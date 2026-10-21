@@ -740,7 +740,29 @@ class KotlinIntrospectorTest {
                 fun launchWithReceiver(block: suspend FunctionModifiersTestClass.() -> Unit)
                 fun launchNullable(block: (suspend () -> Unit)?)
                 fun supplier(): suspend () -> List<String>
+                fun launchAll(blocks: List<suspend () -> Unit>)
+                fun launchWithNullableReceiver(block: suspend (suspend () -> Unit)?.() -> Unit)
             }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension function on suspend function type`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.TestFunctionModifiersKt.retry"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.TestFunctionModifiersKt.retry [page 1/1]
+            fun (suspend () -> Unit).retry()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension property on suspend function type`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.TestFunctionModifiersKt.retryCount"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.TestFunctionModifiersKt.retryCount [page 1/1]
+            val (suspend () -> Unit).retryCount: Int
         """.trimIndent()
     }
 

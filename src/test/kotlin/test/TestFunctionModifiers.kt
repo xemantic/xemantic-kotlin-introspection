@@ -67,4 +67,11 @@ class SuspendFunctionTypesTestClass {
     fun launchWithReceiver(block: suspend FunctionModifiersTestClass.() -> Unit) {}
     fun launchNullable(block: (suspend () -> Unit)?) {}
     fun supplier(): suspend () -> List<String> = { emptyList() }
+    fun launchAll(blocks: List<suspend () -> Unit>) {}
+    fun launchWithNullableReceiver(block: suspend (suspend () -> Unit)?.() -> Unit) {}
 }
+
+// Extensions on a suspend function type
+fun (suspend () -> Unit).retry() {}
+
+val (suspend () -> Unit).retryCount: Int get() = 0

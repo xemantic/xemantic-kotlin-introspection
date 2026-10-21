@@ -1040,7 +1040,7 @@ internal class DefaultKotlinIntrospector(
 
         // Handle extension function receiver
         function.receiverParameterType?.let { receiverType ->
-            +formatType(receiverType, contextPackage, typeParameters)
+            +formatReceiverType(receiverType, contextPackage, typeParameters)
             +"."
         }
 
@@ -1102,7 +1102,7 @@ internal class DefaultKotlinIntrospector(
 
         // Extension property receiver
         property.receiverParameterType?.let { receiverType ->
-            +formatType(receiverType, contextPackage, typeParameters)
+            +formatReceiverType(receiverType, contextPackage, typeParameters)
             +"."
         }
 
@@ -1224,8 +1224,7 @@ internal class DefaultKotlinIntrospector(
         val functionType = buildString {
             +"suspend "
             if (receiver != null) {
-                val formattedReceiver = format(receiver)
-                +if (receiver.isSuspend) "($formattedReceiver)" else formattedReceiver
+                +formatReceiverType(receiver, contextPackage, typeParameters)
                 +"."
             }
             +valueParameters.joinToString(", ", prefix = "(", postfix = ")") { format(it) }
@@ -1233,6 +1232,20 @@ internal class DefaultKotlinIntrospector(
             +format(returnType)
         }
         return if (type.isNullable) "($functionType)?" else functionType
+    }
+
+    /**
+     * Formats a receiver [type], parenthesizing a suspend function type, like `(suspend () -> Unit)`,
+     * which would otherwise absorb the following `.name`.
+     * A nullable one is already parenthesized by [formatType], like `(suspend () -> Unit)?`.
+     */
+    private fun formatReceiverType(
+        type: KmType,
+        contextPackage: String?,
+        typeParameters: Map<Int, String>
+    ): String {
+        val formatted = formatType(type, contextPackage, typeParameters)
+        return if (type.isSuspend && !type.isNullable && formatted.startsWith("suspend ")) "($formatted)" else formatted
     }
 
     /**
