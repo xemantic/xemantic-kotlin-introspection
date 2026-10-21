@@ -1,15 +1,14 @@
-@file:OptIn(ExperimentalWasmDsl::class, ExperimentalKotlinGradlePluginApi::class)
+@file:OptIn(ExperimentalKotlinGradlePluginApi::class, ExperimentalAbiValidation::class)
 
 import org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi
-import org.jetbrains.kotlin.gradle.ExperimentalWasmDsl
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
+import org.jetbrains.kotlin.gradle.dsl.abi.ExperimentalAbiValidation
 import org.jreleaser.model.Active
 
 plugins {
-    alias(libs.plugins.kotlin.multiplatform)
+    alias(libs.plugins.kotlin.jvm)
     alias(libs.plugins.kotlin.plugin.power.assert)
-    alias(libs.plugins.kotlinx.binary.compatibility.validator)
     alias(libs.plugins.dokka)
     alias(libs.plugins.version.catalog.update)
     alias(libs.plugins.maven.publish)
@@ -17,13 +16,11 @@ plugins {
     alias(libs.plugins.xemantic.conventions)
 }
 
-// TODO change the group
-group = "com.xemantic.template"
+group = "com.xemantic.kotlin"
 
-// TODO fill up the details
 xemantic {
-    description = "A template repository for Xemantic's Kotlin multiplatform projects"
-    inceptionYear = "2025"
+    description = "Kotlin API introspection of the classpath, rendering LLM-friendly signatures"
+    inceptionYear = "2026"
     applyAllConventions()
 }
 
@@ -40,91 +37,51 @@ val kotlinTarget = KotlinVersion.fromVersion(libs.versions.kotlinTarget.get())
 
 kotlin {
 
-    // TODO remove for a non-library project
     explicitApi()
 
+    abiValidation {}
+
+    // set up according to https://jakewharton.com/gradle-toolchains-are-rarely-a-good-idea/
     compilerOptions {
         apiVersion = kotlinTarget
         languageVersion = kotlinTarget
+        jvmTarget = JvmTarget.fromTarget(javaTarget)
+        freeCompilerArgs.addAll(
+            "-Xjdk-release=$javaTarget",
+            "-Xcontext-sensitive-resolution"
+        )
         extraWarnings = true
         progressiveMode = true
-        //optIn.addAll("add opt ins here")
-        //freeCompilerArgs.addAll()
-    }
-
-    jvm {
-        // set up according to https://jakewharton.com/gradle-toolchains-are-rarely-a-good-idea/
-        compilerOptions {
-            apiVersion = kotlinTarget
-            languageVersion = kotlinTarget
-            jvmTarget = JvmTarget.fromTarget(javaTarget)
-            freeCompilerArgs.add("-Xjdk-release=$javaTarget")
-            progressiveMode = true
-        }
-    }
-
-    js {
-        browser()
-        nodejs()
-        // TODO remove for a non-library project
-        binaries.library()
-    }
-
-    wasmJs {
-        browser()
-        nodejs()
-        d8()
-        // TODO remove for a non-library project
-        binaries.library()
-    }
-
-    wasmWasi {
-        nodejs()
-        // TODO remove for a non-library project
-        binaries.library()
-    }
-
-    // native, see https://kotlinlang.org/docs/native-target-support.html
-    // tier 1
-    macosArm64()
-    iosSimulatorArm64()
-    iosX64()
-    iosArm64()
-
-    // tier 2
-    linuxX64()
-    linuxArm64()
-    watchosSimulatorArm64()
-    watchosArm32()
-    watchosArm64()
-    tvosSimulatorArm64()
-    tvosArm64()
-
-    // tier 3
-    androidNativeArm32()
-    androidNativeArm64()
-    androidNativeX86()
-    androidNativeX64()
-    mingwX64()
-    watchosDeviceArm64()
-
-    swiftExport {}
-
-    sourceSets {
-
-        commonTest {
-            dependencies {
-                implementation(libs.kotlin.test)
-                implementation(libs.xemantic.kotlin.test)
-            }
-        }
-
     }
 
 }
 
+java {
+    sourceCompatibility = JavaVersion.toVersion(javaTarget)
+    targetCompatibility = JavaVersion.toVersion(javaTarget)
+}
+
 repositories {
     mavenCentral()
+}
+
+// compiled classes deliberately kept off the test classpath,
+// so that tests can expose them through a dedicated class loader only
+val isolatedTestFixtures: SourceSet = sourceSets.create("isolatedTestFixtures")
+
+dependencies {
+    implementation(libs.kotlin.metadata.jvm)
+    implementation(libs.kotlin.reflect)
+    // reading the @Metadata of the scanned classes without loading them
+    implementation(libs.asm)
+    implementation(libs.xemantic.kotlin.core)
+    implementation(libs.kotlin.logging)
+    // kotlin-logging 8 no longer brings SLF4J transitively
+    implementation(libs.slf4j.api)
+
+    testImplementation(libs.kotlin.test)
+    testImplementation(libs.xemantic.kotlin.test)
+    testRuntimeOnly(libs.logback.classic)
 }
 
 configurations.all {
@@ -135,24 +92,12 @@ configurations.all {
     }
 }
 
-// skip tests which require XCode components to be installed
-tasks {
-    named("tvosSimulatorArm64Test") { enabled = false }
-    named("watchosSimulatorArm64Test") { enabled = false }
+tasks.test {
+    useJUnitPlatform()
+    val isolatedTestFixturesDirs = isolatedTestFixtures.output.classesDirs
+    inputs.files(isolatedTestFixturesDirs).withPropertyName("isolatedTestFixtures")
+    systemProperty("isolatedTestFixtures", isolatedTestFixturesDirs.asPath)
 }
-
-// TODO only relevant for private projects, public project snapshots are released to maven central
-//publishing {
-//    if (isPublishingToGitHub) {
-//        repositories {
-//            maven {
-//                name = "GitHubPackages"
-//                url = uri("https://maven.pkg.github.com/xemantic/xemantic-kotlin-core")
-//                credentials(PasswordCredentials::class)
-//            }
-//        }
-//    }
-//}
 
 powerAssert {
     functions = listOf(
@@ -173,7 +118,7 @@ versionCatalogUpdate {
     sortByKey = false
     keep {
         // kotlinTarget / javaTarget are plain version constants with no version.ref
-        versions = setOf("kotlinTarget", "javaTarget", "asm")
+        versions = setOf("kotlinTarget", "javaTarget")
         keepUnusedVersions = false
     }
 }
@@ -198,9 +143,9 @@ mavenPublishing {
 
         licenses {
             license {
-                name = "The Apache License, Version 2.0"
-                url = "https://www.apache.org/licenses/LICENSE-2.0.txt"
-                distribution = "https://www.apache.org/licenses/LICENSE-2.0.txt"
+                name = "GNU Affero General Public License v3.0"
+                url = "https://www.gnu.org/licenses/agpl-3.0.txt"
+                distribution = "https://www.gnu.org/licenses/agpl-3.0.txt"
             }
         }
 

@@ -1,0 +1,17 @@
+public abstract interface class com/xemantic/kotlin/introspection/KotlinIntrospector {
+	public abstract fun resolve (Ljava/lang/String;II)Ljava/lang/String;
+	public static synthetic fun resolve$default (Lcom/xemantic/kotlin/introspection/KotlinIntrospector;Ljava/lang/String;IIILjava/lang/Object;)Ljava/lang/String;
+	public abstract fun search (Ljava/lang/String;II)Ljava/lang/String;
+	public static synthetic fun search$default (Lcom/xemantic/kotlin/introspection/KotlinIntrospector;Ljava/lang/String;IIILjava/lang/Object;)Ljava/lang/String;
+}
+
+public final class com/xemantic/kotlin/introspection/KotlinIntrospector$DefaultImpls {
+	public static synthetic fun resolve$default (Lcom/xemantic/kotlin/introspection/KotlinIntrospector;Ljava/lang/String;IIILjava/lang/Object;)Ljava/lang/String;
+	public static synthetic fun search$default (Lcom/xemantic/kotlin/introspection/KotlinIntrospector;Ljava/lang/String;IIILjava/lang/Object;)Ljava/lang/String;
+}
+
+public final class com/xemantic/kotlin/introspection/KotlinIntrospectorKt {
+	public static final fun KotlinIntrospector (Ljava/lang/ClassLoader;Z)Lcom/xemantic/kotlin/introspection/KotlinIntrospector;
+	public static synthetic fun KotlinIntrospector$default (Ljava/lang/ClassLoader;ZILjava/lang/Object;)Lcom/xemantic/kotlin/introspection/KotlinIntrospector;
+}
+
