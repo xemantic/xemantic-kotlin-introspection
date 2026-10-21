@@ -680,6 +680,7 @@ internal class DefaultKotlinIntrospector(
         if (kmClass.modality == Modality.SEALED) +"sealed "
         if (kmClass.isData) +"data "
         if (kmClass.isValue) +"value "
+        if (kmClass.isInner) +"inner "
 
         // Class kind
         +when (kmClass.kind) {
@@ -773,7 +774,9 @@ internal class DefaultKotlinIntrospector(
             val hasBodyProperties = kmClass.properties.any { it.name !in constructorParamNames }
             val hasFunctions = kmClass.functions.isNotEmpty()
             val hasCompanion = kmClass.companionObject != null
-            val hasBodyContent = hasEnumEntries || hasSealedSubclasses || hasBodyProperties || hasFunctions || hasCompanion
+            val nestedClasses = listedNestedClasses(kmClass, clazz)
+            val hasBodyContent = hasEnumEntries || hasSealedSubclasses || nestedClasses.isNotEmpty() ||
+                hasBodyProperties || hasFunctions || hasCompanion
 
             // Only add braces if there's body content or extensions
             if (!hasBodyContent && extensions.isEmpty() && extensionProperties.isEmpty()) {
@@ -814,6 +817,22 @@ internal class DefaultKotlinIntrospector(
                         ?: "class "
                     +"    $subclassPrefix$simpleName : $parentSimpleName\n"
                 }
+            }
+
+            // Nested classes, only referenced, as they can be resolved by their own name
+            nestedClasses.forEach { (name, nestedKmClass) ->
+                +"    "
+                +formatClassPrefix(nestedKmClass)
+                +name
+                val nestedSupertypes = nestedKmClass.supertypes
+                    .map { formatType(it, contextPackage) }
+                    .filter { it != "Any" }
+                    .filter { !(nestedKmClass.kind == ClassKind.ENUM_CLASS && it.startsWith("Enum<")) }
+                if (nestedSupertypes.isNotEmpty()) {
+                    +" : "
+                    +nestedSupertypes.joinToString(", ")
+                }
+                +"\n"
             }
 
             // Properties (excluding constructor properties)
@@ -892,6 +911,26 @@ internal class DefaultKotlinIntrospector(
                 .forEach { +"\n${formatFunction(it.function, contextPackage = contextPackage)}" }
         }
     }
+
+    /**
+     * The nested classes worth listing in the outer class, by their simple names, excluding
+     * the sealed subclasses and the companion object, which are already rendered,
+     * and the ones not visible to the users of the outer class.
+     */
+    private fun listedNestedClasses(kmClass: KmClass, clazz: Class<*>): List<Pair<String, KmClass>> {
+        val sealedSubclasses = kmClass.sealedSubclasses.toSet()
+        return kmClass.nestedClasses
+            .filter { it != kmClass.companionObject }
+            .filter { "${kmClass.name}.$it" !in sealedSubclasses }
+            .mapNotNull { name ->
+                // the binary name, as the class might be nested
+                loadClass("${clazz.name}\$$name")?.let { readKmClass(it) }?.let { name to it }
+            }
+            .filter { (_, nestedKmClass) -> nestedKmClass.visibility.isApi() }
+    }
+
+    private fun Visibility.isApi(): Boolean =
+        this == Visibility.PUBLIC || this == Visibility.PROTECTED
 
     private fun formatAnnotationDefaultValue(
         annotationClass: Class<*>,
@@ -1333,8 +1372,14 @@ internal class DefaultKotlinIntrospector(
         null
     }
 
+    /**
+     * Whether the class file might contain a named Kotlin class, which is decided by its metadata eventually,
+     * the anonymous classes, like `Outer$1` or `Outer$function$1`, are skipped here already,
+     * to avoid reading them.
+     */
     private fun isIndexedClassFile(fileName: String): Boolean =
-        fileName.endsWith(".class") && !fileName.contains('$') && fileName != "module-info.class"
+        fileName.endsWith(".class") && fileName != "module-info.class" &&
+            fileName.removeSuffix(".class").split('$').drop(1).none { it.isEmpty() || it.first().isDigit() }
 
     private fun scanJarFile(
         jarFile: File,
@@ -1394,10 +1439,15 @@ internal class DefaultKotlinIntrospector(
 
         val (functions, properties) = when (metadata) {
             is KotlinClassMetadata.Class -> {
-                // Index the class by its simple name (lowercase for case-insensitive search)
-                val simpleName = className.substringAfterLast('.').lowercase()
-                clsIndex.getOrPut(simpleName) { mutableListOf() }.add(className)
-                metadata.kmClass.functions to metadata.kmClass.properties
+                val kmClass = metadata.kmClass
+                if (isSearchableClass(kmClass)) {
+                    // the Kotlin name, like com.example.Outer.Nested, which can be resolved
+                    val kotlinName = kmClass.name.replace('/', '.')
+                    // Index the class by its simple name (lowercase for case-insensitive search)
+                    val simpleName = kotlinName.substringAfterLast('.').lowercase()
+                    clsIndex.getOrPut(simpleName) { mutableListOf() }.add(kotlinName)
+                }
+                kmClass.functions to kmClass.properties
             }
             is KotlinClassMetadata.FileFacade -> metadata.kmPackage.functions to metadata.kmPackage.properties
             is KotlinClassMetadata.MultiFileClassPart -> metadata.kmPackage.functions to metadata.kmPackage.properties
@@ -1423,6 +1473,20 @@ internal class DefaultKotlinIntrospector(
             propIndex.getOrPut(receiverName) { mutableListOf() }
                 .add(IndexedExtensionProperty(property, className))
         }
+    }
+
+    /**
+     * Whether the class should be found by the [search]. Nested classes are, unless they are not part of the API,
+     * or they are companion objects, already rendered within their outer class.
+     * Local and anonymous classes, with names starting with `.`, are not.
+     */
+    private fun isSearchableClass(kmClass: KmClass): Boolean {
+        if (kmClass.name.startsWith('.')) return false
+        val isNested = kmClass.name.substringAfterLast('/').contains('.')
+        if (!isNested) return true
+        // like the serializer generated by kotlinx.serialization
+        if (kmClass.name.contains('$')) return false
+        return kmClass.kind != ClassKind.COMPANION_OBJECT && kmClass.visibility.isApi()
     }
 
     /**

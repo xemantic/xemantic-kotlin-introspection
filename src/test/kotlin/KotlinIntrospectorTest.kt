@@ -1012,6 +1012,42 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should list nested classes in the outer class`() {
+        // an LLM cannot discover a nested class otherwise, the companion object is rendered with its members,
+        // while private, internal, and synthetic nested classes are not part of the API
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.NestedClassesHolder",
+            pageSize = 20
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NestedClassesHolder [page 1/1]
+            class NestedClassesHolder {
+                class NestedClass
+                inner class NestedInnerClass
+                interface NestedInterface
+                object NestedObject
+                enum class NestedEnum
+                data class NestedData : NestedClassesHolder.NestedInterface
+                protected class NestedProtectedClass
+                fun anonymous(): Any
+                fun whenMapping(nestedEnum: NestedClassesHolder.NestedEnum): Int
+                companion object {
+                    fun create(): NestedClassesHolder
+                }
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve inner class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.NestedClassesHolder.NestedInnerClass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NestedClassesHolder.NestedInnerClass [page 1/1]
+            inner class NestedInnerClass
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve annotation class with default values`() {
         // an LLM needs the actual defaults to know which parameters can be omitted
         resolver.resolve(
@@ -1305,6 +1341,52 @@ class KotlinIntrospectorTest {
             com.xemantic.kotlin.introspection.test.DataTestClass
             com.xemantic.kotlin.introspection.test.EnumTestClass
         """.trimIndent()
+    }
+
+    @Test
+    fun `search should find sealed subclass by its Kotlin name`() {
+        resolver.search("SubClass1") sameAsKotlin """
+            // search results for "SubClass1" [page 1/1]
+            com.xemantic.kotlin.introspection.test.SealedTestClass.SubClass1
+        """.trimIndent()
+    }
+
+    @Test
+    fun `search should find nested class`() {
+        resolver.search("NestedInnerClass") sameAsKotlin """
+            // search results for "NestedInnerClass" [page 1/1]
+            com.xemantic.kotlin.introspection.test.NestedClassesHolder.NestedInnerClass
+        """.trimIndent()
+    }
+
+    @Test
+    fun `search should find nested class by a common name`() {
+        resolver.search("Inner", pageSize = 1000) should {
+            have("com.xemantic.kotlin.introspection.test.NestedCompanionTestClass.Inner" in lines())
+        }
+    }
+
+    @Test
+    fun `search should not find private nested class`() {
+        assert(resolver.search("NestedPrivateClass") == null)
+    }
+
+    @Test
+    fun `search should not find internal nested class`() {
+        assert(resolver.search("NestedInternalClass") == null)
+    }
+
+    @Test
+    fun `search should not find synthetic nested classes`() {
+        assert(resolver.search("WhenMappings") == null)
+    }
+
+    @Test
+    fun `search should not find companion objects`() {
+        // they are already rendered within their outer class
+        resolver.search("Companion", pageSize = 1000) should {
+            have(!contains("CompanionTestClass.Companion"))
+        }
     }
 
     @Test
