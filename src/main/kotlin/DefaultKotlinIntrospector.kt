@@ -439,33 +439,7 @@ internal class DefaultKotlinIntrospector(
 
             +"}"
 
-            if (supertypeExtensions.isNotEmpty() || supertypeExtensionProperties.isNotEmpty()) {
-                // Group extension functions by source package
-                val funcsBySource = supertypeExtensions.groupBy { it.sourceClass.substringBeforeLast('.') }
-                // Group extension properties by source package
-                val propsBySource = supertypeExtensionProperties.groupBy { it.sourceClass.substringBeforeLast('.') }
-
-                // Get all unique source packages, sorted
-                val allPackages = (funcsBySource.keys + propsBySource.keys).sorted()
-
-                allPackages.forEachIndexed { packageIndex, sourcePackage ->
-                    if (packageIndex == 0) {
-                        +"\n// from $sourcePackage\n"
-                    } else {
-                        +"// from $sourcePackage\n"
-                    }
-                    // Extension properties first, sorted by name
-                    for (extProp in propsBySource[sourcePackage]?.sortedBy { it.property.name } ?: emptyList()) {
-                        +formatExtensionProperty(extProp.property)
-                        +"\n"
-                    }
-                    // Then extension functions, sorted by name
-                    for (ext in funcsBySource[sourcePackage]?.sortedBy { it.function.name } ?: emptyList()) {
-                        +formatFunction(ext.function)
-                        +"\n"
-                    }
-                }
-            }
+            +renderExtensions(supertypeExtensions, supertypeExtensionProperties, contextPackage = null)
 
             trimLastNewLine()
         }
@@ -890,38 +864,35 @@ internal class DefaultKotlinIntrospector(
 
             +"}"
 
-            if (extensions.isNotEmpty() || extensionProperties.isNotEmpty()) {
-                // Group extension functions by source package
-                val funcsBySource = extensions.groupBy { it.sourceClass.substringBeforeLast('.') }
-                // Group extension properties by source package
-                val propsBySource = extensionProperties.groupBy { it.sourceClass.substringBeforeLast('.') }
-
-                // Get all unique source packages, sorted
-                val allPackages = (funcsBySource.keys + propsBySource.keys).sorted()
-
-                allPackages.forEachIndexed { packageIndex, sourcePackage ->
-                    // First package gets newline before comment, subsequent don't (avoid blank line)
-                    if (packageIndex == 0) {
-                        +"\n// from $sourcePackage\n"
-                    } else {
-                        +"// from $sourcePackage\n"
-                    }
-
-                    // Extension properties first
-                    propsBySource[sourcePackage]?.forEach { extProp ->
-                        +formatExtensionProperty(extProp.property, contextPackage)
-                        +"\n"
-                    }
-
-                    // Then extension functions
-                    funcsBySource[sourcePackage]?.forEach { ext ->
-                        +formatFunction(ext.function, contextPackage = contextPackage)
-                        +"\n"
-                    }
-                }
-            }
+            +renderExtensions(extensions, extensionProperties, contextPackage)
 
             trimLastNewLine()
+        }
+    }
+
+    /**
+     * Renders the extensions shown after a class body, grouped under a `// from <package>` comment
+     * for each source package, properties first, then functions.
+     * Both are sorted by name, and then by source class, so that the output does not depend
+     * on the classpath scan order, while overloads declared in one file keep their declaration order.
+     */
+    private fun renderExtensions(
+        functions: List<IndexedExtension>,
+        properties: List<IndexedExtensionProperty>,
+        contextPackage: String?
+    ): String = buildString {
+        val functionsBySource = functions.groupBy { it.sourceClass.substringBeforeLast('.') }
+        val propertiesBySource = properties.groupBy { it.sourceClass.substringBeforeLast('.') }
+        val sourcePackages = (functionsBySource.keys + propertiesBySource.keys).sorted()
+        for (sourcePackage in sourcePackages) {
+            // each line starts with a new line, so that there is no blank line between the groups
+            +"\n// from $sourcePackage"
+            propertiesBySource[sourcePackage].orEmpty()
+                .sortedWith(compareBy({ it.property.name }, { it.sourceClass }))
+                .forEach { +"\n${formatExtensionProperty(it.property, contextPackage)}" }
+            functionsBySource[sourcePackage].orEmpty()
+                .sortedWith(compareBy({ it.function.name }, { it.sourceClass }))
+                .forEach { +"\n${formatFunction(it.function, contextPackage = contextPackage)}" }
         }
     }
 
@@ -1455,30 +1426,16 @@ internal class DefaultKotlinIntrospector(
     }
 
     /**
-     * Get extension functions for a given type name.
+     * Get extension functions for a given fully qualified type name.
      */
-    private fun getExtensionsFor(typeName: String): List<IndexedExtension> {
-        // Try exact match first
-        extensionIndex[typeName]?.let { return it }
-
-        // Try with kotlin. prefix for built-in types
-        extensionIndex["kotlin.$typeName"]?.let { return it }
-
-        return emptyList()
-    }
+    private fun getExtensionsFor(typeName: String): List<IndexedExtension> =
+        extensionIndex[typeName].orEmpty()
 
     /**
-     * Get extension properties for a given type name.
+     * Get extension properties for a given fully qualified type name.
      */
-    private fun getExtensionPropertiesFor(typeName: String): List<IndexedExtensionProperty> {
-        // Try exact match first
-        extensionPropertyIndex[typeName]?.let { return it }
-
-        // Try with kotlin. prefix for built-in types
-        extensionPropertyIndex["kotlin.$typeName"]?.let { return it }
-
-        return emptyList()
-    }
+    private fun getExtensionPropertiesFor(typeName: String): List<IndexedExtensionProperty> =
+        extensionPropertyIndex[typeName].orEmpty()
 
     private fun requirePositivePageSize(pageSize: Int) {
         require(pageSize > 0) { "pageSize must be positive, but was: $pageSize" }

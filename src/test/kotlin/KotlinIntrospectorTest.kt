@@ -891,9 +891,39 @@ class KotlinIntrospectorTest {
                 fun label(): String
             }
             // from com.xemantic.kotlin.introspection.test
-            fun TestSubtype.describeSubtype(): String
             fun TestIntermediateType.describeIntermediate(): String
+            fun TestSubtype.describeSubtype(): String
             fun TestSupertype.describeSupertype(): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extensions sorted by name regardless of declaration and scan order`() {
+        // the extensions are spread over 2 files, in each declared in reverse order,
+        // and the order in which files are scanned depends on the file system
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ExtensionOrderSubject"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ExtensionOrderSubject [page 1/1]
+            class ExtensionOrderSubject(val value: Int)
+            // from com.xemantic.kotlin.introspection.test
+            val ExtensionOrderSubject.bravo: Int
+            val ExtensionOrderSubject.charlie: Int
+            val ExtensionOrderSubject.yankee: Int
+            fun ExtensionOrderSubject.alpha(): Int
+            fun ExtensionOrderSubject.mike(): Int
+            fun ExtensionOrderSubject.zulu(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve extensions of a kotlin type for a user class of a matching name`() {
+        // collections.Iterator must not get the extensions of kotlin.collections.Iterator
+        resolver.resolve(
+            "collections.Iterator"
+        ) sameAsKotlin """
+            // collections.Iterator [page 1/1]
+            class Iterator(val value: Int)
         """.trimIndent()
     }
 
@@ -910,9 +940,9 @@ class KotlinIntrospectorTest {
                 fun <R : Any> transform(block: Function2<K, V, R>): R
             }
             // from com.xemantic.kotlin.introspection.test
+            fun <T> GenericTestClass<T, T>.longest(): T where T : CharSequence, T : Comparable<T>
             fun <K, V> GenericTestClass<K, V>.swap(): GenericTestClass<V, K>
             inline fun <reified T> GenericTestClass<*, *>.valueAs(): T?
-            fun <T> GenericTestClass<T, T>.longest(): T where T : CharSequence, T : Comparable<T>
         """.trimIndent()
     }
 
