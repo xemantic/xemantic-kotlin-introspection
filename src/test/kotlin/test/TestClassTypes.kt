@@ -130,6 +130,8 @@ class NestedClassesHolder {
     protected class NestedProtectedClass
     private class NestedPrivateClass
     internal class NestedInternalClass
+    // named like the synthetic nested classes, e.g. the $serializer of kotlinx.serialization
+    class `Synthetic$Nested`
     companion object {
         fun create(): NestedClassesHolder = NestedClassesHolder()
     }

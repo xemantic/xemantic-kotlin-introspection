@@ -22,8 +22,18 @@ class ExtensionTarget
 
 fun ExtensionTarget.topLevelExtension(): String = "top-level"
 
-// member extensions can only be called within the scope of their dispatch receiver,
-// so they are not extensions of the receiver type for the outside world
+// the member extensions of objects can be imported, like the top-level ones
+object ExtensionTargetUtils {
+    fun ExtensionTarget.fromObject(): String = "object"
+    private fun ExtensionTarget.fromObjectPrivate(): String = "object private"
+}
+
+internal object InternalExtensionObject {
+    fun ExtensionTarget.fromInternalObject(): String = "internal object"
+}
+
+// the member extensions of classes can only be called within the scope of their dispatch receiver,
+// so they are not extensions of the receiver type for the outside world, unlike the ones of the companion object
 class MemberExtensionHolder {
     fun ExtensionTarget.fromMember(): String = "member"
     val ExtensionTarget.fromMemberProperty: String get() = "member"
@@ -32,6 +42,9 @@ class MemberExtensionHolder {
     }
     private class Hidden {
         fun ExtensionTarget.fromPrivateNested(): String = "private nested"
+    }
+    private object HiddenObject {
+        fun ExtensionTarget.fromPrivateObject(): String = "private object"
     }
 }
 
@@ -54,4 +67,15 @@ class GenericNestedHolder {
 
 internal class InternalNestedHolder {
     class NestedInInternalClass
+    object NestedObject {
+        fun ExtensionTarget.fromObjectInInternalClass(): String = "object in internal class"
+    }
+}
+
+class TypeParametersNestedHolder<K> {
+    inner class Cursor : Iterator<K> {
+        override fun hasNext(): Boolean = false
+        override fun next(): K = throw NoSuchElementException()
+    }
+    class Sorted<T> where T : Comparable<T>, T : CharSequence
 }
