@@ -1,0 +1,13 @@
+{
+  "enabledPlugins": {
+    "xemantic@xemantic": true
+  },
+  "extraKnownMarketplaces": {
+    "xemantic": {
+      "source": {
+        "source": "github",
+        "repo": "xemantic/claude-plugins"
+      }
+    }
+  }
+}

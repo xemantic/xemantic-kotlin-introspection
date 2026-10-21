@@ -43,3 +43,7 @@ bin/
 .DS_Store
 
 /*.hprof
+
+### Claude Code ###
+/TASK-QUEUE.md
+/.claude/worktrees/
