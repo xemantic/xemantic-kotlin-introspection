@@ -813,8 +813,8 @@ internal class DefaultKotlinIntrospector(
 
             // For enum classes, show enum entries
             if (hasEnumEntries) {
-                // Check if there are properties or functions after the entries
-                val hasMembers = hasBodyProperties || hasFunctions
+                // Check if there are any members rendered after the entries
+                val hasMembers = hasBodyProperties || hasFunctions || hasCompanion
 
                 kmClass.kmEnumEntries.forEachIndexed { index, entry ->
                     +"    "
@@ -822,7 +822,7 @@ internal class DefaultKotlinIntrospector(
                     if (index < kmClass.kmEnumEntries.size - 1) {
                         +","
                     } else if (hasMembers) {
-                        // Last entry needs semicolon if there are properties/functions after
+                        // Last entry needs semicolon if there are members after
                         +";"
                     }
                     +"\n"
