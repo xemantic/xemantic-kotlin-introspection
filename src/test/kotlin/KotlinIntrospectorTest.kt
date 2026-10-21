@@ -1048,6 +1048,46 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should not list member extensions as extensions of the receiver type`() {
+        // the member extensions of classes, companion objects, private nested and local classes
+        // can only be called within the scope of their dispatch receiver
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ExtensionTarget"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ExtensionTarget [page 1/1]
+            class ExtensionTarget
+            // from com.xemantic.kotlin.introspection.test
+            fun ExtensionTarget.topLevelExtension(): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should separate enum entries from nested classes`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.NestedClassEnum"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NestedClassEnum [page 1/1]
+            enum class NestedClassEnum {
+                RED,
+                GREEN;
+                class Palette
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should list generic nested class with its type parameters`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.GenericNestedHolder"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GenericNestedHolder [page 1/1]
+            class GenericNestedHolder {
+                class Entry<K, V> : Map.Entry<K, V>
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve annotation class with default values`() {
         // an LLM needs the actual defaults to know which parameters can be omitted
         resolver.resolve(
@@ -1387,6 +1427,11 @@ class KotlinIntrospectorTest {
         resolver.search("Companion", pageSize = 1000) should {
             have(!contains("CompanionTestClass.Companion"))
         }
+    }
+
+    @Test
+    fun `search should not find nested class of internal class`() {
+        assert(resolver.search("NestedInInternalClass") == null)
     }
 
     @Test
