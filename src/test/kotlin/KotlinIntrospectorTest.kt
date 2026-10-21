@@ -612,9 +612,9 @@ class KotlinIntrospectorTest {
                 operator fun component1(): Int
                 operator fun component2(): String
                 fun copy(id: Int, name: String): DataTestClass
-                open operator fun equals(other: Any?): Boolean
-                open fun hashCode(): Int
-                open fun toString(): String
+                override operator fun equals(other: Any?): Boolean
+                override fun hashCode(): Int
+                override fun toString(): String
             }
         """.trimIndent()
     }
@@ -627,9 +627,9 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.ValueTestClass [page 1/1]
             value class ValueTestClass(val value: String) {
-                open operator fun equals(other: Any?): Boolean
-                open fun hashCode(): Int
-                open fun toString(): String
+                override operator fun equals(other: Any?): Boolean
+                override fun hashCode(): Int
+                override fun toString(): String
             }
         """.trimIndent()
     }
@@ -827,6 +827,84 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.test.OverrideTestClass [page 1/1]
             class OverrideTestClass : Comparable<OverrideTestClass> {
                 override operator fun compareTo(other: OverrideTestClass): Int
+            }
+        """.trimIndent()
+    }
+
+    // TestOverrides tests
+
+    @Test
+    fun `should not mark overload of superclass function as override`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.OverloadingSubclass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OverloadingSubclass [page 1/1]
+            class OverloadingSubclass : OverloadedBase {
+                fun foo(x: Int)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not mark functions named like final Object methods as override`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ObjectMethodNamesSubclass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ObjectMethodNamesSubclass [page 1/1]
+            class ObjectMethodNamesSubclass : NonAnyBase {
+                fun notify(msg: String)
+                fun wait(ms: Int)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark override of protected abstract function`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ProtectedOverrideSubclass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ProtectedOverrideSubclass [page 1/1]
+            class ProtectedOverrideSubclass : ProtectedAbstractBase {
+                protected override fun bar()
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should tell override of generic function from its overload`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.StringProcessor"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.StringProcessor [page 1/1]
+            abstract class StringProcessor : Processor<String> {
+                override fun process(item: String)
+                fun process(item: Int)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should tell override of generic function with primitive type argument from its overload`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.IntProcessor"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.IntProcessor [page 1/1]
+            class IntProcessor : Processor<Int> {
+                override fun process(item: Int)
+                fun process(item: String)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark override of function declared further up the hierarchy`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.DeepProcessor"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DeepProcessor [page 1/1]
+            class DeepProcessor : IntermediateProcessor {
+                override fun process(item: String)
+                override fun toString(): String
             }
         """.trimIndent()
     }

@@ -25,7 +25,14 @@ import org.objectweb.asm.AnnotationVisitor
 import org.objectweb.asm.ClassReader
 import org.objectweb.asm.ClassVisitor
 import org.objectweb.asm.Opcodes
+import org.objectweb.asm.Type
 import java.io.File
+import java.lang.reflect.GenericArrayType
+import java.lang.reflect.Method
+import java.lang.reflect.Modifier
+import java.lang.reflect.ParameterizedType
+import java.lang.reflect.TypeVariable
+import java.lang.reflect.WildcardType
 import java.net.URI
 import java.net.URL
 import java.net.URLClassLoader
@@ -34,6 +41,7 @@ import java.util.jar.JarFile
 import kotlin.metadata.*
 import kotlin.metadata.internal.common.KotlinCommonMetadata
 import kotlin.metadata.jvm.KotlinClassMetadata
+import kotlin.metadata.jvm.signature
 import kotlin.reflect.KClass
 import kotlin.reflect.KFunction
 import kotlin.reflect.KProperty1
@@ -44,6 +52,12 @@ import kotlin.reflect.full.memberFunctions
 import kotlin.reflect.full.memberProperties
 import kotlin.time.measureTime
 import kotlin.metadata.jvm.Metadata as jvmMetadata
+import java.lang.reflect.Type as JavaType
+
+/**
+ * The overridable members of `Any`, the only ones of `java.lang.Object` visible in Kotlin.
+ */
+private val anyMemberNames = setOf("equals", "hashCode", "toString")
 
 /**
  * Represents an indexed extension function with its source location.
@@ -1016,7 +1030,7 @@ internal class DefaultKotlinIntrospector(
 
         // Check for override - either FAKE_OVERRIDE or explicit override detected via reflection
         val isOverride = function.kind == MemberKind.FAKE_OVERRIDE ||
-            (clazz != null && isMethodOverride(clazz, function.name))
+            (clazz != null && isMethodOverride(clazz, function))
         if (isOverride) +"override "
 
         // Skip 'abstract' in interfaces - all interface members are implicitly abstract
@@ -1215,31 +1229,88 @@ internal class DefaultKotlinIntrospector(
         }
     }
 
-    private fun hasMethodInHierarchy(clazz: Class<*>, methodName: String): Boolean {
-        // Check interfaces
-        for (iface in clazz.interfaces) {
-            if (iface.methods.any { it.name == methodName }) {
-                return true
+    /**
+     * Tells if any supertype of [clazz] declares an overridable method
+     * matching [methodName] and [parameterTypes] (the erased parameter types in [clazz]).
+     *
+     * All the superclasses and interfaces are walked, including non-public members,
+     * while the type arguments of generic supertypes are tracked,
+     * so that `process(item: String)` matches `Processor<String>.process(item: T)`,
+     * but its overload `process(item: Int)` does not.
+     * Of `java.lang.Object` only the members of `Any` are overridable.
+     */
+    private fun hasMethodInHierarchy(
+        clazz: Class<*>,
+        methodName: String,
+        parameterTypes: List<Class<*>>
+    ): Boolean {
+        val visited = mutableSetOf<Class<*>>()
+
+        fun matches(method: Method, bindings: Map<TypeVariable<*>, JavaType>): Boolean {
+            if (method.name != methodName
+                || method.parameterCount != parameterTypes.size
+                || method.isSynthetic
+                || Modifier.isPrivate(method.modifiers)
+                || Modifier.isStatic(method.modifiers)
+                || Modifier.isFinal(method.modifiers)
+            ) return false
+            if (method.declaringClass == Any::class.java && methodName !in anyMemberNames) return false
+            return method.genericParameterTypes.zip(parameterTypes).all { (superType, type) ->
+                val erased = erase(superType, bindings)
+                erased == type || (superType is TypeVariable<*> && erased == type.kotlin.javaObjectType)
             }
         }
-        // Check superclass (excluding Object's methods like hashCode, equals, toString
-        // which are almost always overrides but we might not want to mark them)
-        clazz.superclass?.let { superclass ->
-            if (superclass != Any::class.java) {
-                if (superclass.methods.any { it.name == methodName }) {
-                    return true
-                }
-            }
+
+        fun visit(supertype: JavaType, bindings: Map<TypeVariable<*>, JavaType>): Boolean {
+            val rawType = erase(supertype, emptyMap())
+            if (!visited.add(rawType)) return false
+            val supertypeBindings: Map<TypeVariable<*>, JavaType> = if (supertype is ParameterizedType) {
+                rawType.typeParameters.zip(supertype.actualTypeArguments) { parameter, argument ->
+                    parameter as TypeVariable<*> to ((argument as? TypeVariable<*>)?.let { bindings[it] } ?: argument)
+                }.toMap()
+            } else emptyMap()
+            return rawType.declaredMethods.any { matches(it, supertypeBindings) }
+                || directSupertypes(rawType).any { visit(it, supertypeBindings) }
         }
-        return false
+
+        return directSupertypes(clazz).any { visit(it, emptyMap()) }
     }
 
-    private fun isMethodOverride(clazz: Class<*>, methodName: String): Boolean =
-        hasMethodInHierarchy(clazz, methodName)
+    private fun directSupertypes(clazz: Class<*>): List<JavaType> =
+        listOfNotNull(clazz.genericSuperclass) + clazz.genericInterfaces +
+            // interfaces do not report Object as their superclass, but still inherit its members
+            if (clazz.isInterface && clazz.interfaces.isEmpty()) listOf(Any::class.java) else emptyList()
+
+    /**
+     * The erasure of [type], with type variables substituted by their [bindings].
+     */
+    private fun erase(type: JavaType, bindings: Map<TypeVariable<*>, JavaType>): Class<*> = when (type) {
+        is Class<*> -> type
+        is ParameterizedType -> type.rawType as Class<*>
+        is TypeVariable<*> -> bindings[type]?.let { erase(it, emptyMap()) }
+            ?: erase(type.bounds.first(), bindings)
+        is GenericArrayType -> java.lang.reflect.Array.newInstance(erase(type.genericComponentType, bindings), 0).javaClass
+        is WildcardType -> erase(type.upperBounds.first(), bindings)
+        else -> Any::class.java
+    }
+
+    private fun isMethodOverride(clazz: Class<*>, function: KmFunction): Boolean {
+        val signature = function.signature ?: return false
+        val method = clazz.declaredMethods.firstOrNull {
+            it.name == signature.name && Type.getMethodDescriptor(it) == signature.descriptor
+        } ?: return false
+        // members of value classes are compiled to static methods taking the underlying value first
+        val isValueClassMember = Modifier.isStatic(method.modifiers) && method.name.endsWith("-impl")
+        return if (isValueClassMember) {
+            hasMethodInHierarchy(clazz, method.name.removeSuffix("-impl"), method.parameterTypes.drop(1))
+        } else {
+            hasMethodInHierarchy(clazz, method.name, method.parameterTypes.toList())
+        }
+    }
 
     private fun isPropertyOverride(clazz: Class<*>, propertyName: String): Boolean {
         val getterName = "get${propertyName.replaceFirstChar { it.uppercase() }}"
-        return hasMethodInHierarchy(clazz, getterName)
+        return hasMethodInHierarchy(clazz, getterName, emptyList())
     }
 
     private fun buildFullClasspathIndex(): Triple<Map<String, List<IndexedExtension>>, Map<String, List<IndexedExtensionProperty>>, Map<String, List<String>>> {
