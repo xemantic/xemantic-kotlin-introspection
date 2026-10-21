@@ -38,7 +38,7 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // kotlin.String [page 1/42]
             class String : Comparable<String>, CharSequence {
-                fun byteInputStream(charset: java.nio.charset.Charset): java.io.ByteArrayInputStream
+                fun byteInputStream(charset: java.nio.charset.Charset = …): java.io.ByteArrayInputStream
                 fun capitalize(): String
                 fun capitalize(locale: java.util.Locale): String
                 fun chars(): java.util.stream.IntStream
@@ -47,7 +47,7 @@ class KotlinIntrospectorTest {
                 fun codePointCount(beginIndex: Int, endIndex: Int): Int
                 fun codePoints(): java.util.stream.IntStream
                 operator fun compareTo(other: String): Int
-                fun compareTo(other: String, ignoreCase: Boolean): Int
+                fun compareTo(other: String, ignoreCase: Boolean = …): Int
             }
         """.trimIndent()
     }
@@ -84,15 +84,15 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // kotlin.String [page 3/42]
             class String : Comparable<String>, CharSequence {
-                fun encodeToByteArray(startIndex: Int, endIndex: Int, throwOnInvalidSequence: Boolean): ByteArray
-                fun endsWith(suffix: String, ignoreCase: Boolean): Boolean
+                fun encodeToByteArray(startIndex: Int = …, endIndex: Int = …, throwOnInvalidSequence: Boolean = …): ByteArray
+                fun endsWith(suffix: String, ignoreCase: Boolean = …): Boolean
                 operator fun equals(other: Any?): Boolean
-                fun equals(other: String?, ignoreCase: Boolean): Boolean
+                fun equals(other: String?, ignoreCase: Boolean = …): Boolean
                 fun filter(predicate: Function1<Char, Boolean>): String
                 fun filterIndexed(predicate: Function2<Int, Char, Boolean>): String
                 fun filterNot(predicate: Function1<Char, Boolean>): String
-                fun format(args: Array<out Any?>): String
-                fun format(locale: java.util.Locale?, args: Array<out Any?>): String
+                fun format(vararg args: Any?): String
+                fun format(locale: java.util.Locale?, vararg args: Any?): String
                 operator fun get(index: Int): Char
             }
         """.trimIndent()
@@ -145,7 +145,7 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // kotlin.String [page 1/1]
             class String : Comparable<String>, CharSequence {
-                fun byteInputStream(charset: java.nio.charset.Charset): java.io.ByteArrayInputStream
+                fun byteInputStream(charset: java.nio.charset.Charset = …): java.io.ByteArrayInputStream
                 fun capitalize(): String
                 fun capitalize(locale: java.util.Locale): String
                 fun chars(): java.util.stream.IntStream
@@ -154,7 +154,7 @@ class KotlinIntrospectorTest {
                 fun codePointCount(beginIndex: Int, endIndex: Int): Int
                 fun codePoints(): java.util.stream.IntStream
                 operator fun compareTo(other: String): Int
-                fun compareTo(other: String, ignoreCase: Boolean): Int
+                fun compareTo(other: String, ignoreCase: Boolean = …): Int
                 fun contentEquals(charSequence: CharSequence): Boolean
                 fun contentEquals(stringBuilder: java.lang.StringBuffer): Boolean
                 fun decapitalize(): String
@@ -165,27 +165,27 @@ class KotlinIntrospectorTest {
                 fun dropLastWhile(predicate: Function1<Char, Boolean>): String
                 fun dropWhile(predicate: Function1<Char, Boolean>): String
                 fun encodeToByteArray(): ByteArray
-                fun encodeToByteArray(startIndex: Int, endIndex: Int, throwOnInvalidSequence: Boolean): ByteArray
-                fun endsWith(suffix: String, ignoreCase: Boolean): Boolean
+                fun encodeToByteArray(startIndex: Int = …, endIndex: Int = …, throwOnInvalidSequence: Boolean = …): ByteArray
+                fun endsWith(suffix: String, ignoreCase: Boolean = …): Boolean
                 operator fun equals(other: Any?): Boolean
-                fun equals(other: String?, ignoreCase: Boolean): Boolean
+                fun equals(other: String?, ignoreCase: Boolean = …): Boolean
                 fun filter(predicate: Function1<Char, Boolean>): String
                 fun filterIndexed(predicate: Function2<Int, Char, Boolean>): String
                 fun filterNot(predicate: Function1<Char, Boolean>): String
-                fun format(args: Array<out Any?>): String
-                fun format(locale: java.util.Locale?, args: Array<out Any?>): String
+                fun format(vararg args: Any?): String
+                fun format(locale: java.util.Locale?, vararg args: Any?): String
                 operator fun get(index: Int): Char
                 fun hashCode(): Int
-                fun hexToByte(format: HexFormat): Byte
-                fun hexToByteArray(format: HexFormat): ByteArray
-                fun hexToInt(format: HexFormat): Int
-                fun hexToLong(format: HexFormat): Long
-                fun hexToShort(format: HexFormat): Short
-                fun hexToUByte(format: HexFormat): UByte
-                fun hexToUByteArray(format: HexFormat): UByteArray
-                fun hexToUInt(format: HexFormat): UInt
-                fun hexToULong(format: HexFormat): ULong
-                fun hexToUShort(format: HexFormat): UShort
+                fun hexToByte(format: HexFormat = …): Byte
+                fun hexToByteArray(format: HexFormat = …): ByteArray
+                fun hexToInt(format: HexFormat = …): Int
+                fun hexToLong(format: HexFormat = …): Long
+                fun hexToShort(format: HexFormat = …): Short
+                fun hexToUByte(format: HexFormat = …): UByte
+                fun hexToUByteArray(format: HexFormat = …): UByteArray
+                fun hexToUInt(format: HexFormat = …): UInt
+                fun hexToULong(format: HexFormat = …): ULong
+                fun hexToUShort(format: HexFormat = …): UShort
                 fun intern(): String
                 fun isEmpty(): Boolean
                 fun isLocalClassName(): Boolean
@@ -194,42 +194,42 @@ class KotlinIntrospectorTest {
                 fun lowercase(locale: java.util.Locale): String
                 fun offsetByCodePoints(index: Int, codePointOffset: Int): Int
                 fun orEmpty(): String
-                fun padEnd(length: Int, padChar: Char): String
-                fun padStart(length: Int, padChar: Char): String
+                fun padEnd(length: Int, padChar: Char = …): String
+                fun padStart(length: Int, padChar: Char = …): String
                 fun partition(predicate: Function1<Char, Boolean>): Pair<String, String>
                 operator fun plus(other: Any?): String
-                fun prependIndent(indent: String): String
+                fun prependIndent(indent: String = …): String
                 fun reader(): java.io.StringReader
-                fun regionMatches(thisOffset: Int, other: String, otherOffset: Int, length: Int, ignoreCase: Boolean): Boolean
+                fun regionMatches(thisOffset: Int, other: String, otherOffset: Int, length: Int, ignoreCase: Boolean = …): Boolean
                 fun removePrefix(prefix: CharSequence): String
                 fun removeRange(startIndex: Int, endIndex: Int): String
                 fun removeRange(range: IntRange): String
                 fun removeSuffix(suffix: CharSequence): String
                 fun removeSurrounding(prefix: CharSequence, suffix: CharSequence): String
                 fun removeSurrounding(delimiter: CharSequence): String
-                fun replace(oldChar: Char, newChar: Char, ignoreCase: Boolean): String
-                fun replace(oldValue: String, newValue: String, ignoreCase: Boolean): String
-                fun replaceAfter(delimiter: Char, replacement: String, missingDelimiterValue: String): String
-                fun replaceAfter(delimiter: String, replacement: String, missingDelimiterValue: String): String
-                fun replaceAfterLast(delimiter: String, replacement: String, missingDelimiterValue: String): String
-                fun replaceAfterLast(delimiter: Char, replacement: String, missingDelimiterValue: String): String
-                fun replaceBefore(delimiter: Char, replacement: String, missingDelimiterValue: String): String
-                fun replaceBefore(delimiter: String, replacement: String, missingDelimiterValue: String): String
-                fun replaceBeforeLast(delimiter: Char, replacement: String, missingDelimiterValue: String): String
-                fun replaceBeforeLast(delimiter: String, replacement: String, missingDelimiterValue: String): String
-                fun replaceFirst(oldChar: Char, newChar: Char, ignoreCase: Boolean): String
-                fun replaceFirst(oldValue: String, newValue: String, ignoreCase: Boolean): String
+                fun replace(oldChar: Char, newChar: Char, ignoreCase: Boolean = …): String
+                fun replace(oldValue: String, newValue: String, ignoreCase: Boolean = …): String
+                fun replaceAfter(delimiter: Char, replacement: String, missingDelimiterValue: String = …): String
+                fun replaceAfter(delimiter: String, replacement: String, missingDelimiterValue: String = …): String
+                fun replaceAfterLast(delimiter: String, replacement: String, missingDelimiterValue: String = …): String
+                fun replaceAfterLast(delimiter: Char, replacement: String, missingDelimiterValue: String = …): String
+                fun replaceBefore(delimiter: Char, replacement: String, missingDelimiterValue: String = …): String
+                fun replaceBefore(delimiter: String, replacement: String, missingDelimiterValue: String = …): String
+                fun replaceBeforeLast(delimiter: Char, replacement: String, missingDelimiterValue: String = …): String
+                fun replaceBeforeLast(delimiter: String, replacement: String, missingDelimiterValue: String = …): String
+                fun replaceFirst(oldChar: Char, newChar: Char, ignoreCase: Boolean = …): String
+                fun replaceFirst(oldValue: String, newValue: String, ignoreCase: Boolean = …): String
                 fun replaceFirstChar(transform: Function1<Char, Char>): String
                 fun replaceFirstChar(transform: Function1<Char, CharSequence>): String
-                fun replaceIndent(newIndent: String): String
-                fun replaceIndentByMargin(newIndent: String, marginPrefix: String): String
+                fun replaceIndent(newIndent: String = …): String
+                fun replaceIndentByMargin(newIndent: String = …, marginPrefix: String = …): String
                 fun replaceRange(startIndex: Int, endIndex: Int, replacement: CharSequence): String
                 fun replaceRange(range: IntRange, replacement: CharSequence): String
                 fun reversed(): String
                 fun slice(indices: IntRange): String
                 fun slice(indices: Iterable<Int>): String
-                fun startsWith(prefix: String, ignoreCase: Boolean): Boolean
-                fun startsWith(prefix: String, startIndex: Int, ignoreCase: Boolean): Boolean
+                fun startsWith(prefix: String, ignoreCase: Boolean = …): Boolean
+                fun startsWith(prefix: String, startIndex: Int, ignoreCase: Boolean = …): Boolean
                 fun strip(): String
                 fun stripIndent(): String
                 fun stripLeading(): String
@@ -239,14 +239,14 @@ class KotlinIntrospectorTest {
                 fun substring(startIndex: Int): String
                 fun substring(startIndex: Int, endIndex: Int): String
                 fun substring(range: IntRange): String
-                fun substringAfter(delimiter: Char, missingDelimiterValue: String): String
-                fun substringAfter(delimiter: String, missingDelimiterValue: String): String
-                fun substringAfterLast(delimiter: Char, missingDelimiterValue: String): String
-                fun substringAfterLast(delimiter: String, missingDelimiterValue: String): String
-                fun substringBefore(delimiter: Char, missingDelimiterValue: String): String
-                fun substringBefore(delimiter: String, missingDelimiterValue: String): String
-                fun substringBeforeLast(delimiter: Char, missingDelimiterValue: String): String
-                fun substringBeforeLast(delimiter: String, missingDelimiterValue: String): String
+                fun substringAfter(delimiter: Char, missingDelimiterValue: String = …): String
+                fun substringAfter(delimiter: String, missingDelimiterValue: String = …): String
+                fun substringAfterLast(delimiter: Char, missingDelimiterValue: String = …): String
+                fun substringAfterLast(delimiter: String, missingDelimiterValue: String = …): String
+                fun substringBefore(delimiter: Char, missingDelimiterValue: String = …): String
+                fun substringBefore(delimiter: String, missingDelimiterValue: String = …): String
+                fun substringBeforeLast(delimiter: Char, missingDelimiterValue: String = …): String
+                fun substringBeforeLast(delimiter: String, missingDelimiterValue: String = …): String
                 fun take(n: Int): String
                 fun takeLast(n: Int): String
                 fun takeLastWhile(predicate: Function1<Char, Boolean>): String
@@ -264,12 +264,12 @@ class KotlinIntrospectorTest {
                 fun toBooleanStrictOrNull(): Boolean?
                 fun toByte(): Byte
                 fun toByte(radix: Int): Byte
-                fun toByteArray(charset: java.nio.charset.Charset): ByteArray
+                fun toByteArray(charset: java.nio.charset.Charset = …): ByteArray
                 fun toByteOrNull(): Byte?
                 fun toByteOrNull(radix: Int): Byte?
-                fun toCharArray(startIndex: Int, endIndex: Int): CharArray
+                fun toCharArray(startIndex: Int = …, endIndex: Int = …): CharArray
                 fun toCharArray(): CharArray
-                fun toCharArray(destination: CharArray, destinationOffset: Int, startIndex: Int, endIndex: Int): CharArray
+                fun toCharArray(destination: CharArray, destinationOffset: Int = …, startIndex: Int = …, endIndex: Int = …): CharArray
                 fun toDouble(): Double
                 fun toDoubleOrNull(): Double?
                 fun toFloat(): Float
@@ -285,7 +285,7 @@ class KotlinIntrospectorTest {
                 fun toLongOrNull(radix: Int): Long?
                 fun toLowerCase(): String
                 fun toLowerCase(locale: java.util.Locale): String
-                fun toPattern(flags: Int): java.util.regex.Pattern
+                fun toPattern(flags: Int = …): java.util.regex.Pattern
                 fun toRegex(): Regex
                 fun toRegex(option: RegexOption): Regex
                 fun toRegex(options: Set<RegexOption>): Regex
@@ -314,15 +314,15 @@ class KotlinIntrospectorTest {
                 fun toUpperCase(locale: java.util.Locale): String
                 fun translateEscapes(): String
                 fun trim(predicate: Function1<Char, Boolean>): String
-                fun trim(chars: CharArray): String
+                fun trim(vararg chars: Char): String
                 fun trim(): String
                 fun trimEnd(predicate: Function1<Char, Boolean>): String
-                fun trimEnd(chars: CharArray): String
+                fun trimEnd(vararg chars: Char): String
                 fun trimEnd(): String
                 fun trimIndent(): String
-                fun trimMargin(marginPrefix: String): String
+                fun trimMargin(marginPrefix: String = …): String
                 fun trimStart(predicate: Function1<Char, Boolean>): String
-                fun trimStart(chars: CharArray): String
+                fun trimStart(vararg chars: Char): String
                 fun trimStart(): String
                 fun uppercase(): String
                 fun uppercase(locale: java.util.Locale): String
@@ -349,10 +349,10 @@ class KotlinIntrospectorTest {
             fun <R> CharSequence.chunked(size: Int, transform: Function1<CharSequence, R>): List<R>
             fun CharSequence.chunkedSequence(size: Int): Sequence<String>
             fun <R> CharSequence.chunkedSequence(size: Int, transform: Function1<CharSequence, R>): Sequence<R>
-            fun CharSequence.commonPrefixWith(other: CharSequence, ignoreCase: Boolean): String
-            fun CharSequence.commonSuffixWith(other: CharSequence, ignoreCase: Boolean): String
-            operator fun CharSequence.contains(other: CharSequence, ignoreCase: Boolean): Boolean
-            operator fun CharSequence.contains(char: Char, ignoreCase: Boolean): Boolean
+            fun CharSequence.commonPrefixWith(other: CharSequence, ignoreCase: Boolean = …): String
+            fun CharSequence.commonSuffixWith(other: CharSequence, ignoreCase: Boolean = …): String
+            operator fun CharSequence.contains(other: CharSequence, ignoreCase: Boolean = …): Boolean
+            operator fun CharSequence.contains(char: Char, ignoreCase: Boolean = …): Boolean
             inline operator fun CharSequence.contains(regex: Regex): Boolean
             infix fun CharSequence?.contentEquals(other: CharSequence?): Boolean
             fun CharSequence?.contentEquals(other: CharSequence?, ignoreCase: Boolean): Boolean
@@ -365,8 +365,8 @@ class KotlinIntrospectorTest {
             inline fun CharSequence.elementAt(index: Int): Char
             inline fun CharSequence.elementAtOrElse(index: Int, defaultValue: Function1<Int, Char>): Char
             inline fun CharSequence.elementAtOrNull(index: Int): Char?
-            fun CharSequence.endsWith(char: Char, ignoreCase: Boolean): Boolean
-            fun CharSequence.endsWith(suffix: CharSequence, ignoreCase: Boolean): Boolean
+            fun CharSequence.endsWith(char: Char, ignoreCase: Boolean = …): Boolean
+            fun CharSequence.endsWith(suffix: CharSequence, ignoreCase: Boolean = …): Boolean
             inline fun CharSequence.filter(predicate: Function1<Char, Boolean>): CharSequence
             inline fun CharSequence.filterIndexed(predicate: Function2<Int, Char, Boolean>): CharSequence
             inline fun <C : java.lang.Appendable> CharSequence.filterIndexedTo(destination: C, predicate: Function2<Int, Char, Boolean>): C
@@ -374,9 +374,9 @@ class KotlinIntrospectorTest {
             inline fun <C : java.lang.Appendable> CharSequence.filterNotTo(destination: C, predicate: Function1<Char, Boolean>): C
             inline fun <C : java.lang.Appendable> CharSequence.filterTo(destination: C, predicate: Function1<Char, Boolean>): C
             inline fun CharSequence.find(predicate: Function1<Char, Boolean>): Char?
-            fun CharSequence.findAnyOf(strings: Collection<String>, startIndex: Int, ignoreCase: Boolean): Pair<Int, String>?
+            fun CharSequence.findAnyOf(strings: Collection<String>, startIndex: Int = …, ignoreCase: Boolean = …): Pair<Int, String>?
             inline fun CharSequence.findLast(predicate: Function1<Char, Boolean>): Char?
-            fun CharSequence.findLastAnyOf(strings: Collection<String>, startIndex: Int, ignoreCase: Boolean): Pair<Int, String>?
+            fun CharSequence.findLastAnyOf(strings: Collection<String>, startIndex: Int = …, ignoreCase: Boolean = …): Pair<Int, String>?
             fun CharSequence.first(): Char
             inline fun CharSequence.first(predicate: Function1<Char, Boolean>): Char
             inline fun <R : Any> CharSequence.firstNotNullOf(transform: Function1<Char, R?>): R
@@ -401,10 +401,10 @@ class KotlinIntrospectorTest {
             inline fun <K, V, M : MutableMap<in K, MutableList<V>>> CharSequence.groupByTo(destination: M, keySelector: Function1<Char, K>, valueTransform: Function1<Char, V>): M
             inline fun <K> CharSequence.groupingBy(keySelector: Function1<Char, K>): Grouping<Char, K>
             fun CharSequence.hasSurrogatePairAt(index: Int): Boolean
-            fun CharSequence.indexOf(char: Char, startIndex: Int, ignoreCase: Boolean): Int
-            fun CharSequence.indexOf(string: String, startIndex: Int, ignoreCase: Boolean): Int
-            fun CharSequence.indexOfAny(chars: CharArray, startIndex: Int, ignoreCase: Boolean): Int
-            fun CharSequence.indexOfAny(strings: Collection<String>, startIndex: Int, ignoreCase: Boolean): Int
+            fun CharSequence.indexOf(char: Char, startIndex: Int = …, ignoreCase: Boolean = …): Int
+            fun CharSequence.indexOf(string: String, startIndex: Int = …, ignoreCase: Boolean = …): Int
+            fun CharSequence.indexOfAny(chars: CharArray, startIndex: Int = …, ignoreCase: Boolean = …): Int
+            fun CharSequence.indexOfAny(strings: Collection<String>, startIndex: Int = …, ignoreCase: Boolean = …): Int
             inline fun CharSequence.indexOfFirst(predicate: Function1<Char, Boolean>): Int
             inline fun CharSequence.indexOfLast(predicate: Function1<Char, Boolean>): Int
             fun CharSequence.isBlank(): Boolean
@@ -416,10 +416,10 @@ class KotlinIntrospectorTest {
             operator fun CharSequence.iterator(): CharIterator
             fun CharSequence.last(): Char
             inline fun CharSequence.last(predicate: Function1<Char, Boolean>): Char
-            fun CharSequence.lastIndexOf(char: Char, startIndex: Int, ignoreCase: Boolean): Int
-            fun CharSequence.lastIndexOf(string: String, startIndex: Int, ignoreCase: Boolean): Int
-            fun CharSequence.lastIndexOfAny(chars: CharArray, startIndex: Int, ignoreCase: Boolean): Int
-            fun CharSequence.lastIndexOfAny(strings: Collection<String>, startIndex: Int, ignoreCase: Boolean): Int
+            fun CharSequence.lastIndexOf(char: Char, startIndex: Int = …, ignoreCase: Boolean = …): Int
+            fun CharSequence.lastIndexOf(string: String, startIndex: Int = …, ignoreCase: Boolean = …): Int
+            fun CharSequence.lastIndexOfAny(chars: CharArray, startIndex: Int = …, ignoreCase: Boolean = …): Int
+            fun CharSequence.lastIndexOfAny(strings: Collection<String>, startIndex: Int = …, ignoreCase: Boolean = …): Int
             fun CharSequence.lastOrNull(): Char?
             inline fun CharSequence.lastOrNull(predicate: Function1<Char, Boolean>): Char?
             fun CharSequence.lineSequence(): Sequence<String>
@@ -469,8 +469,8 @@ class KotlinIntrospectorTest {
             fun CharSequence.minWithOrNull(comparator: java.util.Comparator<in Char>): Char?
             fun CharSequence.none(): Boolean
             inline fun CharSequence.none(predicate: Function1<Char, Boolean>): Boolean
-            fun CharSequence.padEnd(length: Int, padChar: Char): CharSequence
-            fun CharSequence.padStart(length: Int, padChar: Char): CharSequence
+            fun CharSequence.padEnd(length: Int, padChar: Char = …): CharSequence
+            fun CharSequence.padStart(length: Int, padChar: Char = …): CharSequence
             inline fun CharSequence.partition(predicate: Function1<Char, Boolean>): Pair<CharSequence, CharSequence>
             inline fun CharSequence.random(): Char
             fun CharSequence.random(random: Random): Char
@@ -484,7 +484,7 @@ class KotlinIntrospectorTest {
             inline fun CharSequence.reduceRightIndexed(operation: Function3<Int, Char, Char, Char>): Char
             inline fun CharSequence.reduceRightIndexedOrNull(operation: Function3<Int, Char, Char, Char>): Char?
             inline fun CharSequence.reduceRightOrNull(operation: Function2<Char, Char, Char>): Char?
-            fun CharSequence.regionMatches(thisOffset: Int, other: CharSequence, otherOffset: Int, length: Int, ignoreCase: Boolean): Boolean
+            fun CharSequence.regionMatches(thisOffset: Int, other: CharSequence, otherOffset: Int, length: Int, ignoreCase: Boolean = …): Boolean
             fun CharSequence.removePrefix(prefix: CharSequence): CharSequence
             fun CharSequence.removeRange(startIndex: Int, endIndex: Int): CharSequence
             fun CharSequence.removeRange(range: IntRange): CharSequence
@@ -510,18 +510,18 @@ class KotlinIntrospectorTest {
             inline fun CharSequence.singleOrNull(predicate: Function1<Char, Boolean>): Char?
             fun CharSequence.slice(indices: IntRange): CharSequence
             fun CharSequence.slice(indices: Iterable<Int>): CharSequence
-            fun CharSequence.split(regex: java.util.regex.Pattern, limit: Int): List<String>
-            fun CharSequence.split(delimiters: Array<out String>, ignoreCase: Boolean, limit: Int): List<String>
-            fun CharSequence.split(delimiters: CharArray, ignoreCase: Boolean, limit: Int): List<String>
-            inline fun CharSequence.split(regex: Regex, limit: Int): List<String>
-            fun CharSequence.splitToSequence(delimiters: Array<out String>, ignoreCase: Boolean, limit: Int): Sequence<String>
-            fun CharSequence.splitToSequence(delimiters: CharArray, ignoreCase: Boolean, limit: Int): Sequence<String>
-            inline fun CharSequence.splitToSequence(regex: Regex, limit: Int): Sequence<String>
-            fun CharSequence.startsWith(char: Char, ignoreCase: Boolean): Boolean
-            fun CharSequence.startsWith(prefix: CharSequence, ignoreCase: Boolean): Boolean
-            fun CharSequence.startsWith(prefix: CharSequence, startIndex: Int, ignoreCase: Boolean): Boolean
+            fun CharSequence.split(regex: java.util.regex.Pattern, limit: Int = …): List<String>
+            fun CharSequence.split(vararg delimiters: String, ignoreCase: Boolean = …, limit: Int = …): List<String>
+            fun CharSequence.split(vararg delimiters: Char, ignoreCase: Boolean = …, limit: Int = …): List<String>
+            inline fun CharSequence.split(regex: Regex, limit: Int = …): List<String>
+            fun CharSequence.splitToSequence(vararg delimiters: String, ignoreCase: Boolean = …, limit: Int = …): Sequence<String>
+            fun CharSequence.splitToSequence(vararg delimiters: Char, ignoreCase: Boolean = …, limit: Int = …): Sequence<String>
+            inline fun CharSequence.splitToSequence(regex: Regex, limit: Int = …): Sequence<String>
+            fun CharSequence.startsWith(char: Char, ignoreCase: Boolean = …): Boolean
+            fun CharSequence.startsWith(prefix: CharSequence, ignoreCase: Boolean = …): Boolean
+            fun CharSequence.startsWith(prefix: CharSequence, startIndex: Int, ignoreCase: Boolean = …): Boolean
             fun CharSequence.subSequence(range: IntRange): CharSequence
-            inline fun CharSequence.substring(startIndex: Int, endIndex: Int): String
+            inline fun CharSequence.substring(startIndex: Int, endIndex: Int = …): String
             fun CharSequence.substring(range: IntRange): String
             inline fun CharSequence.sumBy(selector: Function1<Char, Int>): Int
             inline fun CharSequence.sumByDouble(selector: Function1<Char, Double>): Double
@@ -543,18 +543,18 @@ class KotlinIntrospectorTest {
             fun CharSequence.toSet(): Set<Char>
             fun CharSequence.toSortedSet(): java.util.SortedSet<Char>
             inline fun CharSequence.trim(predicate: Function1<Char, Boolean>): CharSequence
-            fun CharSequence.trim(chars: CharArray): CharSequence
+            fun CharSequence.trim(vararg chars: Char): CharSequence
             fun CharSequence.trim(): CharSequence
             inline fun CharSequence.trimEnd(predicate: Function1<Char, Boolean>): CharSequence
-            fun CharSequence.trimEnd(chars: CharArray): CharSequence
+            fun CharSequence.trimEnd(vararg chars: Char): CharSequence
             fun CharSequence.trimEnd(): CharSequence
             inline fun CharSequence.trimStart(predicate: Function1<Char, Boolean>): CharSequence
-            fun CharSequence.trimStart(chars: CharArray): CharSequence
+            fun CharSequence.trimStart(vararg chars: Char): CharSequence
             fun CharSequence.trimStart(): CharSequence
-            fun CharSequence.windowed(size: Int, step: Int, partialWindows: Boolean): List<String>
-            fun <R> CharSequence.windowed(size: Int, step: Int, partialWindows: Boolean, transform: Function1<CharSequence, R>): List<R>
-            fun CharSequence.windowedSequence(size: Int, step: Int, partialWindows: Boolean): Sequence<String>
-            fun <R> CharSequence.windowedSequence(size: Int, step: Int, partialWindows: Boolean, transform: Function1<CharSequence, R>): Sequence<R>
+            fun CharSequence.windowed(size: Int, step: Int = …, partialWindows: Boolean = …): List<String>
+            fun <R> CharSequence.windowed(size: Int, step: Int = …, partialWindows: Boolean = …, transform: Function1<CharSequence, R>): List<R>
+            fun CharSequence.windowedSequence(size: Int, step: Int = …, partialWindows: Boolean = …): Sequence<String>
+            fun <R> CharSequence.windowedSequence(size: Int, step: Int = …, partialWindows: Boolean = …, transform: Function1<CharSequence, R>): Sequence<R>
             fun CharSequence.withIndex(): Iterable<IndexedValue<Char>>
             infix fun CharSequence.zip(other: CharSequence): List<Pair<Char, Char>>
             inline fun <V> CharSequence.zip(other: CharSequence, transform: Function2<Char, Char, V>): List<V>
@@ -611,7 +611,7 @@ class KotlinIntrospectorTest {
             data class DataTestClass(val id: Int, val name: String) {
                 operator fun component1(): Int
                 operator fun component2(): String
-                fun copy(id: Int, name: String): DataTestClass
+                fun copy(id: Int = …, name: String = …): DataTestClass
                 open operator fun equals(other: Any?): Boolean
                 open fun hashCode(): Int
                 open fun toString(): String
@@ -825,6 +825,30 @@ class KotlinIntrospectorTest {
         """.trimIndent()
     }
 
+    // TestValueParameters tests
+
+    @Test
+    fun `should resolve class with vararg and default constructor and function parameters`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ValueParametersSample"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ValueParametersSample [page 1/1]
+            class ValueParametersSample(vararg val names: String, val count: Int = …, label: String = …) {
+                fun join(vararg parts: Int, separator: String = …): String
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve top-level function with vararg and default parameters`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.TestValueParametersKt.valueParametersSample"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.TestValueParametersKt.valueParametersSample [page 1/1]
+            fun <T> valueParametersSample(vararg elements: T, limit: Int = …): List<T>
+        """.trimIndent()
+    }
+
     // TestFunctionModifiers tests
 
     @Test
@@ -839,7 +863,7 @@ class KotlinIntrospectorTest {
                 inline fun processData(block: Function0<Unit>)
                 infix fun combine(other: String): String
                 operator fun plus(other: FunctionModifiersTestClass): FunctionModifiersTestClass
-                tailrec fun factorial(n: Int, acc: Int): Int
+                tailrec fun factorial(n: Int, acc: Int = …): Int
             }
         """.trimIndent()
     }
@@ -1182,7 +1206,7 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // kotlin.collections.CollectionsKt.listOf [page 1/1]
             fun <T> listOf(element: T): List<T>
-            fun <T> listOf(elements: Array<out T>): List<T>
+            fun <T> listOf(vararg elements: T): List<T>
             inline fun <T> listOf(): List<T>
         """.trimIndent()
     }

@@ -37,6 +37,7 @@ import kotlin.metadata.jvm.KotlinClassMetadata
 import kotlin.metadata.jvm.annotations
 import kotlin.reflect.KClass
 import kotlin.reflect.KFunction
+import kotlin.reflect.KParameter
 import kotlin.reflect.KProperty1
 import kotlin.reflect.KTypeParameter
 import kotlin.reflect.KVisibility
@@ -154,6 +155,12 @@ internal class DefaultKotlinIntrospector(
         }.toSet()
 
         private const val METADATA_DESCRIPTOR = "Lkotlin/Metadata;"
+
+        /**
+         * Marks a parameter declaring a default value, which is not present in the metadata,
+         * telling that the argument can be omitted.
+         */
+        private const val DEFAULT_VALUE_MARKER = "…"
 
     }
 
@@ -535,11 +542,7 @@ internal class DefaultKotlinIntrospector(
 
         // Skip first parameter (receiver) for member functions
         val params = func.parameters.drop(1)  // Drop 'this'
-        +(params.joinToString(", ") { param ->
-            val paramName = param.name ?: "arg${param.index}"
-            val typeName = formatKTypeProjection(param.type)
-            "$paramName: $typeName"
-        })
+        +(params.joinToString(", ") { formatKParameter(it) })
 
         +")"
 
@@ -548,6 +551,25 @@ internal class DefaultKotlinIntrospector(
             +": "
             +returnType
         }
+    }
+
+    /**
+     * Format a value parameter using kotlin-reflect, like `vararg elements: T` or `limit: Int = …`.
+     */
+    private fun formatKParameter(parameter: KParameter): String = buildString {
+        if (parameter.isVararg) +"vararg "
+        +(parameter.name ?: "arg${parameter.index}")
+        +": "
+        // the type of a vararg parameter is the array type, like Array<out T> or IntArray
+        val type = if (parameter.isVararg) {
+            parameter.type.arguments.singleOrNull()?.type?.let { formatKTypeProjection(it) }
+                ?: (parameter.type.classifier as? KClass<*>)?.simpleName?.removeSuffix("Array")
+                ?: formatKTypeProjection(parameter.type)
+        } else {
+            formatKTypeProjection(parameter.type)
+        }
+        +type
+        if (parameter.isOptional) +" = $DEFAULT_VALUE_MARKER"
     }
 
     /**
@@ -638,7 +660,7 @@ internal class DefaultKotlinIntrospector(
         +"("
 
         +(function.valueParameters.joinToString(", ") { param ->
-            "${param.name}: ${formatType(param.type, typeParameters = typeParameters)}"
+            formatValueParameter(param, typeParameters = typeParameters)
         })
 
         +")"
@@ -734,11 +756,13 @@ internal class DefaultKotlinIntrospector(
             if (isAnnotation && primaryConstructor != null && primaryConstructor.valueParameters.isNotEmpty()) {
                 +"("
                 +(primaryConstructor.valueParameters.joinToString(", ") { param ->
-                    // the default values are only present in the JVM annotation, not in the Kotlin metadata
-                    val defaultValue = if (param.declaresDefaultValue) {
-                        formatAnnotationDefaultValue(clazz, param.name, contextPackage)?.let { " = $it" } ?: ""
-                    } else ""
-                    "val ${param.name}: ${formatType(param.type, contextPackage)}$defaultValue"
+                    formatValueParameter(
+                        param,
+                        contextPackage,
+                        prefix = "val ",
+                        // the default values are only present in the JVM annotation, not in the Kotlin metadata
+                        defaultValue = { formatAnnotationDefaultValue(clazz, param.name, contextPackage) }
+                    )
                 })
                 +")"
                 return@buildString
@@ -754,8 +778,7 @@ internal class DefaultKotlinIntrospector(
                         prop.isVar -> "var "
                         else -> "val "
                     }
-                    val type = prop?.returnType ?: param.type
-                    "$prefix${param.name}: ${formatType(type, contextPackage, typeParameters)}"
+                    formatValueParameter(param, contextPackage, typeParameters, prefix)
                 })
                 +")"
             }
@@ -1015,7 +1038,7 @@ internal class DefaultKotlinIntrospector(
         +"("
 
         +(function.valueParameters.joinToString(", ") { param ->
-            "${param.name}: ${formatType(param.type, contextPackage, typeParameters)}"
+            formatValueParameter(param, contextPackage, typeParameters)
         })
 
         +")"
@@ -1029,6 +1052,32 @@ internal class DefaultKotlinIntrospector(
         }
 
         +formatWhereClause(function.typeParameters, typeParameters, contextPackage)
+    }
+
+    /**
+     * Format a function or constructor value parameter, like `vararg elements: T` or `limit: Int = …`.
+     *
+     * @param prefix the `val ` or `var ` of a constructor parameter declaring a property.
+     * @param defaultValue the rendering of the declared default value,
+     *   which is otherwise not present in the Kotlin metadata, and therefore rendered as a marker.
+     */
+    private fun formatValueParameter(
+        parameter: KmValueParameter,
+        contextPackage: String? = null,
+        typeParameters: Map<Int, String> = emptyMap(),
+        prefix: String = "",
+        defaultValue: () -> String? = { null }
+    ): String = buildString {
+        if (parameter.varargElementType != null) +"vararg "
+        +prefix
+        +parameter.name
+        +": "
+        // the type of a vararg parameter is the array type, like Array<out T>
+        +formatType(parameter.varargElementType ?: parameter.type, contextPackage, typeParameters)
+        if (parameter.declaresDefaultValue) {
+            +" = "
+            +(defaultValue() ?: DEFAULT_VALUE_MARKER)
+        }
     }
 
     private fun formatProperty(
