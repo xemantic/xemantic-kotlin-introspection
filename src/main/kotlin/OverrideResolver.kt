@@ -551,21 +551,18 @@ internal class OverrideResolver(
 
     /**
      * Whether the type of a Java method parameter, [overridden], has the same erasure as the [overriding] one,
-     * a Java primitive type matching only a non-nullable type, as a nullable one is boxed on the JVM.
+     * a Java primitive type matching only a non-nullable class type, as a nullable one is boxed on the JVM.
+     * A type parameter never matches a primitive type: one with a nullable bound, like `T : Int?`, is boxed,
+     * and one with a non-nullable bound, like `T : Int`, would be an accidental override rejected by the compiler.
      */
     private fun erasuresMatch(overridden: MemberType, overriding: MemberType): Boolean {
-        if (overridden is ClassType && overridden.isJavaPrimitive && overriding.isNullable) return false
+        if (overridden is ClassType && overridden.isJavaPrimitive &&
+            (overriding is TypeParameterType || (overriding is ClassType && overriding.nullable == true))
+        ) return false
         val erasureA = erasure(overridden) ?: return true
         val erasureB = erasure(overriding) ?: return true
         return erasureA == erasureB
     }
-
-    private val MemberType.isNullable: Boolean
-        get() = when (this) {
-            is ClassType -> nullable == true
-            is TypeParameterType -> nullable
-            UnknownType -> false
-        }
 
     /**
      * The name of the class the [type] is erased to on the JVM, or `null` if unknown.

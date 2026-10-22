@@ -198,6 +198,26 @@ class ClassLoaderIntrospectionTest {
                 fun run(times: Int)
                 fun prim(x: Int?)
                 override fun <S : String> bounded(x: S)
+                fun <S : Number> bounded(x: S)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not mark function taking type parameter as override of Java method taking primitive when another method refers to class missing from the classpath`() {
+        // given
+        val introspector = introspectorWithoutAbsentClass()
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.AbsentJavaTypeParameterSubclass"
+        )
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.AbsentJavaTypeParameterSubclass [page 1/1]
+            class AbsentJavaTypeParameterSubclass<P : Int?> : AbsentJavaBase<String> {
+                fun prim(x: P)
             }
         """.trimIndent()
     }
@@ -355,6 +375,7 @@ class ClassLoaderIntrospectionTest {
                 fun run(times: Int)
                 fun prim(x: Int?)
                 override fun <S : String> bounded(x: S)
+                fun <S : Number> bounded(x: S)
             }
         """.trimIndent()
     }
@@ -383,6 +404,7 @@ class ClassLoaderIntrospectionTest {
                 fun run(times: Int)
                 fun prim(x: Int?)
                 open fun <S : String> bounded(x: S)
+                fun <S : Number> bounded(x: S)
             }
         """.trimIndent()
     }

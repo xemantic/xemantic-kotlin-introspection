@@ -1648,6 +1648,18 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should not mark function taking type parameter as override of Java method taking primitive`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaPrimitiveTypeParameterSubclass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaPrimitiveTypeParameterSubclass [page 1/1]
+            class JavaPrimitiveTypeParameterSubclass<T : Int?> : com.xemantic.kotlin.introspection.test.other.JavaPrimitiveBase {
+                fun prim(x: T)
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should mark overrides of Java methods taking primitive and boxed types`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.JavaNullablePrimitiveSubclass"
