@@ -298,7 +298,8 @@ internal class OverrideResolver(
         val pending = ArrayDeque(owner.supertypes.mapNotNull { kotlinType(it, ownerSubstitution) as? ClassType })
         // every class and interface is a subtype of Any, also when it is reached only through Java interfaces
         pending += ClassType("kotlin/Any")
-        val visited = mutableSetOf<String>()
+        // a class is never its own supertype, which matters for Any itself
+        val visited = mutableSetOf(owner.name)
 
         while (pending.isNotEmpty()) {
             val supertype = pending.removeFirst()

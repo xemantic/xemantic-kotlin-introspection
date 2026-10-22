@@ -54,9 +54,12 @@ internal fun hasSyntheticParameterNames(function: KFunction<*>): Boolean =
 
 /**
  * Format a KFunction using kotlin-reflect.
+ *
+ * @param isOverride whether the [func] overrides a member of its supertypes.
  */
-internal fun formatKFunction(func: KFunction<*>): String = buildString {
+internal fun formatKFunction(func: KFunction<*>, isOverride: Boolean = false): String = buildString {
 
+    if (isOverride) +"override "
     if (func.isOperator) +"operator "
     if (func.isInfix) +"infix "
     if (func.isSuspend) +"suspend "
@@ -119,8 +122,11 @@ internal fun formatKParameter(parameter: KParameter): String = buildString {
 
 /**
  * Format a KProperty using kotlin-reflect.
+ *
+ * @param isOverride whether the [prop] overrides a member of its supertypes.
  */
-internal fun formatKProperty(prop: KProperty1<*, *>): String = buildString {
+internal fun formatKProperty(prop: KProperty1<*, *>, isOverride: Boolean = false): String = buildString {
+    if (isOverride) +"override "
     +"val "
     +prop.name
     +": "
