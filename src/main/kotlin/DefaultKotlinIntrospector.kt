@@ -1722,6 +1722,13 @@ internal class DefaultKotlinIntrospector(
         require(pageSize > 0) { "pageSize must be positive, but was: $pageSize" }
     }
 
+    /**
+     * The number of pages, at least 1 even without items.
+     * Computed without `totalItems + pageSize - 1`, which overflows for a `pageSize` near [Int.MAX_VALUE].
+     */
+    private fun pageCount(totalItems: Int, pageSize: Int): Int =
+        if (totalItems == 0) 1 else (totalItems - 1) / pageSize + 1
+
     override fun resolve(
         name: String,
         page: Int,
@@ -1793,12 +1800,12 @@ internal class DefaultKotlinIntrospector(
         val totalItems = allItems.size
 
         // Calculate total pages based on all items (members + extensions)
-        val totalPages = if (totalItems == 0) 1 else ((totalItems + pageSize - 1) / pageSize)
+        val totalPages = pageCount(totalItems, pageSize)
         val actualPage = page.coerceIn(1, totalPages)
 
         // Get items for this page
         val startIndex = (actualPage - 1) * pageSize
-        val endIndex = minOf(startIndex + pageSize, totalItems)
+        val endIndex = startIndex + minOf(pageSize, totalItems - startIndex)
         val pageItems = if (totalItems > 0) allItems.subList(startIndex, endIndex) else emptyList()
 
         // Build the page content
@@ -1869,12 +1876,12 @@ internal class DefaultKotlinIntrospector(
 
         // Calculate pagination
         val totalItems = matchingClasses.size
-        val totalPages = (totalItems + pageSize - 1) / pageSize
+        val totalPages = pageCount(totalItems, pageSize)
         val actualPage = page.coerceIn(1, totalPages)
 
         // Get items for this page
         val startIndex = (actualPage - 1) * pageSize
-        val endIndex = minOf(startIndex + pageSize, totalItems)
+        val endIndex = startIndex + minOf(pageSize, totalItems - startIndex)
         val pageItems = matchingClasses.subList(startIndex, endIndex)
 
         // Build the result
