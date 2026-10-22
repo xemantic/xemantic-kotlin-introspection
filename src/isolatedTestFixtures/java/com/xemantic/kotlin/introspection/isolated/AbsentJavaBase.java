@@ -32,4 +32,10 @@ public abstract class AbsentJavaBase<T> {
     public void take(Absent absent) {
     }
 
+    public void prim(int x) {
+    }
+
+    public <S extends T> void bounded(S x) {
+    }
+
 }

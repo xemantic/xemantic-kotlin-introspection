@@ -196,6 +196,28 @@ class ClassLoaderIntrospectionTest {
                 fun process(item: Int)
                 override fun run()
                 fun run(times: Int)
+                fun prim(x: Int?)
+                override fun <S : String> bounded(x: S)
+                fun <S : Number> bounded(x: S)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not mark function taking type parameter as override of Java method taking primitive when another method refers to class missing from the classpath`() {
+        // given
+        val introspector = introspectorWithoutAbsentClass()
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.AbsentJavaTypeParameterSubclass"
+        )
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.AbsentJavaTypeParameterSubclass [page 1/1]
+            class AbsentJavaTypeParameterSubclass<P : Int?> : AbsentJavaBase<String> {
+                fun prim(x: P)
             }
         """.trimIndent()
     }
@@ -216,6 +238,7 @@ class ClassLoaderIntrospectionTest {
             class AbsentBoundJavaSubclass : AbsentBoundJavaBase {
                 override fun run()
                 override fun <T : Comparable<Absent>> compare(item: T)
+                fun <T : CharSequence> compare(item: T)
                 fun compare(item: Int)
             }
         """.trimIndent()
@@ -350,6 +373,9 @@ class ClassLoaderIntrospectionTest {
                 fun process(item: Int)
                 override fun run()
                 fun run(times: Int)
+                fun prim(x: Int?)
+                override fun <S : String> bounded(x: S)
+                fun <S : Number> bounded(x: S)
             }
         """.trimIndent()
     }
@@ -376,6 +402,9 @@ class ClassLoaderIntrospectionTest {
                 fun process(item: Int)
                 open fun run()
                 fun run(times: Int)
+                fun prim(x: Int?)
+                open fun <S : String> bounded(x: S)
+                fun <S : Number> bounded(x: S)
             }
         """.trimIndent()
     }
