@@ -158,10 +158,28 @@ internal fun formatKTypeParameters(typeParameters: List<KTypeParameter>): String
 }
 
 /**
- * Format a KType for display.
+ * Format a KType for display, following the same rules as [DefaultKotlinIntrospector.formatType].
  * Uses simple names for kotlin.* types and fully qualified names for java.* types.
  */
 internal fun formatKTypeProjection(type: KType): String {
+    val functionType = type.decodeFunctionType()
+    val formatted = when {
+        functionType != null -> functionType.format(
+            formatType = ::formatKTypeProjection,
+            formatReceiverType = { formatKTypeProjection(it).parenthesizedIf(it.needsParenthesesAsReceiver) },
+            parameterName = { it.parameterName }
+        )
+        // an unexpected shape, the runtime type is printed, still marked as suspend
+        type.isSuspendFunctionType == true -> "suspend " + formatKClassType(type).removeSuffix("?")
+        else -> return formatKClassType(type)
+    }
+    return if (type.isMarkedNullable) "($formatted)?" else formatted
+}
+
+/**
+ * Formats a [type] as written, like `List<String>`, without the special syntax of function types, using kotlin-reflect.
+ */
+private fun formatKClassType(type: KType): String {
     val baseName = when (val classifier = type.classifier) {
         is KClass<*> -> {
             val qualifiedName = classifier.qualifiedName ?: classifier.simpleName ?: "Unknown"

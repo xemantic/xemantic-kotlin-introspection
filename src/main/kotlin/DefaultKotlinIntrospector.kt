@@ -1327,17 +1327,18 @@ internal class DefaultKotlinIntrospector(
         contextPackage: String? = null,
         typeParameters: Map<Int, String> = emptyMap()
     ): String {
-        if (type.isSuspend) {
-            val functionType = type.decodeFunctionType()
-            val formatted = if (functionType != null) {
-                formatFunctionType(functionType, contextPackage, typeParameters)
-            } else {
-                // an unexpected shape, the runtime type is printed, still marked as suspend
-                "suspend " + formatClassType(type, contextPackage, typeParameters).removeSuffix("?")
-            }
-            return if (type.isNullable) "($formatted)?" else formatted
+        val functionType = type.decodeFunctionType()
+        val formatted = when {
+            functionType != null -> functionType.format(
+                formatType = { formatType(it, contextPackage, typeParameters) },
+                formatReceiverType = { formatReceiverType(it, contextPackage, typeParameters) },
+                parameterName = { it.parameterName }
+            )
+            // an unexpected shape, the runtime type is printed, still marked as suspend
+            type.isSuspend -> "suspend " + formatClassType(type, contextPackage, typeParameters).removeSuffix("?")
+            else -> return formatClassType(type, contextPackage, typeParameters)
         }
-        return formatClassType(type, contextPackage, typeParameters)
+        return if (type.isNullable) "($formatted)?" else formatted
     }
 
     /**
@@ -1384,43 +1385,15 @@ internal class DefaultKotlinIntrospector(
     }
 
     /**
-     * Formats a [functionType], like `suspend context(Ctx) Foo.(Int) -> String`, without the nullability.
-     */
-    private fun formatFunctionType(
-        functionType: FunctionType,
-        contextPackage: String?,
-        typeParameters: Map<Int, String>
-    ): String = buildString {
-        if (functionType.isSuspend) +"suspend "
-        if (functionType.contextParameters.isNotEmpty()) {
-            +functionType.contextParameters.joinToString(", ", prefix = "context(", postfix = ") ") {
-                formatType(it, contextPackage, typeParameters)
-            }
-        }
-        functionType.receiver?.let {
-            +formatReceiverType(it, contextPackage, typeParameters)
-            +"."
-        }
-        +functionType.valueParameters.joinToString(", ", prefix = "(", postfix = ")") {
-            formatType(it, contextPackage, typeParameters)
-        }
-        +" -> "
-        +formatType(functionType.returnType, contextPackage, typeParameters)
-    }
-
-    /**
-     * Formats a receiver [type], parenthesizing a suspend function type, like `(suspend () -> Unit)`,
+     * Formats a receiver [type], parenthesizing a function type, like `(() -> Unit)`,
      * which would otherwise absorb the following `.name`.
-     * A nullable one is already parenthesized by [formatType], like `(suspend () -> Unit)?`.
+     * A nullable one is already parenthesized by [formatType], like `(() -> Unit)?`.
      */
     private fun formatReceiverType(
         type: KmType,
         contextPackage: String?,
         typeParameters: Map<Int, String>
-    ): String {
-        val formatted = formatType(type, contextPackage, typeParameters)
-        return if (formatted.startsWith("suspend ")) "($formatted)" else formatted
-    }
+    ): String = formatType(type, contextPackage, typeParameters).parenthesizedIf(type.needsParenthesesAsReceiver)
 
     /**
      * Determines if a type is a well-known stdlib type that should use simple name.

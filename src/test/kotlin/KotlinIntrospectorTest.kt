@@ -68,8 +68,8 @@ class KotlinIntrospectorTest {
                 fun describeConstable(): java.util.Optional<String>
                 fun drop(n: Int): String
                 fun dropLast(n: Int): String
-                fun dropLastWhile(predicate: Function1<Char, Boolean>): String
-                fun dropWhile(predicate: Function1<Char, Boolean>): String
+                fun dropLastWhile(predicate: (Char) -> Boolean): String
+                fun dropWhile(predicate: (Char) -> Boolean): String
                 fun encodeToByteArray(): ByteArray
             }
         """.trimIndent()
@@ -88,9 +88,9 @@ class KotlinIntrospectorTest {
                 fun endsWith(suffix: String, ignoreCase: Boolean = …): Boolean
                 override operator fun equals(other: Any?): Boolean
                 fun equals(other: String?, ignoreCase: Boolean = …): Boolean
-                fun filter(predicate: Function1<Char, Boolean>): String
-                fun filterIndexed(predicate: Function2<Int, Char, Boolean>): String
-                fun filterNot(predicate: Function1<Char, Boolean>): String
+                fun filter(predicate: (Char) -> Boolean): String
+                fun filterIndexed(predicate: (index: Int, Char) -> Boolean): String
+                fun filterNot(predicate: (Char) -> Boolean): String
                 fun format(vararg args: Any?): String
                 fun format(locale: java.util.Locale?, vararg args: Any?): String
                 override operator fun get(index: Int): Char
@@ -114,12 +114,12 @@ class KotlinIntrospectorTest {
             // from kotlin.text
             val CharSequence.indices: IntRange
             val CharSequence.lastIndex: Int
-            inline fun CharSequence.all(predicate: Function1<Char, Boolean>): Boolean
+            inline fun CharSequence.all(predicate: (Char) -> Boolean): Boolean
             fun CharSequence.any(): Boolean
-            inline fun CharSequence.any(predicate: Function1<Char, Boolean>): Boolean
+            inline fun CharSequence.any(predicate: (Char) -> Boolean): Boolean
             fun CharSequence.asIterable(): Iterable<Char>
             fun CharSequence.asSequence(): Sequence<Char>
-            inline fun <K, V> CharSequence.associate(transform: Function1<Char, Pair<K, V>>): Map<K, V>
+            inline fun <K, V> CharSequence.associate(transform: (Char) -> Pair<K, V>): Map<K, V>
         """.trimIndent()
     }
 
@@ -133,7 +133,7 @@ class KotlinIntrospectorTest {
             // kotlin.String [page 42/42]
             // from kotlin.text
             fun CharSequence.zipWithNext(): List<Pair<Char, Char>>
-            inline fun <R> CharSequence.zipWithNext(transform: Function2<Char, Char, R>): List<R>
+            inline fun <R> CharSequence.zipWithNext(transform: (a: Char, b: Char) -> R): List<R>
         """.trimIndent()
     }
 
@@ -162,16 +162,16 @@ class KotlinIntrospectorTest {
                 fun describeConstable(): java.util.Optional<String>
                 fun drop(n: Int): String
                 fun dropLast(n: Int): String
-                fun dropLastWhile(predicate: Function1<Char, Boolean>): String
-                fun dropWhile(predicate: Function1<Char, Boolean>): String
+                fun dropLastWhile(predicate: (Char) -> Boolean): String
+                fun dropWhile(predicate: (Char) -> Boolean): String
                 fun encodeToByteArray(): ByteArray
                 fun encodeToByteArray(startIndex: Int = …, endIndex: Int = …, throwOnInvalidSequence: Boolean = …): ByteArray
                 fun endsWith(suffix: String, ignoreCase: Boolean = …): Boolean
                 override operator fun equals(other: Any?): Boolean
                 fun equals(other: String?, ignoreCase: Boolean = …): Boolean
-                fun filter(predicate: Function1<Char, Boolean>): String
-                fun filterIndexed(predicate: Function2<Int, Char, Boolean>): String
-                fun filterNot(predicate: Function1<Char, Boolean>): String
+                fun filter(predicate: (Char) -> Boolean): String
+                fun filterIndexed(predicate: (index: Int, Char) -> Boolean): String
+                fun filterNot(predicate: (Char) -> Boolean): String
                 fun format(vararg args: Any?): String
                 fun format(locale: java.util.Locale?, vararg args: Any?): String
                 override operator fun get(index: Int): Char
@@ -196,7 +196,7 @@ class KotlinIntrospectorTest {
                 fun orEmpty(): String
                 fun padEnd(length: Int, padChar: Char = …): String
                 fun padStart(length: Int, padChar: Char = …): String
-                fun partition(predicate: Function1<Char, Boolean>): Pair<String, String>
+                fun partition(predicate: (Char) -> Boolean): Pair<String, String>
                 operator fun plus(other: Any?): String
                 fun prependIndent(indent: String = …): String
                 fun reader(): java.io.StringReader
@@ -219,8 +219,8 @@ class KotlinIntrospectorTest {
                 fun replaceBeforeLast(delimiter: String, replacement: String, missingDelimiterValue: String = …): String
                 fun replaceFirst(oldChar: Char, newChar: Char, ignoreCase: Boolean = …): String
                 fun replaceFirst(oldValue: String, newValue: String, ignoreCase: Boolean = …): String
-                fun replaceFirstChar(transform: Function1<Char, Char>): String
-                fun replaceFirstChar(transform: Function1<Char, CharSequence>): String
+                fun replaceFirstChar(transform: (Char) -> Char): String
+                fun replaceFirstChar(transform: (Char) -> CharSequence): String
                 fun replaceIndent(newIndent: String = …): String
                 fun replaceIndentByMargin(newIndent: String = …, marginPrefix: String = …): String
                 fun replaceRange(startIndex: Int, endIndex: Int, replacement: CharSequence): String
@@ -249,8 +249,8 @@ class KotlinIntrospectorTest {
                 fun substringBeforeLast(delimiter: String, missingDelimiterValue: String = …): String
                 fun take(n: Int): String
                 fun takeLast(n: Int): String
-                fun takeLastWhile(predicate: Function1<Char, Boolean>): String
-                fun takeWhile(predicate: Function1<Char, Boolean>): String
+                fun takeLastWhile(predicate: (Char) -> Boolean): String
+                fun takeWhile(predicate: (Char) -> Boolean): String
                 fun toBigDecimal(): java.math.BigDecimal
                 fun toBigDecimal(mathContext: java.math.MathContext): java.math.BigDecimal
                 fun toBigDecimalOrNull(): java.math.BigDecimal?
@@ -313,15 +313,15 @@ class KotlinIntrospectorTest {
                 fun toUpperCase(): String
                 fun toUpperCase(locale: java.util.Locale): String
                 fun translateEscapes(): String
-                fun trim(predicate: Function1<Char, Boolean>): String
+                fun trim(predicate: (Char) -> Boolean): String
                 fun trim(vararg chars: Char): String
                 fun trim(): String
-                fun trimEnd(predicate: Function1<Char, Boolean>): String
+                fun trimEnd(predicate: (Char) -> Boolean): String
                 fun trimEnd(vararg chars: Char): String
                 fun trimEnd(): String
                 fun trimIndent(): String
                 fun trimMargin(marginPrefix: String = …): String
-                fun trimStart(predicate: Function1<Char, Boolean>): String
+                fun trimStart(predicate: (Char) -> Boolean): String
                 fun trimStart(vararg chars: Char): String
                 fun trimStart(): String
                 fun uppercase(): String
@@ -332,23 +332,23 @@ class KotlinIntrospectorTest {
             // from kotlin.text
             val CharSequence.indices: IntRange
             val CharSequence.lastIndex: Int
-            inline fun CharSequence.all(predicate: Function1<Char, Boolean>): Boolean
+            inline fun CharSequence.all(predicate: (Char) -> Boolean): Boolean
             fun CharSequence.any(): Boolean
-            inline fun CharSequence.any(predicate: Function1<Char, Boolean>): Boolean
+            inline fun CharSequence.any(predicate: (Char) -> Boolean): Boolean
             fun CharSequence.asIterable(): Iterable<Char>
             fun CharSequence.asSequence(): Sequence<Char>
-            inline fun <K, V> CharSequence.associate(transform: Function1<Char, Pair<K, V>>): Map<K, V>
-            inline fun <K> CharSequence.associateBy(keySelector: Function1<Char, K>): Map<K, Char>
-            inline fun <K, V> CharSequence.associateBy(keySelector: Function1<Char, K>, valueTransform: Function1<Char, V>): Map<K, V>
-            inline fun <K, M : MutableMap<in K, in Char>> CharSequence.associateByTo(destination: M, keySelector: Function1<Char, K>): M
-            inline fun <K, V, M : MutableMap<in K, in V>> CharSequence.associateByTo(destination: M, keySelector: Function1<Char, K>, valueTransform: Function1<Char, V>): M
-            inline fun <K, V, M : MutableMap<in K, in V>> CharSequence.associateTo(destination: M, transform: Function1<Char, Pair<K, V>>): M
-            inline fun <V> CharSequence.associateWith(valueSelector: Function1<Char, V>): Map<Char, V>
-            inline fun <V, M : MutableMap<in Char, in V>> CharSequence.associateWithTo(destination: M, valueSelector: Function1<Char, V>): M
+            inline fun <K, V> CharSequence.associate(transform: (Char) -> Pair<K, V>): Map<K, V>
+            inline fun <K> CharSequence.associateBy(keySelector: (Char) -> K): Map<K, Char>
+            inline fun <K, V> CharSequence.associateBy(keySelector: (Char) -> K, valueTransform: (Char) -> V): Map<K, V>
+            inline fun <K, M : MutableMap<in K, in Char>> CharSequence.associateByTo(destination: M, keySelector: (Char) -> K): M
+            inline fun <K, V, M : MutableMap<in K, in V>> CharSequence.associateByTo(destination: M, keySelector: (Char) -> K, valueTransform: (Char) -> V): M
+            inline fun <K, V, M : MutableMap<in K, in V>> CharSequence.associateTo(destination: M, transform: (Char) -> Pair<K, V>): M
+            inline fun <V> CharSequence.associateWith(valueSelector: (Char) -> V): Map<Char, V>
+            inline fun <V, M : MutableMap<in Char, in V>> CharSequence.associateWithTo(destination: M, valueSelector: (Char) -> V): M
             fun CharSequence.chunked(size: Int): List<String>
-            fun <R> CharSequence.chunked(size: Int, transform: Function1<CharSequence, R>): List<R>
+            fun <R> CharSequence.chunked(size: Int, transform: (CharSequence) -> R): List<R>
             fun CharSequence.chunkedSequence(size: Int): Sequence<String>
-            fun <R> CharSequence.chunkedSequence(size: Int, transform: Function1<CharSequence, R>): Sequence<R>
+            fun <R> CharSequence.chunkedSequence(size: Int, transform: (CharSequence) -> R): Sequence<R>
             fun CharSequence.commonPrefixWith(other: CharSequence, ignoreCase: Boolean = …): String
             fun CharSequence.commonSuffixWith(other: CharSequence, ignoreCase: Boolean = …): String
             operator fun CharSequence.contains(other: CharSequence, ignoreCase: Boolean = …): Boolean
@@ -357,56 +357,56 @@ class KotlinIntrospectorTest {
             infix fun CharSequence?.contentEquals(other: CharSequence?): Boolean
             fun CharSequence?.contentEquals(other: CharSequence?, ignoreCase: Boolean): Boolean
             inline fun CharSequence.count(): Int
-            inline fun CharSequence.count(predicate: Function1<Char, Boolean>): Int
+            inline fun CharSequence.count(predicate: (Char) -> Boolean): Int
             fun CharSequence.drop(n: Int): CharSequence
             fun CharSequence.dropLast(n: Int): CharSequence
-            inline fun CharSequence.dropLastWhile(predicate: Function1<Char, Boolean>): CharSequence
-            inline fun CharSequence.dropWhile(predicate: Function1<Char, Boolean>): CharSequence
+            inline fun CharSequence.dropLastWhile(predicate: (Char) -> Boolean): CharSequence
+            inline fun CharSequence.dropWhile(predicate: (Char) -> Boolean): CharSequence
             inline fun CharSequence.elementAt(index: Int): Char
-            inline fun CharSequence.elementAtOrElse(index: Int, defaultValue: Function1<Int, Char>): Char
+            inline fun CharSequence.elementAtOrElse(index: Int, defaultValue: (Int) -> Char): Char
             inline fun CharSequence.elementAtOrNull(index: Int): Char?
             fun CharSequence.endsWith(char: Char, ignoreCase: Boolean = …): Boolean
             fun CharSequence.endsWith(suffix: CharSequence, ignoreCase: Boolean = …): Boolean
-            inline fun CharSequence.filter(predicate: Function1<Char, Boolean>): CharSequence
-            inline fun CharSequence.filterIndexed(predicate: Function2<Int, Char, Boolean>): CharSequence
-            inline fun <C : java.lang.Appendable> CharSequence.filterIndexedTo(destination: C, predicate: Function2<Int, Char, Boolean>): C
-            inline fun CharSequence.filterNot(predicate: Function1<Char, Boolean>): CharSequence
-            inline fun <C : java.lang.Appendable> CharSequence.filterNotTo(destination: C, predicate: Function1<Char, Boolean>): C
-            inline fun <C : java.lang.Appendable> CharSequence.filterTo(destination: C, predicate: Function1<Char, Boolean>): C
-            inline fun CharSequence.find(predicate: Function1<Char, Boolean>): Char?
+            inline fun CharSequence.filter(predicate: (Char) -> Boolean): CharSequence
+            inline fun CharSequence.filterIndexed(predicate: (index: Int, Char) -> Boolean): CharSequence
+            inline fun <C : java.lang.Appendable> CharSequence.filterIndexedTo(destination: C, predicate: (index: Int, Char) -> Boolean): C
+            inline fun CharSequence.filterNot(predicate: (Char) -> Boolean): CharSequence
+            inline fun <C : java.lang.Appendable> CharSequence.filterNotTo(destination: C, predicate: (Char) -> Boolean): C
+            inline fun <C : java.lang.Appendable> CharSequence.filterTo(destination: C, predicate: (Char) -> Boolean): C
+            inline fun CharSequence.find(predicate: (Char) -> Boolean): Char?
             fun CharSequence.findAnyOf(strings: Collection<String>, startIndex: Int = …, ignoreCase: Boolean = …): Pair<Int, String>?
-            inline fun CharSequence.findLast(predicate: Function1<Char, Boolean>): Char?
+            inline fun CharSequence.findLast(predicate: (Char) -> Boolean): Char?
             fun CharSequence.findLastAnyOf(strings: Collection<String>, startIndex: Int = …, ignoreCase: Boolean = …): Pair<Int, String>?
             fun CharSequence.first(): Char
-            inline fun CharSequence.first(predicate: Function1<Char, Boolean>): Char
-            inline fun <R : Any> CharSequence.firstNotNullOf(transform: Function1<Char, R?>): R
-            inline fun <R : Any> CharSequence.firstNotNullOfOrNull(transform: Function1<Char, R?>): R?
+            inline fun CharSequence.first(predicate: (Char) -> Boolean): Char
+            inline fun <R : Any> CharSequence.firstNotNullOf(transform: (Char) -> R?): R
+            inline fun <R : Any> CharSequence.firstNotNullOfOrNull(transform: (Char) -> R?): R?
             fun CharSequence.firstOrNull(): Char?
-            inline fun CharSequence.firstOrNull(predicate: Function1<Char, Boolean>): Char?
-            inline fun <R> CharSequence.flatMap(transform: Function1<Char, Iterable<R>>): List<R>
-            inline fun <R> CharSequence.flatMapIndexed(transform: Function2<Int, Char, Iterable<R>>): List<R>
-            inline fun <R, C : MutableCollection<in R>> CharSequence.flatMapIndexedTo(destination: C, transform: Function2<Int, Char, Iterable<R>>): C
-            inline fun <R, C : MutableCollection<in R>> CharSequence.flatMapTo(destination: C, transform: Function1<Char, Iterable<R>>): C
-            inline fun <R> CharSequence.fold(initial: R, operation: Function2<R, Char, R>): R
-            inline fun <R> CharSequence.foldIndexed(initial: R, operation: Function3<Int, R, Char, R>): R
-            inline fun <R> CharSequence.foldRight(initial: R, operation: Function2<Char, R, R>): R
-            inline fun <R> CharSequence.foldRightIndexed(initial: R, operation: Function3<Int, Char, R, R>): R
-            inline fun CharSequence.forEach(action: Function1<Char, Unit>)
-            inline fun CharSequence.forEachIndexed(action: Function2<Int, Char, Unit>)
-            inline fun CharSequence.getOrElse(index: Int, defaultValue: Function1<Int, Char>): Char
+            inline fun CharSequence.firstOrNull(predicate: (Char) -> Boolean): Char?
+            inline fun <R> CharSequence.flatMap(transform: (Char) -> Iterable<R>): List<R>
+            inline fun <R> CharSequence.flatMapIndexed(transform: (index: Int, Char) -> Iterable<R>): List<R>
+            inline fun <R, C : MutableCollection<in R>> CharSequence.flatMapIndexedTo(destination: C, transform: (index: Int, Char) -> Iterable<R>): C
+            inline fun <R, C : MutableCollection<in R>> CharSequence.flatMapTo(destination: C, transform: (Char) -> Iterable<R>): C
+            inline fun <R> CharSequence.fold(initial: R, operation: (acc: R, Char) -> R): R
+            inline fun <R> CharSequence.foldIndexed(initial: R, operation: (index: Int, acc: R, Char) -> R): R
+            inline fun <R> CharSequence.foldRight(initial: R, operation: (Char, acc: R) -> R): R
+            inline fun <R> CharSequence.foldRightIndexed(initial: R, operation: (index: Int, Char, acc: R) -> R): R
+            inline fun CharSequence.forEach(action: (Char) -> Unit)
+            inline fun CharSequence.forEachIndexed(action: (index: Int, Char) -> Unit)
+            inline fun CharSequence.getOrElse(index: Int, defaultValue: (Int) -> Char): Char
             fun CharSequence.getOrNull(index: Int): Char?
-            inline fun <K> CharSequence.groupBy(keySelector: Function1<Char, K>): Map<K, List<Char>>
-            inline fun <K, V> CharSequence.groupBy(keySelector: Function1<Char, K>, valueTransform: Function1<Char, V>): Map<K, List<V>>
-            inline fun <K, M : MutableMap<in K, MutableList<Char>>> CharSequence.groupByTo(destination: M, keySelector: Function1<Char, K>): M
-            inline fun <K, V, M : MutableMap<in K, MutableList<V>>> CharSequence.groupByTo(destination: M, keySelector: Function1<Char, K>, valueTransform: Function1<Char, V>): M
-            inline fun <K> CharSequence.groupingBy(keySelector: Function1<Char, K>): Grouping<Char, K>
+            inline fun <K> CharSequence.groupBy(keySelector: (Char) -> K): Map<K, List<Char>>
+            inline fun <K, V> CharSequence.groupBy(keySelector: (Char) -> K, valueTransform: (Char) -> V): Map<K, List<V>>
+            inline fun <K, M : MutableMap<in K, MutableList<Char>>> CharSequence.groupByTo(destination: M, keySelector: (Char) -> K): M
+            inline fun <K, V, M : MutableMap<in K, MutableList<V>>> CharSequence.groupByTo(destination: M, keySelector: (Char) -> K, valueTransform: (Char) -> V): M
+            inline fun <K> CharSequence.groupingBy(keySelector: (Char) -> K): Grouping<Char, K>
             fun CharSequence.hasSurrogatePairAt(index: Int): Boolean
             fun CharSequence.indexOf(char: Char, startIndex: Int = …, ignoreCase: Boolean = …): Int
             fun CharSequence.indexOf(string: String, startIndex: Int = …, ignoreCase: Boolean = …): Int
             fun CharSequence.indexOfAny(chars: CharArray, startIndex: Int = …, ignoreCase: Boolean = …): Int
             fun CharSequence.indexOfAny(strings: Collection<String>, startIndex: Int = …, ignoreCase: Boolean = …): Int
-            inline fun CharSequence.indexOfFirst(predicate: Function1<Char, Boolean>): Int
-            inline fun CharSequence.indexOfLast(predicate: Function1<Char, Boolean>): Int
+            inline fun CharSequence.indexOfFirst(predicate: (Char) -> Boolean): Int
+            inline fun CharSequence.indexOfLast(predicate: (Char) -> Boolean): Int
             fun CharSequence.isBlank(): Boolean
             inline fun CharSequence.isEmpty(): Boolean
             inline fun CharSequence.isNotBlank(): Boolean
@@ -415,75 +415,75 @@ class KotlinIntrospectorTest {
             inline fun CharSequence?.isNullOrEmpty(): Boolean
             operator fun CharSequence.iterator(): CharIterator
             fun CharSequence.last(): Char
-            inline fun CharSequence.last(predicate: Function1<Char, Boolean>): Char
+            inline fun CharSequence.last(predicate: (Char) -> Boolean): Char
             fun CharSequence.lastIndexOf(char: Char, startIndex: Int = …, ignoreCase: Boolean = …): Int
             fun CharSequence.lastIndexOf(string: String, startIndex: Int = …, ignoreCase: Boolean = …): Int
             fun CharSequence.lastIndexOfAny(chars: CharArray, startIndex: Int = …, ignoreCase: Boolean = …): Int
             fun CharSequence.lastIndexOfAny(strings: Collection<String>, startIndex: Int = …, ignoreCase: Boolean = …): Int
             fun CharSequence.lastOrNull(): Char?
-            inline fun CharSequence.lastOrNull(predicate: Function1<Char, Boolean>): Char?
+            inline fun CharSequence.lastOrNull(predicate: (Char) -> Boolean): Char?
             fun CharSequence.lineSequence(): Sequence<String>
             fun CharSequence.lines(): List<String>
-            inline fun <R> CharSequence.map(transform: Function1<Char, R>): List<R>
-            inline fun <R> CharSequence.mapIndexed(transform: Function2<Int, Char, R>): List<R>
-            inline fun <R : Any> CharSequence.mapIndexedNotNull(transform: Function2<Int, Char, R?>): List<R>
-            inline fun <R : Any, C : MutableCollection<in R>> CharSequence.mapIndexedNotNullTo(destination: C, transform: Function2<Int, Char, R?>): C
-            inline fun <R, C : MutableCollection<in R>> CharSequence.mapIndexedTo(destination: C, transform: Function2<Int, Char, R>): C
-            inline fun <R : Any> CharSequence.mapNotNull(transform: Function1<Char, R?>): List<R>
-            inline fun <R : Any, C : MutableCollection<in R>> CharSequence.mapNotNullTo(destination: C, transform: Function1<Char, R?>): C
-            inline fun <R, C : MutableCollection<in R>> CharSequence.mapTo(destination: C, transform: Function1<Char, R>): C
+            inline fun <R> CharSequence.map(transform: (Char) -> R): List<R>
+            inline fun <R> CharSequence.mapIndexed(transform: (index: Int, Char) -> R): List<R>
+            inline fun <R : Any> CharSequence.mapIndexedNotNull(transform: (index: Int, Char) -> R?): List<R>
+            inline fun <R : Any, C : MutableCollection<in R>> CharSequence.mapIndexedNotNullTo(destination: C, transform: (index: Int, Char) -> R?): C
+            inline fun <R, C : MutableCollection<in R>> CharSequence.mapIndexedTo(destination: C, transform: (index: Int, Char) -> R): C
+            inline fun <R : Any> CharSequence.mapNotNull(transform: (Char) -> R?): List<R>
+            inline fun <R : Any, C : MutableCollection<in R>> CharSequence.mapNotNullTo(destination: C, transform: (Char) -> R?): C
+            inline fun <R, C : MutableCollection<in R>> CharSequence.mapTo(destination: C, transform: (Char) -> R): C
             inline infix fun CharSequence.matches(regex: Regex): Boolean
             fun CharSequence.max(): Char?
             fun CharSequence.max(): Char
-            inline fun <R : Comparable<R>> CharSequence.maxBy(selector: Function1<Char, R>): Char?
-            inline fun <R : Comparable<R>> CharSequence.maxBy(selector: Function1<Char, R>): Char
-            inline fun <R : Comparable<R>> CharSequence.maxByOrNull(selector: Function1<Char, R>): Char?
-            inline fun CharSequence.maxOf(selector: Function1<Char, Double>): Double
-            inline fun CharSequence.maxOf(selector: Function1<Char, Float>): Float
-            inline fun <R : Comparable<R>> CharSequence.maxOf(selector: Function1<Char, R>): R
-            inline fun CharSequence.maxOfOrNull(selector: Function1<Char, Double>): Double?
-            inline fun CharSequence.maxOfOrNull(selector: Function1<Char, Float>): Float?
-            inline fun <R : Comparable<R>> CharSequence.maxOfOrNull(selector: Function1<Char, R>): R?
-            inline fun <R> CharSequence.maxOfWith(comparator: java.util.Comparator<in R>, selector: Function1<Char, R>): R
-            inline fun <R> CharSequence.maxOfWithOrNull(comparator: java.util.Comparator<in R>, selector: Function1<Char, R>): R?
+            inline fun <R : Comparable<R>> CharSequence.maxBy(selector: (Char) -> R): Char?
+            inline fun <R : Comparable<R>> CharSequence.maxBy(selector: (Char) -> R): Char
+            inline fun <R : Comparable<R>> CharSequence.maxByOrNull(selector: (Char) -> R): Char?
+            inline fun CharSequence.maxOf(selector: (Char) -> Double): Double
+            inline fun CharSequence.maxOf(selector: (Char) -> Float): Float
+            inline fun <R : Comparable<R>> CharSequence.maxOf(selector: (Char) -> R): R
+            inline fun CharSequence.maxOfOrNull(selector: (Char) -> Double): Double?
+            inline fun CharSequence.maxOfOrNull(selector: (Char) -> Float): Float?
+            inline fun <R : Comparable<R>> CharSequence.maxOfOrNull(selector: (Char) -> R): R?
+            inline fun <R> CharSequence.maxOfWith(comparator: java.util.Comparator<in R>, selector: (Char) -> R): R
+            inline fun <R> CharSequence.maxOfWithOrNull(comparator: java.util.Comparator<in R>, selector: (Char) -> R): R?
             fun CharSequence.maxOrNull(): Char?
             fun CharSequence.maxWith(comparator: java.util.Comparator<in Char>): Char?
             fun CharSequence.maxWith(comparator: java.util.Comparator<in Char>): Char
             fun CharSequence.maxWithOrNull(comparator: java.util.Comparator<in Char>): Char?
             fun CharSequence.min(): Char?
             fun CharSequence.min(): Char
-            inline fun <R : Comparable<R>> CharSequence.minBy(selector: Function1<Char, R>): Char?
-            inline fun <R : Comparable<R>> CharSequence.minBy(selector: Function1<Char, R>): Char
-            inline fun <R : Comparable<R>> CharSequence.minByOrNull(selector: Function1<Char, R>): Char?
-            inline fun CharSequence.minOf(selector: Function1<Char, Double>): Double
-            inline fun CharSequence.minOf(selector: Function1<Char, Float>): Float
-            inline fun <R : Comparable<R>> CharSequence.minOf(selector: Function1<Char, R>): R
-            inline fun CharSequence.minOfOrNull(selector: Function1<Char, Double>): Double?
-            inline fun CharSequence.minOfOrNull(selector: Function1<Char, Float>): Float?
-            inline fun <R : Comparable<R>> CharSequence.minOfOrNull(selector: Function1<Char, R>): R?
-            inline fun <R> CharSequence.minOfWith(comparator: java.util.Comparator<in R>, selector: Function1<Char, R>): R
-            inline fun <R> CharSequence.minOfWithOrNull(comparator: java.util.Comparator<in R>, selector: Function1<Char, R>): R?
+            inline fun <R : Comparable<R>> CharSequence.minBy(selector: (Char) -> R): Char?
+            inline fun <R : Comparable<R>> CharSequence.minBy(selector: (Char) -> R): Char
+            inline fun <R : Comparable<R>> CharSequence.minByOrNull(selector: (Char) -> R): Char?
+            inline fun CharSequence.minOf(selector: (Char) -> Double): Double
+            inline fun CharSequence.minOf(selector: (Char) -> Float): Float
+            inline fun <R : Comparable<R>> CharSequence.minOf(selector: (Char) -> R): R
+            inline fun CharSequence.minOfOrNull(selector: (Char) -> Double): Double?
+            inline fun CharSequence.minOfOrNull(selector: (Char) -> Float): Float?
+            inline fun <R : Comparable<R>> CharSequence.minOfOrNull(selector: (Char) -> R): R?
+            inline fun <R> CharSequence.minOfWith(comparator: java.util.Comparator<in R>, selector: (Char) -> R): R
+            inline fun <R> CharSequence.minOfWithOrNull(comparator: java.util.Comparator<in R>, selector: (Char) -> R): R?
             fun CharSequence.minOrNull(): Char?
             fun CharSequence.minWith(comparator: java.util.Comparator<in Char>): Char?
             fun CharSequence.minWith(comparator: java.util.Comparator<in Char>): Char
             fun CharSequence.minWithOrNull(comparator: java.util.Comparator<in Char>): Char?
             fun CharSequence.none(): Boolean
-            inline fun CharSequence.none(predicate: Function1<Char, Boolean>): Boolean
+            inline fun CharSequence.none(predicate: (Char) -> Boolean): Boolean
             fun CharSequence.padEnd(length: Int, padChar: Char = …): CharSequence
             fun CharSequence.padStart(length: Int, padChar: Char = …): CharSequence
-            inline fun CharSequence.partition(predicate: Function1<Char, Boolean>): Pair<CharSequence, CharSequence>
+            inline fun CharSequence.partition(predicate: (Char) -> Boolean): Pair<CharSequence, CharSequence>
             inline fun CharSequence.random(): Char
             fun CharSequence.random(random: Random): Char
             inline fun CharSequence.randomOrNull(): Char?
             fun CharSequence.randomOrNull(random: Random): Char?
-            inline fun CharSequence.reduce(operation: Function2<Char, Char, Char>): Char
-            inline fun CharSequence.reduceIndexed(operation: Function3<Int, Char, Char, Char>): Char
-            inline fun CharSequence.reduceIndexedOrNull(operation: Function3<Int, Char, Char, Char>): Char?
-            inline fun CharSequence.reduceOrNull(operation: Function2<Char, Char, Char>): Char?
-            inline fun CharSequence.reduceRight(operation: Function2<Char, Char, Char>): Char
-            inline fun CharSequence.reduceRightIndexed(operation: Function3<Int, Char, Char, Char>): Char
-            inline fun CharSequence.reduceRightIndexedOrNull(operation: Function3<Int, Char, Char, Char>): Char?
-            inline fun CharSequence.reduceRightOrNull(operation: Function2<Char, Char, Char>): Char?
+            inline fun CharSequence.reduce(operation: (acc: Char, Char) -> Char): Char
+            inline fun CharSequence.reduceIndexed(operation: (index: Int, acc: Char, Char) -> Char): Char
+            inline fun CharSequence.reduceIndexedOrNull(operation: (index: Int, acc: Char, Char) -> Char): Char?
+            inline fun CharSequence.reduceOrNull(operation: (acc: Char, Char) -> Char): Char?
+            inline fun CharSequence.reduceRight(operation: (Char, acc: Char) -> Char): Char
+            inline fun CharSequence.reduceRightIndexed(operation: (index: Int, Char, acc: Char) -> Char): Char
+            inline fun CharSequence.reduceRightIndexedOrNull(operation: (index: Int, Char, acc: Char) -> Char): Char?
+            inline fun CharSequence.reduceRightOrNull(operation: (Char, acc: Char) -> Char): Char?
             fun CharSequence.regionMatches(thisOffset: Int, other: CharSequence, otherOffset: Int, length: Int, ignoreCase: Boolean = …): Boolean
             fun CharSequence.removePrefix(prefix: CharSequence): CharSequence
             fun CharSequence.removeRange(startIndex: Int, endIndex: Int): CharSequence
@@ -493,21 +493,21 @@ class KotlinIntrospectorTest {
             fun CharSequence.removeSurrounding(delimiter: CharSequence): CharSequence
             fun CharSequence.repeat(n: Int): String
             inline fun CharSequence.replace(regex: Regex, replacement: String): String
-            inline fun CharSequence.replace(regex: Regex, transform: Function1<MatchResult, CharSequence>): String
+            inline fun CharSequence.replace(regex: Regex, transform: (MatchResult) -> CharSequence): String
             inline fun CharSequence.replaceFirst(regex: Regex, replacement: String): String
             fun CharSequence.replaceRange(startIndex: Int, endIndex: Int, replacement: CharSequence): CharSequence
             fun CharSequence.replaceRange(range: IntRange, replacement: CharSequence): CharSequence
             fun CharSequence.reversed(): CharSequence
-            inline fun <R> CharSequence.runningFold(initial: R, operation: Function2<R, Char, R>): List<R>
-            inline fun <R> CharSequence.runningFoldIndexed(initial: R, operation: Function3<Int, R, Char, R>): List<R>
-            inline fun CharSequence.runningReduce(operation: Function2<Char, Char, Char>): List<Char>
-            inline fun CharSequence.runningReduceIndexed(operation: Function3<Int, Char, Char, Char>): List<Char>
-            inline fun <R> CharSequence.scan(initial: R, operation: Function2<R, Char, R>): List<R>
-            inline fun <R> CharSequence.scanIndexed(initial: R, operation: Function3<Int, R, Char, R>): List<R>
+            inline fun <R> CharSequence.runningFold(initial: R, operation: (acc: R, Char) -> R): List<R>
+            inline fun <R> CharSequence.runningFoldIndexed(initial: R, operation: (index: Int, acc: R, Char) -> R): List<R>
+            inline fun CharSequence.runningReduce(operation: (acc: Char, Char) -> Char): List<Char>
+            inline fun CharSequence.runningReduceIndexed(operation: (index: Int, acc: Char, Char) -> Char): List<Char>
+            inline fun <R> CharSequence.scan(initial: R, operation: (acc: R, Char) -> R): List<R>
+            inline fun <R> CharSequence.scanIndexed(initial: R, operation: (index: Int, acc: R, Char) -> R): List<R>
             fun CharSequence.single(): Char
-            inline fun CharSequence.single(predicate: Function1<Char, Boolean>): Char
+            inline fun CharSequence.single(predicate: (Char) -> Boolean): Char
             fun CharSequence.singleOrNull(): Char?
-            inline fun CharSequence.singleOrNull(predicate: Function1<Char, Boolean>): Char?
+            inline fun CharSequence.singleOrNull(predicate: (Char) -> Boolean): Char?
             fun CharSequence.slice(indices: IntRange): CharSequence
             fun CharSequence.slice(indices: Iterable<Int>): CharSequence
             fun CharSequence.split(regex: java.util.regex.Pattern, limit: Int = …): List<String>
@@ -523,43 +523,43 @@ class KotlinIntrospectorTest {
             fun CharSequence.subSequence(range: IntRange): CharSequence
             inline fun CharSequence.substring(startIndex: Int, endIndex: Int = …): String
             fun CharSequence.substring(range: IntRange): String
-            inline fun CharSequence.sumBy(selector: Function1<Char, Int>): Int
-            inline fun CharSequence.sumByDouble(selector: Function1<Char, Double>): Double
-            inline fun CharSequence.sumOf(selector: Function1<Char, java.math.BigDecimal>): java.math.BigDecimal
-            inline fun CharSequence.sumOf(selector: Function1<Char, java.math.BigInteger>): java.math.BigInteger
-            inline fun CharSequence.sumOf(selector: Function1<Char, Double>): Double
-            inline fun CharSequence.sumOf(selector: Function1<Char, Int>): Int
-            inline fun CharSequence.sumOf(selector: Function1<Char, Long>): Long
-            inline fun CharSequence.sumOf(selector: Function1<Char, UInt>): UInt
-            inline fun CharSequence.sumOf(selector: Function1<Char, ULong>): ULong
+            inline fun CharSequence.sumBy(selector: (Char) -> Int): Int
+            inline fun CharSequence.sumByDouble(selector: (Char) -> Double): Double
+            inline fun CharSequence.sumOf(selector: (Char) -> java.math.BigDecimal): java.math.BigDecimal
+            inline fun CharSequence.sumOf(selector: (Char) -> java.math.BigInteger): java.math.BigInteger
+            inline fun CharSequence.sumOf(selector: (Char) -> Double): Double
+            inline fun CharSequence.sumOf(selector: (Char) -> Int): Int
+            inline fun CharSequence.sumOf(selector: (Char) -> Long): Long
+            inline fun CharSequence.sumOf(selector: (Char) -> UInt): UInt
+            inline fun CharSequence.sumOf(selector: (Char) -> ULong): ULong
             fun CharSequence.take(n: Int): CharSequence
             fun CharSequence.takeLast(n: Int): CharSequence
-            inline fun CharSequence.takeLastWhile(predicate: Function1<Char, Boolean>): CharSequence
-            inline fun CharSequence.takeWhile(predicate: Function1<Char, Boolean>): CharSequence
+            inline fun CharSequence.takeLastWhile(predicate: (Char) -> Boolean): CharSequence
+            inline fun CharSequence.takeWhile(predicate: (Char) -> Boolean): CharSequence
             fun <C : MutableCollection<in Char>> CharSequence.toCollection(destination: C): C
             fun CharSequence.toHashSet(): java.util.HashSet<Char>
             fun CharSequence.toList(): List<Char>
             fun CharSequence.toMutableList(): MutableList<Char>
             fun CharSequence.toSet(): Set<Char>
             fun CharSequence.toSortedSet(): java.util.SortedSet<Char>
-            inline fun CharSequence.trim(predicate: Function1<Char, Boolean>): CharSequence
+            inline fun CharSequence.trim(predicate: (Char) -> Boolean): CharSequence
             fun CharSequence.trim(vararg chars: Char): CharSequence
             fun CharSequence.trim(): CharSequence
-            inline fun CharSequence.trimEnd(predicate: Function1<Char, Boolean>): CharSequence
+            inline fun CharSequence.trimEnd(predicate: (Char) -> Boolean): CharSequence
             fun CharSequence.trimEnd(vararg chars: Char): CharSequence
             fun CharSequence.trimEnd(): CharSequence
-            inline fun CharSequence.trimStart(predicate: Function1<Char, Boolean>): CharSequence
+            inline fun CharSequence.trimStart(predicate: (Char) -> Boolean): CharSequence
             fun CharSequence.trimStart(vararg chars: Char): CharSequence
             fun CharSequence.trimStart(): CharSequence
             fun CharSequence.windowed(size: Int, step: Int = …, partialWindows: Boolean = …): List<String>
-            fun <R> CharSequence.windowed(size: Int, step: Int = …, partialWindows: Boolean = …, transform: Function1<CharSequence, R>): List<R>
+            fun <R> CharSequence.windowed(size: Int, step: Int = …, partialWindows: Boolean = …, transform: (CharSequence) -> R): List<R>
             fun CharSequence.windowedSequence(size: Int, step: Int = …, partialWindows: Boolean = …): Sequence<String>
-            fun <R> CharSequence.windowedSequence(size: Int, step: Int = …, partialWindows: Boolean = …, transform: Function1<CharSequence, R>): Sequence<R>
+            fun <R> CharSequence.windowedSequence(size: Int, step: Int = …, partialWindows: Boolean = …, transform: (CharSequence) -> R): Sequence<R>
             fun CharSequence.withIndex(): Iterable<IndexedValue<Char>>
             infix fun CharSequence.zip(other: CharSequence): List<Pair<Char, Char>>
-            inline fun <V> CharSequence.zip(other: CharSequence, transform: Function2<Char, Char, V>): List<V>
+            inline fun <V> CharSequence.zip(other: CharSequence, transform: (a: Char, b: Char) -> V): List<V>
             fun CharSequence.zipWithNext(): List<Pair<Char, Char>>
-            inline fun <R> CharSequence.zipWithNext(transform: Function2<Char, Char, R>): List<R>
+            inline fun <R> CharSequence.zipWithNext(transform: (a: Char, b: Char) -> R): List<R>
         """.trimIndent()
     }
 
@@ -974,7 +974,7 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.test.FunctionModifiersTestClass [page 1/1]
             class FunctionModifiersTestClass {
                 suspend fun fetchData(): String
-                inline fun processData(block: Function0<Unit>)
+                inline fun processData(block: () -> Unit)
                 infix fun combine(other: String): String
                 operator fun plus(other: FunctionModifiersTestClass): FunctionModifiersTestClass
                 tailrec fun factorial(n: Int, acc: Int = …): Int
@@ -1033,6 +1033,72 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.TestFunctionModifiersKt.retryCount [page 1/1]
             val (suspend () -> Unit).retryCount: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve function types in arrow notation`() {
+        // KFunction1 is a function reference type, not a function type
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.FunctionTypesSample"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.FunctionTypesSample [page 1/1]
+            class FunctionTypesSample {
+                val handler: (String) -> Unit
+                fun launchBoth(block: () -> Unit, suspendBlock: suspend () -> Unit)
+                fun launchWithReceiver(block: FunctionModifiersTestClass.() -> Unit)
+                fun launchInContext(block: context(String) () -> Unit)
+                fun launchInContextWithReceiver(block: context(String) Int.(Long) -> Boolean)
+                fun launchNullable(block: (() -> Unit)?)
+                fun launchHigherOrder(block: suspend (() -> Unit) -> Unit)
+                fun launchWithFunctionReceiver(block: (() -> Unit).() -> Unit)
+                fun curried(): (Int) -> (Int) -> Int
+                fun reference(function: KFunction1<Int, String>)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve parameter names of function types`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.NamedFunctionTypeParametersSample"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NamedFunctionTypeParametersSample [page 1/1]
+            class NamedFunctionTypeParametersSample {
+                fun launch(block: suspend (id: Int, name: String) -> Unit)
+                fun filter(predicate: (index: Int, Char) -> Boolean)
+                fun launchWithReceiver(block: String.(index: Int) -> Unit)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension function on function type`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.TestFunctionModifiersKt.repeat"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.TestFunctionModifiersKt.repeat [page 1/1]
+            fun (() -> Unit).repeat()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension property on function type`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.TestFunctionModifiersKt.repeatCount"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.TestFunctionModifiersKt.repeatCount [page 1/1]
+            val (() -> Unit).repeatCount: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension function on context function type`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.TestFunctionModifiersKt.runInContext"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.TestFunctionModifiersKt.runInContext [page 1/1]
+            fun (context(String) () -> Unit).runInContext()
         """.trimIndent()
     }
 
@@ -2038,7 +2104,7 @@ class KotlinIntrospectorTest {
             "com.xemantic.kotlin.introspection.test.FunctionTypeImpl"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.FunctionTypeImpl [page 1/1]
-            class FunctionTypeImpl : Function1<String, Int> {
+            class FunctionTypeImpl : (String) -> Int {
                 override operator fun invoke(p1: String): Int
                 fun invoke(p1: Int): Int
             }
@@ -2373,8 +2439,8 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.KotlinFunctionTaker [page 1/1]
             class KotlinFunctionTaker : com.xemantic.kotlin.introspection.test.other.JavaFunctionTaker {
-                override fun onEvent(callback: Function1<String, Unit>)
-                fun onEvent(callback: Function1<Int, Unit>, extra: Int)
+                override fun onEvent(callback: (String) -> Unit)
+                fun onEvent(callback: (Int) -> Unit, extra: Int)
             }
         """.trimIndent()
     }
@@ -2747,7 +2813,7 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.GenericTestClass [page 1/1]
             class GenericTestClass<K, out V>(val key: K, val value: V) {
-                fun <R : Any> transform(block: Function2<K, V, R>): R
+                fun <R : Any> transform(block: (K, V) -> R): R
                 fun withKey(newKey: K): GenericTestClass<K, V>
             }
             // from com.xemantic.kotlin.introspection.test
@@ -3276,7 +3342,7 @@ class KotlinIntrospectorTest {
             pageSize = 10000
         ) should {
             have(lines()[1] == "interface List<out E> : Collection<E> {")
-            have("inline fun <T, R> Iterable<T>.map(transform: Function1<T, R>): List<R>" in this)
+            have("inline fun <T, R> Iterable<T>.map(transform: (T) -> R): List<R>" in this)
             have("fun <T> Collection<T>.toMutableList(): MutableList<T>" in this)
         }
     }
