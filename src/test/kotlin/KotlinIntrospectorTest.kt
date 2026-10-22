@@ -2721,6 +2721,75 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should list nested classes of the companion object`() {
+        // an LLM cannot discover them otherwise, while the private and internal ones are not part of the API
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.CompanionNestedClassesHolder"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.CompanionNestedClassesHolder [page 1/1]
+            class CompanionNestedClassesHolder {
+                fun answer(): Int
+                companion object {
+                    class Builder<T : CharSequence> : Iterable<T>
+                    interface Factory
+                    object Defaults : CompanionNestedClassesHolder.Companion.Factory
+                    fun create(): CompanionNestedClassesHolder
+                }
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render body of companion object with only nested classes`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.CompanionOnlyNestedClassHolder"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.CompanionOnlyNestedClassHolder [page 1/1]
+            class CompanionOnlyNestedClassHolder {
+                companion object {
+                    class Builder
+                }
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not list sealed subclass nested in companion object twice`() {
+        // it is already listed as a sealed subclass of the outer class
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.CompanionNestedSealedHolder"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.CompanionNestedSealedHolder [page 1/1]
+            sealed class CompanionNestedSealedHolder {
+                class Companion.CompanionSub : CompanionNestedSealedHolder
+                class Sub : CompanionNestedSealedHolder
+                companion object {
+                    class Unrelated
+                }
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not split companion object with nested classes across pages`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.CompanionNestedClassesHolder",
+            page = 2,
+            pageSize = 1
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.CompanionNestedClassesHolder [page 2/2]
+            class CompanionNestedClassesHolder {
+                companion object {
+                    class Builder<T : CharSequence> : Iterable<T>
+                    interface Factory
+                    object Defaults : CompanionNestedClassesHolder.Companion.Factory
+                    fun create(): CompanionNestedClassesHolder
+                }
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should list only importable extensions of the receiver type`() {
         // the member extensions of classes, private nested and local classes can only be called
         // within the scope of their dispatch receiver, while the ones of public objects can be imported

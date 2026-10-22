@@ -753,14 +753,19 @@ internal class DefaultKotlinIntrospector(
             properties.firstOrNull { it.isDeclaredBy(param) }?.let { param.name to it }
         }.toMap()
 
+        // the binary name, as the class might be nested
+        val companionBinaryName = "${clazz.name}\$${kmClass.companionObject}"
         // The companion object, unless it is not part of the API, with its members which are
         val companion = kmClass.companionObject
-            // the binary name, as the class might be nested
-            ?.let { name -> loadKmClass("${clazz.name}\$$name") }
+            ?.let { loadKmClass(companionBinaryName) }
             ?.takeIf { it.visibility.isApiIn(scopes) }
         val companionScopes = scopes + listOfNotNull(companion?.scope)
         val companionProperties = companion?.properties.orEmpty().filter { it.visibility.isApiIn(companionScopes) }
         val companionFunctions = companion?.functions.orEmpty().filter { it.visibility.isApiIn(companionScopes) }
+        // the ones which are also sealed subclasses of this class are listed as such
+        val companionNestedClasses = companion?.let {
+            listedNestedClasses(it, companionScopes, companionBinaryName, kmClass.sealedSubclasses.toSet())
+        }.orEmpty()
 
         // Extensions from the index on this type and its supertypes (shown after class body with source)
         val receiverNames = listOf(className) + userSupertypes(kmClass)
@@ -823,7 +828,7 @@ internal class DefaultKotlinIntrospector(
 
             val enumEntries = if (isEnum) kmClass.kmEnumEntries else emptyList()
             val sealedSubclasses = if (isSealed) listedSealedSubclasses(kmClass) else emptyList()
-            val nestedClasses = listedNestedClasses(kmClass, scopes, clazz)
+            val nestedClasses = listedNestedClasses(kmClass, scopes, clazz.name)
 
             // The members are rendered before the enum entries, which depend on whether any members follow them
             val members = buildString {
@@ -867,10 +872,17 @@ internal class DefaultKotlinIntrospector(
                     +formatClassHeader(companion, companionName, contextPackage)
 
                     // a companion object without members of the API is rendered without a body
-                    if (companionProperties.isEmpty() && companionFunctions.isEmpty()) {
+                    if (companionNestedClasses.isEmpty() && companionProperties.isEmpty() && companionFunctions.isEmpty()) {
                         +"\n"
                     } else {
                         +" {\n"
+
+                        // Companion nested classes, only referenced, like the ones of the outer class
+                        companionNestedClasses.forEach { (name, listedKmClass) ->
+                            +"        "
+                            +formatClassHeader(listedKmClass, name, contextPackage, typeParametersInScope(listedKmClass))
+                            +"\n"
+                        }
 
                         // Companion properties
                         companionProperties.forEach { property ->
@@ -1035,18 +1047,22 @@ internal class DefaultKotlinIntrospector(
      * The nested classes worth listing in the outer class, by their simple names, excluding
      * the sealed subclasses and the companion object, which are already rendered,
      * and the ones not visible to the users of the outer class.
+     *
+     * @param binaryName the binary name of the [kmClass], like `com.example.Outer$Companion`.
+     * @param sealedSubclasses the sealed subclasses already listed, including the ones of the class
+     *   enclosing a companion object, which might be nested in that companion object.
      */
     private fun listedNestedClasses(
         kmClass: KmClass,
         scopes: List<ClassScope>,
-        clazz: Class<*>
+        binaryName: String,
+        sealedSubclasses: Set<String> = kmClass.sealedSubclasses.toSet()
     ): List<Pair<String, KmClass>> {
-        val sealedSubclasses = kmClass.sealedSubclasses.toSet()
         return kmClass.nestedClasses
             .filter { "${kmClass.name}.$it" !in sealedSubclasses }
             .mapNotNull { name ->
                 // the binary name, as the class might be nested
-                loadClass("${clazz.name}\$$name")?.let { nestedClazz ->
+                loadClass("$binaryName\$$name")?.let { nestedClazz ->
                     readKmClass(nestedClazz)?.takeIf { nestedKmClass ->
                         // a class file which cannot be read is judged by the metadata only
                         isListedClass(nestedKmClass, readClassFile(nestedClazz) ?: ClassFile(null, false, false))
