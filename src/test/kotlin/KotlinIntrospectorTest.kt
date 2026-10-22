@@ -2669,16 +2669,18 @@ class KotlinIntrospectorTest {
     @Test
     fun `should resolve class with extensions sorted by name regardless of declaration and scan order`() {
         // the extensions are spread over 2 files, in each declared in reverse order,
-        // and the order in which files are scanned depends on the file system
+        // and the order in which files are scanned depends on the file system;
+        // same-named extensions are sorted by the declaring file, also across the class and its supertype
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.ExtensionOrderSubject"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.ExtensionOrderSubject [page 1/1]
-            class ExtensionOrderSubject(val value: Int)
+            class ExtensionOrderSubject(val value: Int) : ExtensionOrderSupertype
             // from com.xemantic.kotlin.introspection.test
             val ExtensionOrderSubject.bravo: Int
             val ExtensionOrderSubject.charlie: Int
             val ExtensionOrderSubject.yankee: Int
+            fun ExtensionOrderSupertype.alpha(): Int
             fun ExtensionOrderSubject.alpha(): Int
             fun ExtensionOrderSubject.foxtrot(factor: Int): Int
             fun ExtensionOrderSubject.foxtrot(): Int
