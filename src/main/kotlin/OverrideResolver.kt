@@ -207,28 +207,22 @@ internal class OverrideResolver(
         primitiveNames.forEach { (javaName, kotlinName) -> put(javaName, kotlinName) }
     }
 
-    fun isOverride(owner: KmClass, function: KmFunction): Boolean {
+    /**
+     * An override of a supertype function.
+     *
+     * @param inheritedDefaultValues the indices of the value parameters inheriting a default value
+     *   from an overridden function, directly or through other overrides, as an override cannot declare its own.
+     */
+    class FunctionOverride(val inheritedDefaultValues: Set<Int>)
+
+    /**
+     * The override of a supertype function by the [function], or `null` if it overrides none.
+     * The whole supertype hierarchy is matched, so that the declaration of an inherited default value is found
+     * also through intermediate overrides.
+     */
+    fun override(owner: KmClass, function: KmFunction): FunctionOverride? {
         val overridables = overridables(owner)
-        if (function.name !in overridables.functions) return false
-        return overriddenFunctions(overridables, function).any() || overridables.isShrunk(function.signature)
-    }
-
-    /**
-     * The indices of the value parameters of an overriding [function] inheriting a default value
-     * from a function it overrides, directly or through other overrides, as an override cannot declare its own.
-     * The whole supertype hierarchy is matched, so that the original declaration is found as well.
-     * Only meant to be called for a function already told to be an override, as it matches the supertype members again.
-     */
-    fun inheritedDefaultValues(owner: KmClass, function: KmFunction): Set<Int> {
-        if (function.valueParameters.isEmpty()) return emptySet()
-        return overriddenFunctions(overridables(owner), function).flatMapTo(mutableSetOf()) { it.declaresDefaultValues }
-    }
-
-    /**
-     * The visible supertype members overridden by the [function], lazily matched.
-     */
-    private fun overriddenFunctions(overridables: Overridables, function: KmFunction): Sequence<Overridable> {
-        val candidates = overridables.functions[function.name] ?: return emptySequence()
+        val candidates = overridables.functions[function.name] ?: return null
         val typeParameters = memberTypeParameters(function.typeParameters)
         val contexts = function.contextParameters.map {
             kotlinType(it.type, overridables.substitution, typeParameters)
@@ -239,9 +233,18 @@ internal class OverrideResolver(
         val parameters = function.valueParameters.map {
             kotlinType(it.type, overridables.substitution, typeParameters)
         }
-        return candidates.asSequence().filter {
+        val overridden = candidates.filter {
             it.matches(contexts, receiver, parameters, function.typeParameters.size, function.isSuspend) &&
                 overridables.isVisible(it)
+        }
+        return when {
+            overridden.isNotEmpty() -> FunctionOverride(
+                overridden.fold(emptySet()) { defaults, it ->
+                    if (it.declaresDefaultValues.isEmpty()) defaults else defaults + it.declaresDefaultValues
+                }
+            )
+            overridables.isShrunk(function.signature) -> FunctionOverride(emptySet())
+            else -> null
         }
     }
 
@@ -377,10 +380,11 @@ internal class OverrideResolver(
                         typeParameterCount = function.typeParameters.size,
                         isJava = false,
                         friendJvmMethod = friendJvmMethod(function.visibility, function.signature),
-                        // toSet() shares the empty set among most functions, which declare no default values
-                        declaresDefaultValues = function.valueParameters.indices.filter {
+                        declaresDefaultValues = if (function.valueParameters.none { it.declaresDefaultValue }) {
+                            emptySet()
+                        } else function.valueParameters.indices.filterTo(HashSet()) {
                             function.valueParameters[it].declaresDefaultValue
-                        }.toSet()
+                        }
                     )
                 }
                 kmClass.properties.filter { it.visibility.isOverridable }.forEach { property ->

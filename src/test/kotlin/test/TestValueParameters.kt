@@ -62,3 +62,26 @@ interface Formatter<T> {
 class IntFormatter : Formatter<Int> {
     override fun Int.format(width: Int, pad: Char): String = toString().padStart(width, pad)
 }
+
+// default values declared in an abstract class
+abstract class AbstractRepo {
+    abstract fun find(limit: Int = 10)
+    open fun count(from: Int = 0, to: Int): Int = to - from
+}
+
+class MemoryRepo : AbstractRepo() {
+    override fun find(limit: Int) {}
+    override fun count(from: Int, to: Int): Int = 0
+}
+
+// members implemented by delegation
+class DelegatingRepo(repo: Repo) : Repo by repo
+
+// only one of the overridden functions declares the default value
+interface Finder {
+    fun find(limit: Int)
+}
+
+class FinderRepo : Repo, Finder {
+    override fun find(limit: Int) {}
+}

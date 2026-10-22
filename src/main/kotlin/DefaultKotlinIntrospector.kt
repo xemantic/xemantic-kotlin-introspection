@@ -1144,8 +1144,8 @@ internal class DefaultKotlinIntrospector(
 
         +formatVisibility(function.visibility)
 
-        val isOverride = isOverride(owner, function)
-        +formatModalityModifiers(function.modality, isOverride, inInterface, owner)
+        val override = override(owner, function)
+        +formatModalityModifiers(function.modality, override != null, inInterface, owner)
 
         // Function-specific modifiers
         if (function.isTailrec) +"tailrec "
@@ -1169,9 +1169,7 @@ internal class DefaultKotlinIntrospector(
         +"("
 
         // an override cannot declare a default value, but inherits the one of the overridden function
-        val inheritedDefaultValues = if (isOverride && owner != null) {
-            overrideResolver.inheritedDefaultValues(owner, function)
-        } else emptySet()
+        val inheritedDefaultValues = override?.inheritedDefaultValues.orEmpty()
         +(function.valueParameters.withIndex().joinToString(", ") { (index, param) ->
             formatValueParameter(param, contextPackage, typeParameters, hasDefaultValue = index in inheritedDefaultValues)
         })
@@ -1451,8 +1449,14 @@ internal class DefaultKotlinIntrospector(
         if (isOverride) +"override "
     }
 
-    private fun isOverride(owner: KmClass?, function: KmFunction): Boolean =
-        function.kind == MemberKind.FAKE_OVERRIDE || (owner != null && overrideResolver.isOverride(owner, function))
+    private fun isOverride(owner: KmClass?, function: KmFunction): Boolean = override(owner, function) != null
+
+    /**
+     * The override of a supertype function by the [function], or `null` if it is not an override.
+     */
+    private fun override(owner: KmClass?, function: KmFunction): OverrideResolver.FunctionOverride? =
+        owner?.let { overrideResolver.override(it, function) }
+            ?: if (function.kind == MemberKind.FAKE_OVERRIDE) OverrideResolver.FunctionOverride(emptySet()) else null
 
     private fun isOverride(owner: KmClass?, property: KmProperty): Boolean =
         property.kind == MemberKind.FAKE_OVERRIDE || (owner != null && overrideResolver.isOverride(owner, property))
