@@ -799,12 +799,20 @@ internal class DefaultKotlinIntrospector(
                 +(renderedConstructor.valueParameters.joinToString(", ", "(", ")") { param ->
                     // a parameter not declaring a property is still needed to call the constructor
                     val prop = constructorProperties[param.name]
-                    val prefix = if (prop == null) "" else buildString {
-                        +formatVisibility(prop.visibility)
-                        if (isOverride(kmClass, prop)) +"override "
-                        +(if (prop.isVar) "var " else "val ")
+                    if (prop == null) {
+                        formatValueParameter(param, contextPackage, typeParameters)
+                    } else {
+                        formatValueParameter(
+                            param,
+                            contextPackage,
+                            typeParameters,
+                            prefix = if (prop.isVar) "var " else "val ",
+                            // a constructor property is never abstract, but it can be open or final
+                            modifiers = formatVisibility(prop.visibility) + formatModalityModifiers(
+                                prop.modality, isOverride(kmClass, prop), inInterface = false, kmClass
+                            )
+                        )
                     }
-                    formatValueParameter(param, contextPackage, typeParameters, prefix)
                 })
             }
             else -> ""
@@ -1113,14 +1121,7 @@ internal class DefaultKotlinIntrospector(
 
         +formatVisibility(function.visibility)
 
-        val isOverride = isOverride(owner, function)
-        if (isOverride) +"override "
-
-        // Skip 'abstract' in interfaces - all interface members are implicitly abstract
-        // Also skip if it's an override (can't be both override and abstract in output)
-        if (function.modality == Modality.ABSTRACT && !inInterface && !isOverride) +"abstract "
-        // Only show 'open' if not an override (override implies open-ness for further subclassing)
-        if (function.modality == Modality.OPEN && !isOverride) +"open "
+        +formatModalityModifiers(function.modality, isOverride(owner, function), inInterface, owner)
 
         // Function-specific modifiers
         if (function.isTailrec) +"tailrec "
@@ -1163,6 +1164,8 @@ internal class DefaultKotlinIntrospector(
     /**
      * Format a function or constructor value parameter, like `vararg elements: T` or `limit: Int = …`.
      *
+     * @param modifiers the modifiers of a constructor parameter declaring a property, like `protected open `,
+     *   preceding `vararg` in the order of the Kotlin coding conventions.
      * @param prefix the `val ` or `var ` of a constructor parameter declaring a property.
      * @param defaultValue the rendering of the declared default value,
      *   which is otherwise not present in the Kotlin metadata, and therefore rendered as a marker.
@@ -1172,8 +1175,10 @@ internal class DefaultKotlinIntrospector(
         contextPackage: String? = null,
         typeParameters: Map<Int, String> = emptyMap(),
         prefix: String = "",
+        modifiers: String = "",
         defaultValue: () -> String? = { null }
     ): String = buildString {
+        +modifiers
         if (parameter.varargElementType != null) +"vararg "
         +prefix
         +parameter.name
@@ -1200,12 +1205,7 @@ internal class DefaultKotlinIntrospector(
 
         +formatVisibility(property.visibility)
 
-        val isOverride = isOverride(owner, property)
-        if (isOverride) +"override "
-
-        // Skip 'abstract' in interfaces - all interface members are implicitly abstract
-        if (property.modality == Modality.ABSTRACT && !inInterface && !isOverride) +"abstract "
-        if (property.modality == Modality.OPEN && !isOverride) +"open "
+        +formatModalityModifiers(property.modality, isOverride(owner, property), inInterface, owner)
         if (property.isConst) +"const "
 
         +(if (property.isVar) "var " else "val ")
@@ -1418,6 +1418,33 @@ internal class DefaultKotlinIntrospector(
             Visibility.PRIVATE_TO_THIS -> "private "
             Visibility.LOCAL -> ""
         }
+    }
+
+    /**
+     * Format the modality and `override` modifiers of a member, like `abstract override `,
+     * in the order of the Kotlin coding conventions.
+     *
+     * An override is implicitly open, therefore its `final` is rendered,
+     * unless the [owner] class is final itself, which makes all its members final.
+     * An enum class is final in the metadata, even when its entries have bodies subclassing it,
+     * which the metadata does not tell, therefore `final` is always rendered in an enum class.
+     * The members of an interface are implicitly abstract.
+     */
+    private fun formatModalityModifiers(
+        modality: Modality,
+        isOverride: Boolean,
+        inInterface: Boolean,
+        owner: KmClass?
+    ): String = buildString {
+        when (modality) {
+            Modality.ABSTRACT -> if (!inInterface) +"abstract "
+            Modality.OPEN -> if (!isOverride) +"open "
+            Modality.FINAL -> if (
+                isOverride && owner != null && (owner.modality != Modality.FINAL || owner.kind == ClassKind.ENUM_CLASS)
+            ) +"final "
+            Modality.SEALED -> {}
+        }
+        if (isOverride) +"override "
     }
 
     private fun isOverride(owner: KmClass?, function: KmFunction): Boolean =
