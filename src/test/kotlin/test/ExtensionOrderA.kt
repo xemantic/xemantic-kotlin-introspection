@@ -22,9 +22,9 @@ package com.xemantic.kotlin.introspection.test
 // so that both the declaration order and the classpath scan order of the files
 // would show up in the rendered class if the extensions were not sorted.
 // Names avoid the "TestClass" suffix to keep search result tests stable.
-interface ExtensionOrderBase
+interface ExtensionOrderSupertype
 
-class ExtensionOrderSubject(val value: Int) : ExtensionOrderBase
+class ExtensionOrderSubject(val value: Int) : ExtensionOrderSupertype
 
 fun ExtensionOrderSubject.zulu(): Int = value
 
@@ -38,5 +38,6 @@ val ExtensionOrderSubject.charlie: Int get() = value
 fun ExtensionOrderSubject.foxtrot(factor: Int): Int = value * factor
 
 // the one of ExtensionOrderB.kt is on the class, listed before the ones on its supertypes,
+// and its receiver, as well as its signature, sorts before this one,
 // so this one is rendered before it only when the merged extensions are sorted by the declaring file
-fun ExtensionOrderBase.alpha(): Int = 0
+fun ExtensionOrderSupertype.alpha(): Int = 0

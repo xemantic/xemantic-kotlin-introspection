@@ -2093,12 +2093,12 @@ class KotlinIntrospectorTest {
             "com.xemantic.kotlin.introspection.test.ExtensionOrderSubject"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.ExtensionOrderSubject [page 1/1]
-            class ExtensionOrderSubject(val value: Int) : ExtensionOrderBase
+            class ExtensionOrderSubject(val value: Int) : ExtensionOrderSupertype
             // from com.xemantic.kotlin.introspection.test
             val ExtensionOrderSubject.bravo: Int
             val ExtensionOrderSubject.charlie: Int
             val ExtensionOrderSubject.yankee: Int
-            fun ExtensionOrderBase.alpha(): Int
+            fun ExtensionOrderSupertype.alpha(): Int
             fun ExtensionOrderSubject.alpha(): Int
             fun ExtensionOrderSubject.foxtrot(factor: Int): Int
             fun ExtensionOrderSubject.foxtrot(): Int

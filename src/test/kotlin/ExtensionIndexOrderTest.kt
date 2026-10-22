@@ -43,7 +43,7 @@ class ExtensionIndexOrderTest {
     )
 
     @Test
-    fun `should sort extensions by name, then by declaring class, keeping the declaration order of overloads`() {
+    fun `should sort extensions by name, then by declaring class, keeping the metadata order of overloads`() {
         // given
         // in the classpath scan order, which depends on the file system
         val index = mapOf(

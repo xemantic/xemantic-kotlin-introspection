@@ -982,7 +982,7 @@ internal class DefaultKotlinIntrospector(
                 .sortedWith(extensionPropertyOrder)
                 .forEach { +"\n${formatExtensionProperty(it.property, contextPackage)}" }
             functionsBySource[source].orEmpty()
-                .sortedWith(extensionOrder)
+                .sortedWith(extensionFunctionOrder)
                 .forEach { +"\n${formatFunction(it.function, contextPackage = contextPackage)}" }
         }
     }
@@ -1916,25 +1916,25 @@ internal fun receiverIndexKey(type: KmType): String = when (val classifier = typ
 }
 
 /**
- * The order of extensions by name, and then by the declaring class.
+ * The order of extension functions by name, and then by the declaring class.
  */
-private val extensionOrder: Comparator<IndexedExtension> = compareBy({ it.function.name }, { it.sourceClass })
+private val extensionFunctionOrder: Comparator<IndexedExtension> = compareBy({ it.function.name }, { it.sourceClass })
 
 /**
- * The order of extension properties, like the [extensionOrder].
+ * The order of extension properties, like the [extensionFunctionOrder].
  */
 private val extensionPropertyOrder: Comparator<IndexedExtensionProperty> =
     compareBy({ it.property.name }, { it.sourceClass })
 
 /**
- * The extension index with each list sorted in the [extensionOrder],
+ * The extension index with each list sorted in the [extensionFunctionOrder],
  * so that the output does not depend on the classpath scan order, which differs between file systems.
  * The sort is stable, so overloads declared in one file keep their order in the Kotlin metadata,
  * fixed for a given binary.
  */
 @JvmName("sortedExtensionIndex")
 internal fun Map<String, List<IndexedExtension>>.sortedByNameAndSourceClass(): Map<String, List<IndexedExtension>> =
-    mapValues { (_, extensions) -> extensions.sortedWith(extensionOrder) }
+    mapValues { (_, extensions) -> extensions.sortedWith(extensionFunctionOrder) }
 
 /**
  * The extension property index with each list sorted in the [extensionPropertyOrder].
