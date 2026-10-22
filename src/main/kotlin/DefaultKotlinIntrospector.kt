@@ -35,6 +35,10 @@ import kotlin.metadata.*
 import kotlin.metadata.internal.common.KotlinCommonMetadata
 import kotlin.metadata.jvm.KotlinClassMetadata
 import kotlin.reflect.KClass
+import kotlin.reflect.KFunction
+import kotlin.reflect.KParameter
+import kotlin.reflect.KProperty1
+import kotlin.reflect.KTypeParameter
 import kotlin.reflect.KVisibility
 import kotlin.reflect.full.allSuperclasses
 import kotlin.reflect.full.memberFunctions
@@ -133,10 +137,11 @@ internal class DefaultKotlinIntrospector(
     // Declarations of the built-in types, by their Kotlin class name, like kotlin/collections/List
     private val builtinClasses: Map<String, KmClass> by lazy { readBuiltinClasses() }
 
-    // Declarations of the built-in collection types, which kotlin-reflect cannot tell apart
-    // from their mutable counterparts, as both map to the same JVM type
-    private val builtinCollectionClasses: Map<String, KmClass> by lazy {
-        builtinClasses.filterKeys { it.startsWith("kotlin/collections/") }.mapKeys { it.key.replace('/', '.') }
+    // Declarations of the built-in types, by their fully qualified Kotlin name, like kotlin.collections.List,
+    // telling apart the built-in collection types from their mutable counterparts, which kotlin-reflect cannot,
+    // as both map to the same JVM type, and telling which members of the built-in types are overrides
+    private val builtinKotlinClasses: Map<String, KmClass> by lazy {
+        builtinClasses.mapKeys { it.key.replace('/', '.') }
     }
 
     private val overrideResolver = OverrideResolver(
@@ -445,7 +450,8 @@ internal class DefaultKotlinIntrospector(
         kotlinName: String
     ): String {
         val simpleName = kotlinName.substringAfterLast(".")
-        val mutableKmClass = if (kotlinName in mutableBuiltinTypes) builtinCollectionClasses[kotlinName] else null
+        val builtinKmClass = builtinKotlinClasses[kotlinName]
+        val mutableKmClass = if (kotlinName in mutableBuiltinTypes) builtinKmClass else null
 
         // Collect all members to sort them together alphabetically
         data class Member(val name: String, val formatted: String)
@@ -469,12 +475,18 @@ internal class DefaultKotlinIntrospector(
             }
             mutableKmClass.properties.forEach { property ->
                 allMembers.add(
-                    Member(property.name, formatProperty(property, inInterface = true, classTypeParameters = typeParameters))
+                    Member(
+                        property.name,
+                        formatProperty(property, inInterface = true, owner = mutableKmClass, classTypeParameters = typeParameters)
+                    )
                 )
             }
             mutableKmClass.functions.forEach { function ->
                 allMembers.add(
-                    Member(function.name, formatFunction(function, inInterface = true, classTypeParameters = typeParameters))
+                    Member(
+                        function.name,
+                        formatFunction(function, inInterface = true, owner = mutableKmClass, classTypeParameters = typeParameters)
+                    )
                 )
             }
             supertypeNames = builtinCollectionSupertypes(mutableKmClass)
@@ -502,7 +514,7 @@ internal class DefaultKotlinIntrospector(
             kClass.memberProperties
                 .filter { it.visibility == KVisibility.PUBLIC }
                 .forEach { prop ->
-                    allMembers.add(Member(prop.name, formatKProperty(prop)))
+                    allMembers.add(Member(prop.name, formatKProperty(prop, isOverride(builtinKmClass, prop))))
                 }
 
             // Functions (only public, non-extension, excluding synthetic, internal, and Java-only methods taking parameters)
@@ -516,7 +528,7 @@ internal class DefaultKotlinIntrospector(
                 .filter { !hasSyntheticParameterNames(it) }
                 .toList()
                 .forEach { func ->
-                    allMembers.add(Member(func.name, formatKFunction(func)))
+                    allMembers.add(Member(func.name, formatKFunction(func, isOverride(builtinKmClass, func))))
                 }
 
             supertypeNames = kClass.allSuperclasses
@@ -582,7 +594,7 @@ internal class DefaultKotlinIntrospector(
             for (supertype in pending.removeFirst().supertypes) {
                 val name = (supertype.classifier as? KmClassifier.Class)?.name?.replace('/', '.') ?: continue
                 if (name == "kotlin.Any" || !supertypeNames.add(name)) continue
-                builtinCollectionClasses[name]?.let { pending.add(it) }
+                builtinKotlinClasses[name]?.let { pending.add(it) }
             }
         }
         return supertypeNames
@@ -621,13 +633,14 @@ internal class DefaultKotlinIntrospector(
         className: String,
         memberName: String
     ): String? {
-        val mutableKmClass = if (className in mutableBuiltinTypes) builtinCollectionClasses[className] else null
+        val builtinKmClass = builtinKotlinClasses[className]
+        val mutableKmClass = if (className in mutableBuiltinTypes) builtinKmClass else null
         val mutableMembers = mutableKmClass?.let { kmClass ->
             val typeParameters = kmClass.typeParameters.namesById()
             kmClass.functions.filter { it.name == memberName }.map {
-                formatFunction(it, inInterface = true, classTypeParameters = typeParameters)
+                formatFunction(it, inInterface = true, owner = kmClass, classTypeParameters = typeParameters)
             } + kmClass.properties.filter { it.name == memberName }.map {
-                formatProperty(it, inInterface = true, classTypeParameters = typeParameters)
+                formatProperty(it, inInterface = true, owner = kmClass, classTypeParameters = typeParameters)
             }
         } ?: emptyList()
 
@@ -635,9 +648,11 @@ internal class DefaultKotlinIntrospector(
         val members = mutableMembers.ifEmpty {
             kClass.memberFunctions.filter {
                 it.name == memberName && it.visibility == KVisibility.PUBLIC
-            }.map { formatKFunction(it) }.sorted() + kClass.memberProperties.filter {
+            }.map { formatKFunction(it, isOverride(builtinKmClass, it)) }.sortedBy {
+                it.removePrefix("override ")
+            } + kClass.memberProperties.filter {
                 it.name == memberName && it.visibility == KVisibility.PUBLIC
-            }.map { formatKProperty(it) }
+            }.map { formatKProperty(it, isOverride(builtinKmClass, it)) }
         }
 
         // Only the extensions from the standard library, like in the listing of the built-in type
@@ -1425,6 +1440,40 @@ internal class DefaultKotlinIntrospector(
 
     private fun isOverride(owner: KmClass?, property: KmProperty): Boolean =
         property.kind == MemberKind.FAKE_OVERRIDE || (owner != null && overrideResolver.isOverride(owner, property))
+
+    /**
+     * Whether the [function] reflected from a built-in type is an override of a member of its supertypes,
+     * told by its declaration in the built-in [owner] class.
+     * A member not declared there, like the one inherited from a supertype, or the one of the JVM type only,
+     * like `String.chars()`, is not an override.
+     */
+    private fun isOverride(owner: KmClass?, function: KFunction<*>): Boolean {
+        if (owner == null || function.parameters.any { it.kind == KParameter.Kind.EXTENSION_RECEIVER }) return false
+        val parameters = function.parameters.filter { it.kind == KParameter.Kind.VALUE }
+        val declaration = owner.functions.firstOrNull { candidate ->
+            candidate.name == function.name
+                    && candidate.receiverParameterType == null
+                    && candidate.valueParameters.size == parameters.size
+                    && candidate.valueParameters.zip(parameters).all { (kmParameter, parameter) ->
+                        sameClassifier(kmParameter.type, parameter.type)
+                    }
+        } ?: return false
+        return isOverride(owner, declaration)
+    }
+
+    private fun isOverride(owner: KmClass?, property: KProperty1<*, *>): Boolean {
+        val declaration = owner?.properties?.firstOrNull {
+            it.name == property.name && it.receiverParameterType == null
+        } ?: return false
+        return isOverride(owner, declaration)
+    }
+
+    private fun sameClassifier(kmType: KmType, type: kotlin.reflect.KType): Boolean =
+        when (val classifier = type.classifier) {
+            is KClass<*> -> (kmType.classifier as? KmClassifier.Class)?.name?.replace('/', '.') == classifier.qualifiedName
+            is KTypeParameter -> kmType.classifier is KmClassifier.TypeParameter
+            else -> false
+        }
 
     private fun buildFullClasspathIndex(): Triple<Map<String, List<IndexedExtension>>, Map<String, List<IndexedExtensionProperty>>, Map<String, List<String>>> {
         val funcIndex = mutableMapOf<String, MutableList<IndexedExtension>>()

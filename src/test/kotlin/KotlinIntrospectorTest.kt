@@ -46,7 +46,7 @@ class KotlinIntrospectorTest {
                 fun codePointBefore(index: Int): Int
                 fun codePointCount(beginIndex: Int, endIndex: Int): Int
                 fun codePoints(): java.util.stream.IntStream
-                operator fun compareTo(other: String): Int
+                override operator fun compareTo(other: String): Int
                 fun compareTo(other: String, ignoreCase: Boolean = …): Int
             }
         """.trimIndent()
@@ -86,14 +86,14 @@ class KotlinIntrospectorTest {
             class String : Comparable<String>, CharSequence {
                 fun encodeToByteArray(startIndex: Int = …, endIndex: Int = …, throwOnInvalidSequence: Boolean = …): ByteArray
                 fun endsWith(suffix: String, ignoreCase: Boolean = …): Boolean
-                operator fun equals(other: Any?): Boolean
+                override operator fun equals(other: Any?): Boolean
                 fun equals(other: String?, ignoreCase: Boolean = …): Boolean
                 fun filter(predicate: Function1<Char, Boolean>): String
                 fun filterIndexed(predicate: Function2<Int, Char, Boolean>): String
                 fun filterNot(predicate: Function1<Char, Boolean>): String
                 fun format(vararg args: Any?): String
                 fun format(locale: java.util.Locale?, vararg args: Any?): String
-                operator fun get(index: Int): Char
+                override operator fun get(index: Int): Char
             }
         """.trimIndent()
     }
@@ -153,7 +153,7 @@ class KotlinIntrospectorTest {
                 fun codePointBefore(index: Int): Int
                 fun codePointCount(beginIndex: Int, endIndex: Int): Int
                 fun codePoints(): java.util.stream.IntStream
-                operator fun compareTo(other: String): Int
+                override operator fun compareTo(other: String): Int
                 fun compareTo(other: String, ignoreCase: Boolean = …): Int
                 fun contentEquals(charSequence: CharSequence): Boolean
                 fun contentEquals(stringBuilder: java.lang.StringBuffer): Boolean
@@ -167,14 +167,14 @@ class KotlinIntrospectorTest {
                 fun encodeToByteArray(): ByteArray
                 fun encodeToByteArray(startIndex: Int = …, endIndex: Int = …, throwOnInvalidSequence: Boolean = …): ByteArray
                 fun endsWith(suffix: String, ignoreCase: Boolean = …): Boolean
-                operator fun equals(other: Any?): Boolean
+                override operator fun equals(other: Any?): Boolean
                 fun equals(other: String?, ignoreCase: Boolean = …): Boolean
                 fun filter(predicate: Function1<Char, Boolean>): String
                 fun filterIndexed(predicate: Function2<Int, Char, Boolean>): String
                 fun filterNot(predicate: Function1<Char, Boolean>): String
                 fun format(vararg args: Any?): String
                 fun format(locale: java.util.Locale?, vararg args: Any?): String
-                operator fun get(index: Int): Char
+                override operator fun get(index: Int): Char
                 fun hashCode(): Int
                 fun hexToByte(format: HexFormat = …): Byte
                 fun hexToByteArray(format: HexFormat = …): ByteArray
@@ -189,7 +189,7 @@ class KotlinIntrospectorTest {
                 fun intern(): String
                 fun isEmpty(): Boolean
                 fun isLocalClassName(): Boolean
-                val length: Int
+                override val length: Int
                 fun lowercase(): String
                 fun lowercase(locale: java.util.Locale): String
                 fun offsetByCodePoints(index: Int, codePointOffset: Int): Int
@@ -234,7 +234,7 @@ class KotlinIntrospectorTest {
                 fun stripIndent(): String
                 fun stripLeading(): String
                 fun stripTrailing(): String
-                fun subSequence(startIndex: Int, endIndex: Int): CharSequence
+                override fun subSequence(startIndex: Int, endIndex: Int): CharSequence
                 fun subSequence(start: Int, end: Int): CharSequence
                 fun substring(startIndex: Int): String
                 fun substring(startIndex: Int, endIndex: Int): String
@@ -293,7 +293,7 @@ class KotlinIntrospectorTest {
                 fun toShort(radix: Int): Short
                 fun toShortOrNull(): Short?
                 fun toShortOrNull(radix: Int): Short?
-                fun toString(): String
+                override fun toString(): String
                 fun toUByte(): UByte
                 fun toUByte(radix: Int): UByte
                 fun toUByteOrNull(): UByte?
@@ -2991,18 +2991,101 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // kotlin.collections.MutableList [page 1/35]
             interface MutableList<E> : List<E>, MutableCollection<E> {
-                fun add(element: E): Boolean
+                override fun add(element: E): Boolean
                 fun add(index: Int, element: E)
-                fun addAll(elements: Collection<E>): Boolean
+                override fun addAll(elements: Collection<E>): Boolean
                 fun addAll(index: Int, elements: Collection<E>): Boolean
                 fun <T> asReversed(): MutableList<T>
-                fun clear()
+                override fun clear()
                 fun <T> fill(value: T)
-                fun listIterator(): MutableListIterator<E>
-                fun listIterator(index: Int): MutableListIterator<E>
-                fun remove(element: E): Boolean
+                override fun listIterator(): MutableListIterator<E>
+                override fun listIterator(index: Int): MutableListIterator<E>
+                override fun remove(element: E): Boolean
             }
         """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve MutableList member overriding a MutableCollection member`() {
+        // rendered like the same member of a user class implementing MutableList
+        resolver.resolve(
+            "kotlin.collections.MutableList.add"
+        ) sameAsKotlin """
+            // kotlin.collections.MutableList.add [page 1/1]
+            override fun add(element: E): Boolean
+            fun add(index: Int, element: E)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve MutableCollection member overriding nothing`() {
+        resolver.resolve(
+            "kotlin.collections.MutableCollection.add"
+        ) sameAsKotlin """
+            // kotlin.collections.MutableCollection.add [page 1/1]
+            fun add(element: E): Boolean
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve List members overriding Collection members`() {
+        resolver.resolve("kotlin.collections.List", pageSize = 10000) should {
+            have("    override val size: Int" in lines())
+            have("    override fun isEmpty(): Boolean" in lines())
+            have("    override operator fun contains(element: E): Boolean" in lines())
+            have("    override operator fun iterator(): Iterator<E>" in lines())
+            have("    operator fun get(index: Int): E" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve List member overriding a Collection member`() {
+        resolver.resolve(
+            "kotlin.collections.List.size"
+        ) sameAsKotlin """
+            // kotlin.collections.List.size [page 1/1]
+            override val size: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve String members overriding CharSequence and Comparable members`() {
+        resolver.resolve("kotlin.String", pageSize = 10000) should {
+            have("    override val length: Int" in lines())
+            have("    override operator fun get(index: Int): Char" in lines())
+            have("    override fun subSequence(startIndex: Int, endIndex: Int): CharSequence" in lines())
+            have("    override operator fun compareTo(other: String): Int" in lines())
+            have("    override operator fun equals(other: Any?): Boolean" in lines())
+            have("    override fun toString(): String" in lines())
+            // not redeclared by String, just inherited from Any
+            have("    fun hashCode(): Int" in lines())
+            have("    fun compareTo(other: String, ignoreCase: Boolean = …): Int" in lines())
+            have("    operator fun plus(other: Any?): String" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve Int compareTo overriding only Comparable compareTo`() {
+        resolver.resolve(
+            "kotlin.Int.compareTo"
+        ) sameAsKotlin """
+            // kotlin.Int.compareTo [page 1/1]
+            operator fun compareTo(other: Byte): Int
+            operator fun compareTo(other: Double): Int
+            operator fun compareTo(other: Float): Int
+            override operator fun compareTo(other: Int): Int
+            operator fun compareTo(other: Long): Int
+            operator fun compareTo(other: Short): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Any members as not overriding`() {
+        resolver.resolve("kotlin.Any") should {
+            have("    operator fun equals(other: Any?): Boolean" in lines())
+            have("    fun hashCode(): Int" in lines())
+            have("    fun toString(): String" in lines())
+        }
     }
 
     // pagination tests
