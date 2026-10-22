@@ -34,7 +34,6 @@ import java.util.jar.JarFile
 import kotlin.metadata.*
 import kotlin.metadata.internal.common.KotlinCommonMetadata
 import kotlin.metadata.jvm.KotlinClassMetadata
-import kotlin.metadata.jvm.annotations
 import kotlin.reflect.KClass
 import kotlin.reflect.KFunction
 import kotlin.reflect.KParameter
@@ -1268,15 +1267,32 @@ internal class DefaultKotlinIntrospector(
         return if (constraints.isEmpty()) "" else " where ${constraints.joinToString(", ")}"
     }
 
-    private fun formatType(
+    internal fun formatType(
         type: KmType,
         contextPackage: String? = null,
         typeParameters: Map<Int, String> = emptyMap()
     ): String {
         if (type.isSuspend) {
-            formatSuspendFunctionType(type, contextPackage, typeParameters)?.let { return it }
+            val functionType = type.decodeFunctionType()
+            val formatted = if (functionType != null) {
+                formatFunctionType(functionType, contextPackage, typeParameters)
+            } else {
+                // an unexpected shape, the runtime type is printed, still marked as suspend
+                "suspend " + formatClassType(type, contextPackage, typeParameters).removeSuffix("?")
+            }
+            return if (type.isNullable) "($formatted)?" else formatted
         }
+        return formatClassType(type, contextPackage, typeParameters)
+    }
 
+    /**
+     * Formats a [type] as written, like `List<String>`, without the special syntax of function types.
+     */
+    private fun formatClassType(
+        type: KmType,
+        contextPackage: String?,
+        typeParameters: Map<Int, String>
+    ): String {
         val baseName = when (val classifier = type.classifier) {
             is KmClassifier.Class -> {
                 val fqn = classifier.name.replace("/", ".")
@@ -1313,38 +1329,28 @@ internal class DefaultKotlinIntrospector(
     }
 
     /**
-     * Formats a suspend function type, like `suspend Foo.(Int) -> String`.
-     *
-     * The metadata stores it as the runtime type `FunctionN<Foo, Int, Continuation<String>, Any?>`
-     * marked with [KmType.isSuspend], which is not something one can write in Kotlin.
-     *
-     * @return the formatted type, or `null` if the type does not have the expected shape.
+     * Formats a [functionType], like `suspend context(Ctx) Foo.(Int) -> String`, without the nullability.
      */
-    private fun formatSuspendFunctionType(
-        type: KmType,
+    private fun formatFunctionType(
+        functionType: FunctionType,
         contextPackage: String?,
         typeParameters: Map<Int, String>
-    ): String? {
-        val arguments = type.arguments.map { it.type ?: return null }
-        if (arguments.size < 2) return null
-        val returnType = arguments[arguments.size - 2].arguments.singleOrNull()?.type ?: return null
-        val parameters = arguments.dropLast(2)
-        val receiver = parameters.firstOrNull()?.takeIf { type.isExtensionFunctionType }
-        val valueParameters = if (receiver != null) parameters.drop(1) else parameters
-
-        fun format(type: KmType) = formatType(type, contextPackage, typeParameters)
-
-        val functionType = buildString {
-            +"suspend "
-            if (receiver != null) {
-                +formatReceiverType(receiver, contextPackage, typeParameters)
-                +"."
+    ): String = buildString {
+        if (functionType.isSuspend) +"suspend "
+        if (functionType.contextParameters.isNotEmpty()) {
+            +functionType.contextParameters.joinToString(", ", prefix = "context(", postfix = ") ") {
+                formatType(it, contextPackage, typeParameters)
             }
-            +valueParameters.joinToString(", ", prefix = "(", postfix = ")") { format(it) }
-            +" -> "
-            +format(returnType)
         }
-        return if (type.isNullable) "($functionType)?" else functionType
+        functionType.receiver?.let {
+            +formatReceiverType(it, contextPackage, typeParameters)
+            +"."
+        }
+        +functionType.valueParameters.joinToString(", ", prefix = "(", postfix = ")") {
+            formatType(it, contextPackage, typeParameters)
+        }
+        +" -> "
+        +formatType(functionType.returnType, contextPackage, typeParameters)
     }
 
     /**
@@ -1358,15 +1364,8 @@ internal class DefaultKotlinIntrospector(
         typeParameters: Map<Int, String>
     ): String {
         val formatted = formatType(type, contextPackage, typeParameters)
-        return if (type.isSuspend && !type.isNullable && formatted.startsWith("suspend ")) "($formatted)" else formatted
+        return if (formatted.startsWith("suspend ")) "($formatted)" else formatted
     }
-
-    /**
-     * Whether this function type has a receiver, like `Foo.() -> Unit`.
-     * The receiver is marked with the `@ExtensionFunctionType` type annotation.
-     */
-    private val KmType.isExtensionFunctionType: Boolean
-        get() = annotations.any { it.className == "kotlin/ExtensionFunctionType" }
 
     /**
      * Determines if a type is a well-known stdlib type that should use simple name.

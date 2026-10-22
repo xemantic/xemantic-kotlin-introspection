@@ -71,6 +71,14 @@ class SuspendFunctionTypesTestClass {
     fun launchWithNullableReceiver(block: suspend (suspend () -> Unit)?.() -> Unit) {}
 }
 
+// Class with suspend function types having context parameters
+class SuspendContextFunctionTypesTestClass {
+    fun launchInContext(block: suspend context(FunctionModifiersTestClass) () -> Unit) {}
+    fun launchInContexts(block: suspend context(FunctionModifiersTestClass, String) (Int) -> Boolean) {}
+    fun launchInContextWithReceiver(block: suspend context(FunctionModifiersTestClass) String.(Int) -> Unit) {}
+    fun launchInContextNullable(block: (suspend context(FunctionModifiersTestClass) () -> Unit)?) {}
+}
+
 // Extensions on a suspend function type
 fun (suspend () -> Unit).retry() {}
 
