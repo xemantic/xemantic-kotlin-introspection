@@ -31,6 +31,7 @@ import java.lang.reflect.Modifier
 import java.lang.reflect.ParameterizedType
 import java.lang.reflect.TypeVariable
 import java.lang.reflect.WildcardType
+import kotlin.metadata.ClassKind
 import kotlin.metadata.KmClass
 import kotlin.metadata.KmClassifier
 import kotlin.metadata.KmFunction
@@ -44,6 +45,7 @@ import kotlin.metadata.isDefinitelyNonNull
 import kotlin.metadata.isInner
 import kotlin.metadata.isNullable
 import kotlin.metadata.isSuspend
+import kotlin.metadata.kind
 import kotlin.metadata.jvm.JvmMethodSignature
 import kotlin.metadata.jvm.getterSignature
 import kotlin.metadata.jvm.moduleName
@@ -73,18 +75,22 @@ import org.objectweb.asm.Type as AsmType
  * so that a long-lived resolver over a large classpath does not keep the declarations of every class ever resolved.
  * This class is thread-safe.
  *
- * @param classLoader the class loader of the introspected classes.
- * @param loadClass loads a class by its JVM binary name, like `com.example.Outer${'$'}Nested`,
- *   which must be loaded through the [classLoader], as its class files are told by the latter.
- * @param readKmClass reads the Kotlin metadata of a class, if it is a Kotlin class.
+ * @param classLoader the class loader of the introspected classes, telling which classes have their own class files.
+ * @param loadClassByMetadataName loads a class by its Kotlin class name, like `java/util/Map.Entry`,
+ *   through the [classLoader], unless it cannot be loaded.
+ * @param loadKmClassByMetadataName reads the Kotlin metadata of a class by its Kotlin class name, if it is a Kotlin class,
+ *   also of one which cannot be loaded, but whose class file can still be read.
+ * @param readClassBytesByMetadataName reads the class file of a class by its Kotlin class name,
+ *   also of one which cannot be loaded.
  * @param builtinClasses the declarations of the Kotlin built-in types, by their Kotlin class name, like `kotlin/collections/List`.
  * @param builtinTypes the JVM classes of the Kotlin built-in types, by their fully qualified Kotlin name.
  */
 @OptIn(ExperimentalContextParameters::class)
 internal class OverrideResolver(
     private val classLoader: ClassLoader,
-    private val loadClass: (String) -> Class<*>?,
-    private val readKmClass: (Class<*>) -> KmClass?,
+    private val loadClassByMetadataName: (String) -> Class<*>?,
+    private val loadKmClassByMetadataName: (String) -> KmClass?,
+    private val readClassBytesByMetadataName: (String) -> ByteArray?,
     private val builtinClasses: () -> Map<String, KmClass>,
     builtinTypes: Map<String, kotlin.reflect.KClass<*>>
 ) {
@@ -421,30 +427,31 @@ internal class OverrideResolver(
             }
         }
 
-        // only the name is captured, as the overridables are cached
-        val ownerBinaryName = binaryName(owner.name)
-        return Overridables(ownerSubstitution, functions, properties) {
-            loadClass(ownerBinaryName)?.let { jvmMethods(it) }
-        }
+        // only the name and the kind are captured, as the overridables are cached
+        val ownerName = owner.name
+        val isInterface = owner.kind == ClassKind.INTERFACE
+        return Overridables(ownerSubstitution, functions, properties) { jvmMethods(ownerName, isInterface) }
     }
 
     /**
-     * The JVM methods of a Kotlin class, as names followed by descriptors,
+     * The JVM methods of a Kotlin class, as names followed by descriptors, read from its class file,
+     * whether the class can be loaded or not,
      * including the members of an interface relocated to its `DefaultImpls` class,
      * like with `-jvm-default=disable`, as if they were declared in the interface,
      * or `null` if the class files cannot be read.
      */
-    private fun jvmMethods(javaClass: Class<*>): Set<String>? {
-        val internalName = javaClass.name.replace('.', '/')
+    private fun jvmMethods(className: String, isInterface: Boolean): Set<String>? {
+        // the package is separated with '/', and nested classes with '.'
+        val internalName = className.replace('.', '$')
         val methods = mutableSetOf<String>()
-        val isRead = readMethods(classBytes(javaClass.classLoader, internalName) ?: return null) { _, name, descriptor, _ ->
+        val isRead = readMethods(readClassBytesByMetadataName(className) ?: return null) { _, name, descriptor, _ ->
             methods += name + descriptor
         }
         if (!isRead) return null
-        if (javaClass.isInterface) {
+        if (isInterface) {
             // the static method of DefaultImpls takes the interface instance as the first parameter
             val instanceParameter = "(L$internalName;"
-            val defaultImpls = classBytes(javaClass.classLoader, "$internalName\$DefaultImpls")
+            val defaultImpls = readClassBytesByMetadataName("$className.DefaultImpls")
             if (defaultImpls != null) {
                 val isDefaultImplsRead = readMethods(defaultImpls) { access, name, descriptor, _ ->
                     if (access and Opcodes.ACC_STATIC != 0 && descriptor.startsWith(instanceParameter)) {
@@ -725,10 +732,10 @@ internal class OverrideResolver(
         val builtinClass = builtinClasses()[name]
         // a built-in type without its own class file, like List, is not looked up through the class loader,
         // which would only throw a ClassNotFoundException
-        val binaryName = binaryName(name)
-        val javaClass = if (builtinClass == null || hasClassFile(binaryName)) loadClass(binaryName) else null
-        // the built-in declaration of a type having its own class file, like KClass, is incomplete
-        javaClass?.let { readKmClass(it) }?.let { return Declaration(it, null) }
+        if (builtinClass == null || hasClassFile(binaryName(name))) {
+            // the built-in declaration of a type having its own class file, like KClass, is incomplete
+            loadKmClassByMetadataName(name)?.let { return Declaration(it, null) }
+        }
         builtinClass?.let { kmClass ->
             // members of Any are fully described by its Kotlin declaration, unlike the JVM members of Object
             val builtinJavaClass = if (name == "kotlin/Any") null else builtinJavaClasses[name]
@@ -739,7 +746,7 @@ internal class OverrideResolver(
             }
             return Declaration(kmClass, builtinJavaClass, hiddenJavaMethods)
         }
-        return Declaration(null, javaClass)
+        return Declaration(null, loadClassByMetadataName(name))
     }
 
     /**
@@ -973,7 +980,7 @@ internal class OverrideResolver(
         ownerPackage: String,
         substitution: JavaSubstitution
     ): List<Pair<String, Overridable>> {
-        val bytes = classBytes(javaClass.classLoader, javaClass.name.replace('.', '/')) ?: return emptyList()
+        val bytes = readClassBytesByMetadataName(kotlinClassName(javaClass)) ?: return emptyList()
         val methods = mutableListOf<Pair<String, Overridable>>()
         val isRead = readMethods(bytes) { access, name, descriptor, signature ->
             val isOverridable = access and (Opcodes.ACC_STATIC or Opcodes.ACC_FINAL or Opcodes.ACC_PRIVATE or
@@ -998,17 +1005,6 @@ internal class OverrideResolver(
         }
         // the methods of a class file which cannot be parsed are unknown
         return if (isRead) methods else emptyList()
-    }
-
-    /**
-     * @param internalName the JVM internal name of the class, like `java/util/Map$Entry`.
-     */
-    private fun classBytes(classLoader: ClassLoader?, internalName: String): ByteArray? = try {
-        (classLoader ?: ClassLoader.getSystemClassLoader())
-            .getResourceAsStream("$internalName.class")
-            ?.use { it.readBytes() }
-    } catch (_: java.io.IOException) {
-        null
     }
 
     /**
@@ -1075,15 +1071,17 @@ internal class OverrideResolver(
         }
         AsmType.OBJECT -> {
             val binaryName = type.className
+            // a class missing from the classpath is assumed to be named without `$`,
+            // which is also the metadata name the class of this binary name is loaded by
+            val assumedName = kotlinClassName(
+                binaryName.substringBeforeLast('.', ""),
+                binaryName.substringAfterLast('.').replace('$', '.')
+            )
             ClassType(
                 javaToKotlinNames[binaryName]
                     // the nesting is known from the class, as `$` can be part of a class name
-                    ?: loadClass(binaryName)?.let { kotlinClassName(it) }
-                    // a class missing from the classpath is assumed to be named without `$`
-                    ?: kotlinClassName(
-                        binaryName.substringBeforeLast('.', ""),
-                        binaryName.substringAfterLast('.').replace('$', '.')
-                    ),
+                    ?: loadClassByMetadataName(assumedName)?.let { kotlinClassName(it) }
+                    ?: assumedName,
                 nullable = null
             )
         }

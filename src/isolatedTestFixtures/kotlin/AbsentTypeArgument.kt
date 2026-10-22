@@ -124,3 +124,13 @@ sealed interface AbsentSealed {
     // tests leave this class file out as well
     class Gone : AbsentSealed
 }
+
+// the overrides are inherited through a class which cannot be loaded, neither can this one
+open class AbsentMid : Absent() {
+    open fun foo() {}
+}
+
+class AbsentLeaf : AbsentMid() {
+    override fun foo() {}
+    fun bar() {}
+}

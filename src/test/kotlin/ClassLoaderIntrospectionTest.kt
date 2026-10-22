@@ -448,6 +448,40 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should mark overrides inherited through class which cannot be loaded`() {
+        // given
+        val introspector = introspectorWithoutAbsentClass()
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.AbsentLeaf"
+        )
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.AbsentLeaf [page 1/1]
+            class AbsentLeaf : AbsentMid {
+                override fun foo()
+                fun bar()
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve class by name with slashes`() {
+        // given
+        val introspector = introspectorWithoutAbsentClass()
+
+        // when
+        val signature = introspector.resolve(
+            "com/xemantic/kotlin/introspection/isolated/AbsentNestedHolder"
+        )
+
+        // then
+        assert(signature == null)
+    }
+
+    @Test
     fun `should not resolve nested class without class file`() {
         // given
         val introspector = introspectorWithoutAbsentClass()
@@ -464,10 +498,15 @@ class ClassLoaderIntrospectionTest {
     /**
      * A class loader counting the classes requested by their names.
      */
-    private class CountingClassLoader(parent: ClassLoader) : ClassLoader(parent) {
+    private class CountingClassLoader(
+        parent: ClassLoader,
+        private val failingOnce: Set<String> = emptySet()
+    ) : ClassLoader(parent) {
         val loads = ConcurrentHashMap<String, Int>()
         override fun loadClass(name: String, resolve: Boolean): Class<*> {
-            loads.merge(name, 1, Int::plus)
+            val count = loads.merge(name, 1, Int::plus)
+            // like a transient failure, unlike a class missing from the classpath
+            if (name in failingOnce && count == 1) throw LinkageError("transient failure of $name")
             return super.loadClass(name, resolve)
         }
     }
@@ -503,6 +542,26 @@ class ClassLoaderIntrospectionTest {
         }
         assert(nestedLoads.isNotEmpty())
         assert(nestedLoads.values.all { it == 1 })
+        // only by their binary names, as known from the metadata, without trying the other ones
+        assert(nestedLoads.keys.none { name -> '.' in name.removePrefix("com.xemantic.kotlin.introspection.test.") })
+    }
+
+    @Test
+    fun `should load nested class again after a transient linkage error`() {
+        // given
+        val nested = "com.xemantic.kotlin.introspection.test.TypeParametersNestedHolder\$Sorted"
+        val classLoader = CountingClassLoader(javaClass.classLoader, failingOnce = setOf(nested))
+        val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
+
+        // when
+        val signatures = List(2) {
+            introspector.resolve("com.xemantic.kotlin.introspection.test.TypeParametersNestedHolder")
+        }
+
+        // then
+        // read from the class file the first time, and loaded the second time
+        assert(signatures.all { it != null && "class Sorted<T>" in it })
+        assert(classLoader.loads[nested] == 2)
     }
 
     @Test
