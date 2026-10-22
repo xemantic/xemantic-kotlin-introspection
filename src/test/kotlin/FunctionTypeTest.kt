@@ -18,6 +18,8 @@
 
 package com.xemantic.kotlin.introspection
 
+import com.xemantic.kotlin.introspection.test.FunctionTypesSample
+import com.xemantic.kotlin.introspection.test.NamedFunctionTypeParametersSample
 import com.xemantic.kotlin.test.assert
 import com.xemantic.kotlin.test.have
 import com.xemantic.kotlin.test.should
@@ -30,6 +32,7 @@ import kotlin.metadata.KmVariance
 import kotlin.metadata.isNullable
 import kotlin.metadata.isSuspend
 import kotlin.metadata.jvm.annotations
+import kotlin.reflect.full.declaredMemberFunctions
 import kotlin.test.Test
 
 /**
@@ -198,6 +201,54 @@ class FunctionTypeTest {
 
         // then
         assert(formatted == "(suspend Function2<*, Continuation<Unit>, Any?>)?")
+    }
+
+    @Test
+    fun `should format function type with kotlin-reflect`() {
+        // given
+        val types = FunctionTypesSample::class.declaredMemberFunctions
+            .sortedBy { it.name }
+            .flatMap { function -> function.parameters.drop(1).map { it.type } + function.returnType }
+            .filter { it.classifier != Unit::class }
+
+        // when
+        val formatted = types.map { formatKTypeProjection(it) }
+
+        // then
+        assert(
+            formatted == listOf(
+                "(Int) -> (Int) -> Int",
+                "() -> Unit",
+                "suspend () -> Unit",
+                "suspend (() -> Unit) -> Unit",
+                "context(String) () -> Unit",
+                "context(String) Int.(Long) -> Boolean",
+                "(() -> Unit)?",
+                "(() -> Unit).() -> Unit",
+                "com.xemantic.kotlin.introspection.test.FunctionModifiersTestClass.() -> Unit",
+                "KFunction<Int, String>"
+            )
+        )
+    }
+
+    @Test
+    fun `should format parameter names of function type with kotlin-reflect`() {
+        // given
+        val types = NamedFunctionTypeParametersSample::class.declaredMemberFunctions
+            .sortedBy { it.name }
+            .map { it.parameters[1].type }
+
+        // when
+        val formatted = types.map { formatKTypeProjection(it) }
+
+        // then
+        assert(
+            formatted == listOf(
+                "(index: Int, Char) -> Boolean",
+                "suspend (id: Int, name: String) -> Unit",
+                "String.(index: Int) -> Unit"
+            )
+        )
     }
 
 }

@@ -83,3 +83,31 @@ class SuspendContextFunctionTypesTestClass {
 fun (suspend () -> Unit).retry() {}
 
 val (suspend () -> Unit).retryCount: Int get() = 0
+
+// Class with function types, rendered in arrow notation
+class FunctionTypesSample {
+    val handler: (String) -> Unit = {}
+    fun launchBoth(block: () -> Unit, suspendBlock: suspend () -> Unit) {}
+    fun launchWithReceiver(block: FunctionModifiersTestClass.() -> Unit) {}
+    fun launchInContext(block: context(String) () -> Unit) {}
+    fun launchInContextWithReceiver(block: context(String) Int.(Long) -> Boolean) {}
+    fun launchNullable(block: (() -> Unit)?) {}
+    fun launchHigherOrder(block: suspend (() -> Unit) -> Unit) {}
+    fun launchWithFunctionReceiver(block: (() -> Unit).() -> Unit) {}
+    fun curried(): (Int) -> (Int) -> Int = { a -> { b -> a + b } }
+    fun reference(function: kotlin.reflect.KFunction1<Int, String>) {}
+}
+
+// Class with function types declaring parameter names
+class NamedFunctionTypeParametersSample {
+    fun launch(block: suspend (id: Int, name: String) -> Unit) {}
+    fun filter(predicate: (index: Int, Char) -> Boolean) {}
+    fun launchWithReceiver(block: String.(index: Int) -> Unit) {}
+}
+
+// Extensions on function types
+fun (() -> Unit).repeat() {}
+
+val (() -> Unit).repeatCount: Int get() = 0
+
+fun (context(String) () -> Unit).runInContext() {}
