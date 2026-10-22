@@ -148,11 +148,11 @@ class ClassLoaderIntrospectionTest {
         )
 
         // then
-        // the override cannot be told without reflection, but resolving does not fail
+        // the type argument of Comparable is unknown, but Comparable.compareTo is still found
         signature sameAsKotlin """
             // com.xemantic.kotlin.introspection.isolated.AbsentTypeArgumentComparable [page 1/1]
             class AbsentTypeArgumentComparable : Comparable<Absent> {
-                open operator fun compareTo(other: Absent): Int
+                override operator fun compareTo(other: Absent): Int
             }
         """.trimIndent()
     }

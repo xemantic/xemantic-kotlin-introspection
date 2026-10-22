@@ -97,7 +97,19 @@ private typealias TypeBindings = Map<TypeVariable<*>, TypeBinding>
  * The name of a function without the suffix mangling its JVM name,
  * when it takes value class parameters, or is a member of a value class.
  */
-private fun String.unmangled(): String = substringBefore('-')
+private fun String.unmangled(): String = replace(manglingSuffix, "")
+
+// the 7 character hash, of the URL-safe base64 alphabet, appended for value class parameters,
+// and the -impl suffix of the static methods implementing the members of value classes
+private val manglingSuffix = Regex("(-[A-Za-z0-9_-]{7})?(-impl)?$")
+
+/**
+ * The descriptors of boxed primitive types, by the descriptors of their primitive types.
+ */
+private val boxedTypeDescriptors: Map<String, String> = listOf(
+    Boolean::class, Byte::class, Char::class, Short::class,
+    Int::class, Long::class, Float::class, Double::class
+).associate { Type.getDescriptor(it.javaPrimitiveType) to Type.getDescriptor(it.javaObjectType) }
 
 /**
  * Represents an indexed extension function with its source location.
@@ -1273,7 +1285,7 @@ internal class DefaultKotlinIntrospector(
      * Tells if any supertype of [clazz] declares an overridable method,
      * which is overridden by the method of [clazz] with the given JVM [name] and [jvmParameterTypes],
      * and with [kotlinParameterTypes], where value class parameters keep their value class
-     * instead of the underlying type.
+     * instead of the underlying type. The parameter types are JVM type descriptors.
      *
      * All the superclasses and interfaces are walked, including non-public members.
      * A supertype method matches when it has the same JVM signature,
@@ -1283,14 +1295,15 @@ internal class DefaultKotlinIntrospector(
      * so that `process(item: String)` matches `Processor<String>.process(item: T)`,
      * but its overload `process(item: Int)` does not.
      *
-     * A supertype which cannot be reflected, because it refers to a class missing from the classpath,
-     * is skipped.
+     * When the generic supertypes of a class cannot be reflected,
+     * because they refer to a class missing from the classpath,
+     * its raw supertypes are walked instead, with their type arguments unknown.
      */
     private fun overridesSupertypeMethod(
         clazz: Class<*>,
         name: String,
-        jvmParameterTypes: List<Class<*>>,
-        kotlinParameterTypes: Lazy<List<Class<*>>>
+        jvmParameterTypes: List<String>,
+        kotlinParameterTypes: Lazy<List<String>>
     ): Boolean {
         val unmangledName = name.unmangled()
         val visited = mutableSetOf<Class<*>>()
@@ -1313,55 +1326,76 @@ internal class DefaultKotlinIntrospector(
             return true
         }
 
-        fun matches(method: Method, bindings: TypeBindings): Boolean {
+        /**
+         * @param bindings the type arguments of the declaring class, or `null` if they are unknown.
+         */
+        fun matches(method: Method, bindings: TypeBindings?): Boolean {
             if (method.parameterCount != jvmParameterTypes.size || !isOverridable(method)) return false
-            if (method.name == name && method.parameterTypes.asList() == jvmParameterTypes) return true
+            if (method.name == name && method.parameterTypes.map(Type::getDescriptor) == jvmParameterTypes) return true
             // the JVM parameter types of a mangled supertype method are the underlying types of value classes,
             // so only its exact JVM signature, including the mangling hash, can match
             if (method.name != unmangledName) return false
             return kotlinGenericParameterTypes(method).zip(kotlinParameterTypes.value).all { (superType, type) ->
-                val erased = erase(superType, bindings)
-                erased == type || (superType is TypeVariable<*> && erased == type.kotlin.javaObjectType)
+                val isTypeVariable = superType is TypeVariable<*>
+                if (isTypeVariable && bindings == null && superType.genericDeclaration == method.declaringClass) {
+                    true // an unknown type argument
+                } else {
+                    val erased = Type.getDescriptor(erase(superType, bindings ?: emptyMap()))
+                    erased == type || (isTypeVariable && erased == boxedTypeDescriptors[type])
+                }
             }
         }
 
-        fun visit(supertype: JavaType, bindings: TypeBindings): Boolean = try {
-            val rawType = erase(supertype, emptyMap())
-            if (!visited.add(rawType)) {
-                false
-            } else {
-                val supertypeBindings: TypeBindings = if (supertype is ParameterizedType) {
-                    rawType.typeParameters.zip(supertype.actualTypeArguments) { parameter, argument ->
-                        parameter as TypeVariable<*> to TypeBinding(argument, bindings)
-                    }.toMap()
-                } else emptyMap()
-                rawType.declaredMethods.any { matches(it, supertypeBindings) }
-                    || directSupertypes(rawType).any { visit(it, supertypeBindings) }
+        /**
+         * @param bindings the type arguments of the enclosing type, or `null` if they are unknown,
+         * in which case [type] is a raw class.
+         * @param isSupertype `false` for [clazz] itself, whose methods are not checked.
+         */
+        fun visit(type: JavaType, bindings: TypeBindings?, isSupertype: Boolean = true): Boolean {
+            val rawType = erase(type, emptyMap())
+            if (!visited.add(rawType)) return false
+            val typeBindings: TypeBindings? = when {
+                bindings == null -> null
+                type is ParameterizedType -> rawType.typeParameters.zip(type.actualTypeArguments) { parameter, argument ->
+                    parameter as TypeVariable<*> to TypeBinding(argument, bindings)
+                }.toMap()
+                else -> emptyMap()
             }
-        } catch (e: Exception) {
-            if (!e.isReflectionFailure()) throw e
-            false
-        } catch (_: LinkageError) {
-            false
+            if (isSupertype && reflectOrNull {
+                    rawType.declaredMethods.any { method -> reflectOrNull { matches(method, typeBindings) } == true }
+                } == true
+            ) return true
+            val genericSupertypes = if (typeBindings != null) reflectOrNull { directSupertypes(rawType) } else null
+            return genericSupertypes?.any { visit(it, typeBindings) }
+                ?: rawSupertypes(rawType).any { visit(it, null) }
         }
 
-        return try {
-            directSupertypes(clazz).any { visit(it, emptyMap()) }
-        } catch (e: Exception) {
-            if (!e.isReflectionFailure()) throw e
-            false
-        } catch (_: LinkageError) {
-            false
-        }
+        return visit(clazz, emptyMap(), isSupertype = false)
     }
 
-    private fun Exception.isReflectionFailure() =
-        this is TypeNotPresentException || this is MalformedParameterizedTypeException
+    /**
+     * The result of reflecting with [block], or `null` if it refers to a class missing from the classpath.
+     */
+    private inline fun <T> reflectOrNull(block: () -> T): T? = try {
+        block()
+    } catch (_: LinkageError) {
+        null
+    } catch (_: TypeNotPresentException) {
+        null
+    } catch (_: MalformedParameterizedTypeException) {
+        null
+    }
 
     private fun directSupertypes(clazz: Class<*>): List<JavaType> =
-        listOfNotNull(clazz.genericSuperclass) + clazz.genericInterfaces +
-            // interfaces do not report Object as their superclass, but still inherit its members
-            if (clazz.isInterface && clazz.interfaces.isEmpty()) listOf(Any::class.java) else emptyList()
+        listOfNotNull(clazz.genericSuperclass) + clazz.genericInterfaces + interfaceObject(clazz)
+
+    private fun rawSupertypes(clazz: Class<*>): List<JavaType> =
+        reflectOrNull { listOfNotNull(clazz.superclass) + clazz.interfaces + interfaceObject(clazz) }
+            ?: emptyList()
+
+    // interfaces do not report Object as their superclass, but still inherit its members
+    private fun interfaceObject(clazz: Class<*>): List<JavaType> =
+        if (clazz.isInterface && clazz.interfaces.isEmpty()) listOf(Any::class.java) else emptyList()
 
     /**
      * The generic parameter types of [method], as seen in Kotlin:
@@ -1405,27 +1439,21 @@ internal class DefaultKotlinIntrospector(
 
     private fun isMethodOverride(clazz: Class<*>, function: KmFunction): Boolean {
         val signature = function.signature ?: return false
-        val method = try {
-            clazz.declaredMethods.firstOrNull {
-                it.name == signature.name && Type.getMethodDescriptor(it) == signature.descriptor
-            }
-        } catch (_: LinkageError) {
-            null
-        } ?: return false
-        // members of value classes are compiled to static methods taking the underlying value first
-        val isValueClassMember = Modifier.isStatic(method.modifiers) && readKmClass(clazz)?.isValue == true
-        val name = if (isValueClassMember) method.name.removeSuffix("-impl") else method.name
-        val jvmParameterTypes = method.parameterTypes.asList().let {
-            if (isValueClassMember) it.drop(1) else it
+        // the receiver precedes the value parameters, and a suspend function takes a trailing Continuation
+        val kotlinTypes = listOfNotNull(function.receiverParameterType) + function.valueParameters.map { it.type }
+        val expectedSize = kotlinTypes.size + if (function.isSuspend) 1 else 0
+        val jvmParameterTypes = Type.getArgumentTypes(signature.descriptor).map { it.descriptor }.let {
+            // members of value classes are compiled to static methods taking the underlying value first
+            if (it.size == expectedSize + 1 && readKmClass(clazz)?.isValue == true) it.drop(1) else it
         }
         val kotlinParameterTypes = lazy {
-            // the receiver, if any, precedes the value parameters
-            val offset = jvmParameterTypes.size - function.valueParameters.size
-            jvmParameterTypes.mapIndexed { index, type ->
-                function.valueParameters.getOrNull(index - offset)?.let { valueClassOf(it.type) } ?: type
+            if (jvmParameterTypes.size != expectedSize) {
+                jvmParameterTypes // like with context parameters, which are not mapped
+            } else jvmParameterTypes.mapIndexed { index, type ->
+                kotlinTypes.getOrNull(index)?.let { valueClassOf(it) }?.let { Type.getDescriptor(it) } ?: type
             }
         }
-        return overridesSupertypeMethod(clazz, name, jvmParameterTypes, kotlinParameterTypes)
+        return overridesSupertypeMethod(clazz, signature.name, jvmParameterTypes, kotlinParameterTypes)
     }
 
     private fun isPropertyOverride(clazz: Class<*>, propertyName: String): Boolean {

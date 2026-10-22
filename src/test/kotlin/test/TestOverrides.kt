@@ -128,3 +128,29 @@ class CloneableCopy : Cloneable {
 class PackagePrivateSubclass : PackagePrivateBase() {
     fun hidden() {}
 }
+
+// Suspend functions take a trailing Continuation on the JVM
+interface SuspendProcessor<T> {
+    suspend fun process(item: T)
+}
+
+class UIntSuspendProcessor : SuspendProcessor<UInt> {
+    override suspend fun process(item: UInt) {}
+}
+
+// Receivers precede the value parameters on the JVM
+interface ReceiverProcessor<T> {
+    suspend fun Int.handle(x: T)
+    fun T.describe(): String
+}
+
+class UIntReceiverProcessor : ReceiverProcessor<UInt> {
+    override suspend fun Int.handle(x: UInt) {}
+    override fun UInt.describe(): String = ""
+}
+
+// A function name containing a dash, which is not a mangling suffix
+class DashedNameProcessor : Processor<String> {
+    override fun process(item: String) {}
+    fun `process-item`(item: String) {}
+}

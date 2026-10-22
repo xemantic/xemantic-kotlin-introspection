@@ -1049,6 +1049,44 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should mark suspend override with value class type argument`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.UIntSuspendProcessor"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.UIntSuspendProcessor [page 1/1]
+            class UIntSuspendProcessor : SuspendProcessor<UInt> {
+                override suspend fun process(item: UInt)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark member extension overrides with value class type argument`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.UIntReceiverProcessor"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.UIntReceiverProcessor [page 1/1]
+            class UIntReceiverProcessor : ReceiverProcessor<UInt> {
+                override suspend fun Int.handle(x: UInt)
+                override fun UInt.describe(): String
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not mark function with dash in its name as override`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.DashedNameProcessor"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DashedNameProcessor [page 1/1]
+            class DashedNameProcessor : Processor<String> {
+                override fun process(item: String)
+                fun process-item(item: String)
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve member of nested class`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.SealedTestClass.SubClass1.name"
