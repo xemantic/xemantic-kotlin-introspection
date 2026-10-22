@@ -1402,6 +1402,100 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should keep final modality of override in enum class with entry bodies`() {
+        // an enum class is final in the metadata, even when its entries subclass it
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.EntryBodiesEnum"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.EntryBodiesEnum [page 1/1]
+            enum class EntryBodiesEnum : EnumOverridable {
+                A,
+                B;
+                override fun f(): Int
+                final override fun g()
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should keep final modality of override in enum class without entry bodies`() {
+        // the metadata does not tell whether the entries have bodies
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.PlainEnum"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PlainEnum [page 1/1]
+            enum class PlainEnum : EnumOverridable {
+                A,
+                B;
+                override fun f(): Int
+                final override fun g()
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should keep abstract and final modality of override in sealed class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.SealedModalityOverrides"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SealedModalityOverrides [page 1/1]
+            sealed class SealedModalityOverrides : ModalityBase {
+                abstract override fun abstracted()
+                final override fun finalized()
+                override fun reopened()
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not mark override in object as final`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ObjectModalityOverrides"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ObjectModalityOverrides [page 1/1]
+            object ObjectModalityOverrides : ModalityBase {
+                override fun finalized()
+                override fun reopened()
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not mark override in companion object as final`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.CompanionModalityOverrides"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.CompanionModalityOverrides [page 1/1]
+            class CompanionModalityOverrides {
+                companion object {
+                    override fun finalized()
+                    override fun reopened()
+                }
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render modifiers of vararg property declared in primary constructor in conventional order`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.VarargConstructorProperty"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.VarargConstructorProperty [page 1/1]
+            open class VarargConstructorProperty(open vararg val xs: Int)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render vararg override declared in primary constructor in conventional order`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.VarargConstructorOverride"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.VarargConstructorOverride [page 1/1]
+            class VarargConstructorOverride(override vararg val xs: Int) : HasXs
+        """.trimIndent()
+    }
+
+    @Test
     fun `should keep abstract modality of override in standard library class`() {
         resolver.resolve(
             "kotlin.collections.AbstractCollection.size"

@@ -799,13 +799,20 @@ internal class DefaultKotlinIntrospector(
                 +(renderedConstructor.valueParameters.joinToString(", ", "(", ")") { param ->
                     // a parameter not declaring a property is still needed to call the constructor
                     val prop = constructorProperties[param.name]
-                    val prefix = if (prop == null) "" else buildString {
-                        +formatVisibility(prop.visibility)
-                        // a constructor property is never abstract, but it can be open or final
-                        +formatModalityModifiers(prop.modality, isOverride(kmClass, prop), inInterface = false, kmClass)
-                        +(if (prop.isVar) "var " else "val ")
+                    if (prop == null) {
+                        formatValueParameter(param, contextPackage, typeParameters)
+                    } else {
+                        formatValueParameter(
+                            param,
+                            contextPackage,
+                            typeParameters,
+                            prefix = if (prop.isVar) "var " else "val ",
+                            // a constructor property is never abstract, but it can be open or final
+                            modifiers = formatVisibility(prop.visibility) + formatModalityModifiers(
+                                prop.modality, isOverride(kmClass, prop), inInterface = false, kmClass
+                            )
+                        )
                     }
-                    formatValueParameter(param, contextPackage, typeParameters, prefix)
                 })
             }
             else -> ""
@@ -1162,6 +1169,8 @@ internal class DefaultKotlinIntrospector(
     /**
      * Format a function or constructor value parameter, like `vararg elements: T` or `limit: Int = …`.
      *
+     * @param modifiers the modifiers of a constructor parameter declaring a property, like `protected open `,
+     *   preceding `vararg` in the order of the Kotlin coding conventions.
      * @param prefix the `val ` or `var ` of a constructor parameter declaring a property.
      * @param defaultValue the rendering of the declared default value,
      *   which is otherwise not present in the Kotlin metadata, and therefore rendered as a marker.
@@ -1171,8 +1180,10 @@ internal class DefaultKotlinIntrospector(
         contextPackage: String? = null,
         typeParameters: Map<Int, String> = emptyMap(),
         prefix: String = "",
+        modifiers: String = "",
         defaultValue: () -> String? = { null }
     ): String = buildString {
+        +modifiers
         if (parameter.varargElementType != null) +"vararg "
         +prefix
         +parameter.name
@@ -1420,6 +1431,8 @@ internal class DefaultKotlinIntrospector(
      *
      * An override is implicitly open, therefore its `final` is rendered,
      * unless the [owner] class is final itself, which makes all its members final.
+     * An enum class is final in the metadata, even when its entries have bodies subclassing it,
+     * which the metadata does not tell, therefore `final` is always rendered in an enum class.
      * The members of an interface are implicitly abstract.
      */
     private fun formatModalityModifiers(
@@ -1431,7 +1444,9 @@ internal class DefaultKotlinIntrospector(
         when (modality) {
             Modality.ABSTRACT -> if (!inInterface) +"abstract "
             Modality.OPEN -> if (!isOverride) +"open "
-            Modality.FINAL -> if (isOverride && owner != null && owner.modality != Modality.FINAL) +"final "
+            Modality.FINAL -> if (
+                isOverride && owner != null && (owner.modality != Modality.FINAL || owner.kind == ClassKind.ENUM_CLASS)
+            ) +"final "
             Modality.SEALED -> {}
         }
         if (isOverride) +"override "

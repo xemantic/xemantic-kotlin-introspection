@@ -640,3 +640,50 @@ abstract class FinalConstructorOverride(final override val u: UInt) : HasU
 
 // An open property declared in the primary constructor
 open class OpenConstructorProperty(open val a: Int, val b: Int)
+
+// Enum classes, whose entries can override their members
+interface EnumOverridable {
+    fun f(): Int
+    fun g()
+}
+
+enum class EntryBodiesEnum : EnumOverridable {
+    A { override fun f() = 2 },
+    B;
+    override fun f() = 1
+    final override fun g() {}
+}
+
+enum class PlainEnum : EnumOverridable {
+    A, B;
+    override fun f() = 1
+    final override fun g() {}
+}
+
+// Sealed classes, objects and companion objects as owners of overrides
+sealed class SealedModalityOverrides : ModalityBase() {
+    abstract override fun abstracted()
+    final override fun finalized() {}
+    override fun reopened() {}
+}
+
+object ObjectModalityOverrides : ModalityBase() {
+    final override fun finalized() {}
+    override fun reopened() {}
+}
+
+class CompanionModalityOverrides {
+    companion object : ModalityBase() {
+        final override fun finalized() {}
+        override fun reopened() {}
+    }
+}
+
+// Vararg properties declared in the primary constructor
+open class VarargConstructorProperty(vararg open val xs: Int)
+
+interface HasXs {
+    val xs: IntArray
+}
+
+class VarargConstructorOverride(vararg override val xs: Int) : HasXs
