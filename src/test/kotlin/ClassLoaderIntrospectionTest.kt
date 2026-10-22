@@ -19,6 +19,7 @@
 package com.xemantic.kotlin.introspection
 
 import com.xemantic.kotlin.introspection.test.TestClass
+import com.xemantic.kotlin.test.assert
 import com.xemantic.kotlin.test.sameAs
 import org.junit.jupiter.api.io.TempDir
 import org.objectweb.asm.AnnotationVisitor
@@ -31,6 +32,7 @@ import java.io.File
 import java.io.InputStream
 import java.net.URLClassLoader
 import java.nio.file.Path
+import java.util.Collections
 import java.util.jar.Attributes
 import java.util.jar.JarOutputStream
 import java.util.jar.Manifest
@@ -549,6 +551,34 @@ class ClassLoaderIntrospectionTest {
             val TestClass.uppercaseName: String
             fun TestClass.describe(): String
         """.trimIndent()
+    }
+
+    @Test
+    fun `should not look up the built-in types through the class loader`() {
+        // given
+        val missingClasses = Collections.synchronizedList(mutableListOf<String>())
+        val classLoader = object : ClassLoader(javaClass.classLoader) {
+            override fun loadClass(name: String, resolve: Boolean): Class<*> = try {
+                super.loadClass(name, resolve)
+            } catch (e: ClassNotFoundException) {
+                missingClasses += name
+                throw e
+            }
+        }
+        val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.test.KeyedMap")
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.KeyedMap [page 1/1]
+            abstract class KeyedMap : Map<String, Int> {
+                override val keys: Set<String>
+                override val entries: Set<Map.Entry<String, Int>>
+            }
+        """.trimIndent()
+        assert(missingClasses.none { it.startsWith("kotlin.") })
     }
 
 }

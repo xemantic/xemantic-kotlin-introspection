@@ -25,12 +25,12 @@ import org.objectweb.asm.Opcodes
 import org.objectweb.asm.signature.SignatureReader
 import org.objectweb.asm.signature.SignatureVisitor
 import java.lang.reflect.GenericArrayType
+import java.lang.reflect.MalformedParameterizedTypeException
 import java.lang.reflect.Method
 import java.lang.reflect.Modifier
 import java.lang.reflect.ParameterizedType
 import java.lang.reflect.TypeVariable
 import java.lang.reflect.WildcardType
-import java.util.concurrent.ConcurrentHashMap
 import kotlin.metadata.KmClass
 import kotlin.metadata.KmClassifier
 import kotlin.metadata.KmFunction
@@ -67,9 +67,12 @@ import org.objectweb.asm.Type as AsmType
  * except for a primitive type, which is not nullable.
  * A Java type mapped to a Kotlin built-in type, like `java.util.List`, is replaced with the built-in type.
  *
- * The overridable members of the supertypes are collected once per class.
+ * The overridable members of the supertypes are collected once per class, and the declarations are read once per class,
+ * both kept in bounded caches of the least recently used ones,
+ * so that a long-lived resolver over a large classpath does not keep the declarations of every class ever resolved.
+ * This class is thread-safe.
  *
- * @param loadClass loads a class by its fully qualified Kotlin name.
+ * @param loadClass loads a class by its JVM binary name, like `com.example.Outer${'$'}Nested`.
  * @param readKmClass reads the Kotlin metadata of a class, if it is a Kotlin class.
  * @param builtinClasses the declarations of the Kotlin built-in types, by their Kotlin class name, like `kotlin/collections/List`.
  * @param builtinTypes the JVM classes of the Kotlin built-in types, by their fully qualified Kotlin name.
@@ -170,9 +173,12 @@ internal class OverrideResolver(
         val hiddenJavaMethods: Set<String> = emptySet()
     )
 
-    private val overridablesCache = ConcurrentHashMap<String, Overridables>()
+    // collecting the overridables never requests other overridables, and finding a declaration never requests
+    // another declaration, so that neither computation requests its own key, which the BoundedCache forbids
+    private val overridablesCache = BoundedCache<String, Overridables>(capacity = 256)
 
-    private val declarationCache = ConcurrentHashMap<String, Declaration>()
+    // the declarations of the supertypes of the recently resolved classes, shared between their hierarchies
+    private val declarationCache = BoundedCache<String, Declaration>(capacity = 1024)
 
     /**
      * The Kotlin class names of the built-in types, like `kotlin/collections/Map.Entry`,
@@ -197,7 +203,7 @@ internal class OverrideResolver(
     fun isOverride(owner: KmClass, function: KmFunction): Boolean {
         val overridables = overridables(owner)
         val candidates = overridables.functions[function.name] ?: return false
-        val typeParameters = function.typeParameters
+        val typeParameters = memberTypeParameters(function.typeParameters)
         val contexts = function.contextParameters.map {
             kotlinType(it.type, overridables.substitution, typeParameters)
         }
@@ -208,7 +214,7 @@ internal class OverrideResolver(
             kotlinType(it.type, overridables.substitution, typeParameters)
         }
         return candidates.any {
-            it.matches(contexts, receiver, parameters, typeParameters.size, function.isSuspend) &&
+            it.matches(contexts, receiver, parameters, function.typeParameters.size, function.isSuspend) &&
                 overridables.isVisible(it)
         } ||
             overridables.isShrunk(function.signature)
@@ -216,7 +222,7 @@ internal class OverrideResolver(
 
     fun isOverride(owner: KmClass, property: KmProperty): Boolean {
         val overridables = overridables(owner)
-        val typeParameters = property.typeParameters
+        val typeParameters = memberTypeParameters(property.typeParameters)
         val contexts = property.contextParameters.map {
             kotlinType(it.type, overridables.substitution, typeParameters)
         }
@@ -224,14 +230,14 @@ internal class OverrideResolver(
             kotlinType(it, overridables.substitution, typeParameters)
         }
         val overridesProperty = overridables.properties[property.name].orEmpty().any {
-            it.matches(contexts, receiver, emptyList(), typeParameters.size, isSuspend = false) &&
+            it.matches(contexts, receiver, emptyList(), property.typeParameters.size, isSuspend = false) &&
                 overridables.isVisible(it)
         }
         // a property of a Kotlin supertype without metadata is known only by its JVM getter,
         // which a private or a @JvmField property does not have, and which might be renamed or mangled
         val getter = property.getterSignature?.takeIf { property.visibility.isOverridable }
         val overridesGetter = getter != null && overridables.functions[getter.name].orEmpty().any {
-            it.isJava && it.matches(contexts, receiver, emptyList(), typeParameters.size, isSuspend = false)
+            it.isJava && it.matches(contexts, receiver, emptyList(), property.typeParameters.size, isSuspend = false)
         }
         return overridesProperty || overridesGetter ||
             (property.name in overridables.properties && overridables.isShrunk(property.getterSignature))
@@ -282,9 +288,7 @@ internal class OverrideResolver(
     }
 
     private fun overridables(owner: KmClass): Overridables =
-        overridablesCache[owner.name] ?: collectOverridables(owner).also {
-            overridablesCache.putIfAbsent(owner.name, it)
-        }
+        overridablesCache.getOrPut(owner.name) { collectOverridables(owner) }
 
     /**
      * Walks the whole supertype hierarchy of the [owner] once,
@@ -334,15 +338,16 @@ internal class OverrideResolver(
                         signature?.toString() ?: ""
                     } else null
                 kmClass.functions.filter { it.visibility.isOverridable }.forEach { function ->
+                    val typeParameters = memberTypeParameters(function.typeParameters)
                     functions.getOrPut(function.name) { mutableListOf() } += Overridable(
                         contexts = function.contextParameters.map {
-                            kotlinType(it.type, substitution, function.typeParameters)
+                            kotlinType(it.type, substitution, typeParameters)
                         },
                         receiver = function.receiverParameterType?.let {
-                            kotlinType(it, substitution, function.typeParameters)
+                            kotlinType(it, substitution, typeParameters)
                         },
                         parameters = function.valueParameters.map {
-                            kotlinType(it.type, substitution, function.typeParameters)
+                            kotlinType(it.type, substitution, typeParameters)
                         },
                         typeParameterCount = function.typeParameters.size,
                         isJava = false,
@@ -350,12 +355,13 @@ internal class OverrideResolver(
                     )
                 }
                 kmClass.properties.filter { it.visibility.isOverridable }.forEach { property ->
+                    val typeParameters = memberTypeParameters(property.typeParameters)
                     properties.getOrPut(property.name) { mutableListOf() } += Overridable(
                         contexts = property.contextParameters.map {
-                            kotlinType(it.type, substitution, property.typeParameters)
+                            kotlinType(it.type, substitution, typeParameters)
                         },
                         receiver = property.receiverParameterType?.let {
-                            kotlinType(it, substitution, property.typeParameters)
+                            kotlinType(it, substitution, typeParameters)
                         },
                         parameters = emptyList(),
                         typeParameterCount = property.typeParameters.size,
@@ -383,7 +389,7 @@ internal class OverrideResolver(
         }
 
         return Overridables(ownerSubstitution, functions, properties) {
-            loadClass(owner.name.replace('/', '.'))?.let { jvmMethods(it) }
+            loadClass(binaryName(owner.name))?.let { jvmMethods(it) }
         }
     }
 
@@ -479,6 +485,22 @@ internal class OverrideResolver(
 
     private fun outerClassName(name: String): String = name.substringBeforeLast('.')
 
+    /**
+     * The JVM binary name of a Kotlin class name, like `com.example.Outer${'$'}Nested` for `com/example/Outer.Nested`.
+     */
+    private fun binaryName(name: String): String {
+        val packageName = name.substringBeforeLast('/', "")
+        val simpleName = name.substringAfterLast('/').replace('.', '$')
+        return if (packageName.isEmpty()) simpleName else packageName.replace('/', '.') + "." + simpleName
+    }
+
+    /**
+     * Whether the standard library has a class file for the class of this Kotlin name.
+     * A class file resource is never encapsulated, also when the standard library is a named module.
+     */
+    private fun hasStdlibClassFile(name: String): Boolean =
+        KotlinVersion::class.java.getResource("/" + binaryName(name).replace('.', '/') + ".class") != null
+
     private fun erasure(typeParameter: KmTypeParameter, typeParameters: Map<Int, KmTypeParameter>): String? {
         val bound = typeParameter.upperBounds.firstOrNull() ?: return "kotlin/Any"
         return when (val classifier = bound.classifier) {
@@ -491,14 +513,26 @@ internal class OverrideResolver(
     }
 
     /**
+     * The type parameters of a member, matched by their position, by their ids,
+     * resolved once per member, as the member types might refer to them many times.
+     */
+    private fun memberTypeParameters(typeParameters: List<KmTypeParameter>): Map<Int, TypeParameterType> {
+        if (typeParameters.isEmpty()) return emptyMap()
+        val byId = typeParameters.associateBy { it.id }
+        return typeParameters.withIndex().associate { (index, typeParameter) ->
+            typeParameter.id to TypeParameterType("F$index", false, erasure(typeParameter, byId))
+        }
+    }
+
+    /**
      * Resolves a Kotlin [type] of a member, substituting the type parameters of its class.
      *
-     * @param typeParameters the type parameters of the member itself, matched by their position.
+     * @param typeParameters the type parameters of the member itself, as resolved by [memberTypeParameters].
      */
     private fun kotlinType(
         type: KmType,
         substitution: Map<Int, MemberType>,
-        typeParameters: List<KmTypeParameter> = emptyList()
+        typeParameters: Map<Int, TypeParameterType> = emptyMap()
     ): MemberType = when (val classifier = type.classifier) {
         is KmClassifier.Class -> suspendFunctionType(type, substitution, typeParameters) ?: ClassType(
             name = classifier.name,
@@ -513,15 +547,9 @@ internal class OverrideResolver(
             nullable = type.isNullable,
             outer = type.outerType?.let { kotlinType(it, substitution, typeParameters) as? ClassType }
         )
-        is KmClassifier.TypeParameter -> {
-            val index = typeParameters.indexOfFirst { it.id == classifier.id }
-            if (index >= 0) {
-                val byId = typeParameters.associateBy { it.id }
-                TypeParameterType("F$index", type.isNullable, erasure(typeParameters[index], byId))
-            } else {
-                substitution[classifier.id]?.withNullability(type) ?: UnknownType
-            }
-        }
+        is KmClassifier.TypeParameter -> typeParameters[classifier.id]?.copy(nullable = type.isNullable)
+            ?: substitution[classifier.id]?.withNullability(type)
+            ?: UnknownType
         // the metadata refers to the expanded type, an alias is not expected here
         is KmClassifier.TypeAlias -> UnknownType
     }
@@ -534,7 +562,7 @@ internal class OverrideResolver(
     private fun suspendFunctionType(
         type: KmType,
         substitution: Map<Int, MemberType>,
-        typeParameters: List<KmTypeParameter>
+        typeParameters: Map<Int, TypeParameterType>
     ): ClassType? {
         if (!type.isSuspend) return null
         val name = (type.classifier as? KmClassifier.Class)?.name ?: return null
@@ -656,13 +684,16 @@ internal class OverrideResolver(
     }
 
     private fun declaration(name: String): Declaration =
-        declarationCache[name] ?: findDeclaration(name).also { declarationCache.putIfAbsent(name, it) }
+        declarationCache.getOrPut(name) { findDeclaration(name) }
 
     private fun findDeclaration(name: String): Declaration {
-        val javaClass = loadClass(name.replace('/', '.'))
+        val builtinClass = builtinClasses()[name]
+        // a built-in type without its own class file, like List, is not looked up through the class loader,
+        // which would only throw a ClassNotFoundException
+        val javaClass = if (builtinClass == null || hasStdlibClassFile(name)) loadClass(binaryName(name)) else null
         // the built-in declaration of a type having its own class file, like KClass, is incomplete
         javaClass?.let { readKmClass(it) }?.let { return Declaration(it, null) }
-        builtinClasses()[name]?.let { kmClass ->
+        builtinClass?.let { kmClass ->
             // members of Any are fully described by its Kotlin declaration, unlike the JVM members of Object
             val builtinJavaClass = if (name == "kotlin/Any") null else builtinJavaClasses[name]
             val hiddenJavaMethods = when {
@@ -712,12 +743,8 @@ internal class OverrideResolver(
         val isRaw = supertype.isRaw
         while (declaration != null) {
             val typeArguments = type?.arguments
-            val typeParameters = try {
-                declaration.typeParameters
-            } catch (_: LinkageError) {
-                // a malformed generic signature
-                break
-            }
+            // a malformed generic signature
+            val typeParameters = reflectOrNull { declaration.typeParameters } ?: break
             scopes += declaration to typeParameters.withIndex().associate { (index, typeVariable) ->
                 typeVariable.name to if (isRaw) {
                     boundErasure(typeVariable)
@@ -727,11 +754,7 @@ internal class OverrideResolver(
             }
             // a static nested class cannot refer to the type variables of its outer class
             if (Modifier.isStatic(declaration.modifiers)) break
-            declaration = try {
-                declaration.declaringClass
-            } catch (_: LinkageError) {
-                null
-            }
+            declaration = reflectOrNull { declaration.declaringClass }
             type = type?.outer
         }
         return JavaSubstitution(scopes)
@@ -741,7 +764,7 @@ internal class OverrideResolver(
      * The type a [typeVariable] of a raw type is erased to: the erasure of its first bound,
      * or an unknown type if the bound refers to a class missing from the classpath.
      */
-    private fun boundErasure(typeVariable: TypeVariable<*>): MemberType = try {
+    private fun boundErasure(typeVariable: TypeVariable<*>): MemberType = reflectOrNull {
         var bound: JavaType? = typeVariable
         val visited = mutableSetOf<TypeVariable<*>>()
         while (bound is TypeVariable<*> && visited.add(bound)) {
@@ -752,12 +775,20 @@ internal class OverrideResolver(
             is ParameterizedType -> javaClassType(bound.rawType as Class<*>)
             else -> UnknownType
         }
+    } ?: UnknownType
+
+    /**
+     * Runs a reflective [block], returning `null` if it throws because a reflected type refers to a class
+     * missing from the classpath, or a generic signature is malformed, as the generic types are resolved lazily.
+     */
+    private inline fun <T : Any> reflectOrNull(block: () -> T?): T? = try {
+        block()
     } catch (_: TypeNotPresentException) {
-        UnknownType
-    } catch (_: java.lang.reflect.MalformedParameterizedTypeException) {
-        UnknownType
+        null
+    } catch (_: MalformedParameterizedTypeException) {
+        null
     } catch (_: LinkageError) {
-        UnknownType
+        null
     }
 
     /**
@@ -768,12 +799,9 @@ internal class OverrideResolver(
         ownerPackage: String,
         substitution: JavaSubstitution
     ): List<Pair<String, Overridable>> {
-        val methods = try {
-            javaClass.declaredMethods
-        } catch (_: LinkageError) {
-            // a method signature refers to a class missing from the classpath
-            return asmMethods(javaClass, ownerPackage, substitution)
-        }
+        // a method signature might refer to a class missing from the classpath
+        val methods = reflectOrNull { javaClass.declaredMethods }
+            ?: return asmMethods(javaClass, ownerPackage, substitution)
         val overridables = methods
             .filter { method ->
                 val modifiers = method.modifiers
@@ -782,16 +810,9 @@ internal class OverrideResolver(
                     (Modifier.isPublic(modifiers) || Modifier.isProtected(modifiers) ||
                         javaClass.packageName == ownerPackage)
             }
-        return try {
-            overridables.map { method -> method.name to javaOverridable(method, substitution) }
-        } catch (_: TypeNotPresentException) {
-            // a generic type, like a wildcard or a type variable bound, refers to a class missing from the classpath
-            asmMethods(javaClass, ownerPackage, substitution)
-        } catch (_: java.lang.reflect.MalformedParameterizedTypeException) {
-            asmMethods(javaClass, ownerPackage, substitution)
-        } catch (_: LinkageError) {
-            asmMethods(javaClass, ownerPackage, substitution)
-        }
+        // a generic type, like a wildcard or a type variable bound, might refer to a class missing from the classpath
+        return reflectOrNull { overridables.map { method -> method.name to javaOverridable(method, substitution) } }
+            ?: asmMethods(javaClass, ownerPackage, substitution)
     }
 
     /**
@@ -808,7 +829,7 @@ internal class OverrideResolver(
 
     private fun javaSupertypes(javaClass: Class<*>, substitution: JavaSubstitution): List<ClassType> {
         val rawSupertypes = listOfNotNull(javaClass.superclass) + javaClass.interfaces
-        val supertypes = try {
+        val supertypes = reflectOrNull {
             (listOfNotNull(javaClass.genericSuperclass) + javaClass.genericInterfaces).map { type ->
                 // a generic supertype given as a class is raw
                 if (type is Class<*>) {
@@ -817,12 +838,6 @@ internal class OverrideResolver(
                     javaType(type, substitution, method = null)
                 }
             }
-        } catch (_: TypeNotPresentException) {
-            null
-        } catch (_: java.lang.reflect.MalformedParameterizedTypeException) {
-            null
-        } catch (_: LinkageError) {
-            null
         } ?: rawSupertypes.map { javaClassType(it) }
         return supertypes.filterIsInstance<ClassType>()
     }
