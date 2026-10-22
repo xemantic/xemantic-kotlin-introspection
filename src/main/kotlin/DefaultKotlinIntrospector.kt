@@ -397,10 +397,9 @@ internal class DefaultKotlinIntrospector(
         }
 
         // Extension functions on this exact type (shown inside class body)
-        // Only include public extensions from kotlin.* packages for built-in types
+        // Only include extensions from kotlin.* packages for built-in types
         getExtensionsFor(kotlinName)
             .filter { isPublicStdlibSource(it.sourceClass) }
-            .filter { it.function.visibility == Visibility.PUBLIC }
             .forEach { ext ->
                 allMembers.add(Member(ext.function.name, formatFunctionWithoutReceiver(ext.function)))
             }
@@ -408,22 +407,19 @@ internal class DefaultKotlinIntrospector(
         // Extension properties on this exact type (shown inside class body)
         getExtensionPropertiesFor(kotlinName)
             .filter { isPublicStdlibSource(it.sourceClass) }
-            .filter { it.property.visibility == Visibility.PUBLIC }
             .forEach { extProp ->
                 allMembers.add(Member(extProp.property.name, formatExtensionPropertyWithoutReceiver(extProp.property)))
             }
 
         // Extension functions and properties on all the supertypes (shown outside class body)
-        // Only include public extensions from kotlin.* packages for built-in types
+        // Only include extensions from kotlin.* packages for built-in types
         val supertypeExtensions = supertypeNames.flatMap { supertypeName ->
             getExtensionsFor(supertypeName)
                 .filter { isPublicStdlibSource(it.sourceClass) }
-                .filter { it.function.visibility == Visibility.PUBLIC }
         }
         val supertypeExtensionProperties = supertypeNames.flatMap { supertypeName ->
             getExtensionPropertiesFor(supertypeName)
                 .filter { isPublicStdlibSource(it.sourceClass) }
-                .filter { it.property.visibility == Visibility.PUBLIC }
         }
 
         return buildString {
@@ -1347,7 +1343,10 @@ internal class DefaultKotlinIntrospector(
             else -> return
         }
 
+        // Only public extensions are indexed, as only they can be called from the user code.
+        // This also excludes `@PublishedApi internal` ones, callable only from public inline functions.
         for (function in functions) {
+            if (function.visibility != Visibility.PUBLIC) continue
             val receiverType = function.receiverParameterType ?: continue
             val receiverName = getReceiverTypeName(receiverType)
 
@@ -1356,6 +1355,7 @@ internal class DefaultKotlinIntrospector(
         }
 
         for (property in properties) {
+            if (property.visibility != Visibility.PUBLIC) continue
             val receiverType = property.receiverParameterType ?: continue
             val receiverName = getReceiverTypeName(receiverType)
 

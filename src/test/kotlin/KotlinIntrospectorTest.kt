@@ -946,6 +946,43 @@ class KotlinIntrospectorTest {
         """.trimIndent()
     }
 
+    // TestExtensionVisibility tests
+
+    @Test
+    fun `should list only public extensions of a class`() {
+        // private and internal extensions cannot be called from the user code,
+        // neither can @PublishedApi internal ones, which are meant only for public inline functions
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ExtensionVisibilityTarget"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ExtensionVisibilityTarget [page 1/1]
+            class ExtensionVisibilityTarget(val value: Int)
+            // from com.xemantic.kotlin.introspection.test
+            val ExtensionVisibilityTarget.publicCache: Int
+            fun ExtensionVisibilityTarget.helper(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve only public extension overloads as class member`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ExtensionVisibilityTarget.helper"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ExtensionVisibilityTarget.helper [page 1/1]
+            fun com.xemantic.kotlin.introspection.test.ExtensionVisibilityTarget.helper(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve non-public extension property as class member`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.ExtensionVisibilityTarget.internalCache") == null)
+    }
+
+    @Test
+    fun `should not resolve non-public extension of built-in type as its member`() {
+        assert(resolver.resolve("kotlin.String.internalStringHelper") == null)
+    }
+
     // TestOverloads tests
 
     @Test
