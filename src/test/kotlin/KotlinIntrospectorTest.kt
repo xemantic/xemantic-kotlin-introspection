@@ -4462,4 +4462,33 @@ class KotlinIntrospectorTest {
         """.trimIndent()
     }
 
+    @Test
+    fun `should not list interface properties deprecated with hidden level`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenDeprecationInterface"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenDeprecationInterface [page 1/1]
+            interface HiddenDeprecationInterface {
+                val visible: Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve interface property with getter deprecated with hidden level`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenDeprecationInterface.hiddenWithGetter") == null)
+    }
+
+    @Test
+    fun `should not list interface properties deprecated with hidden level compiled without jvm default`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsHiddenProperties"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsHiddenProperties [page 1/1]
+            interface DefaultImplsHiddenProperties {
+                val visible: Int
+            }
+        """.trimIndent()
+    }
+
 }

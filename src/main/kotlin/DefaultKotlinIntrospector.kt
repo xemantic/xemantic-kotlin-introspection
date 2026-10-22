@@ -26,6 +26,7 @@ import org.objectweb.asm.ClassVisitor
 import org.objectweb.asm.MethodVisitor
 import org.objectweb.asm.Opcodes
 import java.io.File
+import java.net.JarURLConnection
 import java.net.URI
 import java.net.URL
 import java.net.URLClassLoader
@@ -157,14 +158,18 @@ internal class DefaultKotlinIntrospector(
      */
     private val stdlibVersion: KotlinVersion by lazy {
         try {
-            // the CURRENT of the KotlinVersion class of the classpath, possibly not the one of this library
-            classLoader.loadClass(KotlinVersion::class.java.name).getField("CURRENT").get(null)
-                ?.toString()?.let { parseKotlinVersion(it) }
+            // the Implementation-Version of the manifest of the jar of the standard library seen by the class loader,
+            // which can differ from the one of this library, while loading the KotlinVersion class would,
+            // with the parent-first delegation, rather give the one of this library;
+            // unless the manifest is of another jar, like a fat jar with the standard library inside
+            (classLoader.getResource("kotlin/KotlinVersion.class")?.openConnection() as? JarURLConnection)
+                ?.manifest?.mainAttributes
+                ?.takeIf { it.getValue(Attributes.Name.IMPLEMENTATION_TITLE) == "kotlin-stdlib" }
+                ?.getValue(Attributes.Name.IMPLEMENTATION_VERSION)
+                ?.let { parseKotlinVersion(it) }
         } catch (_: Exception) {
             null
-        } catch (_: LinkageError) {
-            null
-        } ?: KotlinVersion.CURRENT
+        } ?: KotlinVersion.CURRENT // like for a standard library in a directory, or in a fat jar
     }
 
     // Declarations of the built-in types, by their Kotlin class name, like kotlin/collections/List
@@ -269,10 +274,10 @@ internal class DefaultKotlinIntrospector(
 
         /**
          * A Kotlin version, like `1.6` of `@DeprecatedSinceKotlin(hiddenSince = "1.6")`, or `2.4.21`,
-         * or `null` if malformed.
+         * also of a pre-release, like `2.5.0-Beta1`, or `null` if malformed.
          */
         private fun parseKotlinVersion(version: String): KotlinVersion? {
-            val parts = version.split('.').map { it.toIntOrNull() ?: return null }
+            val parts = version.substringBefore('-').split('.').map { it.toIntOrNull() ?: return null }
             if (parts.size !in 2..3) return null
             return try {
                 KotlinVersion(parts[0], parts[1], parts.getOrElse(2) { 0 })
@@ -288,6 +293,10 @@ internal class DefaultKotlinIntrospector(
         internal const val DEFAULT_VALUE_MARKER = "…"
 
         private const val DEFAULT_COMPANION_NAME = "Companion"
+
+        private const val DEFAULT_IMPLS = "DefaultImpls"
+
+        private const val ANNOTATIONS_METHOD_SUFFIX = "\$annotations"
 
     }
 
@@ -383,7 +392,8 @@ internal class DefaultKotlinIntrospector(
 
         /**
          * The class file, read once, and only when needed: already when the class cannot be loaded,
-         * otherwise only for the flags telling whether a listed class is usable, see [isUsableClass].
+         * otherwise for the flags telling whether a listed class is usable, see [isUsableClass],
+         * and for the hidden declarations, see [isHidden].
          */
         val classFile: ClassFile? by lazy { readFile ?: readClassFile(binaryName) }
 
@@ -393,18 +403,54 @@ internal class DefaultKotlinIntrospector(
                 ?.let { parseMetadata(it) }
         }
 
+        /**
+         * The `DefaultImpls` class file of an interface, holding the synthetic methods for the annotations
+         * of its properties, unless compiled with `-jvm-default=no-compatibility`, read only when needed.
+         */
+        private val defaultImplsFile: ClassFile? by lazy { readClassFile("$binaryName\$$DEFAULT_IMPLS") }
+
         // whether a declaration of this class is hidden, see ClassFile, never when the class file cannot be read
 
         fun isHidden(function: KmFunction): Boolean = classFile?.isHidden(function) == true
 
         fun isHidden(constructor: KmConstructor): Boolean = classFile?.isHidden(constructor) == true
 
-        fun isHidden(property: KmProperty): Boolean = classFile?.isHidden(property) == true
+        fun isHidden(property: KmProperty): Boolean {
+            val classFile = classFile ?: return false
+            if (classFile.isHidden(property)) return true
+            // the synthetic method for the annotations of an interface property is rather in its DefaultImpls
+            val annotationsMethod = property.syntheticMethodForAnnotations ?: return false
+            return !classFile.declares(annotationsMethod) &&
+                kmClass?.kind == ClassKind.INTERFACE &&
+                defaultImplsFile?.isHidden(property) == true
+        }
 
     }
 
     private val FoundClass.kmClass: KmClass?
         get() = (metadata as? KotlinClassMetadata.Class)?.kmClass
+
+    /**
+     * The functions which are part of the API in the [scopes], see [isApiIn], unless hidden,
+     * see [FoundClass.isHidden], when declared in the [declaringClass] known.
+     */
+    @JvmName("apiFunctions")
+    private fun List<KmFunction>.inApi(scopes: List<ClassScope>, declaringClass: FoundClass?): List<KmFunction> =
+        filter { it.visibility.isApiIn(scopes) && declaringClass?.isHidden(it) != true }
+
+    /**
+     * The properties which are part of the API, like the functions, see [inApi].
+     */
+    @JvmName("apiProperties")
+    private fun List<KmProperty>.inApi(scopes: List<ClassScope>, declaringClass: FoundClass?): List<KmProperty> =
+        filter { it.visibility.isApiIn(scopes) && declaringClass?.isHidden(it) != true }
+
+    /**
+     * Whether a member of a built-in type, described by kotlin-reflect, is part of the API:
+     * public, and not hidden, see [isHiddenDeprecated].
+     */
+    private fun isBuiltinApi(member: KCallable<*>): Boolean =
+        member.visibility == KVisibility.PUBLIC && !isHiddenDeprecated(member)
 
     /**
      * Whether the found class is listed in its outer class, see [isListedClass],
@@ -571,13 +617,9 @@ internal class DefaultKotlinIntrospector(
         val typeParameters = typeParametersInScope(kmClass)
         val contextPackage = contextPackageOf(foundClass, kmClass)
 
-        val members = kmClass.functions.filter {
-            it.name == memberName && it.visibility.isApiIn(scopes) && !foundClass.isHidden(it)
-        }.map { function ->
+        val members = kmClass.functions.filter { it.name == memberName }.inApi(scopes, foundClass).map { function ->
             formatFunction(function, inInterface = isInterface, owner = kmClass, contextPackage = contextPackage, classTypeParameters = typeParameters)
-        } + kmClass.properties.filter {
-            it.name == memberName && it.visibility.isApiIn(scopes) && !foundClass.isHidden(it)
-        }.map { property ->
+        } + kmClass.properties.filter { it.name == memberName }.inApi(scopes, foundClass).map { property ->
             formatProperty(property, inInterface = isInterface, owner = kmClass, contextPackage = contextPackage, classTypeParameters = typeParameters)
         }
         val extensions = renderExtensions(
@@ -600,11 +642,8 @@ internal class DefaultKotlinIntrospector(
      */
     private fun resolvePackageMember(kmPackages: List<Pair<KmPackage, FoundClass>>, memberName: String): String? {
         val signatures = kmPackages.flatMap { (kmPackage, foundClass) ->
-            kmPackage.functions.filter {
-                it.name == memberName && it.visibility.isApiIn(emptyList()) && !foundClass.isHidden(it)
-            }.map { formatFunction(it) } + kmPackage.properties.filter {
-                it.name == memberName && it.visibility.isApiIn(emptyList()) && !foundClass.isHidden(it)
-            }.map { formatProperty(it) }
+            kmPackage.functions.filter { it.name == memberName }.inApi(emptyList(), foundClass).map { formatFunction(it) } +
+                kmPackage.properties.filter { it.name == memberName }.inApi(emptyList(), foundClass).map { formatProperty(it) }
         }
         return signatures.joinToString("\n").ifEmpty { null }
     }
@@ -640,7 +679,7 @@ internal class DefaultKotlinIntrospector(
                     +supertypes.joinToString(", ")
                 }
             }
-            mutableKmClass.properties.forEach { property ->
+            mutableKmClass.properties.inApi(emptyList(), declaringClass = null).forEach { property ->
                 allMembers.add(
                     Member(
                         property.name,
@@ -648,7 +687,7 @@ internal class DefaultKotlinIntrospector(
                     )
                 )
             }
-            mutableKmClass.functions.forEach { function ->
+            mutableKmClass.functions.inApi(emptyList(), declaringClass = null).forEach { function ->
                 allMembers.add(
                     Member(
                         function.name,
@@ -682,7 +721,7 @@ internal class DefaultKotlinIntrospector(
 
             // Properties (only public, non-extension)
             kClass.memberProperties
-                .filter { it.visibility == KVisibility.PUBLIC && !isHiddenDeprecated(it) }
+                .filter { isBuiltinApi(it) }
                 .forEach { prop ->
                     allMembers.add(Member(prop.name, formatKProperty(prop, isOverride(builtinKmClass, prop))))
                 }
@@ -690,7 +729,7 @@ internal class DefaultKotlinIntrospector(
             // Functions (only public, non-extension, excluding synthetic, internal, and Java-only methods taking parameters)
             kClass.memberFunctions
                 .asSequence()
-                .filter { it.visibility == KVisibility.PUBLIC && !isHiddenDeprecated(it) }
+                .filter { isBuiltinApi(it) }
                 .filter { !it.name.startsWith("component") }  // Exclude componentN
                 .filter { it.name != "copy" }  // Exclude copy for data classes
                 .filter { !it.name.contains("$") }  // Exclude synthetic
@@ -817,11 +856,11 @@ internal class DefaultKotlinIntrospector(
         // Members are sorted, as kotlin-reflect does not guarantee their order
         val members = mutableMembers.ifEmpty {
             kClass.memberFunctions.filter {
-                it.name == memberName && it.visibility == KVisibility.PUBLIC && !isHiddenDeprecated(it)
+                it.name == memberName && isBuiltinApi(it)
             }.map { formatKFunction(it, isOverride(builtinKmClass, it)) }.sortedBy {
                 it.removePrefix("override ")
             } + kClass.memberProperties.filter {
-                it.name == memberName && it.visibility == KVisibility.PUBLIC && !isHiddenDeprecated(it)
+                it.name == memberName && isBuiltinApi(it)
             }.map { formatKProperty(it, isOverride(builtinKmClass, it)) }
         }
 
@@ -893,8 +932,8 @@ internal class DefaultKotlinIntrospector(
         val contextPackage = contextPackageOf(foundClass, kmClass)
 
         // Only the members which can be used from the user code
-        val properties = kmClass.properties.filter { it.visibility.isApiIn(scopes) && !foundClass.isHidden(it) }
-        val functions = kmClass.functions.filter { it.visibility.isApiIn(scopes) && !foundClass.isHidden(it) }
+        val properties = kmClass.properties.inApi(scopes, foundClass)
+        val functions = kmClass.functions.inApi(scopes, foundClass)
 
         // Find primary constructor and its parameter names
         val primaryConstructor = kmClass.constructors.firstOrNull { !it.isSecondary }
@@ -920,12 +959,8 @@ internal class DefaultKotlinIntrospector(
         val companionClass = companionBinaryName?.let { findClassByBinaryName(it) }
         val companion = companionClass?.kmClass?.takeIf { it.visibility.isApiIn(scopes) }
         val companionScopes = scopes + listOfNotNull(companion?.scope)
-        val companionProperties = companion?.properties.orEmpty().filter {
-            it.visibility.isApiIn(companionScopes) && companionClass?.isHidden(it) != true
-        }
-        val companionFunctions = companion?.functions.orEmpty().filter {
-            it.visibility.isApiIn(companionScopes) && companionClass?.isHidden(it) != true
-        }
+        val companionProperties = companion?.properties.orEmpty().inApi(companionScopes, companionClass)
+        val companionFunctions = companion?.functions.orEmpty().inApi(companionScopes, companionClass)
         // the ones which are also sealed subclasses of this class are listed as such
         val companionNestedClasses = if (companion != null) {
             listedNestedClasses(companion, companionScopes, companionClass.binaryName, kmClass.sealedSubclasses.toSet())
@@ -1925,8 +1960,8 @@ internal class DefaultKotlinIntrospector(
             else -> return
         }
         indexExtensions(
-            kmPackage.functions.filter { !classFile.isHidden(it) },
-            kmPackage.properties.filter { !classFile.isHidden(it) },
+            kmPackage.functions.filter { it.receiverParameterType != null && !classFile.isHidden(it) },
+            kmPackage.properties.filter { it.receiverParameterType != null && !classFile.isHidden(it) },
             className,
             // the facade class name for the default package, which has no name
             source = className.substringBeforeLast('.'),
@@ -2033,6 +2068,7 @@ internal class DefaultKotlinIntrospector(
         val memberClasses = mutableListOf<MemberClass>()
         val nestMembers = mutableListOf<String>()
         val hiddenMethods = mutableSetOf<String>()
+        val annotationsMethods = mutableSetOf<String>()
         reader.accept(object : ClassVisitor(Opcodes.ASM9) {
             override fun visitAnnotation(descriptor: String, visible: Boolean): AnnotationVisitor? =
                 if (descriptor == METADATA_DESCRIPTOR) {
@@ -2051,6 +2087,7 @@ internal class DefaultKotlinIntrospector(
                 // the declarations of a class without the metadata, visited before the methods, are not rendered
                 null
             } else {
+                if (name.endsWith(ANNOTATIONS_METHOD_SUFFIX)) annotationsMethods += name + descriptor
                 object : MethodVisitor(Opcodes.ASM9) {
                     override fun visitAnnotation(annotationDescriptor: String, visible: Boolean): AnnotationVisitor? =
                         hiddenDeprecationVisitor(annotationDescriptor) { hiddenMethods += name + descriptor }
@@ -2074,7 +2111,8 @@ internal class DefaultKotlinIntrospector(
             isHiddenDeprecated = isHiddenDeprecated,
             memberClasses = memberClasses,
             nestMembers = nestMembers,
-            hiddenMethods = hiddenMethods
+            hiddenMethods = hiddenMethods,
+            annotationsMethods = annotationsMethods
         )
     }
 
@@ -2087,6 +2125,8 @@ internal class DefaultKotlinIntrospector(
      *   declared by the `NestMembers` attribute.
      * @property hiddenMethods the JVM signatures, like `max(Ljava/lang/CharSequence;)Ljava/lang/Character;`,
      *   of the methods annotated as hidden, see [hiddenDeprecationVisitor].
+     * @property annotationsMethods the JVM signatures of the synthetic methods for the annotations of the properties,
+     *   like `getName${'$'}annotations()V`.
      */
     private class ClassFile(
         val metadata: Metadata?,
@@ -2094,7 +2134,8 @@ internal class DefaultKotlinIntrospector(
         val isHiddenDeprecated: Boolean,
         val memberClasses: List<MemberClass> = emptyList(),
         val nestMembers: List<String> = emptyList(),
-        val hiddenMethods: Set<String> = emptySet()
+        val hiddenMethods: Set<String> = emptySet(),
+        val annotationsMethods: Set<String> = emptySet()
     ) {
 
         /*
@@ -2114,8 +2155,14 @@ internal class DefaultKotlinIntrospector(
         fun isHidden(property: KmProperty): Boolean =
             isHidden(property.syntheticMethodForAnnotations) || isHidden(property.getterSignature)
 
+        /**
+         * Whether the class declares the synthetic method for the annotations of a property, by its [signature].
+         */
+        fun declares(signature: JvmMethodSignature): Boolean = signature.toString() in annotationsMethods
+
+        // most classes have no hidden methods, so that no signature is rendered to a string for them
         private fun isHidden(signature: JvmMethodSignature?): Boolean =
-            signature != null && signature.toString() in hiddenMethods
+            hiddenMethods.isNotEmpty() && signature != null && signature.toString() in hiddenMethods
 
     }
 

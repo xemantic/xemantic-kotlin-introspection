@@ -82,3 +82,12 @@ object HiddenDeprecationExtensions {
     @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
     fun HiddenDeprecationTarget.objectExtension(factor: Int): Int = value * factor
 }
+
+// the synthetic methods for the annotations of the interface properties are in its DefaultImpls class
+interface HiddenDeprecationInterface {
+    val visible: Int
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    val hiddenAbstract: Int
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    val hiddenWithGetter: Int get() = 1
+}
