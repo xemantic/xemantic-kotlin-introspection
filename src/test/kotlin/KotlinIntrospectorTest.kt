@@ -681,6 +681,23 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve enum class with only a companion object`() {
+        // the last entry needs a semicolon before the companion object, otherwise the rendered Kotlin is invalid
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.CompanionOnlyEnum"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.CompanionOnlyEnum [page 1/1]
+            enum class CompanionOnlyEnum {
+                RED,
+                GREEN;
+                companion object {
+                    fun default(): CompanionOnlyEnum
+                }
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve annotation class`() {
         // an LLM needs to see annotation parameters to know how to use the annotation
         resolver.resolve(

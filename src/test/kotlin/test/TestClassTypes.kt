@@ -54,6 +54,16 @@ enum class RichEnumTestClass(val code: Int, val label: String) {
     fun isFirst(): Boolean = this == ALPHA
 }
 
+// Enum class whose only member after the entries is a companion object
+enum class CompanionOnlyEnum {
+    RED,
+    GREEN;
+
+    companion object {
+        fun default(): CompanionOnlyEnum = RED
+    }
+}
+
 // Annotation class
 annotation class AnnotationTestClass(
     val message: String = ""
