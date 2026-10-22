@@ -33,6 +33,7 @@ import java.io.InputStream
 import java.net.URLClassLoader
 import java.nio.file.Path
 import java.util.Collections
+import java.util.concurrent.ConcurrentHashMap
 import java.util.jar.Attributes
 import java.util.jar.JarOutputStream
 import java.util.jar.Manifest
@@ -106,13 +107,16 @@ class ClassLoaderIntrospectionTest {
 
     /**
      * An introspector of the isolated test fixtures without the class `Absent`,
-     * which they refer to, and the other [absentClassFiles].
+     * which they refer to, without the nested classes named `Gone`, and without the other [absentClassFiles].
      */
     private fun introspectorWithoutAbsentClass(vararg absentClassFiles: String): KotlinIntrospector {
         val root = tempDir.resolve("withoutAbsent")
         isolatedTestFixtures.filter { it.exists() }.forEach { dir ->
             dir.walkTopDown()
-                .filter { it.isFile && it.name != "Absent.class" && it.name !in absentClassFiles }
+                .filter {
+                    it.isFile && it.name != "Absent.class" && !it.name.endsWith("\$Gone.class") &&
+                        it.name !in absentClassFiles
+                }
                 .forEach { it.copyTo(root.resolve(it.relativeTo(dir).path).toFile(), overwrite = true) }
         }
         val classLoader = URLClassLoader(
@@ -383,6 +387,181 @@ class ClassLoaderIntrospectionTest {
                 fun compare(item: Int)
             }
         """.trimIndent()
+    }
+
+    @Test
+    fun `should list nested classes which cannot be loaded, as read from their class files`() {
+        // given
+        val introspector = introspectorWithoutAbsentClass()
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.AbsentNestedHolder"
+        )
+
+        // then
+        // the private one is still not listed, and the one without a class file cannot be listed at all
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.AbsentNestedHolder [page 1/1]
+            class AbsentNestedHolder {
+                class Present
+                class AbsentSubclass : Absent
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should list sealed subclasses which cannot be loaded, as read from their class files`() {
+        // given
+        val introspector = introspectorWithoutAbsentClass()
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.AbsentSealed"
+        )
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.AbsentSealed [page 1/1]
+            sealed interface AbsentSealed {
+                class AbsentSubclass : Absent, AbsentSealed
+                class Present : AbsentSealed
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve nested class which cannot be loaded, as read from its class file`() {
+        // given
+        val introspector = introspectorWithoutAbsentClass()
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.AbsentNestedHolder.AbsentSubclass"
+        )
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.AbsentNestedHolder.AbsentSubclass [page 1/1]
+            class AbsentSubclass : Absent
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark overrides inherited through class which cannot be loaded`() {
+        // given
+        val introspector = introspectorWithoutAbsentClass()
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.AbsentLeaf"
+        )
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.AbsentLeaf [page 1/1]
+            class AbsentLeaf : AbsentMid {
+                override fun foo()
+                fun bar()
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve class by name with slashes`() {
+        // given
+        val introspector = introspectorWithoutAbsentClass()
+
+        // when
+        val signature = introspector.resolve(
+            "com/xemantic/kotlin/introspection/isolated/AbsentNestedHolder"
+        )
+
+        // then
+        assert(signature == null)
+    }
+
+    @Test
+    fun `should not resolve nested class without class file`() {
+        // given
+        val introspector = introspectorWithoutAbsentClass()
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.AbsentNestedHolder.Gone"
+        )
+
+        // then
+        assert(signature == null)
+    }
+
+    /**
+     * A class loader counting the classes requested by their names.
+     */
+    private class CountingClassLoader(
+        parent: ClassLoader,
+        private val failingOnce: Set<String> = emptySet()
+    ) : ClassLoader(parent) {
+        val loads = ConcurrentHashMap<String, Int>()
+        override fun loadClass(name: String, resolve: Boolean): Class<*> {
+            val count = loads.merge(name, 1, Int::plus)
+            // like a transient failure, unlike a class missing from the classpath
+            if (name in failingOnce && count == 1) throw LinkageError("transient failure of $name")
+            return super.loadClass(name, resolve)
+        }
+    }
+
+    @Test
+    fun `should load each nested class once for repeated and paged resolves`() {
+        // given
+        val classLoader = CountingClassLoader(javaClass.classLoader)
+        val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
+        val holders = listOf(
+            // sealed subclasses, also nested in the companion object, the nested classes of the companion object
+            "com.xemantic.kotlin.introspection.test.CompanionNestedSealedHolder",
+            // the inner classes, referring to the type parameters of their outer classes
+            "com.xemantic.kotlin.introspection.test.TypeParametersNestedHolder",
+            "com.xemantic.kotlin.introspection.test.InnerOfInnerHolder.Mid"
+        )
+
+        // when
+        val pages = holders.flatMap { holder ->
+            listOf(
+                introspector.resolve(holder),
+                introspector.resolve(holder),
+                introspector.resolve(holder, page = 1, pageSize = 1),
+                introspector.resolve(holder, page = 2, pageSize = 1)
+            )
+        }
+
+        // then
+        assert(pages.all { it != null })
+        // the class names of the declarations within the holders, like Holder.Sub or Holder${'$'}Sub
+        val nestedLoads = classLoader.loads.filterKeys { name ->
+            holders.any { holder -> name != holder && name.replace('$', '.').startsWith("$holder.") }
+        }
+        assert(nestedLoads.isNotEmpty())
+        assert(nestedLoads.values.all { it == 1 })
+        // only by their binary names, as known from the metadata, without trying the other ones
+        assert(nestedLoads.keys.none { name -> '.' in name.removePrefix("com.xemantic.kotlin.introspection.test.") })
+    }
+
+    @Test
+    fun `should load nested class again after a transient linkage error`() {
+        // given
+        val nested = "com.xemantic.kotlin.introspection.test.TypeParametersNestedHolder\$Sorted"
+        val classLoader = CountingClassLoader(javaClass.classLoader, failingOnce = setOf(nested))
+        val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
+
+        // when
+        val signatures = List(2) {
+            introspector.resolve("com.xemantic.kotlin.introspection.test.TypeParametersNestedHolder")
+        }
+
+        // then
+        // read from the class file the first time, and loaded the second time
+        assert(signatures.all { it != null && "class Sorted<T>" in it })
+        assert(classLoader.loads[nested] == 2)
     }
 
     @Test
@@ -663,6 +842,41 @@ class ClassLoaderIntrospectionTest {
             }
         """.trimIndent()
         assert(missingClasses.none { it.startsWith("kotlin.") })
+    }
+
+    @Test
+    fun `should read DefaultImpls class files of interfaces without loading the classes`() {
+        // given
+        val requestedClasses = Collections.synchronizedList(mutableListOf<String>())
+        val classLoader = object : ClassLoader(javaClass.classLoader) {
+            override fun loadClass(name: String, resolve: Boolean): Class<*> {
+                requestedClasses += name
+                return super.loadClass(name, resolve)
+            }
+        }
+        val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
+
+        // when
+        // the JVM methods of an interface owning an overload are read, also the ones relocated to DefaultImpls,
+        // which most interfaces do not have, compiled with the default -jvm-default
+        val greeter = introspector.resolve("com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsGreeter")
+        val processor = introspector.resolve("com.xemantic.kotlin.introspection.test.OverloadingProcessorInterface")
+
+        // then
+        greeter sameAsKotlin """
+            // com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsGreeter [page 1/1]
+            interface DefaultImplsGreeter : DefaultImplsBase {
+                override val label: String
+                override fun greet(name: String): String
+            }
+        """.trimIndent()
+        processor sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OverloadingProcessorInterface [page 1/1]
+            interface OverloadingProcessorInterface : Processor<String> {
+                fun process(item: Int)
+            }
+        """.trimIndent()
+        assert(requestedClasses.none { it.endsWith("\$DefaultImpls") })
     }
 
 }
