@@ -67,6 +67,25 @@ class PrivateCompanionHolder {
     fun answer(): Int = helper()
 }
 
+// The protected members of the companion object can be called from a subclass of the outer class
+open class ProtectedCompanionMembersHolder {
+    companion object {
+        protected fun protectedFactory(): Int = 1
+        fun publicFactory(): Int = 2
+    }
+}
+
+// The constructor of a sealed class is protected, but the user code cannot declare a subclass calling it
+sealed class SealedShape(val code: Int) {
+    class Square : SealedShape(4)
+}
+
+// Neither the class, nor its members, nor its nested classes are part of the API
+internal class InternalHolder {
+    fun member() {}
+    class Nested
+}
+
 // Only non-public members in the companion object
 class HiddenCompanionMembersHolder {
     companion object {
