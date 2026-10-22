@@ -725,7 +725,7 @@ internal class OverrideResolver(
                     substitution[type.name] ?: UnknownType
                 } else {
                     // a type variable of the method, known only by its erasure
-                    val erasure = javaErasure(type)?.let { (javaClassType(it) as? ClassType)?.let { erasure(it) } }
+                    val erasure = javaErasure(type, substitution)
                     val index = (declaration as? Method)?.typeParameters?.indexOfFirst { it.name == type.name } ?: -1
                     TypeParameterType("F$index", false, erasure)
                 }
@@ -734,12 +734,18 @@ internal class OverrideResolver(
         }
 
     /**
-     * The class a Java [type] is erased to, the erasure of the first bound for a type variable.
+     * The name of the class a Java [type] is erased to, or `null` if unknown:
+     * the erasure of the first bound for a type variable of a method,
+     * and of the substituted type argument for a type variable of a class.
      */
-    private fun javaErasure(type: JavaType): Class<*>? = when (type) {
-        is Class<*> -> type
-        is ParameterizedType -> type.rawType as? Class<*>
-        is TypeVariable<*> -> type.bounds.firstOrNull()?.let { javaErasure(it) }
+    private fun javaErasure(type: JavaType, substitution: Map<String, MemberType>): String? = when (type) {
+        is Class<*> -> erasure(javaClassType(type))
+        is ParameterizedType -> javaErasure(type.rawType, substitution)
+        is TypeVariable<*> -> if (type.genericDeclaration is Class<*>) {
+            substitution[type.name]?.let { erasure(it) }
+        } else {
+            type.bounds.firstOrNull()?.let { javaErasure(it, substitution) }
+        }
         else -> null
     }
 
@@ -791,7 +797,14 @@ internal class OverrideResolver(
                     typeVariable in generic.typeParameters -> TypeParameterType(
                         "F${generic.typeParameters.indexOf(typeVariable)}",
                         false,
-                        erasure(asmType(parameterType))
+                        // the descriptor erases a type variable bounded by one of the class to the bound of the latter
+                        generic.classTypeVariableBound(typeVariable).let { classTypeVariable ->
+                            if (classTypeVariable != null) {
+                                substitution[classTypeVariable]?.let { erasure(it) }
+                            } else {
+                                erasure(asmType(parameterType))
+                            }
+                        }
                     )
                     else -> substitution[typeVariable] ?: UnknownType
                 }
@@ -838,13 +851,30 @@ internal class OverrideResolver(
 
     /**
      * The type parameters of a generic method signature,
-     * and the type variables of the parameters by their indices, for the parameters whose type is a type variable.
+     * the type variables of the parameters by their indices, for the parameters whose type is a type variable,
+     * and the type variables bounding the type parameters, for the type parameters whose first bound is a type variable.
      */
     private class GenericMethodSignature(signature: String) {
 
         val typeParameters = mutableListOf<String>()
 
         val typeVariableParameters = mutableMapOf<Int, String>()
+
+        val typeVariableBounds = mutableMapOf<String, String>()
+
+        /**
+         * The type variable of the class bounding the [typeVariable] of the method, directly or through other ones,
+         * or `null` if it is bounded by a class.
+         */
+        fun classTypeVariableBound(typeVariable: String): String? {
+            val visited = mutableSetOf<String>()
+            var current = typeVariable
+            while (current in typeParameters) {
+                if (!visited.add(current)) return null
+                current = typeVariableBounds[current] ?: return null
+            }
+            return current
+        }
 
         init {
             SignatureReader(signature).accept(object : SignatureVisitor(Opcodes.ASM9) {
@@ -853,11 +883,19 @@ internal class OverrideResolver(
 
                 private var inParameter = false
 
+                private var boundedTypeParameter: String? = null
+
                 override fun visitFormalTypeParameter(name: String) {
                     typeParameters += name
+                    boundedTypeParameter = name
                 }
 
+                override fun visitClassBound(): SignatureVisitor = this
+
+                override fun visitInterfaceBound(): SignatureVisitor = this
+
                 override fun visitParameterType(): SignatureVisitor {
+                    boundedTypeParameter = null
                     parameterIndex++
                     inParameter = true
                     return this
@@ -865,24 +903,30 @@ internal class OverrideResolver(
 
                 override fun visitReturnType(): SignatureVisitor {
                     inParameter = false
+                    boundedTypeParameter = null
                     return this
                 }
 
                 override fun visitTypeVariable(name: String) {
                     if (inParameter) typeVariableParameters[parameterIndex] = name
+                    boundedTypeParameter?.let { typeVariableBounds[it] = name }
                     inParameter = false
+                    boundedTypeParameter = null
                 }
 
                 override fun visitClassType(name: String) {
                     inParameter = false
+                    boundedTypeParameter = null
                 }
 
                 override fun visitBaseType(descriptor: Char) {
                     inParameter = false
+                    boundedTypeParameter = null
                 }
 
                 override fun visitArrayType(): SignatureVisitor {
                     inParameter = false
+                    boundedTypeParameter = null
                     return this
                 }
 

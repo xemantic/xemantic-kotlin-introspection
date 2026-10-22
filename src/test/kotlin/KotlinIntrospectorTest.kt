@@ -1685,6 +1685,19 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should mark override of Java method whose type variable is bounded by type variable of its class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaClassBoundSubclass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaClassBoundSubclass [page 1/1]
+            class JavaClassBoundSubclass : com.xemantic.kotlin.introspection.test.other.JavaClassBoundBase<CharSequence> {
+                override fun <T : CharSequence> bounded(x: T)
+                fun <T : Number> bounded(x: T)
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should not mark function of other erasure as override of Java method whose type variable has parameterized bound`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.CharSequenceSorter"

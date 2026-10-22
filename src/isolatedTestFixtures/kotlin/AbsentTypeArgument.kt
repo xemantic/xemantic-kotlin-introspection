@@ -48,6 +48,7 @@ class AbsentJavaSubclass : AbsentJavaBase<String>() {
     override fun run() {}
     fun run(times: Int) {}
     fun prim(x: Int?) {}
+    override fun <S : String> bounded(x: S) {}
 }
 
 // the Java superclass refers to Absent only in the generic types of its methods
