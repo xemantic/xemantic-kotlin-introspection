@@ -743,6 +743,11 @@ internal class DefaultKotlinIntrospector(
         val renderedConstructor = primaryConstructor?.takeIf {
             isEnum || it.visibility.isApiIn(scopes)
         }
+        // The other ways of creating the class, never of an enum class, as they are private,
+        // nor of an annotation class, which cannot have any
+        val secondaryConstructors = kmClass.constructors.filter {
+            it.isSecondary && it.visibility.isApiIn(scopes)
+        }
         // The properties declared by the parameters of the rendered constructor, by the parameter name
         val constructorProperties = renderedConstructor?.valueParameters.orEmpty().mapNotNull { param ->
             properties.firstOrNull { it.isDeclaredBy(param) }?.let { param.name to it }
@@ -776,7 +781,11 @@ internal class DefaultKotlinIntrospector(
                     defaultValue = { formatAnnotationDefaultValue(clazz, param.name, contextPackage) }
                 )
             }
-            renderedConstructor != null && renderedConstructor.valueParameters.isNotEmpty() -> buildString {
+            // the implicit constructor without parameters is omitted, unless there are other constructors,
+            // as `class Foo { constructor(x: Int) }` has no constructor without parameters
+            renderedConstructor != null && (
+                renderedConstructor.valueParameters.isNotEmpty() || secondaryConstructors.isNotEmpty()
+            ) -> buildString {
                 // a protected constructor can be called only from a subclass
                 if (!isEnum && renderedConstructor.visibility != Visibility.PUBLIC) {
                     +" "
@@ -835,6 +844,13 @@ internal class DefaultKotlinIntrospector(
                         +formatProperty(property, inInterface = isInterface, owner = kmClass, contextPackage = contextPackage, classTypeParameters = typeParameters)
                         +"\n"
                     }
+
+                // Secondary constructors, in the conventional order, between the properties and the functions
+                secondaryConstructors.forEach { constructor ->
+                    +"    "
+                    +formatSecondaryConstructor(constructor, contextPackage, typeParameters)
+                    +"\n"
+                }
 
                 // Functions
                 functions.forEach { function ->
@@ -903,6 +919,21 @@ internal class DefaultKotlinIntrospector(
             +"}"
 
             +renderExtensions(extensions, extensionProperties, contextPackage)
+        }
+    }
+
+    /**
+     * A secondary constructor, like `constructor(name: String, vararg tags: String)`, without the delegation call.
+     */
+    private fun formatSecondaryConstructor(
+        constructor: KmConstructor,
+        contextPackage: String,
+        typeParameters: Map<Int, String>
+    ): String = buildString {
+        +formatVisibility(constructor.visibility)
+        +"constructor"
+        +constructor.valueParameters.joinToString(", ", "(", ")") { param ->
+            formatValueParameter(param, contextPackage, typeParameters)
         }
     }
 
