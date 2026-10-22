@@ -160,3 +160,24 @@ sealed class CompanionNestedSealedHolder {
         class Unrelated
     }
 }
+
+sealed class NamedCompanionNestedHolder {
+    companion object Factory {
+        class Builder
+        class FactorySub : NamedCompanionNestedHolder()
+    }
+}
+
+open class OpenCompanionNestedHolder {
+    companion object {
+        protected class ProtectedNested
+        class PublicNested
+    }
+}
+
+class FinalCompanionNestedHolder {
+    companion object {
+        protected class ProtectedNested
+        class PublicNested
+    }
+}

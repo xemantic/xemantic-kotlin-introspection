@@ -2771,6 +2771,52 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should list nested classes of named companion object`() {
+        // the sealed subclass nested in the companion object is listed only once, qualified with its name
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.NamedCompanionNestedHolder"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NamedCompanionNestedHolder [page 1/1]
+            sealed class NamedCompanionNestedHolder {
+                class Factory.FactorySub : NamedCompanionNestedHolder
+                companion object Factory {
+                    class Builder
+                }
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should list protected nested class of companion object of open class`() {
+        // a subclass of the outer class can use it
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.OpenCompanionNestedHolder"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OpenCompanionNestedHolder [page 1/1]
+            open class OpenCompanionNestedHolder {
+                companion object {
+                    protected class ProtectedNested
+                    class PublicNested
+                }
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not list protected nested class of companion object of final class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.FinalCompanionNestedHolder"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.FinalCompanionNestedHolder [page 1/1]
+            class FinalCompanionNestedHolder {
+                companion object {
+                    class PublicNested
+                }
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should not split companion object with nested classes across pages`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.CompanionNestedClassesHolder",

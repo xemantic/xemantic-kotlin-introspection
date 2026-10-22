@@ -754,18 +754,20 @@ internal class DefaultKotlinIntrospector(
         }.toMap()
 
         // the binary name, as the class might be nested
-        val companionBinaryName = "${clazz.name}\$${kmClass.companionObject}"
+        val companionBinaryName = kmClass.companionObject?.let { "${clazz.name}\$$it" }
         // The companion object, unless it is not part of the API, with its members which are
-        val companion = kmClass.companionObject
-            ?.let { loadKmClass(companionBinaryName) }
+        val companion = companionBinaryName
+            ?.let { loadKmClass(it) }
             ?.takeIf { it.visibility.isApiIn(scopes) }
         val companionScopes = scopes + listOfNotNull(companion?.scope)
         val companionProperties = companion?.properties.orEmpty().filter { it.visibility.isApiIn(companionScopes) }
         val companionFunctions = companion?.functions.orEmpty().filter { it.visibility.isApiIn(companionScopes) }
         // the ones which are also sealed subclasses of this class are listed as such
-        val companionNestedClasses = companion?.let {
-            listedNestedClasses(it, companionScopes, companionBinaryName, kmClass.sealedSubclasses.toSet())
-        }.orEmpty()
+        val companionNestedClasses = if (companion != null && companionBinaryName != null) {
+            listedNestedClasses(companion, companionScopes, companionBinaryName, kmClass.sealedSubclasses.toSet())
+        } else {
+            emptyList()
+        }
 
         // Extensions from the index on this type and its supertypes (shown after class body with source)
         val receiverNames = listOf(className) + userSupertypes(kmClass)
@@ -1049,8 +1051,8 @@ internal class DefaultKotlinIntrospector(
      * and the ones not visible to the users of the outer class.
      *
      * @param binaryName the binary name of the [kmClass], like `com.example.Outer$Companion`.
-     * @param sealedSubclasses the sealed subclasses already listed, including the ones of the class
-     *   enclosing a companion object, which might be nested in that companion object.
+     * @param sealedSubclasses the declared sealed subclasses to exclude, the ones of the [kmClass],
+     *   or of the class enclosing a companion object, which might be nested in that companion object.
      */
     private fun listedNestedClasses(
         kmClass: KmClass,
