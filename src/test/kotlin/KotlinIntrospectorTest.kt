@@ -1647,6 +1647,106 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should mark overrides of JDK members of read-only collection`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JdkList"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JdkList [page 1/1]
+            abstract class JdkList : List<String> {
+                override fun spliterator(): java.util.Spliterator<String>
+                override fun forEach(action: java.util.function.Consumer<in String>)
+                override fun stream(): java.util.stream.Stream<String>
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark overrides of JDK members of mutable list`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JdkMutableList"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JdkMutableList [page 1/1]
+            abstract class JdkMutableList : AbstractMutableList<String> {
+                override fun removeIf(filter: java.util.function.Predicate<in String>): Boolean
+                override fun replaceAll(operator: java.util.function.UnaryOperator<String>)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark override of JDK member of mutable map`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JdkMap"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JdkMap [page 1/1]
+            abstract class JdkMap : MutableMap<String, Int> {
+                override fun putIfAbsent(key: String, value: Int): Int?
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not mark JDK members hidden from Kotlin collections as override`() {
+        // Collection.toArray is not visible in Kotlin, AbstractCollection declares its own
+        resolver.resolve(
+            "kotlin.collections.AbstractCollection.toArray"
+        ) sameAsKotlin """
+            // kotlin.collections.AbstractCollection.toArray [page 1/1]
+            protected open fun toArray(): Array<Any?>
+            protected open fun <T> toArray(array: Array<T>): Array<T>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not mark functions named like JDK 21 sequenced collection members as override`() {
+        // the standard library is compiled against JDK 8, without List.addFirst
+        resolver.resolve(
+            "kotlin.collections.ArrayDeque.addFirst"
+        ) sameAsKotlin """
+            // kotlin.collections.ArrayDeque.addFirst [page 1/1]
+            fun addFirst(element: E)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark override of Java method taking Kotlin function type`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.KotlinFunctionTaker"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.KotlinFunctionTaker [page 1/1]
+            class KotlinFunctionTaker : com.xemantic.kotlin.introspection.test.other.JavaFunctionTaker {
+                override fun onEvent(callback: Function1<String, Unit>)
+                fun onEvent(callback: Function1<Int, Unit>, extra: Int)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark overrides without redundant use-site projections`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.RedundantProjectionImpl"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.RedundantProjectionImpl [page 1/1]
+            abstract class RedundantProjectionImpl : RedundantProjection {
+                override fun f(x: List<String>)
+                override fun c(x: Comparable<in String>)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark overrides with redundant use-site projections`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.PlainProjectionImpl"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PlainProjectionImpl [page 1/1]
+            abstract class PlainProjectionImpl : PlainProjection {
+                override fun f(x: List<out String>)
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should mark override in object`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.ObjectProcessor"

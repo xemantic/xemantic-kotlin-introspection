@@ -21,6 +21,12 @@ package com.xemantic.kotlin.introspection
 import com.xemantic.kotlin.introspection.test.TestClass
 import com.xemantic.kotlin.test.sameAs
 import org.junit.jupiter.api.io.TempDir
+import org.objectweb.asm.AnnotationVisitor
+import org.objectweb.asm.ClassReader
+import org.objectweb.asm.ClassVisitor
+import org.objectweb.asm.ClassWriter
+import org.objectweb.asm.MethodVisitor
+import org.objectweb.asm.Opcodes
 import java.io.File
 import java.net.URLClassLoader
 import java.nio.file.Path
@@ -212,6 +218,87 @@ class ClassLoaderIntrospectionTest {
                 fun compare(item: Int)
             }
         """.trimIndent()
+    }
+
+    @Test
+    fun `should mark overrides of members of Kotlin superclass without metadata`() {
+        // given
+        val root = tempDir.resolve("stripped")
+        isolatedTestFixtures.filter { it.exists() }.forEach { dir ->
+            dir.walkTopDown().filter { it.isFile }.forEach { file ->
+                val target = root.resolve(file.relativeTo(dir).path).toFile()
+                target.parentFile.mkdirs()
+                target.writeBytes(
+                    when (file.name) {
+                        "MetadataStrippedBase.class" -> shrunk(withoutMetadata(file.readBytes()))
+                        "MetadataStrippedSubclass.class" -> shrunk(file.readBytes())
+                        else -> file.readBytes()
+                    }
+                )
+            }
+        }
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.MetadataStrippedSubclass",
+            pageSize = 20
+        )
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.MetadataStrippedSubclass [page 1/1]
+            abstract class MetadataStrippedSubclass : MetadataStrippedBase<String> {
+                override val presentable: String
+                override val isReady: Boolean
+                override var count: Int
+                override val String.measure: Int
+                val Int.measure: Int
+                override fun String.describe(x: Int): String
+                fun describe(x: Int): String
+                override suspend fun load(id: String): String
+                fun load(id: String, extra: Int): String
+                override fun onEvent(callback: suspend (String) -> Unit)
+                override fun process(item: String)
+                fun process(item: Int)
+                override fun shrunk(x: Int)
+                override fun shrunk(x: String)
+                fun shrunkAlone()
+            }
+        """.trimIndent()
+    }
+
+    /**
+     * Removes the JVM methods `shrunk(int)` and `shrunkAlone()` from the class bytes, like R8 might.
+     */
+    private fun shrunk(bytes: ByteArray): ByteArray {
+        val writer = ClassWriter(0)
+        ClassReader(bytes).accept(object : ClassVisitor(Opcodes.ASM9, writer) {
+            override fun visitMethod(
+                access: Int,
+                name: String,
+                descriptor: String,
+                signature: String?,
+                exceptions: Array<out String>?
+            ): MethodVisitor? = if ((name == "shrunk" && descriptor == "(I)V") || name == "shrunkAlone") {
+                null
+            } else {
+                super.visitMethod(access, name, descriptor, signature, exceptions)
+            }
+        }, 0)
+        return writer.toByteArray()
+    }
+
+    /**
+     * Removes the `@Metadata` annotation from the class bytes, like R8 or shading might.
+     */
+    private fun withoutMetadata(bytes: ByteArray): ByteArray {
+        val writer = ClassWriter(0)
+        ClassReader(bytes).accept(object : ClassVisitor(Opcodes.ASM9, writer) {
+            override fun visitAnnotation(descriptor: String, visible: Boolean): AnnotationVisitor? =
+                if (descriptor == "Lkotlin/Metadata;") null else super.visitAnnotation(descriptor, visible)
+        }, 0)
+        return writer.toByteArray()
     }
 
     @Test

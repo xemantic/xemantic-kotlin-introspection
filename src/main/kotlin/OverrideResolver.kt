@@ -43,6 +43,9 @@ import kotlin.metadata.isDefinitelyNonNull
 import kotlin.metadata.isInner
 import kotlin.metadata.isNullable
 import kotlin.metadata.isSuspend
+import kotlin.metadata.jvm.JvmMethodSignature
+import kotlin.metadata.jvm.getterSignature
+import kotlin.metadata.jvm.signature
 import kotlin.metadata.visibility
 import java.lang.reflect.Type as JavaType
 import org.objectweb.asm.Type as AsmType
@@ -127,17 +130,26 @@ internal class OverrideResolver(
         val isJava: Boolean
     )
 
+    /**
+     * @param ownerJvmMethods the JVM methods of the owner class, as names followed by descriptors,
+     *   or `null` if its class file cannot be read.
+     */
     private class Overridables(
         val substitution: Map<Int, MemberType>,
         val functions: Map<String, List<Overridable>>,
-        val properties: Map<String, List<Overridable>>
+        val properties: Map<String, List<Overridable>>,
+        val ownerJvmMethods: Set<String>?
     )
 
     /**
      * A declaration of a supertype: Kotlin, Java, or both for a Kotlin built-in type
      * whose JVM type contributes Java members, like `Throwable.fillInStackTrace`.
      */
-    private class Declaration(val kotlin: KmClass?, val java: Class<*>?)
+    private class Declaration(
+        val kotlin: KmClass?,
+        val java: Class<*>?,
+        val hiddenJavaMethods: Set<String> = emptySet()
+    )
 
     private val overridablesCache = ConcurrentHashMap<String, Overridables>()
 
@@ -173,30 +185,61 @@ internal class OverrideResolver(
         val parameters = function.valueParameters.map {
             kotlinType(it.type, overridables.substitution, typeParameters)
         }
-        return candidates.any { it.matches(receiver, parameters, typeParameters.size) }
+        return candidates.any { it.matches(receiver, parameters, typeParameters.size, function.isSuspend) } ||
+            overridables.isShrunk(function.signature)
     }
 
     fun isOverride(owner: KmClass, property: KmProperty): Boolean {
         val overridables = overridables(owner)
-        val candidates = overridables.properties[property.name] ?: return false
         val typeParameters = property.typeParameters
         val receiver = property.receiverParameterType?.let {
             kotlinType(it, overridables.substitution, typeParameters)
         }
-        return candidates.any { it.matches(receiver, emptyList(), typeParameters.size) }
+        val overridesProperty = overridables.properties[property.name].orEmpty().any {
+            it.matches(receiver, emptyList(), typeParameters.size, isSuspend = false)
+        }
+        // a property of a Kotlin supertype without metadata is known only by its JVM getter
+        val overridesGetter = overridables.functions[getterName(property.name)].orEmpty().any {
+            it.isJava && it.matches(receiver, emptyList(), typeParameters.size, isSuspend = false)
+        }
+        return overridesProperty || overridesGetter ||
+            (property.name in overridables.properties && overridables.isShrunk(property.getterSignature))
     }
+
+    /**
+     * Whether the JVM method of a member, declared in the metadata, has been removed from the class file of its owner,
+     * like by R8, so that it cannot be told from an overload of a supertype member,
+     * which is then assumed to be overridden, as one with the same name is known.
+     * The caller checks that a supertype member of the same name exists.
+     */
+    private fun Overridables.isShrunk(signature: JvmMethodSignature?): Boolean =
+        signature != null && ownerJvmMethods != null && "${signature.name}${signature.descriptor}" !in ownerJvmMethods
+
+    private fun getterName(propertyName: String): String =
+        if (propertyName.length > 2 && propertyName.startsWith("is") && !propertyName[2].isLowerCase()) {
+            propertyName
+        } else {
+            "get${propertyName.replaceFirstChar { it.uppercaseChar() }}"
+        }
 
     private fun Overridable.matches(
         receiver: MemberType?,
         parameters: List<MemberType>,
-        typeParameterCount: Int
+        typeParameterCount: Int,
+        isSuspend: Boolean
     ): Boolean {
         if (this.typeParameterCount != typeParameterCount) return false
+        if (isJava) {
+            // on the JVM, the receiver is the first parameter, and a suspend function takes a trailing Continuation
+            val jvmParameters = listOfNotNull(receiver) + parameters +
+                if (isSuspend) listOf(ClassType("kotlin/coroutines/Continuation")) else emptyList()
+            return this.parameters.size == jvmParameters.size &&
+                this.parameters.zip(jvmParameters).all { (overridden, overriding) -> erasuresMatch(overridden, overriding) }
+        }
         if ((this.receiver == null) != (receiver == null)) return false
         if (this.parameters.size != parameters.size) return false
-        val match: (MemberType, MemberType) -> Boolean = if (isJava) ::erasuresMatch else ::typesMatch
-        return (this.receiver == null || match(this.receiver, receiver!!)) &&
-            this.parameters.zip(parameters).all { (overridden, overriding) -> match(overridden, overriding) }
+        return (this.receiver == null || typesMatch(this.receiver, receiver!!)) &&
+            this.parameters.zip(parameters).all { (overridden, overriding) -> typesMatch(overridden, overriding) }
     }
 
     private fun overridables(owner: KmClass): Overridables =
@@ -273,7 +316,9 @@ internal class OverrideResolver(
                     typeVariable.name to (supertype.arguments.getOrNull(index)?.type ?: UnknownType)
                 }
                 javaMethods(javaClass, ownerPackage, substitution).forEach { (name, method) ->
-                    functions.getOrPut(name) { mutableListOf() } += method
+                    if (name !in declaration.hiddenJavaMethods) {
+                        functions.getOrPut(name) { mutableListOf() } += method
+                    }
                 }
                 // the supertypes of a built-in type are known from its Kotlin declaration
                 if (declaration.kotlin == null) {
@@ -282,7 +327,23 @@ internal class OverrideResolver(
             }
         }
 
-        return Overridables(ownerSubstitution, functions, properties)
+        val ownerJvmMethods = loadClass(owner.name.replace('/', '.'))?.let { classBytes(it) }?.let { bytes ->
+            buildSet {
+                ClassReader(bytes).accept(object : ClassVisitor(Opcodes.ASM9) {
+                    override fun visitMethod(
+                        access: Int,
+                        name: String,
+                        descriptor: String,
+                        signature: String?,
+                        exceptions: Array<out String>?
+                    ): MethodVisitor? {
+                        add(name + descriptor)
+                        return null
+                    }
+                }, ClassReader.SKIP_CODE or ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES)
+            }
+        }
+        return Overridables(ownerSubstitution, functions, properties, ownerJvmMethods)
     }
 
     private val Visibility.isOverridable: Boolean
@@ -422,13 +483,26 @@ internal class OverrideResolver(
             namesMatch &&
                 (flexible || a.nullable == b.nullable) &&
                 a.arguments.size == b.arguments.size &&
-                a.arguments.zip(b.arguments).all { (x, y) ->
+                a.arguments.zip(b.arguments).withIndex().all { (index, arguments) ->
+                    val (x, y) = arguments
                     (x.type == UnknownType || y.type == UnknownType) ||
-                        ((flexible || x.variance == y.variance) && typesMatch(x.type, y.type))
+                        ((flexible || variancesMatch(a.name, index, x.variance, y.variance)) && typesMatch(x.type, y.type))
                 }
         }
         a is TypeParameterType && b is TypeParameterType -> a.key == b.key && a.nullable == b.nullable
         else -> false
+    }
+
+    /**
+     * Whether the use-site variances of a type argument are the same,
+     * a redundant one, like `List<out String>`, being the same as none.
+     */
+    private fun variancesMatch(className: String, index: Int, a: KmVariance?, b: KmVariance?): Boolean {
+        if (a == b) return true
+        if (a == null || b == null) return false
+        val declared = declaration(className).kotlin?.typeParameters?.getOrNull(index)?.variance
+        fun effective(variance: KmVariance) = if (variance == declared) KmVariance.INVARIANT else variance
+        return effective(a) == effective(b)
     }
 
     private fun erasuresMatch(a: MemberType, b: MemberType): Boolean {
@@ -444,19 +518,36 @@ internal class OverrideResolver(
         is ClassType -> if (type.name == "kotlin/Array") {
             type.arguments.singleOrNull()?.type?.let { erasure(it) }?.let { "[$it" }
         } else {
-            normalizedName(type.name)
+            functionTypeErasure(type.name) ?: normalizedName(type.name)
         }
         is TypeParameterType -> type.erasure
         UnknownType -> null
     }
 
     /**
-     * The name of a read-only collection type for a mutable one, as Java does not tell them apart.
+     * The JVM erasure of a function type: `kotlin/reflect/KFunction` for the `KFunctionN` types,
+     * and `kotlin/FunctionN+1` for a suspend function type resolved by [suspendFunctionType],
+     * as it takes a trailing `Continuation`.
      */
-    private fun normalizedName(name: String): String =
-        if (name.startsWith("kotlin/collections/")) {
-            name.replace("/Mutable", "/").replace(".Mutable", ".")
-        } else name
+    private fun functionTypeErasure(name: String): String? {
+        val match = functionTypeRegex.matchEntire(name) ?: return null
+        val (reflect, suspend, arity) = match.destructured
+        return when {
+            reflect.isNotEmpty() -> "kotlin/reflect/KFunction"
+            suspend.isNotEmpty() -> "kotlin/Function${arity.toInt() + 1}"
+            else -> null
+        }
+    }
+
+    /**
+     * The name of a read-only collection type for a mutable one, as Java does not tell them apart,
+     * and the name of a function type for its JVM interface, like `kotlin/jvm/functions/Function1`.
+     */
+    private fun normalizedName(name: String): String = when {
+        name.startsWith("kotlin/collections/") -> name.replace("/Mutable", "/").replace(".Mutable", ".")
+        name.startsWith("kotlin/jvm/functions/Function") -> "kotlin/" + name.removePrefix("kotlin/jvm/functions/")
+        else -> name
+    }
 
     private fun declaration(name: String): Declaration =
         declarationCache[name] ?: findDeclaration(name).also { declarationCache.putIfAbsent(name, it) }
@@ -466,13 +557,14 @@ internal class OverrideResolver(
         // the built-in declaration of a type having its own class file, like KClass, is incomplete
         javaClass?.let { readKmClass(it) }?.let { return Declaration(it, null) }
         builtinClasses()[name]?.let { kmClass ->
-            // members of Any and of the collection types are fully described by their Kotlin declarations
-            val builtinJavaClass = if (name == "kotlin/Any" || name.startsWith("kotlin/collections/")) {
-                null
-            } else {
-                builtinJavaClasses[name]
+            // members of Any are fully described by its Kotlin declaration, unlike the JVM members of Object
+            val builtinJavaClass = if (name == "kotlin/Any") null else builtinJavaClasses[name]
+            val hiddenJavaMethods = when {
+                !name.startsWith("kotlin/collections/") -> emptySet()
+                name.substringAfterLast('/').contains("Mutable") -> hiddenCollectionMethods
+                else -> hiddenCollectionMethods + mutatingCollectionMethods
             }
-            return Declaration(kmClass, builtinJavaClass)
+            return Declaration(kmClass, builtinJavaClass, hiddenJavaMethods)
         }
         return Declaration(null, javaClass)
     }
@@ -617,14 +709,7 @@ internal class OverrideResolver(
         ownerPackage: String,
         substitution: Map<String, MemberType>
     ): List<Pair<String, Overridable>> {
-        val resource = javaClass.name.replace('.', '/') + ".class"
-        val bytes = try {
-            (javaClass.classLoader ?: ClassLoader.getSystemClassLoader())
-                .getResourceAsStream(resource)
-                ?.use { it.readBytes() }
-        } catch (_: java.io.IOException) {
-            null
-        } ?: return emptyList()
+        val bytes = classBytes(javaClass) ?: return emptyList()
         val methods = mutableListOf<Pair<String, Overridable>>()
         ClassReader(bytes).accept(object : ClassVisitor(Opcodes.ASM9) {
             override fun visitMethod(
@@ -658,6 +743,14 @@ internal class OverrideResolver(
             }
         }, ClassReader.SKIP_CODE or ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES)
         return methods
+    }
+
+    private fun classBytes(javaClass: Class<*>): ByteArray? = try {
+        (javaClass.classLoader ?: ClassLoader.getSystemClassLoader())
+            .getResourceAsStream(javaClass.name.replace('.', '/') + ".class")
+            ?.use { it.readBytes() }
+    } catch (_: java.io.IOException) {
+        null
     }
 
     private fun asmType(type: AsmType): MemberType = when (type.sort) {
@@ -741,10 +834,28 @@ internal class OverrideResolver(
     private companion object {
 
         /**
+         * The JVM methods of the collection interfaces not visible in Kotlin:
+         * `toArray`, and the members of the JDK 21 sequenced collections,
+         * which the standard library, compiled against JDK 8, declares without overriding them.
+         */
+        val hiddenCollectionMethods = setOf(
+            "toArray", "addFirst", "addLast", "getFirst", "getLast", "removeFirst", "removeLast", "reversed"
+        )
+
+        /**
+         * The JVM methods of the collection interfaces visible only on the mutable Kotlin collection types.
+         */
+        val mutatingCollectionMethods = setOf(
+            "add", "addAll", "remove", "removeAll", "retainAll", "clear", "removeIf", "replaceAll", "sort", "set",
+            "put", "putAll", "putIfAbsent", "replace", "compute", "computeIfAbsent", "computeIfPresent", "merge",
+            "setValue"
+        )
+
+        /**
          * The function types, like `kotlin/Function1`, `kotlin/reflect/KFunction1`,
          * and the suspend function types as resolved by [suspendFunctionType].
          */
-        val functionTypeRegex = Regex("kotlin/(?:reflect/)?(K?)(?:Suspend)?Function\\d+")
+        val functionTypeRegex = Regex("kotlin/(?:reflect/)?(K?)(Suspend)?Function(\\d+)")
 
         val primitiveNames = mapOf(
             "boolean" to "kotlin/Boolean",

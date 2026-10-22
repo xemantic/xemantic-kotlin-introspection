@@ -18,6 +18,7 @@
 
 package com.xemantic.kotlin.introspection.test
 
+import com.xemantic.kotlin.introspection.test.other.JavaFunctionTaker
 import com.xemantic.kotlin.introspection.test.other.JavaProcessorBase
 import com.xemantic.kotlin.introspection.test.other.JavaVoidBase
 import com.xemantic.kotlin.introspection.test.other.PackagePrivateBase
@@ -372,6 +373,50 @@ class AnyMembersRunnable : Runnable {
     override fun toString(): String = ""
     override fun equals(other: Any?): Boolean = false
     override fun hashCode(): Int = 0
+}
+
+// JDK members of mapped collection interfaces, not declared by the Kotlin built-in types
+abstract class JdkList : List<String> {
+    override fun spliterator(): java.util.Spliterator<String> = TODO()
+    override fun forEach(action: java.util.function.Consumer<in String>) {}
+    override fun stream(): java.util.stream.Stream<String> = TODO()
+}
+
+abstract class JdkMutableList : AbstractMutableList<String>() {
+    override fun removeIf(filter: java.util.function.Predicate<in String>): Boolean = false
+    override fun replaceAll(operator: java.util.function.UnaryOperator<String>) {}
+}
+
+abstract class JdkMap : MutableMap<String, Int> {
+    override fun putIfAbsent(key: String, value: Int): Int? = null
+}
+
+// A Java parameter of a Kotlin function type
+class KotlinFunctionTaker : JavaFunctionTaker() {
+    override fun onEvent(callback: (String) -> Unit) {}
+    fun onEvent(callback: (Int) -> Unit, extra: Int) {}
+}
+
+// Redundant use-site projections, the same as the declaration-site variance
+interface RedundantProjection {
+    @Suppress("REDUNDANT_PROJECTION")
+    fun f(x: List<out String>)
+    fun c(x: Comparable<String>)
+}
+
+abstract class RedundantProjectionImpl : RedundantProjection {
+    override fun f(x: List<String>) {}
+    @Suppress("REDUNDANT_PROJECTION")
+    override fun c(x: Comparable<in String>) {}
+}
+
+interface PlainProjection {
+    fun f(x: List<String>)
+}
+
+abstract class PlainProjectionImpl : PlainProjection {
+    @Suppress("REDUNDANT_PROJECTION")
+    override fun f(x: List<out String>) {}
 }
 
 interface RunnableExtension : Runnable
