@@ -645,6 +645,71 @@ class ClassLoaderIntrospectionTest {
         """.trimIndent()
     }
 
+    @Test
+    fun `should not list declarations hidden since an older Kotlin version`() {
+        // given
+        val root = tempDir.resolve("hiddenSince")
+        isolatedTestFixtures.filter { it.exists() }.forEach { dir ->
+            dir.walkTopDown().filter { it.isFile }.forEach { file ->
+                val target = root.resolve(file.relativeTo(dir).path).toFile()
+                target.parentFile.mkdirs()
+                target.writeBytes(
+                    if (file.name == "HiddenSinceHolder.class") {
+                        hiddenSince(
+                            file.readBytes(),
+                            "hiddenSincePast" to "1.0",
+                            // a property is annotated through the synthetic method for its annotations
+                            "getHiddenSinceProperty\$annotations" to "1.0",
+                            "hiddenSinceFuture" to "${KotlinVersion.CURRENT.major + 1}.0"
+                        )
+                    } else {
+                        file.readBytes()
+                    }
+                )
+            }
+        }
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.HiddenSinceHolder")
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.HiddenSinceHolder [page 1/1]
+            class HiddenSinceHolder {
+                fun hiddenSinceFuture(): Int
+            }
+        """.trimIndent()
+    }
+
+    /**
+     * Annotates the methods of the class with `@DeprecatedSinceKotlin(hiddenSince = …)`,
+     * which only the standard library can declare, by the method name.
+     */
+    private fun hiddenSince(bytes: ByteArray, vararg versionsByMethod: Pair<String, String>): ByteArray {
+        val versions = versionsByMethod.toMap()
+        val writer = ClassWriter(0)
+        ClassReader(bytes).accept(object : ClassVisitor(Opcodes.ASM9, writer) {
+            override fun visitMethod(
+                access: Int,
+                name: String,
+                descriptor: String,
+                signature: String?,
+                exceptions: Array<out String>?
+            ): MethodVisitor {
+                val visitor = super.visitMethod(access, name, descriptor, signature, exceptions)
+                versions[name]?.let { version ->
+                    visitor.visitAnnotation("Lkotlin/DeprecatedSinceKotlin;", true).apply {
+                        visit("hiddenSince", version)
+                        visitEnd()
+                    }
+                }
+                return visitor
+            }
+        }, 0)
+        return writer.toByteArray()
+    }
+
     /**
      * Adds the `ACC_SYNTHETIC` flag to the class, like a bytecode tool might,
      * leaving the flags of the `InnerClasses` attribute, which [Class.isSynthetic] reports, intact.
