@@ -64,6 +64,26 @@ enum class CompanionOnlyEnum {
     }
 }
 
+// Enum class without entries, whose only member is a companion object
+enum class EntrylessCompanionEnum {
+    ;
+
+    companion object {
+        fun x(): Int = 1
+    }
+}
+
+// Enum class without entries, but with members
+enum class EntrylessEnum {
+    ;
+
+    val a: Int get() = 1
+
+    fun f1() {}
+
+    fun f2() {}
+}
+
 // Annotation class
 annotation class AnnotationTestClass(
     val message: String = ""

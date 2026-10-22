@@ -817,97 +817,92 @@ internal class DefaultKotlinIntrospector(
 
             if (annotationParameters != null) return@buildString
 
-            // Check if there's any body content
-            val hasEnumEntries = isEnum && kmClass.kmEnumEntries.isNotEmpty()
+            val enumEntries = if (isEnum) kmClass.kmEnumEntries else emptyList()
             val sealedSubclasses = if (isSealed) listedSealedSubclasses(kmClass) else emptyList()
-            val hasSealedSubclasses = sealedSubclasses.isNotEmpty()
-            val hasBodyProperties = properties.any { it.name !in constructorParamNames }
-            val hasFunctions = functions.isNotEmpty()
-            // even without members of the API, the companion object is a value, like a CoroutineContext.Key
-            val hasCompanion = companion != null
             val nestedClasses = listedNestedClasses(kmClass, scopes, clazz)
-            val hasBodyContent = hasEnumEntries || hasSealedSubclasses || nestedClasses.isNotEmpty() ||
-                hasBodyProperties || hasFunctions || hasCompanion
+
+            // The members are rendered before the enum entries, which depend on whether any members follow them
+            val members = buildString {
+                // The sealed subclasses first, then the other nested classes, only referenced,
+                // as they can be resolved by their own name
+                (sealedSubclasses + nestedClasses).forEach { (name, listedKmClass) ->
+                    +"    "
+                    +formatClassHeader(listedKmClass, name, contextPackage, typeParametersInScope(listedKmClass))
+                    +"\n"
+                }
+
+                // Properties (excluding constructor properties)
+                properties
+                    .filter { it.name !in constructorParamNames }
+                    .forEach { property ->
+                        +"    "
+                        +formatProperty(property, inInterface = isInterface, owner = kmClass, contextPackage = contextPackage, classTypeParameters = typeParameters)
+                        +"\n"
+                    }
+
+                // Functions
+                functions.forEach { function ->
+                    +"    "
+                    +formatFunction(function, inInterface = isInterface, owner = kmClass, contextPackage = contextPackage, classTypeParameters = typeParameters)
+                    +"\n"
+                }
+
+                // even without members of the API, the companion object is a value, like a CoroutineContext.Key
+                if (companion != null) {
+                    // a custom name is needed to qualify the members, like Outer.Factory.create()
+                    val companionName = kmClass.companionObject.takeIf { it != DEFAULT_COMPANION_NAME } ?: ""
+                    +"    "
+                    +formatClassHeader(companion, companionName, contextPackage)
+
+                    // a companion object without members of the API is rendered without a body
+                    if (companionProperties.isEmpty() && companionFunctions.isEmpty()) {
+                        +"\n"
+                    } else {
+                        +" {\n"
+
+                        // Companion properties
+                        companionProperties.forEach { property ->
+                            +"        "
+                            +formatProperty(property, owner = companion, contextPackage = contextPackage)
+                            +"\n"
+                        }
+
+                        // Companion functions
+                        companionFunctions.forEach { function ->
+                            +"        "
+                            +formatFunction(function, inInterface = false, owner = companion, contextPackage = contextPackage)
+                            +"\n"
+                        }
+
+                        +"    }\n"
+                    }
+                }
+            }
 
             // Only add braces if there's body content or extensions
-            if (!hasBodyContent && extensions.isEmpty() && extensionProperties.isEmpty()) {
+            if (enumEntries.isEmpty() && members.isEmpty() && extensions.isEmpty() && extensionProperties.isEmpty()) {
                 return@buildString
             }
 
             +" {\n"
 
-            // For enum classes, show enum entries
-            if (hasEnumEntries) {
-                // Check if there are any members rendered after the entries
-                val hasMembers = nestedClasses.isNotEmpty() || hasBodyProperties || hasFunctions || hasCompanion
-
-                kmClass.kmEnumEntries.forEachIndexed { index, entry ->
-                    +"    "
-                    +entry.name
-                    if (index < kmClass.kmEnumEntries.size - 1) {
-                        +","
-                    } else if (hasMembers) {
-                        // Last entry needs semicolon if there are members after
-                        +";"
-                    }
-                    +"\n"
-                }
-            }
-
-            // The sealed subclasses first, then the other nested classes, only referenced,
-            // as they can be resolved by their own name
-            (sealedSubclasses + nestedClasses).forEach { (name, listedKmClass) ->
+            // The members of an enum class have to be separated from its entries with a semicolon,
+            // following the last entry, or on a line of its own, if there are no entries
+            enumEntries.forEachIndexed { index, entry ->
                 +"    "
-                +formatClassHeader(listedKmClass, name, contextPackage, typeParametersInScope(listedKmClass))
+                +entry.name
+                if (index < enumEntries.lastIndex) {
+                    +","
+                } else if (members.isNotEmpty()) {
+                    +";"
+                }
                 +"\n"
             }
-
-            // Properties (excluding constructor properties)
-            properties
-                .filter { it.name !in constructorParamNames }
-                .forEach { property ->
-                    +"    "
-                    +formatProperty(property, inInterface = isInterface, owner = kmClass, contextPackage = contextPackage, classTypeParameters = typeParameters)
-                    +"\n"
-                }
-
-            // Functions
-            functions.forEach { function ->
-                +"    "
-                +formatFunction(function, inInterface = isInterface, owner = kmClass, contextPackage = contextPackage, classTypeParameters = typeParameters)
-                +"\n"
+            if (isEnum && enumEntries.isEmpty() && members.isNotEmpty()) {
+                +"    ;\n"
             }
 
-            // Companion object members
-            if (companion != null) {
-                // a custom name is needed to qualify the members, like Outer.Factory.create()
-                val companionName = kmClass.companionObject.takeIf { it != DEFAULT_COMPANION_NAME } ?: ""
-                +"    "
-                +formatClassHeader(companion, companionName, contextPackage)
-
-                // a companion object without members of the API is rendered without a body
-                if (companionProperties.isEmpty() && companionFunctions.isEmpty()) {
-                    +"\n"
-                } else {
-                    +" {\n"
-
-                    // Companion properties
-                    companionProperties.forEach { property ->
-                        +"        "
-                        +formatProperty(property, owner = companion, contextPackage = contextPackage)
-                        +"\n"
-                    }
-
-                    // Companion functions
-                    companionFunctions.forEach { function ->
-                        +"        "
-                        +formatFunction(function, inInterface = false, owner = companion, contextPackage = contextPackage)
-                        +"\n"
-                    }
-
-                    +"    }\n"
-                }
-            }
+            +members
 
             +"}"
 
@@ -1837,12 +1832,21 @@ internal class DefaultKotlinIntrospector(
                     add(mutableListOf(line))
                 }
             }
-        }.map { it.joinToString("\n") }
+        }.map { it.joinToString("\n") }.toMutableList()
 
-        // Enum entries are followed by a semicolon only when the members come after them
-        val enumEntryCount = if (classDeclarationLine.contains("enum class ")) {
-            members.indexOfFirst { it.endsWith(";") } + 1
-        } else 0
+        // The members of an enum class are separated from its entries with a semicolon,
+        // following the last entry, or on a line of its own, which is not an item to paginate,
+        // if there are no entries
+        val enumSemicolonIndex = if (classDeclarationLine.contains("enum class ")) {
+            members.indexOfFirst { it.endsWith(";") }
+        } else -1
+        val hasSemicolonLine = enumSemicolonIndex >= 0 && members[enumSemicolonIndex] == ";"
+        if (hasSemicolonLine) members.removeAt(enumSemicolonIndex)
+        val enumEntryCount = when {
+            enumSemicolonIndex < 0 -> -1 // no members after the entries, if any, so no semicolon to restore
+            hasSemicolonLine -> 0
+            else -> enumSemicolonIndex + 1
+        }
 
         // Extract extensions (lines after closing brace), preserving package headers
         // We need to parse extensions as items with their package context
@@ -1887,7 +1891,7 @@ internal class DefaultKotlinIntrospector(
             if (pageMembers.isNotEmpty()) {
                 +classDeclarationLine
                 +"\n"
-                if (enumEntryCount > 0 && startIndex >= enumEntryCount) {
+                if (enumEntryCount >= 0 && startIndex >= enumEntryCount) {
                     // without the entries on this page, the semicolon still has to precede the members
                     +"    ;\n"
                 }
