@@ -1565,6 +1565,88 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should mark override of invoke of function type supertype`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.FunctionTypeImpl"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.FunctionTypeImpl [page 1/1]
+            class FunctionTypeImpl : Function1<String, Int> {
+                override operator fun invoke(p1: String): Int
+                fun invoke(p1: Int): Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark override of invoke of suspend function type supertype`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.SuspendFunctionTypeImpl"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SuspendFunctionTypeImpl [page 1/1]
+            class SuspendFunctionTypeImpl : suspend (String) -> Int {
+                override suspend operator fun invoke(p1: String): Int
+                fun invoke(p1: String, p2: Int): Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark override of Java method taking Void`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaVoidVisitor"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaVoidVisitor [page 1/1]
+            class JavaVoidVisitor : com.xemantic.kotlin.introspection.test.other.JavaVoidBase {
+                override fun visit(v: java.lang.Void?)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark overrides of Any members of data class implementing Java interface`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.SerializableData"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SerializableData [page 1/1]
+            data class SerializableData(val a: Int) : java.io.Serializable {
+                operator fun component1(): Int
+                fun copy(a: Int = …): SerializableData
+                override operator fun equals(other: Any?): Boolean
+                override fun hashCode(): Int
+                override fun toString(): String
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark overrides of Any members of class implementing Java interface`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.AnyMembersRunnable"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.AnyMembersRunnable [page 1/1]
+            class AnyMembersRunnable : java.lang.Runnable {
+                override fun run()
+                override fun toString(): String
+                override operator fun equals(other: Any?): Boolean
+                override fun hashCode(): Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark override of Any member of class implementing interface extending Java interface`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.RunnableExtensionImpl"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.RunnableExtensionImpl [page 1/1]
+            class RunnableExtensionImpl : RunnableExtension {
+                override fun run()
+                override fun hashCode(): Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should mark override in object`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.ObjectProcessor"

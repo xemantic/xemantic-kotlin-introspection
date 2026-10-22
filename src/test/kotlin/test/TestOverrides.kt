@@ -19,6 +19,7 @@
 package com.xemantic.kotlin.introspection.test
 
 import com.xemantic.kotlin.introspection.test.other.JavaProcessorBase
+import com.xemantic.kotlin.introspection.test.other.JavaVoidBase
 import com.xemantic.kotlin.introspection.test.other.PackagePrivateBase
 
 // An overload of an open function of the superclass is not an override
@@ -345,4 +346,37 @@ class CompanionProcessor {
     companion object : Processor<Int> {
         override fun process(item: Int) {}
     }
+}
+
+// The invoke function of a function type supertype
+class FunctionTypeImpl : (String) -> Int {
+    override fun invoke(p1: String): Int = 0
+    fun invoke(p1: Int): Int = 0
+}
+
+class SuspendFunctionTypeImpl : suspend (String) -> Int {
+    override suspend fun invoke(p1: String): Int = 0
+    fun invoke(p1: String, p2: Int): Int = 0
+}
+
+// java.lang.Void is not Nothing
+class JavaVoidVisitor : JavaVoidBase() {
+    override fun visit(v: Void?) {}
+}
+
+// Members of Any, reached only through Java interfaces
+data class SerializableData(val a: Int) : java.io.Serializable
+
+class AnyMembersRunnable : Runnable {
+    override fun run() {}
+    override fun toString(): String = ""
+    override fun equals(other: Any?): Boolean = false
+    override fun hashCode(): Int = 0
+}
+
+interface RunnableExtension : Runnable
+
+class RunnableExtensionImpl : RunnableExtension {
+    override fun run() {}
+    override fun hashCode(): Int = 1
 }

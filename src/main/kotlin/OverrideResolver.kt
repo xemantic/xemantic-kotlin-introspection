@@ -42,6 +42,7 @@ import kotlin.metadata.Visibility
 import kotlin.metadata.isDefinitelyNonNull
 import kotlin.metadata.isInner
 import kotlin.metadata.isNullable
+import kotlin.metadata.isSuspend
 import kotlin.metadata.visibility
 import java.lang.reflect.Type as JavaType
 import org.objectweb.asm.Type as AsmType
@@ -147,7 +148,8 @@ internal class OverrideResolver(
      * mapped to their JVM classes.
      */
     private val builtinJavaClasses: Map<String, Class<*>> = builtinTypes.entries
-        .filter { (name, kClass) -> !kClass.java.isArray && kClass.java.name != name }
+        // Nothing is represented by java.lang.Void, which is not Nothing when used in Java
+        .filter { (name, kClass) -> !kClass.java.isArray && kClass.java.name != name && name != "kotlin.Nothing" }
         .associate { (name, kClass) -> kotlinClassName(name) to kClass.java }
 
     /**
@@ -212,11 +214,29 @@ internal class OverrideResolver(
         val functions = mutableMapOf<String, MutableList<Overridable>>()
         val properties = mutableMapOf<String, MutableList<Overridable>>()
         val pending = ArrayDeque(owner.supertypes.mapNotNull { kotlinType(it, ownerSubstitution) as? ClassType })
+        // every class and interface is a subtype of Any, also when it is reached only through Java interfaces
+        pending += ClassType("kotlin/Any")
         val visited = mutableSetOf<String>()
 
         while (pending.isNotEmpty()) {
             val supertype = pending.removeFirst()
             if (!visited.add(supertype.name)) continue
+
+            // the function types have no declarations to read
+            functionTypeRegex.matchEntire(supertype.name)?.let { match ->
+                functions.getOrPut("invoke") { mutableListOf() } += Overridable(
+                    receiver = null,
+                    parameters = supertype.arguments.dropLast(1).map { it.type },
+                    typeParameterCount = 0,
+                    isJava = false
+                )
+                if (match.groupValues[1].isNotEmpty()) {
+                    // the members of KFunction
+                    pending += ClassType("kotlin/reflect/KFunction", listOfNotNull(supertype.arguments.lastOrNull()))
+                }
+                continue
+            }
+
             val declaration = declaration(supertype.name)
 
             declaration.kotlin?.let { kmClass ->
@@ -322,7 +342,7 @@ internal class OverrideResolver(
         substitution: Map<Int, MemberType>,
         typeParameters: List<KmTypeParameter> = emptyList()
     ): MemberType = when (val classifier = type.classifier) {
-        is KmClassifier.Class -> ClassType(
+        is KmClassifier.Class -> suspendFunctionType(type, substitution, typeParameters) ?: ClassType(
             name = classifier.name,
             arguments = type.arguments.map { projection ->
                 val argumentType = projection.type
@@ -346,6 +366,31 @@ internal class OverrideResolver(
         }
         // the metadata refers to the expanded type, an alias is not expected here
         is KmClassifier.TypeAlias -> UnknownType
+    }
+
+    /**
+     * A suspend function type, like `suspend (String) -> Int`, stored in the metadata
+     * as `Function2<String, Continuation<Int>, Any?>`, resolved as `SuspendFunction1<String, Int>`,
+     * so that its arguments are the parameter types and the return type, like of a function type.
+     */
+    private fun suspendFunctionType(
+        type: KmType,
+        substitution: Map<Int, MemberType>,
+        typeParameters: List<KmTypeParameter>
+    ): ClassType? {
+        if (!type.isSuspend) return null
+        val name = (type.classifier as? KmClassifier.Class)?.name ?: return null
+        val match = functionTypeRegex.matchEntire(name) ?: return null
+        val arguments = type.arguments.map { it.type ?: return null }
+        if (arguments.size < 2) return null
+        val returnType = arguments[arguments.size - 2].arguments.singleOrNull()?.type ?: return null
+        return ClassType(
+            name = "kotlin/${match.groupValues[1]}SuspendFunction${arguments.size - 2}",
+            arguments = (arguments.dropLast(2) + returnType).map {
+                TypeArgument(KmVariance.INVARIANT, kotlinType(it, substitution, typeParameters))
+            },
+            nullable = type.isNullable
+        )
     }
 
     /**
@@ -446,7 +491,7 @@ internal class OverrideResolver(
             // a method signature refers to a class missing from the classpath
             return asmMethods(javaClass, ownerPackage, substitution)
         }
-        return methods
+        val overridables = methods
             .filter { method ->
                 val modifiers = method.modifiers
                 !method.isSynthetic && !method.isBridge &&
@@ -454,38 +499,42 @@ internal class OverrideResolver(
                     (Modifier.isPublic(modifiers) || Modifier.isProtected(modifiers) ||
                         javaClass.packageName == ownerPackage)
             }
-            .map { method -> method.name to javaOverridable(method, substitution) }
+        return try {
+            overridables.map { method -> method.name to javaOverridable(method, substitution) }
+        } catch (_: TypeNotPresentException) {
+            // a generic type, like a wildcard or a type variable bound, refers to a class missing from the classpath
+            asmMethods(javaClass, ownerPackage, substitution)
+        } catch (_: java.lang.reflect.MalformedParameterizedTypeException) {
+            asmMethods(javaClass, ownerPackage, substitution)
+        } catch (_: LinkageError) {
+            asmMethods(javaClass, ownerPackage, substitution)
+        }
     }
 
-    private fun javaOverridable(method: Method, substitution: Map<String, MemberType>): Overridable {
-        val parameterTypes = try {
-            method.genericParameterTypes.toList()
-        } catch (_: TypeNotPresentException) {
-            method.parameterTypes.toList()
-        } catch (_: java.lang.reflect.MalformedParameterizedTypeException) {
-            method.parameterTypes.toList()
-        } catch (_: LinkageError) {
-            method.parameterTypes.toList()
-        }
-        return Overridable(
+    /**
+     * The generic types are resolved lazily, so this might throw when they refer to a class missing from the classpath.
+     */
+    private fun javaOverridable(method: Method, substitution: Map<String, MemberType>): Overridable =
+        Overridable(
             receiver = null,
-            parameters = parameterTypes.map { javaType(it, substitution, method) },
+            parameters = method.genericParameterTypes.map { javaType(it, substitution, method) },
             typeParameterCount = method.typeParameters.size,
             isJava = true
         )
-    }
 
     private fun javaSupertypes(javaClass: Class<*>, substitution: Map<String, MemberType>): List<ClassType> {
-        val genericSupertypes = try {
-            listOfNotNull(javaClass.genericSuperclass) + javaClass.genericInterfaces
+        val rawSupertypes = listOfNotNull(javaClass.superclass) + javaClass.interfaces
+        val supertypes = try {
+            (listOfNotNull(javaClass.genericSuperclass) + javaClass.genericInterfaces)
+                .map { javaType(it, substitution, method = null) }
         } catch (_: TypeNotPresentException) {
             null
         } catch (_: java.lang.reflect.MalformedParameterizedTypeException) {
             null
         } catch (_: LinkageError) {
             null
-        } ?: (listOfNotNull(javaClass.superclass) + javaClass.interfaces)
-        return genericSupertypes.mapNotNull { javaType(it, substitution, method = null) as? ClassType }
+        } ?: rawSupertypes.map { javaClassType(it) }
+        return supertypes.filterIsInstance<ClassType>()
     }
 
     /**
@@ -690,6 +739,12 @@ internal class OverrideResolver(
     }
 
     private companion object {
+
+        /**
+         * The function types, like `kotlin/Function1`, `kotlin/reflect/KFunction1`,
+         * and the suspend function types as resolved by [suspendFunctionType].
+         */
+        val functionTypeRegex = Regex("kotlin/(?:reflect/)?(K?)(?:Suspend)?Function\\d+")
 
         val primitiveNames = mapOf(
             "boolean" to "kotlin/Boolean",

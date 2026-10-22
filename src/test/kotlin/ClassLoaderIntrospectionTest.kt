@@ -194,6 +194,27 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should mark overrides of Java superclass methods when generic types of methods refer to class missing from the classpath`() {
+        // given
+        val introspector = introspectorWithoutAbsentClass()
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.AbsentBoundJavaSubclass"
+        )
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.AbsentBoundJavaSubclass [page 1/1]
+            class AbsentBoundJavaSubclass : AbsentBoundJavaBase {
+                override fun run()
+                override fun <T : Comparable<Absent>> compare(item: T)
+                fun compare(item: Int)
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should not duplicate declarations of a class present twice on the classpath`() {
         // given
         val testClasses = File(TestClass::class.java.protectionDomain.codeSource.location.toURI())
