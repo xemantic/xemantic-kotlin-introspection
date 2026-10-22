@@ -106,13 +106,13 @@ class ClassLoaderIntrospectionTest {
 
     /**
      * An introspector of the isolated test fixtures without the class `Absent`,
-     * which they refer to.
+     * which they refer to, and the other [absentClassFiles].
      */
-    private fun introspectorWithoutAbsentClass(): KotlinIntrospector {
+    private fun introspectorWithoutAbsentClass(vararg absentClassFiles: String): KotlinIntrospector {
         val root = tempDir.resolve("withoutAbsent")
         isolatedTestFixtures.filter { it.exists() }.forEach { dir ->
             dir.walkTopDown()
-                .filter { it.isFile && it.name != "Absent.class" }
+                .filter { it.isFile && it.name != "Absent.class" && it.name !in absentClassFiles }
                 .forEach { it.copyTo(root.resolve(it.relativeTo(dir).path).toFile(), overwrite = true) }
         }
         val classLoader = URLClassLoader(
@@ -332,6 +332,33 @@ class ClassLoaderIntrospectionTest {
             // com.xemantic.kotlin.introspection.isolated.AbsentJavaTypeParameterSubclass [page 1/1]
             class AbsentJavaTypeParameterSubclass<P : Int?> : AbsentJavaBase<String> {
                 fun prim(x: P)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark overrides of Java superclass methods taking nested class whose outer class is missing from the classpath`() {
+        // given
+        // like in a shaded or shrunk jar, the nested class is present, while its outer class is not
+        val introspector = introspectorWithoutAbsentClass("DollarHolder.class")
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.AbsentJavaSubclass"
+        )
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.AbsentJavaSubclass [page 1/1]
+            class AbsentJavaSubclass : AbsentJavaBase<String> {
+                override fun process(item: String)
+                fun process(item: Int)
+                override fun run()
+                fun run(times: Int)
+                fun prim(x: Int?)
+                override fun <S : String> bounded(x: S)
+                fun <S : Number> bounded(x: S)
+                override fun take(nested: DollarHolder.Dollar${'$'}Nested)
             }
         """.trimIndent()
     }

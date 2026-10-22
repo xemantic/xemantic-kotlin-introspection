@@ -1048,7 +1048,7 @@ internal class OverrideResolver(
             ClassType(
                 javaToKotlinNames[binaryName]
                     // the nesting is known from the class, as `$` can be part of a class name
-                    ?: loadClass(binaryName)?.takeIf { it.name == binaryName }?.let { kotlinClassName(it) }
+                    ?: loadClass(binaryName)?.let { kotlinClassName(it) }
                     // a class missing from the classpath is assumed to be named without `$`
                     ?: kotlinClassName(
                         binaryName.substringBeforeLast('.', ""),
@@ -1222,5 +1222,40 @@ internal class OverrideResolver(
  * The name of the class within its package, like `Map.Entry`, where the nested classes are separated with `.`,
  * resolved from the declaring classes, as `$` of the binary name can also be part of a class name.
  */
-internal fun Class<*>.nestedClassName(): String =
-    declaringClass?.let { "${it.nestedClassName()}.$simpleName" } ?: name.substringAfterLast('.')
+internal fun Class<*>.nestedClassName(): String {
+    val declaringClass = try {
+        declaringClass
+    } catch (_: LinkageError) {
+        // the outer class is missing from the classpath, like in a shaded or shrunk jar
+        return nestedClassNameWithoutDeclaringClass()
+    }
+    return declaringClass?.let { "${it.nestedClassName()}.$simpleName" } ?: name.substringAfterLast('.')
+}
+
+/**
+ * The [nestedClassName] of a class whose declaring class cannot be loaded, neither its simple name reflected,
+ * read from the `InnerClasses` attribute of its class file, which lists the enclosing classes as well,
+ * or, if it cannot be read, assuming that every `$` separates the nested classes.
+ */
+private fun Class<*>.nestedClassNameWithoutDeclaringClass(): String {
+    val internalName = name.replace('.', '/')
+    // the internal names of the nested classes mapped to their outer class and simple name
+    val innerClasses = mutableMapOf<String, Pair<String, String>>()
+    try {
+        (classLoader ?: ClassLoader.getSystemClassLoader())
+            .getResourceAsStream("$internalName.class")
+            ?.use { ClassReader(it) }
+            ?.accept(object : ClassVisitor(Opcodes.ASM9) {
+                override fun visitInnerClass(name: String, outerName: String?, innerName: String?, access: Int) {
+                    if (outerName != null && innerName != null) innerClasses[name] = outerName to innerName
+                }
+            }, ClassReader.SKIP_CODE or ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES)
+    } catch (_: Exception) {
+        // judged by the name only
+    }
+    if (internalName !in innerClasses) return name.substringAfterLast('.').replace('$', '.')
+    fun nestedName(name: String): String = innerClasses[name]
+        ?.let { (outerName, innerName) -> "${nestedName(outerName)}.$innerName" }
+        ?: name.substringAfterLast('/')
+    return nestedName(internalName)
+}

@@ -68,7 +68,23 @@ class GenericNestedHolder {
 private class PrivateTopLevelHolder
 
 @Deprecated("hidden", level = DeprecationLevel.HIDDEN)
-class HiddenTopLevelHolder
+class HiddenTopLevelHolder {
+    class NestedInHiddenClass
+    object NestedObjectInHiddenClass {
+        fun ExtensionTarget.fromObjectInHiddenClass(): String = "object in hidden class"
+    }
+}
+
+@Deprecated("hidden", level = DeprecationLevel.HIDDEN)
+object HiddenExtensionObject {
+    fun ExtensionTarget.fromHiddenObject(): String = "hidden object"
+}
+
+// shaped like a serializable class compiled by an older kotlinx.serialization plugin,
+// whose generated $serializer is not deprecated with the HIDDEN level
+class LegacySerializableHolder(val value: Int) {
+    object `$serializer` : kotlinx.serialization.internal.GeneratedSerializer<LegacySerializableHolder>
+}
 
 internal class InternalNestedHolder {
     class NestedInInternalClass
