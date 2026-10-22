@@ -2145,6 +2145,48 @@ class KotlinIntrospectorTest {
         }
     }
 
+    @Test
+    fun `resolve should return everything on one page when pageSize is Int MAX_VALUE`() {
+        // "all on one page" must not overflow the page count calculation
+        resolver.resolve(
+            "kotlin.String",
+            pageSize = Int.MAX_VALUE
+        ) should {
+            have(this == resolver.resolve("kotlin.String", pageSize = 10000))
+            have(startsWith("// kotlin.String [page 1/1]\n"))
+        }
+    }
+
+    @Test
+    fun `resolve should coerce page Int MAX_VALUE to the last page when pageSize is Int MAX_VALUE`() {
+        resolver.resolve(
+            "kotlin.String",
+            page = Int.MAX_VALUE,
+            pageSize = Int.MAX_VALUE
+        ) should {
+            have(this == resolver.resolve("kotlin.String", pageSize = 10000))
+        }
+    }
+
+    @Test
+    fun `search should return everything on one page when pageSize is Int MAX_VALUE`() {
+        resolver.search("TestClass", pageSize = Int.MAX_VALUE) should {
+            have(this == resolver.search("TestClass", pageSize = 1000))
+            have(startsWith("// search results for \"TestClass\" [page 1/1]\n"))
+        }
+    }
+
+    @Test
+    fun `search should coerce page Int MAX_VALUE to the last page when pageSize is Int MAX_VALUE`() {
+        resolver.search(
+            "TestClass",
+            page = Int.MAX_VALUE,
+            pageSize = Int.MAX_VALUE
+        ) should {
+            have(this == resolver.search("TestClass", pageSize = 1000))
+        }
+    }
+
     // search() tests
 
     @Test
