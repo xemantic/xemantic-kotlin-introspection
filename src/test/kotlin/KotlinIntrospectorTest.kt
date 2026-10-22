@@ -1414,6 +1414,154 @@ class KotlinIntrospectorTest {
         """.trimIndent()
     }
 
+    // the context parameters are not rendered yet, the subclass declares fun run(), context(c: Ctx) fun run(),
+    // and context(c: Ctx) val label, while the superclass declares context(log: Logger) members
+    @Test
+    fun `should not mark overloads with other context parameters as override`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ContextOverloadingSubclass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ContextOverloadingSubclass [page 1/1]
+            class ContextOverloadingSubclass : ContextBase {
+                val label: String
+                fun run()
+                fun run()
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark overrides with the same context parameters`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ContextOverridingSubclass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ContextOverridingSubclass [page 1/1]
+            class ContextOverridingSubclass : ContextBase {
+                override val label: String
+                override fun run()
+            }
+        """.trimIndent()
+    }
+
+    // context(c: Ctx) override fun process(item: UInt), next to fun process(item: Int)
+    @Test
+    fun `should mark override with context parameter and value class type argument`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.UIntContextProcessor"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.UIntContextProcessor [page 1/1]
+            class UIntContextProcessor : ContextProcessor<UInt> {
+                override fun process(item: UInt)
+                fun process(item: Int)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark override of value class member with context parameter`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ValueContextProcessor.process"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ValueContextProcessor.process [page 1/1]
+            override fun process(item: UInt)
+        """.trimIndent()
+    }
+
+    // context(c: Ctx) override fun act(), next to context(log: Logger) fun act()
+    @Test
+    fun `should match context parameter of type argument of supertype`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.CtxContextual"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.CtxContextual [page 1/1]
+            class CtxContextual : Contextual<Ctx> {
+                override fun act()
+                fun act()
+            }
+        """.trimIndent()
+    }
+
+    // override fun run(), next to context(c: Ctx) fun run()
+    @Test
+    fun `should not mark function with context parameter named like Java method as override`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ContextRunnable"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ContextRunnable [page 1/1]
+            class ContextRunnable : java.lang.Runnable {
+                override fun run()
+                fun run()
+            }
+        """.trimIndent()
+    }
+
+    // context(c: Ctx) fun accept() is accept(Ctx) on the JVM, like Consumer<Ctx>.accept, but not an override in Kotlin
+    @Test
+    fun `should not mark function with context parameter taken as parameter by Java method as override`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ContextConsumer"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ContextConsumer [page 1/1]
+            abstract class ContextConsumer : java.util.function.Consumer<Ctx> {
+                fun accept()
+            }
+        """.trimIndent()
+    }
+
+    // context(c: Ctx) val label has the getter getLabel(Ctx), like the Java method of JavaLabelBase<Ctx>
+    @Test
+    fun `should not mark property with context parameter named like Java getter taking it as override`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ContextLabel"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ContextLabel [page 1/1]
+            abstract class ContextLabel : com.xemantic.kotlin.introspection.test.other.JavaLabelBase<Ctx> {
+                val label: String
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not mark members named like internal members of superclass of another module as override`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.OtherModuleSubclass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OtherModuleSubclass [page 1/1]
+            class OtherModuleSubclass : com.xemantic.kotlin.introspection.othermodule.InternalBase {
+                val state: Int
+                fun reset()
+                override fun keep()
+            }
+        """.trimIndent()
+    }
+
+    // the internal override of reset is not part of the API since #94, so it is not listed,
+    // the public override of the internal state property still is
+    @Test
+    fun `should mark overrides of internal members of superclass of the same module`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.othermodule.SameModuleSubclass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.othermodule.SameModuleSubclass [page 1/1]
+            class SameModuleSubclass : InternalBase {
+                override val state: Int
+            }
+        """.trimIndent()
+    }
+
+    // the internal override of reset is not listed, as in the same module case
+    @Test
+    fun `should mark overrides of internal members of superclass of a friend module`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.friendmodule.FriendModuleSubclass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.friendmodule.FriendModuleSubclass [page 1/1]
+            class FriendModuleSubclass : com.xemantic.kotlin.introspection.othermodule.InternalBase {
+                override val state: Int
+            }
+        """.trimIndent()
+    }
+
     @Test
     fun `should match type parameters of overridden functions by position`() {
         resolver.resolve(
