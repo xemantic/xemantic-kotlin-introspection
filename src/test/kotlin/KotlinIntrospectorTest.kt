@@ -2026,6 +2026,19 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve inner class with type parameters of the outer class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.TypeParametersNestedHolder.Cursor"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.TypeParametersNestedHolder.Cursor [page 1/1]
+            inner class Cursor : Iterator<K> {
+                override operator fun hasNext(): Boolean
+                override operator fun next(): K
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should separate enum entries from nested classes`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.NestedClassEnum"
@@ -2467,6 +2480,30 @@ class KotlinIntrospectorTest {
             sealed class SealedShape {
                 class Square : SealedShape
                 val code: Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render inner sealed subclass of another class with its outer type parameters`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.GenericSealedHolder"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GenericSealedHolder [page 1/1]
+            sealed class GenericSealedHolder<A> {
+                inner class GenericSealedOuter.Sub : GenericSealedHolder<T>
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render inner subclass of sealed interface with its outer type parameters`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InnerSealedInterface"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InnerSealedInterface [page 1/1]
+            sealed interface InnerSealedInterface {
+                inner class InnerSealedInterfaceHolder.Sub : InnerSealedInterface, Comparable<X>
             }
         """.trimIndent()
     }

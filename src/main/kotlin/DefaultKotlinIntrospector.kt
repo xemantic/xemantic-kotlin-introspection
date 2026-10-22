@@ -728,7 +728,7 @@ internal class DefaultKotlinIntrospector(
         val isEnum = kmClass.kind == ClassKind.ENUM_CLASS
         val isAnnotation = kmClass.kind == ClassKind.ANNOTATION_CLASS
         val isSealed = kmClass.modality == Modality.SEALED
-        val typeParameters = kmClass.typeParameters.namesById()
+        val typeParameters = typeParametersInScope(kmClass)
 
         // Extract the package name for context-aware type formatting
         val contextPackage = contextPackageOf(clazz, className)
@@ -846,11 +846,8 @@ internal class DefaultKotlinIntrospector(
             // The sealed subclasses first, then the other nested classes, only referenced,
             // as they can be resolved by their own name
             (sealedSubclasses + nestedClasses).forEach { (name, listedKmClass) ->
-                // an inner class can refer to the type parameters of its outer class
-                val listedTypeParameters = (if (listedKmClass.isInner) typeParameters else emptyMap()) +
-                    listedKmClass.typeParameters.namesById()
                 +"    "
-                +formatClassHeader(listedKmClass, name, contextPackage, listedTypeParameters)
+                +formatClassHeader(listedKmClass, name, contextPackage, typeParametersInScope(listedKmClass))
                 +"\n"
             }
 
@@ -941,12 +938,16 @@ internal class DefaultKotlinIntrospector(
         contextPackage: String,
         typeParameters: Map<Int, String>
     ): List<String> = kmClass.supertypes
+        .filter { supertype ->
+            // the implicit supertypes are redundant
+            when ((supertype.classifier as? KmClassifier.Class)?.name) {
+                "kotlin/Any" -> false
+                "kotlin/Enum" -> kmClass.kind != ClassKind.ENUM_CLASS
+                "kotlin/Annotation" -> kmClass.kind != ClassKind.ANNOTATION_CLASS
+                else -> true
+            }
+        }
         .map { formatType(it, contextPackage, typeParameters) }
-        .filter { it != "Any" }
-        // Enum supertype is redundant for enum classes
-        .filter { !(kmClass.kind == ClassKind.ENUM_CLASS && it.startsWith("Enum<")) }
-        // as is the Annotation supertype for annotation classes
-        .filter { !(kmClass.kind == ClassKind.ANNOTATION_CLASS && it == "Annotation") }
 
     /**
      * Renders the extensions shown after a class body, grouped under a `// from <source>` comment
@@ -1237,6 +1238,20 @@ internal class DefaultKotlinIntrospector(
     }
 
     private fun List<KmTypeParameter>.namesById(): Map<Int, String> = associate { it.id to it.name }
+
+    /**
+     * The names of the type parameters which the [kmClass] can refer to, by their ids,
+     * including the ones of its outer classes when it is an inner class,
+     * which can be declared in a class other than the one listing it, like a sealed subclass.
+     */
+    private fun typeParametersInScope(kmClass: KmClass): Map<Int, String> {
+        val outerClass = if (kmClass.isInner) {
+            enclosingClassNames(kmClass.name).lastOrNull()
+                ?.let { loadClass(it.replace('/', '.')) }
+                ?.let { readKmClass(it) }
+        } else null
+        return outerClass?.let { typeParametersInScope(it) }.orEmpty() + kmClass.typeParameters.namesById()
+    }
 
     private fun KmType.isNullableAny(): Boolean =
         (classifier as? KmClassifier.Class)?.name == "kotlin/Any" && isNullable

@@ -70,3 +70,18 @@ sealed class SealedSupertypesHolder {
     }
     data object Empty : SealedSupertypesHolder()
 }
+
+// The inner sealed subclasses declared in other generic classes refer to the type parameters of their outer classes
+sealed class GenericSealedHolder<A>
+
+class GenericSealedOuter<T> {
+    inner class Sub : GenericSealedHolder<T>()
+}
+
+sealed interface InnerSealedInterface
+
+class InnerSealedInterfaceHolder<X> {
+    inner class Sub : InnerSealedInterface, Comparable<X> {
+        override fun compareTo(other: X): Int = 0
+    }
+}
