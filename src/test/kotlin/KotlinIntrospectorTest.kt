@@ -1317,6 +1317,18 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should mark override of Java superclass method taking nested class named with dollar sign`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaDollarTaker"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaDollarTaker [page 1/1]
+            class JavaDollarTaker : com.xemantic.kotlin.introspection.test.other.JavaDollarBase {
+                override fun take(nested: NestedClassesHolder.Dollar${'$'}Nested)
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should mark overrides of generic Java superclass methods`() {
         // JavaProcessorBase.finish(int) is final, and count() protected
         resolver.resolve(
@@ -2353,6 +2365,16 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve annotation class with default values referring to nested classes`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.NestedClassReferenceAnnotation"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NestedClassReferenceAnnotation [page 1/1]
+            annotation class NestedClassReferenceAnnotation(val nested: KClass<*> = NestedClassesHolder.NestedClass::class, val dollar: KClass<*> = NestedClassesHolder.Dollar${'$'}Nested::class)
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve class without body members together with its extensions`() {
         // the constructor must be visible even though the class has only extensions
         resolver.resolve(
@@ -3311,11 +3333,14 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should resolve internal top-level class by its name`() {
-        // resolve takes the exact name, so it is not limited to the API, unlike search
-        resolver.resolve("com.xemantic.kotlin.introspection.test.InternalNestedHolder") should {
-            have(contains("class InternalNestedHolder"))
-        }
+    fun `search should not find hidden deprecated top-level class`() {
+        assert(resolver.search("HiddenTopLevelHolder") == null)
+    }
+
+    @Test
+    fun `search should not find hidden deprecated nested class listed in metadata of outer class`() {
+        // like the $serializer of kotlinx.serialization
+        assert(resolver.search("\$serializer") == null)
     }
 
     @Test

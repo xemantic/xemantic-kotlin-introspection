@@ -67,6 +67,9 @@ class GenericNestedHolder {
 
 private class PrivateTopLevelHolder
 
+@Deprecated("hidden", level = DeprecationLevel.HIDDEN)
+class HiddenTopLevelHolder
+
 internal class InternalNestedHolder {
     class NestedInInternalClass
     object NestedObject {

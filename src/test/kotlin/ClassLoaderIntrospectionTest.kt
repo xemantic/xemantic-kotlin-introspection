@@ -201,6 +201,7 @@ class ClassLoaderIntrospectionTest {
                 fun prim(x: Int?)
                 override fun <S : String> bounded(x: S)
                 fun <S : Number> bounded(x: S)
+                override fun take(nested: DollarHolder.Dollar${'$'}Nested)
             }
         """.trimIndent()
     }
@@ -439,7 +440,7 @@ class ClassLoaderIntrospectionTest {
     }
 
     /**
-     * Adds the `ACC_SYNTHETIC` flag to the class, like kotlinx.serialization does for the `$serializer`,
+     * Adds the `ACC_SYNTHETIC` flag to the class, like a bytecode tool might,
      * leaving the flags of the `InnerClasses` attribute, which [Class.isSynthetic] reports, intact.
      */
     private fun synthetic(bytes: ByteArray): ByteArray {

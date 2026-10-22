@@ -1046,10 +1046,14 @@ internal class OverrideResolver(
         AsmType.OBJECT -> {
             val binaryName = type.className
             ClassType(
-                javaToKotlinNames[binaryName] ?: kotlinClassName(
-                    binaryName.substringBeforeLast('.', ""),
-                    binaryName.substringAfterLast('.')
-                ),
+                javaToKotlinNames[binaryName]
+                    // the nesting is known from the class, as `$` can be part of a class name
+                    ?: loadClass(binaryName)?.takeIf { it.name == binaryName }?.let { kotlinClassName(it) }
+                    // a class missing from the classpath is assumed to be named without `$`
+                    ?: kotlinClassName(
+                        binaryName.substringBeforeLast('.', ""),
+                        binaryName.substringAfterLast('.').replace('$', '.')
+                    ),
                 nullable = null
             )
         }
@@ -1201,16 +1205,22 @@ internal class OverrideResolver(
         }
 
         fun kotlinClassName(javaClass: Class<*>): String =
-            kotlinClassName(javaClass.packageName, javaClass.name.removePrefix("${javaClass.packageName}."))
+            kotlinClassName(javaClass.packageName, javaClass.nestedClassName())
 
         /**
-         * The Kotlin class name, like `java/util/Map.Entry`, of the [packageName] and the binary [name] of a class within it.
+         * The Kotlin class name, like `java/util/Map.Entry`, of the [packageName] and the [name] of a class within it,
+         * where the nested classes are separated with `.`.
          */
-        fun kotlinClassName(packageName: String, name: String): String {
-            val simpleName = name.replace('$', '.')
-            return if (packageName.isEmpty()) simpleName else "${packageName.replace('.', '/')}/$simpleName"
-        }
+        fun kotlinClassName(packageName: String, name: String): String =
+            if (packageName.isEmpty()) name else "${packageName.replace('.', '/')}/$name"
 
     }
 
 }
+
+/**
+ * The name of the class within its package, like `Map.Entry`, where the nested classes are separated with `.`,
+ * resolved from the declaring classes, as `$` of the binary name can also be part of a class name.
+ */
+internal fun Class<*>.nestedClassName(): String =
+    declaringClass?.let { "${it.nestedClassName()}.$simpleName" } ?: name.substringAfterLast('.')
