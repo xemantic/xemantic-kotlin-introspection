@@ -106,13 +106,13 @@ class ClassLoaderIntrospectionTest {
 
     /**
      * An introspector of the isolated test fixtures without the class `Absent`,
-     * which they refer to.
+     * which they refer to, and the other [absentClassFiles].
      */
-    private fun introspectorWithoutAbsentClass(): KotlinIntrospector {
+    private fun introspectorWithoutAbsentClass(vararg absentClassFiles: String): KotlinIntrospector {
         val root = tempDir.resolve("withoutAbsent")
         isolatedTestFixtures.filter { it.exists() }.forEach { dir ->
             dir.walkTopDown()
-                .filter { it.isFile && it.name != "Absent.class" }
+                .filter { it.isFile && it.name != "Absent.class" && it.name !in absentClassFiles }
                 .forEach { it.copyTo(root.resolve(it.relativeTo(dir).path).toFile(), overwrite = true) }
         }
         val classLoader = URLClassLoader(
@@ -201,6 +201,7 @@ class ClassLoaderIntrospectionTest {
                 fun prim(x: Int?)
                 override fun <S : String> bounded(x: S)
                 fun <S : Number> bounded(x: S)
+                override fun take(nested: DollarHolder.Dollar${'$'}Nested)
             }
         """.trimIndent()
     }
@@ -336,6 +337,33 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should mark overrides of Java superclass methods taking nested class whose outer class is missing from the classpath`() {
+        // given
+        // like in a shaded or shrunk jar, the nested class is present, while its outer class is not
+        val introspector = introspectorWithoutAbsentClass("DollarHolder.class")
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.AbsentJavaSubclass"
+        )
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.AbsentJavaSubclass [page 1/1]
+            class AbsentJavaSubclass : AbsentJavaBase<String> {
+                override fun process(item: String)
+                fun process(item: Int)
+                override fun run()
+                fun run(times: Int)
+                fun prim(x: Int?)
+                override fun <S : String> bounded(x: S)
+                fun <S : Number> bounded(x: S)
+                override fun take(nested: DollarHolder.Dollar${'$'}Nested)
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should mark overrides of Java superclass methods when generic types of methods refer to class missing from the classpath`() {
         // given
         val introspector = introspectorWithoutAbsentClass()
@@ -403,6 +431,60 @@ class ClassLoaderIntrospectionTest {
                 fun shrunkAlone()
             }
         """.trimIndent()
+    }
+
+    @Test
+    fun `should neither find nor list synthetic nested class declared in metadata of outer class`() {
+        // given
+        val root = tempDir.resolve("synthetic")
+        isolatedTestFixtures.filter { it.exists() }.forEach { dir ->
+            dir.walkTopDown().filter { it.isFile }.forEach { file ->
+                val target = root.resolve(file.relativeTo(dir).path).toFile()
+                target.parentFile.mkdirs()
+                target.writeBytes(
+                    if (file.name == "SyntheticNestedHolder\$\$serializer.class") {
+                        synthetic(file.readBytes())
+                    } else {
+                        file.readBytes()
+                    }
+                )
+            }
+        }
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val searchResult = introspector.search("\$serializer")
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.SyntheticNestedHolder")
+
+        // then
+        assert(searchResult == null)
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.SyntheticNestedHolder [page 1/1]
+            class SyntheticNestedHolder {
+                class Visible
+            }
+        """.trimIndent()
+    }
+
+    /**
+     * Adds the `ACC_SYNTHETIC` flag to the class, like a bytecode tool might,
+     * leaving the flags of the `InnerClasses` attribute, which [Class.isSynthetic] reports, intact.
+     */
+    private fun synthetic(bytes: ByteArray): ByteArray {
+        val writer = ClassWriter(0)
+        ClassReader(bytes).accept(object : ClassVisitor(Opcodes.ASM9, writer) {
+            override fun visit(
+                version: Int,
+                access: Int,
+                name: String,
+                signature: String?,
+                superName: String?,
+                interfaces: Array<out String>?
+            ) {
+                super.visit(version, access or Opcodes.ACC_SYNTHETIC, name, signature, superName, interfaces)
+            }
+        }, 0)
+        return writer.toByteArray()
     }
 
     /**
@@ -489,6 +571,7 @@ class ClassLoaderIntrospectionTest {
                 fun prim(x: Int?)
                 override fun <S : String> bounded(x: S)
                 fun <S : Number> bounded(x: S)
+                override fun take(nested: DollarHolder.Dollar${'$'}Nested)
             }
         """.trimIndent()
     }
@@ -518,6 +601,7 @@ class ClassLoaderIntrospectionTest {
                 fun prim(x: Int?)
                 open fun <S : String> bounded(x: S)
                 fun <S : Number> bounded(x: S)
+                open fun take(nested: DollarHolder.Dollar${'$'}Nested)
             }
         """.trimIndent()
     }

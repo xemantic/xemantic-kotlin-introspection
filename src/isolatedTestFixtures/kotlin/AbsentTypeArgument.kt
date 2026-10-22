@@ -41,6 +41,10 @@ abstract class StringAbsentArrayProcessor : AbsentArrayProcessor<String, Absent>
     fun process(items: Array<Absent>) {}
 }
 
+class DollarHolder {
+    class `Dollar$Nested`
+}
+
 // the Java superclass declares a method taking Absent
 class AbsentJavaSubclass : AbsentJavaBase<String>() {
     override fun process(item: String) {}
@@ -50,6 +54,7 @@ class AbsentJavaSubclass : AbsentJavaBase<String>() {
     fun prim(x: Int?) {}
     override fun <S : String> bounded(x: S) {}
     fun <S : Number> bounded(x: S) {}
+    override fun take(nested: DollarHolder.`Dollar$Nested`) {}
 }
 
 // a type parameter bounded by Int? does not override the Java method taking int

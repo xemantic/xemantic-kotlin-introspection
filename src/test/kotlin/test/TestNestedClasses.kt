@@ -16,7 +16,16 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+@file:OptIn(InternalSerializationApi::class)
+
 package com.xemantic.kotlin.introspection.test
+
+import kotlinx.serialization.InternalSerializationApi
+import kotlinx.serialization.KSerializer
+import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
+import kotlinx.serialization.internal.GeneratedSerializer
 
 class ExtensionTarget
 
@@ -63,6 +72,42 @@ enum class NestedClassEnum {
 
 class GenericNestedHolder {
     class Entry<K, V>(override val key: K, override val value: V) : Map.Entry<K, V>
+}
+
+private class PrivateTopLevelHolder
+
+@Deprecated("hidden", level = DeprecationLevel.HIDDEN)
+class HiddenTopLevelHolder {
+    class NestedInHiddenClass
+    object NestedObjectInHiddenClass {
+        fun ExtensionTarget.fromObjectInHiddenClass(): String = "object in hidden class"
+    }
+}
+
+@Deprecated("hidden", level = DeprecationLevel.HIDDEN)
+object HiddenExtensionObject {
+    fun ExtensionTarget.fromHiddenObject(): String = "hidden object"
+}
+
+// shaped like a serializable class compiled by an older kotlinx.serialization plugin,
+// whose generated $serializer is not deprecated with the HIDDEN level
+class LegacySerializableHolder(val value: Int) {
+    object `$serializer` : GeneratedSerializer<LegacySerializableHolder> {
+        override val descriptor: SerialDescriptor get() = throw UnsupportedOperationException()
+        override fun childSerializers(): Array<KSerializer<*>> = emptyArray()
+        override fun serialize(encoder: Encoder, value: LegacySerializableHolder) {}
+        override fun deserialize(decoder: Decoder): LegacySerializableHolder = LegacySerializableHolder(0)
+    }
+}
+
+// a hand-written serializer, implementing the same interface as the generated ones, is part of the API
+class HandWrittenSerializerHolder(val value: Int) {
+    object HandWrittenSerializer : GeneratedSerializer<HandWrittenSerializerHolder> {
+        override val descriptor: SerialDescriptor get() = throw UnsupportedOperationException()
+        override fun childSerializers(): Array<KSerializer<*>> = emptyArray()
+        override fun serialize(encoder: Encoder, value: HandWrittenSerializerHolder) {}
+        override fun deserialize(decoder: Decoder): HandWrittenSerializerHolder = HandWrittenSerializerHolder(0)
+    }
 }
 
 internal class InternalNestedHolder {

@@ -1046,10 +1046,14 @@ internal class OverrideResolver(
         AsmType.OBJECT -> {
             val binaryName = type.className
             ClassType(
-                javaToKotlinNames[binaryName] ?: kotlinClassName(
-                    binaryName.substringBeforeLast('.', ""),
-                    binaryName.substringAfterLast('.')
-                ),
+                javaToKotlinNames[binaryName]
+                    // the nesting is known from the class, as `$` can be part of a class name
+                    ?: loadClass(binaryName)?.let { kotlinClassName(it) }
+                    // a class missing from the classpath is assumed to be named without `$`
+                    ?: kotlinClassName(
+                        binaryName.substringBeforeLast('.', ""),
+                        binaryName.substringAfterLast('.').replace('$', '.')
+                    ),
                 nullable = null
             )
         }
@@ -1201,16 +1205,57 @@ internal class OverrideResolver(
         }
 
         fun kotlinClassName(javaClass: Class<*>): String =
-            kotlinClassName(javaClass.packageName, javaClass.name.removePrefix("${javaClass.packageName}."))
+            kotlinClassName(javaClass.packageName, javaClass.nestedClassName())
 
         /**
-         * The Kotlin class name, like `java/util/Map.Entry`, of the [packageName] and the binary [name] of a class within it.
+         * The Kotlin class name, like `java/util/Map.Entry`, of the [packageName] and the [name] of a class within it,
+         * where the nested classes are separated with `.`.
          */
-        fun kotlinClassName(packageName: String, name: String): String {
-            val simpleName = name.replace('$', '.')
-            return if (packageName.isEmpty()) simpleName else "${packageName.replace('.', '/')}/$simpleName"
-        }
+        fun kotlinClassName(packageName: String, name: String): String =
+            if (packageName.isEmpty()) name else "${packageName.replace('.', '/')}/$name"
 
     }
 
+}
+
+/**
+ * The name of the class within its package, like `Map.Entry`, where the nested classes are separated with `.`,
+ * resolved from the declaring classes, as `$` of the binary name can also be part of a class name.
+ */
+internal fun Class<*>.nestedClassName(): String {
+    val declaringClass = try {
+        declaringClass
+    } catch (_: LinkageError) {
+        // the outer class is missing from the classpath, like in a shaded or shrunk jar
+        return nestedClassNameWithoutDeclaringClass()
+    }
+    return declaringClass?.let { "${it.nestedClassName()}.$simpleName" } ?: name.substringAfterLast('.')
+}
+
+/**
+ * The [nestedClassName] of a class whose declaring class cannot be loaded, neither its simple name reflected,
+ * read from the `InnerClasses` attribute of its class file, which lists the enclosing classes as well,
+ * or, if it cannot be read, assuming that every `$` separates the nested classes.
+ */
+private fun Class<*>.nestedClassNameWithoutDeclaringClass(): String {
+    val internalName = name.replace('.', '/')
+    // the internal names of the nested classes mapped to their outer class and simple name
+    val innerClasses = mutableMapOf<String, Pair<String, String>>()
+    try {
+        (classLoader ?: ClassLoader.getSystemClassLoader())
+            .getResourceAsStream("$internalName.class")
+            ?.use { ClassReader(it) }
+            ?.accept(object : ClassVisitor(Opcodes.ASM9) {
+                override fun visitInnerClass(name: String, outerName: String?, innerName: String?, access: Int) {
+                    if (outerName != null && innerName != null) innerClasses[name] = outerName to innerName
+                }
+            }, ClassReader.SKIP_CODE or ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES)
+    } catch (_: Exception) {
+        // judged by the name only
+    }
+    if (internalName !in innerClasses) return name.substringAfterLast('.').replace('$', '.')
+    fun nestedName(name: String): String = innerClasses[name]
+        ?.let { (outerName, innerName) -> "${nestedName(outerName)}.$innerName" }
+        ?: name.substringAfterLast('/')
+    return nestedName(internalName)
 }

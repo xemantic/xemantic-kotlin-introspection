@@ -21,6 +21,7 @@ package com.xemantic.kotlin.introspection.test
 import com.xemantic.kotlin.introspection.othermodule.InternalBase
 import com.xemantic.kotlin.introspection.test.other.JavaArrayBase
 import com.xemantic.kotlin.introspection.test.other.JavaClassBoundBase
+import com.xemantic.kotlin.introspection.test.other.JavaDollarBase
 import com.xemantic.kotlin.introspection.test.other.JavaFunctionTaker
 import com.xemantic.kotlin.introspection.test.other.JavaGetterBase
 import com.xemantic.kotlin.introspection.test.other.JavaLabelBase
@@ -167,6 +168,11 @@ class CloneableCopy : Cloneable {
 // A package-private Java method is not visible, therefore not overridable, from another package
 class PackagePrivateSubclass : PackagePrivateBase() {
     fun hidden() {}
+}
+
+// A Java superclass method taking a nested class named with a $
+class JavaDollarTaker : JavaDollarBase() {
+    override fun take(nested: NestedClassesHolder.`Dollar$Nested`) {}
 }
 
 // Members of a Java superclass, the class is open, so that its protected member is part of the API
