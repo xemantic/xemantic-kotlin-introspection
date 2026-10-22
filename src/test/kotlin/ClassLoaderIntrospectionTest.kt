@@ -28,6 +28,7 @@ import org.objectweb.asm.ClassWriter
 import org.objectweb.asm.MethodVisitor
 import org.objectweb.asm.Opcodes
 import java.io.File
+import java.io.InputStream
 import java.net.URLClassLoader
 import java.nio.file.Path
 import java.util.jar.Attributes
@@ -299,6 +300,84 @@ class ClassLoaderIntrospectionTest {
                 if (descriptor == "Lkotlin/Metadata;") null else super.visitAnnotation(descriptor, visible)
         }, 0)
         return writer.toByteArray()
+    }
+
+    /**
+     * An introspector of the isolated test fixtures without the class `Absent`,
+     * whose class loader loads every class, but serves the class files of the [unreadableClasses]
+     * with an unsupported major version, like a class file too new for ASM.
+     */
+    private fun introspectorWithUnreadableClassFiles(vararg unreadableClasses: String): KotlinIntrospector {
+        val root = tempDir.resolve("unreadable")
+        isolatedTestFixtures.filter { it.exists() }.forEach { dir ->
+            dir.walkTopDown()
+                .filter { it.isFile && it.name != "Absent.class" }
+                .forEach { it.copyTo(root.resolve(it.relativeTo(dir).path).toFile(), overwrite = true) }
+        }
+        val unreadableResources = unreadableClasses.map { it.replace('.', '/') + ".class" }.toSet()
+        val classLoader = object : URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader) {
+            override fun getResourceAsStream(name: String): InputStream? {
+                val stream = super.getResourceAsStream(name)
+                return if (stream != null && name in unreadableResources) {
+                    val bytes = stream.use { it.readBytes() }
+                    // the major version, following the magic number and the minor version
+                    bytes[6] = 0x7F
+                    bytes[7] = 0x7F
+                    bytes.inputStream()
+                } else stream
+            }
+        }
+        return KotlinIntrospector(classLoader)
+    }
+
+    @Test
+    fun `should mark overrides of class whose class file cannot be parsed`() {
+        // given
+        val introspector = introspectorWithUnreadableClassFiles(
+            "com.xemantic.kotlin.introspection.isolated.AbsentJavaSubclass"
+        )
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.AbsentJavaSubclass"
+        )
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.AbsentJavaSubclass [page 1/1]
+            class AbsentJavaSubclass : AbsentJavaBase<String> {
+                override fun process(item: String)
+                fun process(item: Int)
+                override fun run()
+                fun run(times: Int)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class whose Java superclass can be neither reflected nor parsed`() {
+        // given
+        val introspector = introspectorWithUnreadableClassFiles(
+            "com.xemantic.kotlin.introspection.isolated.AbsentJavaBase"
+        )
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.AbsentJavaSubclass"
+        )
+
+        // then
+        // the methods of the superclass are unknown, so the overrides cannot be told,
+        // and are rendered as open, as an override is implicitly open
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.AbsentJavaSubclass [page 1/1]
+            class AbsentJavaSubclass : AbsentJavaBase<String> {
+                open fun process(item: String)
+                fun process(item: Int)
+                open fun run()
+                fun run(times: Int)
+            }
+        """.trimIndent()
     }
 
     @Test

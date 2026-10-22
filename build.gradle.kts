@@ -1,9 +1,11 @@
 @file:OptIn(ExperimentalKotlinGradlePluginApi::class, ExperimentalAbiValidation::class)
 
 import org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi
+import org.jetbrains.kotlin.gradle.dsl.JvmDefaultMode
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
 import org.jetbrains.kotlin.gradle.dsl.abi.ExperimentalAbiValidation
+import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 import org.jreleaser.model.Active
 
 plugins {
@@ -69,6 +71,13 @@ repositories {
 // so that tests can expose them through a dedicated class loader only
 val isolatedTestFixtures: SourceSet = sourceSets.create("isolatedTestFixtures")
 
+// compiled with the bodies of interface members relocated to DefaultImpls, like the libraries targeting old JVMs
+val jvmDefaultDisabledTestFixtures: SourceSet = sourceSets.create("jvmDefaultDisabledTestFixtures")
+
+tasks.named<KotlinCompile>("compileJvmDefaultDisabledTestFixturesKotlin") {
+    compilerOptions.jvmDefault = JvmDefaultMode.DISABLE
+}
+
 dependencies {
     implementation(libs.kotlin.metadata.jvm)
     implementation(libs.kotlin.reflect)
@@ -79,6 +88,7 @@ dependencies {
     // kotlin-logging 8 no longer brings SLF4J transitively
     implementation(libs.slf4j.api)
 
+    testImplementation(jvmDefaultDisabledTestFixtures.output)
     testImplementation(libs.kotlin.test)
     testImplementation(libs.xemantic.kotlin.test)
     testRuntimeOnly(libs.logback.classic)

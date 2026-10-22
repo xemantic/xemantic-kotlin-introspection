@@ -131,15 +131,17 @@ internal class OverrideResolver(
     )
 
     /**
-     * @param ownerJvmMethods the JVM methods of the owner class, as names followed by descriptors,
-     *   or `null` if its class file cannot be read.
+     * @param ownerJvmMethods reads the JVM methods of the owner class, as names followed by descriptors,
+     *   or `null` if its class files cannot be read; only needed to tell a shrunk member, so read lazily.
      */
     private class Overridables(
         val substitution: Map<Int, MemberType>,
         val functions: Map<String, List<Overridable>>,
         val properties: Map<String, List<Overridable>>,
-        val ownerJvmMethods: Set<String>?
-    )
+        ownerJvmMethods: () -> Set<String>?
+    ) {
+        val ownerJvmMethods: Set<String>? by lazy(ownerJvmMethods)
+    }
 
     /**
      * A declaration of a supertype: Kotlin, Java, or both for a Kotlin built-in type
@@ -211,9 +213,10 @@ internal class OverrideResolver(
      * like by R8, so that it cannot be told from an overload of a supertype member,
      * which is then assumed to be overridden, as one with the same name is known.
      * The caller checks that a supertype member of the same name exists.
+     * A member whose owner class files cannot be read is not considered shrunk.
      */
     private fun Overridables.isShrunk(signature: JvmMethodSignature?): Boolean =
-        signature != null && ownerJvmMethods != null && "${signature.name}${signature.descriptor}" !in ownerJvmMethods
+        signature != null && ownerJvmMethods?.let { "${signature.name}${signature.descriptor}" !in it } == true
 
     private fun getterName(propertyName: String): String =
         if (propertyName.length > 2 && propertyName.startsWith("is") && !propertyName[2].isLowerCase()) {
@@ -327,23 +330,65 @@ internal class OverrideResolver(
             }
         }
 
-        val ownerJvmMethods = loadClass(owner.name.replace('/', '.'))?.let { classBytes(it) }?.let { bytes ->
-            buildSet {
-                ClassReader(bytes).accept(object : ClassVisitor(Opcodes.ASM9) {
-                    override fun visitMethod(
-                        access: Int,
-                        name: String,
-                        descriptor: String,
-                        signature: String?,
-                        exceptions: Array<out String>?
-                    ): MethodVisitor? {
-                        add(name + descriptor)
-                        return null
+        return Overridables(ownerSubstitution, functions, properties) {
+            loadClass(owner.name.replace('/', '.'))?.let { jvmMethods(it) }
+        }
+    }
+
+    /**
+     * The JVM methods of a Kotlin class, as names followed by descriptors,
+     * including the members of an interface relocated to its `DefaultImpls` class,
+     * like with `-jvm-default=disable`, as if they were declared in the interface,
+     * or `null` if the class files cannot be read.
+     */
+    private fun jvmMethods(javaClass: Class<*>): Set<String>? {
+        val internalName = javaClass.name.replace('.', '/')
+        val methods = mutableSetOf<String>()
+        val isRead = readMethods(classBytes(javaClass.classLoader, internalName) ?: return null) { _, name, descriptor, _ ->
+            methods += name + descriptor
+        }
+        if (!isRead) return null
+        if (javaClass.isInterface) {
+            // the static method of DefaultImpls takes the interface instance as the first parameter
+            val instanceParameter = "(L$internalName;"
+            val defaultImpls = classBytes(javaClass.classLoader, "$internalName\$DefaultImpls")
+            if (defaultImpls != null) {
+                val isDefaultImplsRead = readMethods(defaultImpls) { access, name, descriptor, _ ->
+                    if (access and Opcodes.ACC_STATIC != 0 && descriptor.startsWith(instanceParameter)) {
+                        methods += name + "(" + descriptor.removePrefix(instanceParameter)
                     }
-                }, ClassReader.SKIP_CODE or ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES)
+                }
+                if (!isDefaultImplsRead) return null
             }
         }
-        return Overridables(ownerSubstitution, functions, properties, ownerJvmMethods)
+        return methods
+    }
+
+    /**
+     * Reads the methods of a class file, passing their access flags, names, descriptors and generic signatures
+     * to the [visit] function.
+     *
+     * @return `false` if the class file cannot be parsed, like when it is malformed, or too new for ASM.
+     */
+    private fun readMethods(
+        bytes: ByteArray,
+        visit: (access: Int, name: String, descriptor: String, signature: String?) -> Unit
+    ): Boolean = try {
+        ClassReader(bytes).accept(object : ClassVisitor(Opcodes.ASM9) {
+            override fun visitMethod(
+                access: Int,
+                name: String,
+                descriptor: String,
+                signature: String?,
+                exceptions: Array<out String>?
+            ): MethodVisitor? {
+                visit(access, name, descriptor, signature)
+                return null
+            }
+        }, ClassReader.SKIP_CODE or ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES)
+        true
+    } catch (_: Exception) {
+        false
     }
 
     private val Visibility.isOverridable: Boolean
@@ -709,45 +754,40 @@ internal class OverrideResolver(
         ownerPackage: String,
         substitution: Map<String, MemberType>
     ): List<Pair<String, Overridable>> {
-        val bytes = classBytes(javaClass) ?: return emptyList()
+        val bytes = classBytes(javaClass.classLoader, javaClass.name.replace('.', '/')) ?: return emptyList()
         val methods = mutableListOf<Pair<String, Overridable>>()
-        ClassReader(bytes).accept(object : ClassVisitor(Opcodes.ASM9) {
-            override fun visitMethod(
-                access: Int,
-                name: String,
-                descriptor: String,
-                signature: String?,
-                exceptions: Array<out String>?
-            ): MethodVisitor? {
-                val isOverridable = access and (Opcodes.ACC_STATIC or Opcodes.ACC_FINAL or Opcodes.ACC_PRIVATE or
-                    Opcodes.ACC_SYNTHETIC or Opcodes.ACC_BRIDGE) == 0 &&
-                    (access and (Opcodes.ACC_PUBLIC or Opcodes.ACC_PROTECTED) != 0 || javaClass.packageName == ownerPackage) &&
-                    !name.startsWith("<")
-                if (!isOverridable) return null
-                val generic = signature?.let { GenericMethodSignature(it) }
-                val parameters = AsmType.getArgumentTypes(descriptor).mapIndexed { index, parameterType ->
-                    val typeVariable = generic?.typeVariableParameters?.get(index)
-                    when {
-                        typeVariable == null -> asmType(parameterType)
-                        // a type variable of the method is known only by its erasure
-                        typeVariable in generic.typeParameters -> TypeParameterType(
-                            "F${generic.typeParameters.indexOf(typeVariable)}",
-                            false,
-                            erasure(asmType(parameterType))
-                        )
-                        else -> substitution[typeVariable] ?: UnknownType
-                    }
+        val isRead = readMethods(bytes) { access, name, descriptor, signature ->
+            val isOverridable = access and (Opcodes.ACC_STATIC or Opcodes.ACC_FINAL or Opcodes.ACC_PRIVATE or
+                Opcodes.ACC_SYNTHETIC or Opcodes.ACC_BRIDGE) == 0 &&
+                (access and (Opcodes.ACC_PUBLIC or Opcodes.ACC_PROTECTED) != 0 || javaClass.packageName == ownerPackage) &&
+                !name.startsWith("<")
+            if (!isOverridable) return@readMethods
+            val generic = signature?.let { GenericMethodSignature(it) }
+            val parameters = AsmType.getArgumentTypes(descriptor).mapIndexed { index, parameterType ->
+                val typeVariable = generic?.typeVariableParameters?.get(index)
+                when {
+                    typeVariable == null -> asmType(parameterType)
+                    // a type variable of the method is known only by its erasure
+                    typeVariable in generic.typeParameters -> TypeParameterType(
+                        "F${generic.typeParameters.indexOf(typeVariable)}",
+                        false,
+                        erasure(asmType(parameterType))
+                    )
+                    else -> substitution[typeVariable] ?: UnknownType
                 }
-                methods += name to Overridable(null, parameters, generic?.typeParameters?.size ?: 0, isJava = true)
-                return null
             }
-        }, ClassReader.SKIP_CODE or ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES)
-        return methods
+            methods += name to Overridable(null, parameters, generic?.typeParameters?.size ?: 0, isJava = true)
+        }
+        // the methods of a class file which cannot be parsed are unknown
+        return if (isRead) methods else emptyList()
     }
 
-    private fun classBytes(javaClass: Class<*>): ByteArray? = try {
-        (javaClass.classLoader ?: ClassLoader.getSystemClassLoader())
-            .getResourceAsStream(javaClass.name.replace('.', '/') + ".class")
+    /**
+     * @param internalName the JVM internal name of the class, like `java/util/Map$Entry`.
+     */
+    private fun classBytes(classLoader: ClassLoader?, internalName: String): ByteArray? = try {
+        (classLoader ?: ClassLoader.getSystemClassLoader())
+            .getResourceAsStream("$internalName.class")
             ?.use { it.readBytes() }
     } catch (_: java.io.IOException) {
         null
