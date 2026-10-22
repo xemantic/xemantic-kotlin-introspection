@@ -571,6 +571,7 @@ class ClassLoaderIntrospectionTest {
                 fun prim(x: Int?)
                 override fun <S : String> bounded(x: S)
                 fun <S : Number> bounded(x: S)
+                override fun take(nested: DollarHolder.Dollar${'$'}Nested)
             }
         """.trimIndent()
     }
@@ -600,6 +601,7 @@ class ClassLoaderIntrospectionTest {
                 fun prim(x: Int?)
                 open fun <S : String> bounded(x: S)
                 fun <S : Number> bounded(x: S)
+                open fun take(nested: DollarHolder.Dollar${'$'}Nested)
             }
         """.trimIndent()
     }
