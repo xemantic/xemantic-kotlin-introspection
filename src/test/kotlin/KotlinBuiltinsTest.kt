@@ -21,6 +21,7 @@ package com.xemantic.kotlin.introspection
 import com.xemantic.kotlin.test.assert
 import org.junit.jupiter.api.io.TempDir
 import java.net.URI
+import java.net.URL
 import java.nio.file.Path
 import java.util.jar.JarEntry
 import java.util.jar.JarOutputStream
@@ -115,6 +116,36 @@ class KotlinBuiltinsTest {
 
         // then
         assert(found == resources.sorted())
+    }
+
+    @Test
+    fun `should find kotlin_builtins resources of standard library in a jar of a URL with an unencoded space`() {
+        // given
+        val jar = tempDir.resolve("my libs").createDirectories().resolve("stdlib.jar")
+        JarOutputStream(jar.outputStream()).use { output ->
+            resources.forEach { resource ->
+                output.putNextEntry(JarEntry(resource))
+                output.closeEntry()
+            }
+        }
+        // like a URL of the deprecated File.toURL(), which is not a valid URI
+        @Suppress("DEPRECATION")
+        val anchor = URL("jar:file:${jar.toAbsolutePath().toString().replace('\\', '/')}!/kotlin/kotlin.kotlin_builtins")
+
+        // when
+        val found = kotlinBuiltinsResources(anchor)
+
+        // then
+        assert(found == resources.sorted())
+    }
+
+    @Suppress("DEPRECATION")
+    @Test
+    fun `should tell the file of a file URL only when it is a valid file URI`() {
+        assert(URL("file:/tmp/stdlib.jar").toFile() == java.io.File("/tmp/stdlib.jar"))
+        assert(URL("file:/tmp/my libs/stdlib.jar").toFile() == null)
+        assert(URL("file://server/share/stdlib.jar").toFile() == null)
+        assert(URL("jar:file:/tmp/stdlib.jar!/kotlin/kotlin.kotlin_builtins").toFile() == null)
     }
 
     @Test

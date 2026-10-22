@@ -73,7 +73,8 @@ import org.objectweb.asm.Type as AsmType
  * This class is thread-safe.
  *
  * @param classLoader the class loader of the introspected classes.
- * @param loadClass loads a class by its JVM binary name, like `com.example.Outer${'$'}Nested`, through the [classLoader].
+ * @param loadClass loads a class by its JVM binary name, like `com.example.Outer${'$'}Nested`,
+ *   which must be loaded through the [classLoader], as its class files are told by the latter.
  * @param readKmClass reads the Kotlin metadata of a class, if it is a Kotlin class.
  * @param builtinClasses the declarations of the Kotlin built-in types, by their Kotlin class name, like `kotlin/collections/List`.
  * @param builtinTypes the JVM classes of the Kotlin built-in types, by their fully qualified Kotlin name.
@@ -499,11 +500,11 @@ internal class OverrideResolver(
     }
 
     /**
-     * Whether the [classLoader] has a class file for the class of this Kotlin name.
+     * Whether the [classLoader] has a class file for the class of this JVM binary name.
      * A class file resource is never encapsulated, also when it is in a named module.
      */
-    private fun hasClassFile(name: String): Boolean =
-        classLoader.getResource(binaryName(name).replace('.', '/') + ".class") != null
+    private fun hasClassFile(binaryName: String): Boolean =
+        classLoader.getResource(binaryName.replace('.', '/') + ".class") != null
 
     private fun erasure(typeParameter: KmTypeParameter, typeParameters: Map<Int, KmTypeParameter>): String? {
         val bound = typeParameter.upperBounds.firstOrNull() ?: return "kotlin/Any"
@@ -694,7 +695,8 @@ internal class OverrideResolver(
         val builtinClass = builtinClasses()[name]
         // a built-in type without its own class file, like List, is not looked up through the class loader,
         // which would only throw a ClassNotFoundException
-        val javaClass = if (builtinClass == null || hasClassFile(name)) loadClass(binaryName(name)) else null
+        val binaryName = binaryName(name)
+        val javaClass = if (builtinClass == null || hasClassFile(binaryName)) loadClass(binaryName) else null
         // the built-in declaration of a type having its own class file, like KClass, is incomplete
         javaClass?.let { readKmClass(it) }?.let { return Declaration(it, null) }
         builtinClass?.let { kmClass ->

@@ -21,6 +21,7 @@ package com.xemantic.kotlin.introspection
 import io.github.oshai.kotlinlogging.KotlinLogging
 import java.io.File
 import java.net.JarURLConnection
+import java.net.URISyntaxException
 import java.net.URL
 import java.nio.file.Files
 import java.nio.file.Path
@@ -41,7 +42,7 @@ private const val ANCHOR_BUILTINS_RESOURCE = "kotlin/kotlin$BUILTINS_EXTENSION"
 
 /**
  * The `.kotlin_builtins` resources of the standard library known at the time of writing,
- * read only when the resources cannot be listed.
+ * read only when the resources cannot be listed, or the listed ones lack the anchor resource.
  */
 private val knownBuiltinsResources = listOf(
     ANCHOR_BUILTINS_RESOURCE,
@@ -59,8 +60,9 @@ private val knownBuiltinsResources = listOf(
  * by their Kotlin class names, like `kotlin/collections/List`.
  */
 internal fun readKotlinBuiltinClasses(): Map<String, KmClass> = kotlinBuiltinsResources().flatMap { resource ->
-    // read through the class loader of the standard library; when it is a named module, these resources
-    // are encapsulated, as its packages are open only to kotlin.reflect, and cannot be read from here
+    // read relative to a class of the standard library, through its class loader when it is an unnamed module;
+    // when it is a named module, the resources are read through the module, and are encapsulated,
+    // as its packages are open only to kotlin.reflect, so that they cannot be read from here
     val stream = KotlinVersion::class.java.getResourceAsStream("/$resource")
     if (stream == null) {
         // the known resources, read when they cannot be listed, might be missing from an older standard library
@@ -91,18 +93,23 @@ internal fun kotlinBuiltinsResources(
         logger.warn { "Cannot find $ANCHOR_BUILTINS_RESOURCE of the Kotlin standard library" }
         return knownBuiltinsResources
     }
+    var failure: Exception? = null
     val resources = try {
         val resources = if (anchor.protocol == "jar") jarBuiltinsResources(anchor) else pathBuiltinsResources(anchor)
         resources.filter { it.startsWith("kotlin/") && it.endsWith(BUILTINS_EXTENSION) }.sorted()
     } catch (e: Exception) {
-        logger.warn(e) { "Cannot list the Kotlin built-in declarations next to $anchor, reading the known ones" }
-        return knownBuiltinsResources
+        failure = e
+        emptyList()
     }
-    if (ANCHOR_BUILTINS_RESOURCE !in resources) {
-        logger.warn { "Cannot list the Kotlin built-in declarations next to $anchor, reading the known ones" }
-        return knownBuiltinsResources
+    if (ANCHOR_BUILTINS_RESOURCE in resources) return resources
+    logger.warn(failure) {
+        if (failure != null) {
+            "Cannot list the Kotlin built-in declarations next to $anchor, reading the known ones"
+        } else {
+            "The Kotlin built-in declarations listed next to $anchor lack $ANCHOR_BUILTINS_RESOURCE, reading the known ones"
+        }
     }
-    return resources
+    return knownBuiltinsResources
 }
 
 /**
@@ -117,13 +124,26 @@ private fun jarBuiltinsResources(anchor: URL): List<String> {
         .filter { it.startsWith(prefix) }
         .map { it.removePrefix(prefix) }
         .toList()
-    val jarFileUrl = connection.jarFileURL
-    return if (jarFileUrl.protocol == "file") {
-        JarFile(File(jarFileUrl.toURI())).use { it.resources() }
-    } else {
-        // a jar file of a custom URL handler, like a nested jar of a fat jar, might be shared with the class loader,
-        // also when the caches are disabled, therefore it is never closed
-        connection.jarFile.resources()
+    val file = connection.jarFileURL.toFile()
+    if (file != null) return JarFile(file).use { it.resources() }
+    // a jar file of a custom URL handler, like a nested jar of a fat jar, or of a file: URL which is not a valid URI,
+    // is shared with the class loader when cached, so it is closed only when not cached
+    val jarFile = connection.jarFile
+    return if (connection.useCaches) jarFile.resources() else jarFile.use { it.resources() }
+}
+
+/**
+ * The file of a `file:` [URL], or `null` if it is not one, or it is not a valid file URI,
+ * like one with an unencoded space of the deprecated `File.toURL()`, or a Windows UNC path, like `file://server/share`.
+ */
+internal fun URL.toFile(): File? {
+    if (protocol != "file") return null
+    return try {
+        File(toURI())
+    } catch (_: URISyntaxException) {
+        null
+    } catch (_: IllegalArgumentException) {
+        null
     }
 }
 
