@@ -609,3 +609,34 @@ class JavaRawArraySubclass : JavaRawArrayMid() {
 class JavaRawClassBoundSubclass : JavaRawClassBoundMid() {
     fun <T : Number> bounded(x: T) {}
 }
+
+// An override keeps its modality, abstract or final, while an open override is implicitly open
+open class ModalityBase {
+    open fun abstracted() {}
+    open val abstractedValue: Int = 0
+    open fun finalized() {}
+    open val finalizedValue: Int = 0
+    protected open fun protectedFinalized() {}
+    open fun reopened() {}
+}
+
+abstract class ModalityOverrides : ModalityBase() {
+    abstract override fun abstracted()
+    abstract override val abstractedValue: Int
+    final override fun finalized() {}
+    final override val finalizedValue: Int = 0
+    protected final override fun protectedFinalized() {}
+    override fun reopened() {}
+}
+
+// A final override in a final class is redundant, as all its members are final
+class FinalClassOverrides : ModalityBase() {
+    final override fun finalized() {}
+    override fun reopened() {}
+}
+
+// A final override declared in the primary constructor
+abstract class FinalConstructorOverride(final override val u: UInt) : HasU
+
+// An open property declared in the primary constructor
+open class OpenConstructorProperty(open val a: Int, val b: Int)

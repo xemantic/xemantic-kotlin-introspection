@@ -1350,6 +1350,68 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should keep abstract and final modality of override`() {
+        // an open override is rendered as just override, which is implicitly open
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ModalityOverrides"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ModalityOverrides [page 1/1]
+            abstract class ModalityOverrides : ModalityBase {
+                abstract override val abstractedValue: Int
+                final override val finalizedValue: Int
+                abstract override fun abstracted()
+                final override fun finalized()
+                protected final override fun protectedFinalized()
+                override fun reopened()
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not mark override in final class as final`() {
+        // all the members of a final class are final, which makes final override redundant
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.FinalClassOverrides"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.FinalClassOverrides [page 1/1]
+            class FinalClassOverrides : ModalityBase {
+                override fun finalized()
+                override fun reopened()
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should keep final modality of override declared in primary constructor`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.FinalConstructorOverride"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.FinalConstructorOverride [page 1/1]
+            abstract class FinalConstructorOverride(final override val u: UInt) : HasU
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark open property declared in primary constructor`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.OpenConstructorProperty"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OpenConstructorProperty [page 1/1]
+            open class OpenConstructorProperty(open val a: Int, val b: Int)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should keep abstract modality of override in standard library class`() {
+        resolver.resolve(
+            "kotlin.collections.AbstractCollection.size"
+        ) sameAsKotlin """
+            // kotlin.collections.AbstractCollection.size [page 1/1]
+            abstract override val size: Int
+        """.trimIndent()
+    }
+
+    @Test
     fun `should mark override of function taking type parameter passed as type argument of supertype`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.Box"
