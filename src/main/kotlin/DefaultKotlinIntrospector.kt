@@ -728,10 +728,10 @@ internal class DefaultKotlinIntrospector(
         val renderedConstructor = primaryConstructor?.takeIf {
             isEnum || it.visibility.isApiIn(scopes)
         }
-        val constructorParamNames = renderedConstructor?.valueParameters?.map { it.name }?.toSet() ?: emptySet()
-
-        // Constructor parameters - properties that match constructor parameter names
-        val constructorProperties = properties.filter { it.name in constructorParamNames }.associateBy { it.name }
+        // The properties declared by the parameters of the rendered constructor, by the parameter name
+        val constructorProperties = renderedConstructor?.valueParameters.orEmpty().mapNotNull { param ->
+            properties.firstOrNull { it.isDeclaredBy(param) }?.let { param.name to it }
+        }.toMap()
 
         // The companion object, unless it is not part of the API, with its members which are
         val companion = kmClass.companionObject
@@ -813,7 +813,7 @@ internal class DefaultKotlinIntrospector(
 
                 // Properties (excluding constructor properties)
                 properties
-                    .filter { it.name !in constructorParamNames }
+                    .filter { it !in constructorProperties.values }
                     .forEach { property ->
                         +"    "
                         +formatProperty(property, inInterface = isInterface, owner = kmClass, contextPackage = contextPackage, classTypeParameters = typeParameters)
@@ -1392,6 +1392,28 @@ internal class DefaultKotlinIntrospector(
         }
         if (isOverride) +"override "
     }
+
+    /**
+     * Whether this property might be declared by the constructor [parameter], like `class Foo(val x: Int)`.
+     *
+     * The metadata does not tell where a property is declared, so a property of the same name is excluded
+     * when it cannot be declared in the constructor: it has a receiver, an accessor with a body
+     * (also the only way of declaring a property without a backing field), a delegate,
+     * or a type other than the parameter type, like `class Foo(x: Int) { val x: Long = x.toLong() }`.
+     * What remains, like `class Foo(x: Int) { val x: Int = x }`, cannot be distinguished from
+     * a constructor property either in the metadata or in the bytecode, and has the same API.
+     */
+    private fun KmProperty.isDeclaredBy(parameter: KmValueParameter): Boolean =
+        name == parameter.name &&
+            kind == MemberKind.DECLARATION &&
+            receiverParameterType == null &&
+            typeParameters.isEmpty() &&
+            !isDelegated &&
+            !isLateinit &&
+            !isConst &&
+            !getter.isNotDefault &&
+            setter?.isNotDefault != true &&
+            returnType == parameter.type
 
     private fun isOverride(owner: KmClass?, function: KmFunction): Boolean = override(owner, function) != null
 
