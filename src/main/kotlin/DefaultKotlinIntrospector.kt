@@ -120,19 +120,26 @@ private fun Visibility.isApiIn(enclosing: List<ClassScope>): Boolean {
 
 internal class DefaultKotlinIntrospector(
     private val classLoader: ClassLoader = Thread.currentThread().contextClassLoader,
-    scanEntireClasspath: Boolean = true
+    scanEntireClasspath: Boolean = true,
+    // whether the scan skips the nested class files which cannot contain an indexed Kotlin class, see NestedClassFiles,
+    // disabled only by the tests telling that skipping them does not change the index
+    private val skipNonKotlinNestedClassFiles: Boolean = true
 ) : KotlinIntrospector {
 
     private val logger = KotlinLogging.logger {}
 
     // Index of extension functions: receiver type name -> list of extensions
-    private val extensionIndex: Map<String, List<IndexedExtension>>
+    internal val extensionIndex: Map<String, List<IndexedExtension>>
 
     // Index of extension properties: receiver type name -> list of extension properties
-    private val extensionPropertyIndex: Map<String, List<IndexedExtensionProperty>>
+    internal val extensionPropertyIndex: Map<String, List<IndexedExtensionProperty>>
 
     // Index of all Kotlin classes: simple name (lowercase) -> list of fully qualified names
-    private val classIndex: Map<String, List<String>>
+    internal val classIndex: Map<String, List<String>>
+
+    // the number of the class files the classpath scan skipped without reading them, see NestedClassFiles
+    internal var skippedClassFileCount: Int = 0
+        private set
 
     // Declarations of the built-in types, by their Kotlin class name, like kotlin/collections/List
     private val builtinClasses: Map<String, KmClass> by lazy { readKotlinBuiltinClasses() }
@@ -1435,10 +1442,14 @@ internal class DefaultKotlinIntrospector(
             if (!visitedRoots.add(root) || !root.exists()) continue
 
             if (root.isDirectory) {
+                val nestedClassFiles = newNestedClassFiles()
                 root.walkTopDown()
                     .filter { it.isFile && isIndexedClassFile(it.name) }
-                    .forEach { file ->
-                        indexClass(file.readBytes(), indexedClasses, funcIndex, propIndex, classes)
+                    .map { file -> file.relativeTo(root).invariantSeparatorsPath.removeSuffix(".class") to file }
+                    .sortedBy { (name, _) -> nestingDepth(name) }
+                    .forEach { (name, file) ->
+                        if (isSkipped(name, nestedClassFiles, indexedClasses)) return@forEach
+                        indexClass(file.readBytes(), indexedClasses, funcIndex, propIndex, classes, nestedClassFiles)
                     }
             } else {
                 scanJarFile(root, roots, indexedClasses, funcIndex, propIndex, classes)
@@ -1541,6 +1552,30 @@ internal class DefaultKotlinIntrospector(
         fileName.endsWith(".class") && fileName != "module-info.class" &&
             fileName.removeSuffix(".class").split('$').drop(1).none { it.firstOrNull()?.isDigit() == true }
 
+    private fun newNestedClassFiles(): NestedClassFiles? =
+        if (skipNonKotlinNestedClassFiles) NestedClassFiles() else null
+
+    /**
+     * The number of `$` in the simple name of the class file, as the binary name of a nested class
+     * usually extends the one of its outer class, like `Outer$Nested`, so that ordering by it reads the outer class first.
+     */
+    private fun nestingDepth(path: String): Int = path.substringAfterLast('/').count { it == '$' }
+
+    /**
+     * Whether the class file of the class with the internal [name] is skipped without reading it,
+     * which still shadows, like an indexed one, the class of the same name in the next roots.
+     */
+    private fun isSkipped(
+        name: String,
+        nestedClassFiles: NestedClassFiles?,
+        indexedClasses: MutableSet<String>
+    ): Boolean {
+        if (nestedClassFiles == null || !nestedClassFiles.isNonKotlinNestedClass(name)) return false
+        indexedClasses.add(name.replace('/', '.'))
+        skippedClassFileCount++
+        return true
+    }
+
     private fun scanJarFile(
         jarFile: File,
         roots: ArrayDeque<File>,
@@ -1562,13 +1597,17 @@ internal class DefaultKotlinIntrospector(
                             // Skip malformed Class-Path entries
                         }
                     }
+                val nestedClassFiles = newNestedClassFiles()
                 jar.entries().asSequence()
                     // skip the class versions of multi-release jars
                     .filter { !it.name.startsWith("META-INF/") }
                     .filter { isIndexedClassFile(it.name.substringAfterLast('/')) }
+                    // the entries are in the archive order, while an outer class should be read before its nested ones
+                    .sortedBy { nestingDepth(it.name) }
                     .forEach { entry ->
+                        if (isSkipped(entry.name.removeSuffix(".class"), nestedClassFiles, indexedClasses)) return@forEach
                         val bytes = jar.getInputStream(entry).use { it.readBytes() }
-                        indexClass(bytes, indexedClasses, funcIndex, propIndex, classes)
+                        indexClass(bytes, indexedClasses, funcIndex, propIndex, classes, nestedClassFiles)
                     }
             }
         } catch (_: Exception) {
@@ -1581,7 +1620,8 @@ internal class DefaultKotlinIntrospector(
         indexedClasses: MutableSet<String>,
         funcIndex: MutableMap<String, MutableList<IndexedExtension>>,
         propIndex: MutableMap<String, MutableList<IndexedExtensionProperty>>,
-        classes: MutableMap<String, IndexedClass>
+        classes: MutableMap<String, IndexedClass>,
+        nestedClassFiles: NestedClassFiles?
     ) {
         val reader = try {
             ClassReader(bytes)
@@ -1599,8 +1639,11 @@ internal class DefaultKotlinIntrospector(
         val metadata = try {
             classFile.metadata?.let { KotlinClassMetadata.readLenient(it) }
         } catch (_: Exception) {
-            null
-        } ?: return
+            // nothing is told about the nested classes of a class with unreadable metadata
+            return
+        }
+        nestedClassFiles?.add(reader.className, classFile, (metadata as? KotlinClassMetadata.Class)?.kmClass)
+        if (metadata == null) return
 
         if (metadata is KotlinClassMetadata.Class) {
             val kmClass = metadata.kmClass
@@ -1719,28 +1762,105 @@ internal class DefaultKotlinIntrospector(
     private fun readClassFile(reader: ClassReader): ClassFile {
         var metadata: Metadata? = null
         var isHiddenDeprecated = false
+        val memberClasses = mutableListOf<MemberClass>()
+        val nestMembers = mutableListOf<String>()
         reader.accept(object : ClassVisitor(Opcodes.ASM9) {
             override fun visitAnnotation(descriptor: String, visible: Boolean): AnnotationVisitor? = when (descriptor) {
                 METADATA_DESCRIPTOR -> MetadataVisitor { metadata = it }
                 DEPRECATED_DESCRIPTOR -> hiddenDeprecationVisitor { isHiddenDeprecated = true }
                 else -> null
             }
+
+            override fun visitInnerClass(name: String, outerName: String?, innerName: String?, access: Int) {
+                // the anonymous and local classes are not members
+                if (outerName != null && innerName != null) {
+                    memberClasses += MemberClass(name, outerName, innerName)
+                }
+            }
+
+            override fun visitNestMember(nestMember: String) {
+                nestMembers += nestMember
+            }
         }, ClassReader.SKIP_CODE or ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES)
         return ClassFile(
             metadata = metadata,
             isSynthetic = reader.access and Opcodes.ACC_SYNTHETIC != 0,
-            isHiddenDeprecated = isHiddenDeprecated
+            isHiddenDeprecated = isHiddenDeprecated,
+            memberClasses = memberClasses,
+            nestMembers = nestMembers
         )
     }
 
     /**
      * What is read from a class file, without loading the class.
+     *
+     * @property memberClasses the member classes, of this or the other classes it refers to,
+     *   declared by the `InnerClasses` attribute.
+     * @property nestMembers the classes compiled from the same source as this nest host,
+     *   declared by the `NestMembers` attribute.
      */
     private class ClassFile(
         val metadata: Metadata?,
         val isSynthetic: Boolean,
-        val isHiddenDeprecated: Boolean
+        val isHiddenDeprecated: Boolean,
+        val memberClasses: List<MemberClass> = emptyList(),
+        val nestMembers: List<String> = emptyList()
     )
+
+    /**
+     * The class with the internal [name], declared as the member named [simpleName] of the [outerName] class.
+     */
+    private class MemberClass(
+        val name: String,
+        val outerName: String,
+        val simpleName: String
+    )
+
+    /**
+     * What the classpath scan learns, from the class files read in a classpath root, about the classes nested in them,
+     * by their internal names, telling the nested class files which cannot contain an indexed Kotlin class,
+     * so that they are not even read, which matters for Java libraries with thousands of nested classes:
+     *
+     * - the classes nested in a class without the Kotlin class metadata, like a Java class or a Kotlin file facade,
+     *   as only a Kotlin class can contain a Kotlin class,
+     * - the members of a Kotlin class declared in its metadata neither as nested classes nor as enum entries,
+     *   like the generated `$DefaultImpls` or `$WhenMappings`.
+     *
+     * Only what the class files declare is trusted, never the names of the class files,
+     * as a top-level Kotlin class can be named like `JavaOuter$Name`.
+     * A class nested in a class which is missing from the root, or not read yet, is read, as any other class.
+     */
+    private class NestedClassFiles {
+
+        private val memberClasses = mutableMapOf<String, MemberClass>()
+
+        private val nonKotlinClasses = mutableSetOf<String>()
+
+        // the simple names of the nested classes and enum entries of the Kotlin classes, declared in their metadata
+        private val kotlinNestedClasses = mutableMapOf<String, Set<String>>()
+
+        fun add(name: String, classFile: ClassFile, kmClass: KmClass?) {
+            classFile.memberClasses.forEach { memberClasses.putIfAbsent(it.name, it) }
+            if (kmClass != null) {
+                // an enum entry with a body is compiled to a nested class too, having the class metadata
+                kotlinNestedClasses[name] = (kmClass.nestedClasses + kmClass.kmEnumEntries.map { it.name }).toSet()
+            } else {
+                nonKotlinClasses += name
+                nonKotlinClasses += classFile.nestMembers
+            }
+        }
+
+        fun isNonKotlinNestedClass(name: String): Boolean {
+            if (name in nonKotlinClasses) return true
+            val memberClass = memberClasses[name] ?: return false
+            val isNonKotlin = memberClass.outerName in nonKotlinClasses ||
+                kotlinNestedClasses[memberClass.outerName]?.let { memberClass.simpleName !in it } == true
+            // so that the classes nested in it are recognized as well
+            if (isNonKotlin) nonKotlinClasses += name
+            return isNonKotlin
+        }
+
+    }
 
     private class MetadataVisitor(
         private val onMetadata: (Metadata) -> Unit
