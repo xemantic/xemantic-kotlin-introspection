@@ -23,3 +23,6 @@ package com.xemantic.kotlin.introspection.test
 fun ExtensionOrderSubject.alpha(): Int = value
 
 val ExtensionOrderSubject.bravo: Int get() = value
+
+// see foxtrot in ExtensionOrderA.kt
+fun ExtensionOrderSubject.foxtrot(): Int = value
