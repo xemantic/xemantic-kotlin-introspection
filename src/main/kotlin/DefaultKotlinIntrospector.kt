@@ -1508,12 +1508,29 @@ internal class DefaultKotlinIntrospector(
 
         // Extract members (lines between class declaration and closing brace)
         // Preserve relative indentation by only removing the base 4-space indent
-        val members = lines.subList(1, closingBraceIndex)
+        val memberLines = lines.subList(1, closingBraceIndex)
             .filter { it.isNotBlank() }
             .map { line ->
                 // Remove exactly 4 spaces if present, preserving any additional indentation
                 if (line.startsWith("    ")) line.substring(4) else line.trimStart()
             }
+
+        // A member is paginated as a whole: the lines indented deeper, and the closing brace
+        // of a block like the companion object, belong to the member started above them
+        val members = buildList<MutableList<String>> {
+            for (line in memberLines) {
+                if (isNotEmpty() && (line.first().isWhitespace() || line == "}")) {
+                    last().add(line)
+                } else {
+                    add(mutableListOf(line))
+                }
+            }
+        }.map { it.joinToString("\n") }
+
+        // Enum entries are followed by a semicolon only when the members come after them
+        val enumEntryCount = if (classDeclarationLine.contains("enum class ")) {
+            members.indexOfFirst { it.endsWith(";") } + 1
+        } else 0
 
         // Extract extensions (lines after closing brace), preserving package headers
         // We need to parse extensions as items with their package context
@@ -1558,10 +1575,16 @@ internal class DefaultKotlinIntrospector(
             if (pageMembers.isNotEmpty()) {
                 +classDeclarationLine
                 +"\n"
+                if (enumEntryCount > 0 && startIndex >= enumEntryCount) {
+                    // without the entries on this page, the semicolon still has to precede the members
+                    +"    ;\n"
+                }
                 for (item in pageMembers) {
-                    +"    "
-                    +item.line
-                    +"\n"
+                    for (line in item.line.lines()) {
+                        +"    "
+                        +line
+                        +"\n"
+                    }
                 }
                 +"}"
                 if (pageExtensions.isNotEmpty()) {

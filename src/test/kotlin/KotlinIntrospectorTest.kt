@@ -725,6 +725,106 @@ class KotlinIntrospectorTest {
         """.trimIndent()
     }
 
+    @Test
+    fun `should paginate companion object as a single member`() {
+        // 9 members and the companion object block make 10 items, fitting the default page size
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.PaginatedCompanionClass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PaginatedCompanionClass [page 1/1]
+            class PaginatedCompanionClass {
+                val a1: Int
+                val a2: Int
+                val a3: Int
+                val a4: Int
+                val a5: Int
+                fun f6()
+                fun f7()
+                fun f8()
+                fun f9()
+                companion object {
+                    const val CONSTANT: String
+                    fun create(): PaginatedCompanionClass
+                }
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not split companion object across pages - the page ending with it`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.PaginatedCompanionClass",
+            page = 2,
+            pageSize = 5
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PaginatedCompanionClass [page 2/2]
+            class PaginatedCompanionClass {
+                fun f6()
+                fun f7()
+                fun f8()
+                fun f9()
+                companion object {
+                    const val CONSTANT: String
+                    fun create(): PaginatedCompanionClass
+                }
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should separate enum members from entries on a page without entries`() {
+        // without the leading semicolon, enum members would be parsed as enum entries
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.RichEnumTestClass",
+            page = 3,
+            pageSize = 2
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.RichEnumTestClass [page 3/3]
+            enum class RichEnumTestClass(val code: Int, val label: String) {
+                ;
+                fun isFirst(): Boolean
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not split companion object across pages - the page before it`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.PaginatedCompanionClass",
+            pageSize = 9
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PaginatedCompanionClass [page 1/2]
+            class PaginatedCompanionClass {
+                val a1: Int
+                val a2: Int
+                val a3: Int
+                val a4: Int
+                val a5: Int
+                fun f6()
+                fun f7()
+                fun f8()
+                fun f9()
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not split companion object across pages - the page starting with it`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.PaginatedCompanionClass",
+            page = 2,
+            pageSize = 9
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PaginatedCompanionClass [page 2/2]
+            class PaginatedCompanionClass {
+                companion object {
+                    const val CONSTANT: String
+                    fun create(): PaginatedCompanionClass
+                }
+            }
+        """.trimIndent()
+    }
+
     // TestFunctionModifiers tests
 
     @Test

@@ -100,3 +100,20 @@ class NestedCompanionTestClass {
         }
     }
 }
+
+// Class with enough members for the companion object to straddle a page boundary
+class PaginatedCompanionClass {
+    val a1: Int = 1
+    val a2: Int = 2
+    val a3: Int = 3
+    val a4: Int = 4
+    val a5: Int = 5
+    fun f6() {}
+    fun f7() {}
+    fun f8() {}
+    fun f9() {}
+    companion object {
+        const val CONSTANT: String = "const"
+        fun create(): PaginatedCompanionClass = PaginatedCompanionClass()
+    }
+}
