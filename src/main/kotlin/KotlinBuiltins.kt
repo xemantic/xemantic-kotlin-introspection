@@ -19,10 +19,12 @@
 package com.xemantic.kotlin.introspection
 
 import io.github.oshai.kotlinlogging.KotlinLogging
+import java.io.File
 import java.net.JarURLConnection
 import java.net.URL
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.jar.JarFile
 import kotlin.io.path.isRegularFile
 import kotlin.metadata.KmClass
 import kotlin.metadata.internal.common.KotlinCommonMetadata
@@ -57,10 +59,16 @@ private val knownBuiltinsResources = listOf(
  * by their Kotlin class names, like `kotlin/collections/List`.
  */
 internal fun readKotlinBuiltinClasses(): Map<String, KmClass> = kotlinBuiltinsResources().flatMap { resource ->
-    // read through a class of the standard library, as its resources are encapsulated when it is a named module
+    // read through the class loader of the standard library; when it is a named module, these resources
+    // are encapsulated, as its packages are open only to kotlin.reflect, and cannot be read from here
     val stream = KotlinVersion::class.java.getResourceAsStream("/$resource")
     if (stream == null) {
-        logger.warn { "Cannot read the Kotlin built-in declarations of $resource" }
+        // the known resources, read when they cannot be listed, might be missing from an older standard library
+        if (resource == ANCHOR_BUILTINS_RESOURCE) {
+            logger.warn { "Cannot read the Kotlin built-in declarations of $resource" }
+        } else {
+            logger.debug { "Cannot read the Kotlin built-in declarations of $resource" }
+        }
     }
     stream?.use { KotlinCommonMetadata.read(it) }?.kmModuleFragment?.classes.orEmpty()
 }.associateBy { it.name }
@@ -71,7 +79,8 @@ internal fun readKotlinBuiltinClasses(): Map<String, KmClass> = kotlinBuiltinsRe
  * a jar, also a nested one of a fat jar if its URL handler supports it, a directory, or a module of the runtime image.
  *
  * As all the built-in types are declared in the `kotlin` package, or its subpackages, only these are listed.
- * If the resources cannot be listed, the known ones are returned, and a warning is logged.
+ * If the resources cannot be listed, or the listed ones lack the [anchor] itself,
+ * the known ones are returned, and a warning is logged.
  *
  * @param anchor the URL of the `kotlin/kotlin.kotlin_builtins` resource.
  */
@@ -82,21 +91,39 @@ internal fun kotlinBuiltinsResources(
         logger.warn { "Cannot find $ANCHOR_BUILTINS_RESOURCE of the Kotlin standard library" }
         return knownBuiltinsResources
     }
-    return try {
+    val resources = try {
         val resources = if (anchor.protocol == "jar") jarBuiltinsResources(anchor) else pathBuiltinsResources(anchor)
         resources.filter { it.startsWith("kotlin/") && it.endsWith(BUILTINS_EXTENSION) }.sorted()
     } catch (e: Exception) {
         logger.warn(e) { "Cannot list the Kotlin built-in declarations next to $anchor, reading the known ones" }
-        knownBuiltinsResources
+        return knownBuiltinsResources
     }
+    if (ANCHOR_BUILTINS_RESOURCE !in resources) {
+        logger.warn { "Cannot list the Kotlin built-in declarations next to $anchor, reading the known ones" }
+        return knownBuiltinsResources
+    }
+    return resources
 }
 
+/**
+ * Lists the entries of the jar containing the [anchor], relative to the path prefix of the anchor entry,
+ * like `WEB-INF/classes/` of a war, skipping the entries outside of it.
+ */
 private fun jarBuiltinsResources(anchor: URL): List<String> {
     val connection = anchor.openConnection() as JarURLConnection
-    // a cached jar file is shared with the class loader, and must not be closed
-    connection.useCaches = false
-    return connection.jarFile.use { jar ->
-        jar.entries().asSequence().map { it.name }.toList()
+    val prefix = connection.entryName.orEmpty().removeSuffix(ANCHOR_BUILTINS_RESOURCE)
+    fun JarFile.resources() = entries().asSequence()
+        .map { it.name }
+        .filter { it.startsWith(prefix) }
+        .map { it.removePrefix(prefix) }
+        .toList()
+    val jarFileUrl = connection.jarFileURL
+    return if (jarFileUrl.protocol == "file") {
+        JarFile(File(jarFileUrl.toURI())).use { it.resources() }
+    } else {
+        // a jar file of a custom URL handler, like a nested jar of a fat jar, might be shared with the class loader,
+        // also when the caches are disabled, therefore it is never closed
+        connection.jarFile.resources()
     }
 }
 

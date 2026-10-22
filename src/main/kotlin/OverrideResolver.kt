@@ -72,13 +72,15 @@ import org.objectweb.asm.Type as AsmType
  * so that a long-lived resolver over a large classpath does not keep the declarations of every class ever resolved.
  * This class is thread-safe.
  *
- * @param loadClass loads a class by its JVM binary name, like `com.example.Outer${'$'}Nested`.
+ * @param classLoader the class loader of the introspected classes.
+ * @param loadClass loads a class by its JVM binary name, like `com.example.Outer${'$'}Nested`, through the [classLoader].
  * @param readKmClass reads the Kotlin metadata of a class, if it is a Kotlin class.
  * @param builtinClasses the declarations of the Kotlin built-in types, by their Kotlin class name, like `kotlin/collections/List`.
  * @param builtinTypes the JVM classes of the Kotlin built-in types, by their fully qualified Kotlin name.
  */
 @OptIn(ExperimentalContextParameters::class)
 internal class OverrideResolver(
+    private val classLoader: ClassLoader,
     private val loadClass: (String) -> Class<*>?,
     private val readKmClass: (Class<*>) -> KmClass?,
     private val builtinClasses: () -> Map<String, KmClass>,
@@ -388,8 +390,10 @@ internal class OverrideResolver(
             }
         }
 
+        // only the name is captured, as the overridables are cached
+        val ownerBinaryName = binaryName(owner.name)
         return Overridables(ownerSubstitution, functions, properties) {
-            loadClass(binaryName(owner.name))?.let { jvmMethods(it) }
+            loadClass(ownerBinaryName)?.let { jvmMethods(it) }
         }
     }
 
@@ -495,11 +499,11 @@ internal class OverrideResolver(
     }
 
     /**
-     * Whether the standard library has a class file for the class of this Kotlin name.
-     * A class file resource is never encapsulated, also when the standard library is a named module.
+     * Whether the [classLoader] has a class file for the class of this Kotlin name.
+     * A class file resource is never encapsulated, also when it is in a named module.
      */
-    private fun hasStdlibClassFile(name: String): Boolean =
-        KotlinVersion::class.java.getResource("/" + binaryName(name).replace('.', '/') + ".class") != null
+    private fun hasClassFile(name: String): Boolean =
+        classLoader.getResource(binaryName(name).replace('.', '/') + ".class") != null
 
     private fun erasure(typeParameter: KmTypeParameter, typeParameters: Map<Int, KmTypeParameter>): String? {
         val bound = typeParameter.upperBounds.firstOrNull() ?: return "kotlin/Any"
@@ -690,7 +694,7 @@ internal class OverrideResolver(
         val builtinClass = builtinClasses()[name]
         // a built-in type without its own class file, like List, is not looked up through the class loader,
         // which would only throw a ClassNotFoundException
-        val javaClass = if (builtinClass == null || hasStdlibClassFile(name)) loadClass(binaryName(name)) else null
+        val javaClass = if (builtinClass == null || hasClassFile(name)) loadClass(binaryName(name)) else null
         // the built-in declaration of a type having its own class file, like KClass, is incomplete
         javaClass?.let { readKmClass(it) }?.let { return Declaration(it, null) }
         builtinClass?.let { kmClass ->

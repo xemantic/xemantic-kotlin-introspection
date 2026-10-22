@@ -144,6 +144,7 @@ internal class DefaultKotlinIntrospector(
     }
 
     private val overrideResolver = OverrideResolver(
+        classLoader = classLoader,
         loadClass = ::loadBinaryClass,
         readKmClass = ::readKmClass,
         builtinClasses = { builtinClasses },
@@ -323,11 +324,7 @@ internal class DefaultKotlinIntrospector(
     private fun loadClass(name: String): Class<*>? {
         var binaryName = name
         while (true) {
-            try {
-                return classLoader.loadClass(binaryName)
-            } catch (_: ClassNotFoundException) {
-            } catch (_: LinkageError) {
-            }
+            loadBinaryClass(binaryName)?.let { return it }
             val lastDot = binaryName.lastIndexOf('.')
             if (lastDot < 0) return null
             binaryName = binaryName.substring(0, lastDot) + "$" + binaryName.substring(lastDot + 1)

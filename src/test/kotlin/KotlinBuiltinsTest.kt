@@ -97,4 +97,45 @@ class KotlinBuiltinsTest {
         assert(found == resources.sorted())
     }
 
+    @Test
+    fun `should find kotlin_builtins resources of standard library under a path prefix of a jar`() {
+        // given
+        val war = tempDir.resolve("app.war")
+        JarOutputStream(war.outputStream()).use { output ->
+            // the entry outside of the prefix is not a resource of the class path
+            (resources.map { "WEB-INF/classes/$it" } + "kotlin/other.kotlin_builtins").forEach { entry ->
+                output.putNextEntry(JarEntry(entry))
+                output.closeEntry()
+            }
+        }
+        val anchor = URI("jar:${war.toUri()}!/WEB-INF/classes/kotlin/kotlin.kotlin_builtins").toURL()
+
+        // when
+        val found = kotlinBuiltinsResources(anchor)
+
+        // then
+        assert(found == resources.sorted())
+    }
+
+    @Test
+    fun `should fall back to the known kotlin_builtins resources when the listed ones lack the anchor`() {
+        // given
+        val jar = tempDir.resolve("unrelated.jar")
+        JarOutputStream(jar.outputStream()).use { output ->
+            output.putNextEntry(JarEntry("kotlin/Unit.class"))
+            output.closeEntry()
+        }
+        val anchor = URI("jar:${jar.toUri()}!/kotlin/kotlin.kotlin_builtins").toURL()
+
+        // when
+        val found = kotlinBuiltinsResources(anchor)
+
+        // then
+        assert(
+            found.containsAll(
+                listOf("kotlin/kotlin.kotlin_builtins", "kotlin/collections/collections.kotlin_builtins")
+            )
+        )
+    }
+
 }
