@@ -204,6 +204,117 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should mark overrides of Java methods taking arrays of type variable when another method refers to class missing from the classpath`() {
+        // given
+        val introspector = introspectorWithoutAbsentClass()
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.AbsentJavaArraySubclass"
+        )
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.AbsentJavaArraySubclass [page 1/1]
+            class AbsentJavaArraySubclass : AbsentJavaBase<String> {
+                override fun process(items: Array<String>)
+                fun process(items: Array<Int>)
+                override fun <S : String> boundedArray(items: Array<S>)
+                fun <S : Number> boundedArray(items: Array<S>)
+                override fun nested(items: Array<Array<String>>)
+                fun nested(items: Array<Array<Int>>)
+                override fun lists(items: Array<List<String>>)
+                fun lists(items: Array<Set<String>>)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should erase type variable of raw Java superclass to its bound when another method refers to class missing from the classpath`() {
+        // given
+        val introspector = introspectorWithoutAbsentClass()
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.AbsentRawJavaSubclass"
+        )
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.AbsentRawJavaSubclass [page 1/1]
+            class AbsentRawJavaSubclass : AbsentRawJavaMid {
+                override fun process(items: Array<Any?>)
+                fun process(items: Array<Int>)
+                fun <S : Number> bounded(x: S)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not bind Java method type variable shadowing type variable of its class when another method refers to class missing from the classpath`() {
+        // given
+        val introspector = introspectorWithoutAbsentClass()
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.AbsentJavaOuterSubclass"
+        )
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.AbsentJavaOuterSubclass [page 1/1]
+            class AbsentJavaOuterSubclass : AbsentJavaOuter<String> {
+                inner class InnerSubclass : AbsentJavaOuter.Inner<Int>
+                inner class ShadowingSubclass : AbsentJavaOuter.Shadowing<Int>
+                override fun <T : Number> shadowing(x: T)
+                fun <T : String> shadowing(x: T)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should bind type variable of outer Java class when another method refers to class missing from the classpath`() {
+        // given
+        val introspector = introspectorWithoutAbsentClass()
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.AbsentJavaOuterSubclass.InnerSubclass"
+        )
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.AbsentJavaOuterSubclass.InnerSubclass [page 1/1]
+            inner class InnerSubclass : AbsentJavaOuter.Inner<Int> {
+                override fun outer(x: String)
+                fun outer(x: Int)
+                override fun inner(x: Int)
+                fun inner(x: String)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should bind type variable of inner Java class shadowing type variable of outer class when another method refers to class missing from the classpath`() {
+        // given
+        val introspector = introspectorWithoutAbsentClass()
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.AbsentJavaOuterSubclass.ShadowingSubclass"
+        )
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.AbsentJavaOuterSubclass.ShadowingSubclass [page 1/1]
+            inner class ShadowingSubclass : AbsentJavaOuter.Shadowing<Int> {
+                override fun shadowed(x: Int)
+                fun shadowed(x: String)
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should not mark function taking type parameter as override of Java method taking primitive when another method refers to class missing from the classpath`() {
         // given
         val introspector = introspectorWithoutAbsentClass()

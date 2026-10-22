@@ -19,12 +19,16 @@
 package com.xemantic.kotlin.introspection.test
 
 import com.xemantic.kotlin.introspection.othermodule.InternalBase
+import com.xemantic.kotlin.introspection.test.other.JavaArrayBase
 import com.xemantic.kotlin.introspection.test.other.JavaClassBoundBase
 import com.xemantic.kotlin.introspection.test.other.JavaFunctionTaker
 import com.xemantic.kotlin.introspection.test.other.JavaGetterBase
 import com.xemantic.kotlin.introspection.test.other.JavaLabelBase
+import com.xemantic.kotlin.introspection.test.other.JavaOuterBase
 import com.xemantic.kotlin.introspection.test.other.JavaPrimitiveBase
 import com.xemantic.kotlin.introspection.test.other.JavaProcessorBase
+import com.xemantic.kotlin.introspection.test.other.JavaRawArrayMid
+import com.xemantic.kotlin.introspection.test.other.JavaRawClassBoundMid
 import com.xemantic.kotlin.introspection.test.other.JavaSortBase
 import com.xemantic.kotlin.introspection.test.other.JavaVoidBase
 import com.xemantic.kotlin.introspection.test.other.PackagePrivateBase
@@ -564,4 +568,44 @@ class OtherModuleSubclass : InternalBase() {
     fun reset() {}
     val state: Int get() = 1
     override fun keep() {}
+}
+
+// A Java method taking an array of a type variable is erased to the array of its type argument
+class JavaArraySubclass : JavaArrayBase<String>() {
+    override fun process(items: Array<String>) {}
+    fun process(items: Array<Int>) {}
+    override fun <S : String> bounded(items: Array<S>) {}
+    fun <S : Number> bounded(items: Array<S>) {}
+    override fun nested(items: Array<Array<String>>) {}
+    fun nested(items: Array<Array<Int>>) {}
+    override fun lists(items: Array<List<String>>) {}
+    fun lists(items: Array<Set<String>>) {}
+}
+
+// The Java type variables are bound per declaring class, of an inner class, of its outer class, or of a method
+class JavaOuterSubclass : JavaOuterBase<String>() {
+    override fun <T : Number> shadowing(x: T) {}
+    fun <T : String> shadowing(x: T) {}
+
+    inner class InnerSubclass : JavaOuterBase<String>.Inner<Int>() {
+        override fun outer(x: String) {}
+        fun outer(x: Int) {}
+        override fun inner(x: Int) {}
+        fun inner(x: String) {}
+    }
+
+    inner class ShadowingSubclass : JavaOuterBase<String>.Shadowing<Int>() {
+        override fun shadowed(x: Int) {}
+        fun shadowed(x: String) {}
+    }
+}
+
+// The type variable of a raw Java superclass is erased to its bound
+class JavaRawArraySubclass : JavaRawArrayMid() {
+    override fun process(items: Array<Any?>) {}
+    fun process(items: Array<Int>) {}
+}
+
+class JavaRawClassBoundSubclass : JavaRawClassBoundMid() {
+    fun <T : Number> bounded(x: T) {}
 }

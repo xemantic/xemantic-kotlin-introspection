@@ -18,6 +18,8 @@
 
 package com.xemantic.kotlin.introspection.isolated;
 
+import java.util.List;
+
 /**
  * A Java class with a method referring to {@link Absent}, which cannot be reflected without it.
  */
@@ -36,6 +38,18 @@ public abstract class AbsentJavaBase<T> {
     }
 
     public <S extends T> void bounded(S x) {
+    }
+
+    public void process(T[] items) {
+    }
+
+    public <S extends T> void boundedArray(S[] items) {
+    }
+
+    public void nested(T[][] items) {
+    }
+
+    public void lists(List<T>[] items) {
     }
 
 }

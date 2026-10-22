@@ -64,3 +64,41 @@ class AbsentBoundJavaSubclass : AbsentBoundJavaBase() {
     fun <T : CharSequence> compare(item: T) {}
     fun compare(item: Int) {}
 }
+
+// the Java superclass takes arrays of its type variable, and declares a method taking Absent
+class AbsentJavaArraySubclass : AbsentJavaBase<String>() {
+    override fun process(items: Array<String>) {}
+    fun process(items: Array<Int>) {}
+    override fun <S : String> boundedArray(items: Array<S>) {}
+    fun <S : Number> boundedArray(items: Array<S>) {}
+    override fun nested(items: Array<Array<String>>) {}
+    fun nested(items: Array<Array<Int>>) {}
+    override fun lists(items: Array<List<String>>) {}
+    fun lists(items: Array<Set<String>>) {}
+}
+
+// the type variables of the Java superclass are bound per declaring class, also when shadowed,
+// while each of its classes declares a method taking Absent
+class AbsentJavaOuterSubclass : AbsentJavaOuter<String>() {
+    override fun <T : Number> shadowing(x: T) {}
+    fun <T : String> shadowing(x: T) {}
+
+    inner class InnerSubclass : AbsentJavaOuter<String>.Inner<Int>() {
+        override fun outer(x: String) {}
+        fun outer(x: Int) {}
+        override fun inner(x: Int) {}
+        fun inner(x: String) {}
+    }
+
+    inner class ShadowingSubclass : AbsentJavaOuter<String>.Shadowing<Int>() {
+        override fun shadowed(x: Int) {}
+        fun shadowed(x: String) {}
+    }
+}
+
+// the type variable of the raw Java superclass, declaring a method taking Absent, is erased to its bound
+class AbsentRawJavaSubclass : AbsentRawJavaMid() {
+    override fun process(items: Array<Any?>) {}
+    fun process(items: Array<Int>) {}
+    fun <S : Number> bounded(x: S) {}
+}
