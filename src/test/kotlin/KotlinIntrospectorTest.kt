@@ -3157,6 +3157,52 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should not render constructor parameter as abstract body property of the same name and type`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ConstructorParameterShadowedByAbstractProperty"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ConstructorParameterShadowedByAbstractProperty [page 1/1]
+            abstract class ConstructorParameterShadowedByAbstractProperty(x: Int, y: String) {
+                abstract val x: Int
+                abstract var y: String
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not render constructor parameter as constant initialized body property of the same name and type`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ConstructorParameterShadowedByConstantProperty"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ConstructorParameterShadowedByConstantProperty [page 1/1]
+            class ConstructorParameterShadowedByConstantProperty(x: Int, y: String) {
+                val x: Int
+                val y: String
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render constructor properties with accessors renamed for the JVM`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ConstructorPropertiesWithJvmNames"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ConstructorPropertiesWithJvmNames [page 1/1]
+            class ConstructorPropertiesWithJvmNames(val x: Int, var y: Int)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render IntRange bounds overriding body properties as in the source`() {
+        // the parameters are passed to the IntProgression constructor, while the overriding properties are computed
+        resolver.resolve("kotlin.ranges.IntRange") should {
+            have(lines().contains("class IntRange(start: Int, endInclusive: Int) : IntProgression, ClosedRange<Int>, OpenEndRange<Int> {"))
+            have(lines().contains("    override val start: Int"))
+            have(lines().contains("    override val endInclusive: Int"))
+        }
+    }
+
+    @Test
     fun `should render member extension property named like constructor property in class body`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.CtorClash"

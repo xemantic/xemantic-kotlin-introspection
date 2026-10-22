@@ -42,3 +42,18 @@ interface MeasureX {
 class CtorClash(val measure: Int) : MeasureX {
     override val String.measure: Int get() = 0
 }
+
+// a constructor parameter cannot declare an abstract property
+abstract class ConstructorParameterShadowedByAbstractProperty(x: Int, y: String) {
+    abstract val x: Int
+    abstract var y: String
+}
+
+// a property initialized with a constant is never declared in the constructor
+class ConstructorParameterShadowedByConstantProperty(x: Int, y: String) {
+    val x: Int = 42
+    val y: String = "lit"
+}
+
+// the accessors renamed for the JVM have no body, and the properties are still declared in the constructor
+class ConstructorPropertiesWithJvmNames(@get:JvmName("fetchX") val x: Int, @set:JvmName("storeY") var y: Int)

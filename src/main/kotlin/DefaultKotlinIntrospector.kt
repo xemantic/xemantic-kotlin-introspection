@@ -812,8 +812,9 @@ internal class DefaultKotlinIntrospector(
                 }
 
                 // Properties (excluding constructor properties)
+                val declaredInConstructor = constructorProperties.values.toSet()
                 properties
-                    .filter { it !in constructorProperties.values }
+                    .filter { it !in declaredInConstructor }
                     .forEach { property ->
                         +"    "
                         +formatProperty(property, inInterface = isInterface, owner = kmClass, contextPackage = contextPackage, classTypeParameters = typeParameters)
@@ -1397,20 +1398,23 @@ internal class DefaultKotlinIntrospector(
      * Whether this property might be declared by the constructor [parameter], like `class Foo(val x: Int)`.
      *
      * The metadata does not tell where a property is declared, so a property of the same name is excluded
-     * when it cannot be declared in the constructor: it has a receiver, an accessor with a body
-     * (also the only way of declaring a property without a backing field), a delegate,
+     * when it cannot be declared in the constructor: it has a receiver, an accessor other than the default one
+     * (with a body, also the only way of declaring a property without a backing field,
+     * or only changing the visibility, like `private set`), a delegate, a constant initializer, no implementation,
      * or a type other than the parameter type, like `class Foo(x: Int) { val x: Long = x.toLong() }`.
      * What remains, like `class Foo(x: Int) { val x: Int = x }`, cannot be distinguished from
-     * a constructor property either in the metadata or in the bytecode, and has the same API.
+     * a constructor property in the metadata, and has the same API.
      */
     private fun KmProperty.isDeclaredBy(parameter: KmValueParameter): Boolean =
         name == parameter.name &&
             kind == MemberKind.DECLARATION &&
+            modality != Modality.ABSTRACT &&
             receiverParameterType == null &&
             typeParameters.isEmpty() &&
             !isDelegated &&
             !isLateinit &&
             !isConst &&
+            !hasConstant &&
             !getter.isNotDefault &&
             setter?.isNotDefault != true &&
             returnType == parameter.type
