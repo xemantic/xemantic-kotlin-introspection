@@ -2039,6 +2039,32 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve member of inner class with type parameters of the outer class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.TypeParametersNestedHolder.Cursor.next"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.TypeParametersNestedHolder.Cursor.next [page 1/1]
+            override operator fun next(): K
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve members of inner class of inner class with type parameters of all outer classes`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InnerOfInnerHolder.Mid.Leaf.pair"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InnerOfInnerHolder.Mid.Leaf.pair [page 1/1]
+            fun pair(): Pair<A, B>
+        """.trimIndent()
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InnerOfInnerHolder.Mid.Leaf.key"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InnerOfInnerHolder.Mid.Leaf.key [page 1/1]
+            override val key: A
+        """.trimIndent()
+    }
+
+    @Test
     fun `should separate enum entries from nested classes`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.NestedClassEnum"

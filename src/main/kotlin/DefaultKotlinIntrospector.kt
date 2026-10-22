@@ -351,12 +351,18 @@ internal class DefaultKotlinIntrospector(
         (readMetadata(clazz) as? KotlinClassMetadata.Class)?.kmClass
 
     /**
+     * Loads the metadata of a class by its name, either the metadata one, like `com/example/Outer.Nested`,
+     * or the one accepted by [loadClass].
+     */
+    private fun loadKmClass(name: String): KmClass? = loadClass(name.replace('/', '.'))?.let { readKmClass(it) }
+
+    /**
      * The scopes of the classes enclosing the [kmClass], from the outermost one,
      * or null if any of them cannot be loaded.
      */
     private fun enclosingScopes(kmClass: KmClass): List<ClassScope>? =
         enclosingClassNames(kmClass.name).map { name ->
-            loadClass(name.replace('/', '.'))?.let { readKmClass(it) }?.scope ?: return null
+            loadKmClass(name)?.scope ?: return null
         }
 
     /**
@@ -381,7 +387,7 @@ internal class DefaultKotlinIntrospector(
         memberName: String
     ): String? {
         val isInterface = kmClass.kind == ClassKind.INTERFACE
-        val typeParameters = kmClass.typeParameters.namesById()
+        val typeParameters = typeParametersInScope(kmClass)
         val contextPackage = contextPackageOf(clazz, className)
 
         val members = kmClass.functions.filter {
@@ -594,7 +600,7 @@ internal class DefaultKotlinIntrospector(
             for (supertype in pending.removeFirst().supertypes) {
                 val name = (supertype.classifier as? KmClassifier.Class)?.name?.replace('/', '.') ?: continue
                 if (name.startsWith("kotlin.") || name.startsWith("java.") || !supertypeNames.add(name)) continue
-                loadClass(name)?.let { readKmClass(it) }?.let { pending.add(it) }
+                loadKmClass(name)?.let { pending.add(it) }
             }
         }
         return supertypeNames
@@ -753,7 +759,7 @@ internal class DefaultKotlinIntrospector(
         // The companion object, unless it is not part of the API, with its members which are
         val companion = kmClass.companionObject
             // the binary name, as the class might be nested
-            ?.let { name -> loadClass("${clazz.name}\$$name")?.let { readKmClass(it) } }
+            ?.let { name -> loadKmClass("${clazz.name}\$$name") }
             ?.takeIf { it.visibility.isApiIn(scopes) }
         val companionScopes = scopes + listOfNotNull(companion?.scope)
         val companionProperties = companion?.properties.orEmpty().filter { it.visibility.isApiIn(companionScopes) }
@@ -983,8 +989,7 @@ internal class DefaultKotlinIntrospector(
      */
     private fun listedSealedSubclasses(kmClass: KmClass): List<Pair<String, KmClass>> =
         kmClass.sealedSubclasses.mapNotNull { subclassName ->
-            val subclass = loadClass(subclassName.replace('/', '.'))?.let { readKmClass(it) }
-                ?: return@mapNotNull null
+            val subclass = loadKmClass(subclassName) ?: return@mapNotNull null
             val enclosing = enclosingScopes(subclass) ?: return@mapNotNull null
             if (!isListedNestedClass(subclass) || !subclass.visibility.isApiIn(enclosing)) return@mapNotNull null
             subclassName.removePrefix("${kmClass.name}.").substringAfterLast('/') to subclass
@@ -1005,7 +1010,7 @@ internal class DefaultKotlinIntrospector(
             .filter { "${kmClass.name}.$it" !in sealedSubclasses }
             .mapNotNull { name ->
                 // the binary name, as the class might be nested
-                loadClass("${clazz.name}\$$name")?.let { readKmClass(it) }?.let { name to it }
+                loadKmClass("${clazz.name}\$$name")?.let { name to it }
             }
             .filter { (_, nestedKmClass) ->
                 isListedNestedClass(nestedKmClass) && nestedKmClass.visibility.isApiIn(scopes)
@@ -1245,11 +1250,7 @@ internal class DefaultKotlinIntrospector(
      * which can be declared in a class other than the one listing it, like a sealed subclass.
      */
     private fun typeParametersInScope(kmClass: KmClass): Map<Int, String> {
-        val outerClass = if (kmClass.isInner) {
-            enclosingClassNames(kmClass.name).lastOrNull()
-                ?.let { loadClass(it.replace('/', '.')) }
-                ?.let { readKmClass(it) }
-        } else null
+        val outerClass = if (kmClass.isInner) enclosingClassNames(kmClass.name).lastOrNull()?.let { loadKmClass(it) } else null
         return outerClass?.let { typeParametersInScope(it) }.orEmpty() + kmClass.typeParameters.namesById()
     }
 
