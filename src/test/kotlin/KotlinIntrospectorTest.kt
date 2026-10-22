@@ -1976,6 +1976,17 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should not list extensions on a type parameter receiver for a user class named TypeParameter`() {
+        // fun <T> T.let(), T.apply(), … are not extensions of a class named TypeParameter
+        resolver.resolve(
+            "TypeParameter"
+        ) sameAsKotlin """
+            // TypeParameter [page 1/1]
+            class TypeParameter
+        """.trimIndent()
+    }
+
+    @Test
     fun `should not resolve extensions of a kotlin type for a user class of a matching name`() {
         // collections.Iterator must not get the extensions of kotlin.collections.Iterator
         resolver.resolve(
