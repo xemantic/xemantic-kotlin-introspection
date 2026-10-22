@@ -285,9 +285,10 @@ internal class DefaultKotlinIntrospector(
 
                 is KotlinClassMetadata.Class -> {
                     val kmClass = metadata.kmClass
-                    // neither a class which is not part of the API, nor anything declared within it, is resolved
-                    val outerScopes = enclosingScopes(kmClass) ?: return null
-                    if (!kmClass.visibility.isApiIn(outerScopes)) return null
+                    // neither a class which is not part of the API, nor anything declared within it, is resolved,
+                    // while its name might still be a member of the outer class, like an extension property
+                    val outerScopes = enclosingScopes(kmClass) ?: continue
+                    if (!kmClass.visibility.isApiIn(outerScopes)) continue
                     val scopes = outerScopes + kmClass.scope
                     if (memberName != null) {
                         resolveMember(kmClass, scopes, className, memberName)
@@ -902,11 +903,11 @@ internal class DefaultKotlinIntrospector(
                 +(renderedConstructor.valueParameters.joinToString(", ") { param ->
                     // a parameter not declaring a property is still needed to call the constructor
                     val prop = constructorProperties[param.name]
-                    val prefix = when {
-                        prop == null -> ""
-                        prop.isVar -> "var "
-                        else -> "val "
-                    }.let { if (prop != null && isOverride(kmClass, prop)) "override $it" else it }
+                    val prefix = if (prop == null) "" else buildString {
+                        +formatVisibility(prop.visibility)
+                        if (isOverride(kmClass, prop)) +"override "
+                        +(if (prop.isVar) "var " else "val ")
+                    }
                     formatValueParameter(param, contextPackage, typeParameters, prefix)
                 })
                 +")"
@@ -924,8 +925,8 @@ internal class DefaultKotlinIntrospector(
             val hasSealedSubclasses = isSealed && kmClass.sealedSubclasses.isNotEmpty()
             val hasBodyProperties = properties.any { it.name !in constructorParamNames }
             val hasFunctions = functions.isNotEmpty()
-            // a companion object without members of the API is not worth listing
-            val hasCompanion = companionProperties.isNotEmpty() || companionFunctions.isNotEmpty()
+            // even without members of the API, the companion object is a value, like a CoroutineContext.Key
+            val hasCompanion = companion != null
             val nestedClasses = listedNestedClasses(kmClass, scopes, clazz)
             val hasBodyContent = hasEnumEntries || hasSealedSubclasses || nestedClasses.isNotEmpty() ||
                 hasBodyProperties || hasFunctions || hasCompanion
@@ -1006,30 +1007,41 @@ internal class DefaultKotlinIntrospector(
             }
 
             // Companion object members
-            if (companion != null && hasCompanion) {
+            if (companion != null) {
                 +"    "
                 +formatVisibility(companion.visibility)
-                +"companion object "
+                +"companion object"
                 // a custom name is needed to qualify the members, like Outer.Factory.create()
                 val companionName = kmClass.companionObject
-                if (companionName != DEFAULT_COMPANION_NAME) +"$companionName "
-                +"{\n"
-
-                // Companion properties
-                companionProperties.forEach { property ->
-                    +"        "
-                    +formatProperty(property, owner = companion, contextPackage = contextPackage)
-                    +"\n"
+                if (companionName != DEFAULT_COMPANION_NAME) +" $companionName"
+                val companionSupertypes = formatSupertypes(companion, contextPackage, emptyMap())
+                if (companionSupertypes.isNotEmpty()) {
+                    +" : "
+                    +companionSupertypes.joinToString(", ")
                 }
 
-                // Companion functions
-                companionFunctions.forEach { function ->
-                    +"        "
-                    +formatFunction(function, inInterface = false, owner = companion, contextPackage = contextPackage)
+                // a companion object without members of the API is rendered without a body
+                if (companionProperties.isEmpty() && companionFunctions.isEmpty()) {
                     +"\n"
-                }
+                } else {
+                    +" {\n"
 
-                +"    }\n"
+                    // Companion properties
+                    companionProperties.forEach { property ->
+                        +"        "
+                        +formatProperty(property, owner = companion, contextPackage = contextPackage)
+                        +"\n"
+                    }
+
+                    // Companion functions
+                    companionFunctions.forEach { function ->
+                        +"        "
+                        +formatFunction(function, inInterface = false, owner = companion, contextPackage = contextPackage)
+                        +"\n"
+                    }
+
+                    +"    }\n"
+                }
             }
 
             +"}"

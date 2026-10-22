@@ -18,6 +18,8 @@
 
 package com.xemantic.kotlin.introspection.test
 
+import kotlin.coroutines.CoroutineContext
+
 // Names avoid the "TestClass" suffix to keep search result tests stable.
 
 // Open class with members of every visibility, where the protected ones can be used by a subclass
@@ -86,7 +88,26 @@ internal class InternalHolder {
     class Nested
 }
 
-// Only non-public members in the companion object
+// The companion object used as a value, like in coroutineContext[CompanionKeyElement]
+class CompanionKeyElement : CoroutineContext.Element {
+    override val key: CoroutineContext.Key<*> get() = Key
+    companion object Key : CoroutineContext.Key<CompanionKeyElement>
+}
+
+class EmptyCompanionHolder {
+    companion object
+}
+
+open class ProtectedConstructorPropertyHolder(protected val secret: Int, val open: Int)
+
+// The private nested class is not part of the API, but the extension property of the same name is
+class ShadowingHolder {
+    private class X
+}
+
+val ShadowingHolder.X: Int get() = 42
+
+// Only non-public members in the companion object, which is still a public value
 class HiddenCompanionMembersHolder {
     companion object {
         private const val PRIVATE_CONSTANT: String = "private"

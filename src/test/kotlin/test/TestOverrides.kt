@@ -50,6 +50,11 @@ open class ProtectedOverrideSubclass : ProtectedAbstractBase() {
     override fun bar() {}
 }
 
+// The protected override in a final class is not part of the API
+class FinalProtectedOverrideSubclass : ProtectedAbstractBase() {
+    override fun bar() {}
+}
+
 // An override of a generic function, next to its overload
 interface Processor<T> {
     fun process(item: T)

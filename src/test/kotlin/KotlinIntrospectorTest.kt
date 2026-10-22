@@ -1034,6 +1034,17 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should not list protected override in final class`() {
+        // a final class cannot be subclassed, so its protected members are not part of the API
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.FinalProtectedOverrideSubclass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.FinalProtectedOverrideSubclass [page 1/1]
+            class FinalProtectedOverrideSubclass : ProtectedAbstractBase
+        """.trimIndent()
+    }
+
+    @Test
     fun `should mark override of protected abstract function`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.ProtectedOverrideSubclass"
@@ -1760,7 +1771,7 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.CompanionProcessor [page 1/1]
             class CompanionProcessor {
-                companion object {
+                companion object : Processor<Int> {
                     override fun process(item: Int)
                 }
             }
@@ -2268,12 +2279,62 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should not list companion object without public members`() {
+    fun `should list companion object without public members`() {
+        // the companion object itself is still a public value
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.HiddenCompanionMembersHolder"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.HiddenCompanionMembersHolder [page 1/1]
-            class HiddenCompanionMembersHolder
+            class HiddenCompanionMembersHolder {
+                companion object
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should list empty companion object`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.EmptyCompanionHolder"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.EmptyCompanionHolder [page 1/1]
+            class EmptyCompanionHolder {
+                companion object
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should list named companion object with supertype and no members`() {
+        // an LLM can tell that the companion object is a key, like in coroutineContext[CompanionKeyElement]
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.CompanionKeyElement"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.CompanionKeyElement [page 1/1]
+            class CompanionKeyElement : CoroutineContext.Element {
+                override val key: CoroutineContext.Key<*>
+                companion object Key : CoroutineContext.Key<CompanionKeyElement>
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render visibility of protected constructor property`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ProtectedConstructorPropertyHolder"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ProtectedConstructorPropertyHolder [page 1/1]
+            open class ProtectedConstructorPropertyHolder(protected val secret: Int, val open: Int)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension named like private nested class`() {
+        // the private nested class is not part of the API, so the name is resolved as a member of the outer class
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ShadowingHolder.X"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ShadowingHolder.X [page 1/1]
+            val com.xemantic.kotlin.introspection.test.ShadowingHolder.X: Int
         """.trimIndent()
     }
 
