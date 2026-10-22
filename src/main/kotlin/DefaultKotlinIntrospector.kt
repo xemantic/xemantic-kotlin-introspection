@@ -561,8 +561,6 @@ internal class DefaultKotlinIntrospector(
             +"}"
 
             +renderExtensions(supertypeExtensions, supertypeExtensionProperties, contextPackage = null)
-
-            trimLastNewLine()
         }
     }
 
@@ -945,8 +943,6 @@ internal class DefaultKotlinIntrospector(
             +"}"
 
             +renderExtensions(extensions, extensionProperties, contextPackage)
-
-            trimLastNewLine()
         }
     }
 
@@ -965,7 +961,11 @@ internal class DefaultKotlinIntrospector(
      * for each package, or object, to import them from, properties first, then functions.
      * Both are sorted by name, and then by source class, like each list of the extension index,
      * still sorted here, as the extensions of several receiver types, like the supertypes, are merged.
-     * Overloads declared in one file keep their declaration order.
+     * The overloads declared in one file keep their order in the Kotlin metadata, fixed for a given binary,
+     * usually the declaration order, which tends to list the basic overload first,
+     * unlike a sort by the rendered signature, where, e.g., the type parameters would come first.
+     * The extensions of all the receivers are sorted together, not grouped by receiver,
+     * so that the overloads callable on the class, like `Iterable.first()` and `List.first()`, are adjacent.
      */
     private fun renderExtensions(
         functions: List<IndexedExtension>,
@@ -979,10 +979,10 @@ internal class DefaultKotlinIntrospector(
             // each line starts with a new line, so that there is no blank line between the groups
             +"\n// from $source"
             propertiesBySource[source].orEmpty()
-                .sortedWith(compareBy({ it.property.name }, { it.sourceClass }))
+                .sortedWith(extensionPropertyOrder)
                 .forEach { +"\n${formatExtensionProperty(it.property, contextPackage)}" }
             functionsBySource[source].orEmpty()
-                .sortedWith(compareBy({ it.function.name }, { it.sourceClass }))
+                .sortedWith(extensionOrder)
                 .forEach { +"\n${formatFunction(it.function, contextPackage = contextPackage)}" }
         }
     }
@@ -1916,20 +1916,32 @@ internal fun receiverIndexKey(type: KmType): String = when (val classifier = typ
 }
 
 /**
- * The extension index with each list sorted by name, and then by the declaring class,
+ * The order of extensions by name, and then by the declaring class.
+ */
+private val extensionOrder: Comparator<IndexedExtension> = compareBy({ it.function.name }, { it.sourceClass })
+
+/**
+ * The order of extension properties, like the [extensionOrder].
+ */
+private val extensionPropertyOrder: Comparator<IndexedExtensionProperty> =
+    compareBy({ it.property.name }, { it.sourceClass })
+
+/**
+ * The extension index with each list sorted in the [extensionOrder],
  * so that the output does not depend on the classpath scan order, which differs between file systems.
- * The sort is stable, so overloads declared in one file keep their declaration order.
+ * The sort is stable, so overloads declared in one file keep their order in the Kotlin metadata,
+ * fixed for a given binary.
  */
 @JvmName("sortedExtensionIndex")
 internal fun Map<String, List<IndexedExtension>>.sortedByNameAndSourceClass(): Map<String, List<IndexedExtension>> =
-    mapValues { (_, extensions) -> extensions.sortedWith(compareBy({ it.function.name }, { it.sourceClass })) }
+    mapValues { (_, extensions) -> extensions.sortedWith(extensionOrder) }
 
 /**
- * The extension property index with each list sorted like in the extension index.
+ * The extension property index with each list sorted in the [extensionPropertyOrder].
  */
 @JvmName("sortedExtensionPropertyIndex")
 internal fun Map<String, List<IndexedExtensionProperty>>.sortedByNameAndSourceClass(): Map<String, List<IndexedExtensionProperty>> =
-    mapValues { (_, properties) -> properties.sortedWith(compareBy({ it.property.name }, { it.sourceClass })) }
+    mapValues { (_, properties) -> properties.sortedWith(extensionPropertyOrder) }
 
 private const val TYPE_PARAMETER_RECEIVER_KEY = "<type parameter>"
 
