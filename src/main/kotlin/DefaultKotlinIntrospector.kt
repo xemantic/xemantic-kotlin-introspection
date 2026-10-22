@@ -36,10 +36,6 @@ import kotlin.metadata.internal.common.KotlinCommonMetadata
 import kotlin.metadata.jvm.KotlinClassMetadata
 import kotlin.metadata.jvm.annotations
 import kotlin.reflect.KClass
-import kotlin.reflect.KFunction
-import kotlin.reflect.KParameter
-import kotlin.reflect.KProperty1
-import kotlin.reflect.KTypeParameter
 import kotlin.reflect.KVisibility
 import kotlin.reflect.full.allSuperclasses
 import kotlin.reflect.full.memberFunctions
@@ -197,7 +193,7 @@ internal class DefaultKotlinIntrospector(
          * Marks a parameter declaring a default value, which is not present in the metadata,
          * telling that the argument can be omitted.
          */
-        private const val DEFAULT_VALUE_MARKER = "…"
+        internal const val DEFAULT_VALUE_MARKER = "…"
 
     }
 
@@ -416,7 +412,7 @@ internal class DefaultKotlinIntrospector(
                     allMembers.add(Member(prop.name, formatKProperty(prop)))
                 }
 
-            // Functions (only public, non-extension, excluding synthetic, internal, and Java-only methods)
+            // Functions (only public, non-extension, excluding synthetic, internal, and Java-only methods taking parameters)
             kClass.memberFunctions
                 .asSequence()
                 .filter { it.visibility == KVisibility.PUBLIC }
@@ -424,11 +420,7 @@ internal class DefaultKotlinIntrospector(
                 .filter { it.name != "copy" }  // Exclude copy for data classes
                 .filter { !it.name.contains("$") }  // Exclude synthetic
                 .filter { !it.toString().contains("internal ") }  // Exclude internal
-                // Filter out Java-only methods (those with argN parameter names)
-                .filter { func ->
-                    val params = func.parameters.drop(1)  // Skip 'this'
-                    params.isEmpty() || params.all { it.name != null && !it.name!!.startsWith("arg") }
-                }
+                .filter { !hasSyntheticParameterNames(it) }
                 .toList()
                 .forEach { func ->
                     allMembers.add(Member(func.name, formatKFunction(func)))
@@ -562,124 +554,6 @@ internal class DefaultKotlinIntrospector(
         }.map { formatFunction(it.function) }
 
         return signatures.joinToString("\n").ifEmpty { null }
-    }
-
-    /**
-     * Format a KFunction using kotlin-reflect.
-     */
-    private fun formatKFunction(func: KFunction<*>): String = buildString {
-
-        if (func.isOperator) +"operator "
-        if (func.isInfix) +"infix "
-        if (func.isSuspend) +"suspend "
-
-        +"fun "
-        formatKTypeParameters(func.typeParameters).let { if (it.isNotEmpty()) +"$it " }
-        +func.name
-        +"("
-
-        // Skip first parameter (receiver) for member functions
-        val params = func.parameters.drop(1)  // Drop 'this'
-        +(params.joinToString(", ") { formatKParameter(it) })
-
-        +")"
-
-        val returnType = formatKTypeProjection(func.returnType)
-        if (returnType != "Unit") {
-            +": "
-            +returnType
-        }
-    }
-
-    /**
-     * Format a value parameter using kotlin-reflect, like `vararg elements: T` or `limit: Int = …`.
-     */
-    private fun formatKParameter(parameter: KParameter): String = buildString {
-        if (parameter.isVararg) +"vararg "
-        +(parameter.name ?: "arg${parameter.index}")
-        +": "
-        // the type of a vararg parameter is the array type, like Array<out T> or IntArray
-        val type = if (parameter.isVararg) {
-            parameter.type.arguments.singleOrNull()?.type?.let { formatKTypeProjection(it) }
-                ?: (parameter.type.classifier as? KClass<*>)?.simpleName?.removeSuffix("Array")
-                ?: formatKTypeProjection(parameter.type)
-        } else {
-            formatKTypeProjection(parameter.type)
-        }
-        +type
-        if (parameter.isOptional) +" = $DEFAULT_VALUE_MARKER"
-    }
-
-    /**
-     * Format a KProperty using kotlin-reflect.
-     */
-    private fun formatKProperty(prop: KProperty1<*, *>): String = buildString {
-        +"val "
-        +prop.name
-        +": "
-        +formatKTypeProjection(prop.returnType)
-    }
-
-    /**
-     * Format type parameter declarations, like `<out E>`, using kotlin-reflect.
-     */
-    private fun formatKTypeParameters(typeParameters: List<KTypeParameter>): String {
-        if (typeParameters.isEmpty()) return ""
-        return typeParameters.joinToString(", ", prefix = "<", postfix = ">") { typeParameter ->
-            buildString {
-                if (typeParameter.isReified) +"reified "
-                when (typeParameter.variance) {
-                    kotlin.reflect.KVariance.IN -> +"in "
-                    kotlin.reflect.KVariance.OUT -> +"out "
-                    kotlin.reflect.KVariance.INVARIANT -> {}
-                }
-                +typeParameter.name
-                typeParameter.upperBounds.singleOrNull()
-                    ?.takeUnless { it.classifier == Any::class && it.isMarkedNullable }
-                    ?.let {
-                        +" : "
-                        +formatKTypeProjection(it)
-                    }
-            }
-        }
-    }
-
-    /**
-     * Format a KType for display.
-     * Uses simple names for kotlin.* types and fully qualified names for java.* types.
-     */
-    private fun formatKTypeProjection(type: kotlin.reflect.KType): String {
-        val baseName = when (val classifier = type.classifier) {
-            is KClass<*> -> {
-                val qualifiedName = classifier.qualifiedName ?: classifier.simpleName ?: "Unknown"
-                // Use simple name for kotlin.* types, fully qualified for others
-                if (qualifiedName.startsWith("kotlin.")) {
-                    classifier.simpleName ?: "Unknown"
-                } else {
-                    qualifiedName
-                }
-            }
-            // the name only, without the platform type marker
-            is KTypeParameter -> classifier.name
-            else -> type.toString()
-        }
-
-        val args = type.arguments.map { projection ->
-            val projType = projection.type ?: return@map "*"
-            when (projection.variance) {
-                kotlin.reflect.KVariance.INVARIANT, null -> formatKTypeProjection(projType)
-                kotlin.reflect.KVariance.IN -> "in ${formatKTypeProjection(projType)}"
-                kotlin.reflect.KVariance.OUT -> "out ${formatKTypeProjection(projType)}"
-            }
-        }
-
-        val result = if (args.isEmpty()) {
-            baseName
-        } else {
-            "$baseName<${args.joinToString(", ")}>"
-        }
-
-        return if (type.isMarkedNullable) "$result?" else result
     }
 
     /**
@@ -1157,7 +1031,7 @@ internal class DefaultKotlinIntrospector(
         +prefix
         +parameter.name
         +": "
-        // the type of a vararg parameter is the array type, like Array<out T>
+        // a vararg parameter is typed as an array, like Array<out T>, while its element type is rendered
         +formatType(parameter.varargElementType ?: parameter.type, contextPackage, typeParameters)
         if (parameter.declaresDefaultValue) {
             +" = "
