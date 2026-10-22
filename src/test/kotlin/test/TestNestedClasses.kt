@@ -132,3 +132,52 @@ class InnerOfInnerHolder<A> {
         }
     }
 }
+
+class CompanionNestedClassesHolder {
+    fun answer(): Int = 42
+    companion object {
+        class Builder<T : CharSequence> : Iterable<T> {
+            override fun iterator(): Iterator<T> = emptyList<T>().iterator()
+        }
+        interface Factory
+        object Defaults : Factory
+        private class Hidden
+        internal class InternalNested
+        fun create(): CompanionNestedClassesHolder = CompanionNestedClassesHolder()
+    }
+}
+
+class CompanionOnlyNestedClassHolder {
+    companion object {
+        class Builder
+    }
+}
+
+sealed class CompanionNestedSealedHolder {
+    class Sub : CompanionNestedSealedHolder()
+    companion object {
+        class CompanionSub : CompanionNestedSealedHolder()
+        class Unrelated
+    }
+}
+
+sealed class NamedCompanionNestedHolder {
+    companion object Factory {
+        class Builder
+        class FactorySub : NamedCompanionNestedHolder()
+    }
+}
+
+open class OpenCompanionNestedHolder {
+    companion object {
+        protected class ProtectedNested
+        class PublicNested
+    }
+}
+
+class FinalCompanionNestedHolder {
+    companion object {
+        protected class ProtectedNested
+        class PublicNested
+    }
+}
