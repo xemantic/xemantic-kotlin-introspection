@@ -19,7 +19,10 @@
 package com.xemantic.kotlin.introspection.test
 
 import com.xemantic.kotlin.introspection.test.other.JavaFunctionTaker
+import com.xemantic.kotlin.introspection.test.other.JavaGetterBase
+import com.xemantic.kotlin.introspection.test.other.JavaPrimitiveBase
 import com.xemantic.kotlin.introspection.test.other.JavaProcessorBase
+import com.xemantic.kotlin.introspection.test.other.JavaSortBase
 import com.xemantic.kotlin.introspection.test.other.JavaVoidBase
 import com.xemantic.kotlin.introspection.test.other.PackagePrivateBase
 
@@ -369,6 +372,40 @@ class SuspendFunctionTypeImpl : suspend (String) -> Int {
 // java.lang.Void is not Nothing
 class JavaVoidVisitor : JavaVoidBase() {
     override fun visit(v: Void?) {}
+}
+
+// Properties without a JVM getter named like a Java method,
+// a Kotlin property never overrides a Java getter, it would be an accidental override
+class JavaGetterSubclass : JavaGetterBase() {
+    @JvmField val bar: Int = 0
+    private val parent: String = ""
+    @get:JvmName("fooValue") val foo: Int = 0
+    val value: UInt = 0u
+}
+
+// A Java primitive parameter is seen in Kotlin as non-nullable, a boxed one as of flexible nullability
+class JavaPrimitiveSubclass : JavaPrimitiveBase() {
+    fun prim(x: Int?) {}
+    override fun boxed(x: Int) {}
+}
+
+class JavaNullablePrimitiveSubclass : JavaPrimitiveBase() {
+    override fun prim(x: Int) {}
+    override fun boxed(x: Int?) {}
+}
+
+// A Java type variable substituted with Int is of flexible nullability, not primitive
+abstract class JavaNullableIntProcessor : JavaProcessorBase<Int>() {
+    override fun process(item: Int?) {}
+}
+
+// A Java type variable with a parameterized bound is erased to the raw bound
+class JavaSorter : JavaSortBase() {
+    override fun <T : Comparable<T>> sort(x: T) {}
+}
+
+class CharSequenceSorter : JavaSortBase() {
+    fun <T : CharSequence> sort(x: T) {}
 }
 
 // Members of Any, reached only through Java interfaces

@@ -47,11 +47,13 @@ class AbsentJavaSubclass : AbsentJavaBase<String>() {
     fun process(item: Int) {}
     override fun run() {}
     fun run(times: Int) {}
+    fun prim(x: Int?) {}
 }
 
 // the Java superclass refers to Absent only in the generic types of its methods
 class AbsentBoundJavaSubclass : AbsentBoundJavaBase() {
     override fun run() {}
     override fun <T : Comparable<Absent>> compare(item: T) {}
+    fun <T : CharSequence> compare(item: T) {}
     fun compare(item: Int) {}
 }
