@@ -3176,6 +3176,175 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should render secondary constructors after properties`() {
+        // following the conventional order of class members: properties, secondary constructors, functions
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.SecondaryConstructors"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SecondaryConstructors [page 1/1]
+            class SecondaryConstructors(val name: String) {
+                val tags: MutableList<String>
+                constructor(name: String, vararg tags: String)
+                constructor(id: Int, prefix: String = …)
+                fun describe(): String
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should paginate secondary constructors one per item`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.SecondaryConstructors",
+            page = 2,
+            pageSize = 2
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SecondaryConstructors [page 2/2]
+            class SecondaryConstructors(val name: String) {
+                constructor(id: Int, prefix: String = …)
+                fun describe(): String
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render secondary constructor of class with private primary constructor`() {
+        // the secondary constructor is the only way of creating the class
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.SecondaryConstructorOfPrivatePrimary"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SecondaryConstructorOfPrivatePrimary [page 1/1]
+            class SecondaryConstructorOfPrivatePrimary {
+                val a: Int
+                constructor(s: String)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render secondary constructors of class without primary constructor`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.SecondaryConstructorsWithoutPrimary"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SecondaryConstructorsWithoutPrimary [page 1/1]
+            class SecondaryConstructorsWithoutPrimary {
+                val x: Int
+                constructor(x: Int)
+                constructor(s: String)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render primary constructor without parameters next to secondary constructor`() {
+        // without the parentheses, the class would have no constructor without parameters
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.SecondaryConstructorOfEmptyPrimary"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SecondaryConstructorOfEmptyPrimary [page 1/1]
+            class SecondaryConstructorOfEmptyPrimary() {
+                constructor(x: Int)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render protected secondary constructor of open class`() {
+        // the internal and private constructors cannot be called from the user code
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.SecondaryConstructorsOfOpenClass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SecondaryConstructorsOfOpenClass [page 1/1]
+            open class SecondaryConstructorsOfOpenClass(val id: Int) {
+                protected constructor(s: String)
+                fun useDouble(): SecondaryConstructorsOfOpenClass
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not render protected secondary constructor of final class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ProtectedSecondaryConstructorOfFinalClass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ProtectedSecondaryConstructorOfFinalClass [page 1/1]
+            class ProtectedSecondaryConstructorOfFinalClass(val id: Int)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not render secondary constructor of sealed class`() {
+        // it is protected, and the user code cannot declare a subclass calling it
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.SecondaryConstructorOfSealedClass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SecondaryConstructorOfSealedClass [page 1/1]
+            sealed class SecondaryConstructorOfSealedClass {
+                class Sub : SecondaryConstructorOfSealedClass
+                val id: Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not render secondary constructor of enum class`() {
+        // it is private, only for declaring the entries
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.SecondaryConstructorOfEnum"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SecondaryConstructorOfEnum [page 1/1]
+            enum class SecondaryConstructorOfEnum(val code: Int) {
+                A,
+                B
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render secondary constructor of data class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.SecondaryConstructorOfDataClass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SecondaryConstructorOfDataClass [page 1/1]
+            data class SecondaryConstructorOfDataClass(val x: Int, val y: Int) {
+                constructor(xy: Int)
+                operator fun component1(): Int
+                operator fun component2(): Int
+                fun copy(x: Int = …, y: Int = …): SecondaryConstructorOfDataClass
+                override operator fun equals(other: Any?): Boolean
+                override fun hashCode(): Int
+                override fun toString(): String
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render secondary constructor of value class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.SecondaryConstructorOfValueClass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SecondaryConstructorOfValueClass [page 1/1]
+            @JvmInline value class SecondaryConstructorOfValueClass(val value: Int) {
+                constructor(s: String)
+                override operator fun equals(other: Any?): Boolean
+                override fun hashCode(): Int
+                override fun toString(): String
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render secondary constructor with type parameter of the class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.SecondaryConstructorOfGenericClass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SecondaryConstructorOfGenericClass [page 1/1]
+            class SecondaryConstructorOfGenericClass<T>(val value: T) {
+                constructor(values: List<T>)
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should not render constructor parameter as body property of the same name and another type`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.ConstructorParameterShadowedByProperty"
