@@ -29,10 +29,13 @@ import java.io.File
 import java.net.URI
 import java.net.URL
 import java.net.URLClassLoader
+import java.util.Optional
+import java.util.concurrent.ConcurrentHashMap
 import java.util.jar.Attributes
 import java.util.jar.JarFile
 import kotlin.metadata.*
 import kotlin.metadata.jvm.KotlinClassMetadata
+import kotlin.jvm.optionals.getOrNull
 import kotlin.reflect.KClass
 import kotlin.reflect.KFunction
 import kotlin.reflect.KParameter
@@ -295,8 +298,8 @@ internal class DefaultKotlinIntrospector(
                 }
             }
 
-            val clazz = loadClass(className) ?: continue
-            val metadata = readMetadata(clazz) ?: continue
+            val foundClass = findClass(className) ?: continue
+            val metadata = foundClass.metadata ?: continue
 
             val resolved = when (metadata) {
 
@@ -308,9 +311,9 @@ internal class DefaultKotlinIntrospector(
                     if (!kmClass.visibility.isApiIn(outerScopes)) continue
                     val scopes = outerScopes + kmClass.scope
                     if (memberName != null) {
-                        resolveMember(kmClass, scopes, className, clazz, memberName)
+                        resolveMember(kmClass, scopes, className, foundClass, memberName)
                     } else {
-                        formatClass(kmClass, scopes, className, clazz)
+                        formatClass(kmClass, scopes, className, foundClass)
                     }
                 }
 
@@ -326,7 +329,7 @@ internal class DefaultKotlinIntrospector(
                 is KotlinClassMetadata.MultiFileClassFacade -> memberName?.let {
                     resolvePackageMember(
                         metadata.partClassNames.mapNotNull { partName ->
-                            loadClass(partName.replace('/', '.'))?.let { readMetadata(it) }
+                            findClass(partName)?.metadata
                         }.filterIsInstance<KotlinClassMetadata.MultiFileClassPart>().map { it.kmPackage },
                         it
                     )
@@ -342,47 +345,101 @@ internal class DefaultKotlinIntrospector(
     }
 
     /**
-     * Loads a class by its fully qualified Kotlin name, where nested classes are separated with `.`
-     * instead of the `$` of the JVM binary name.
+     * A class of the classpath, by its JVM [binaryName], either loaded, or, when it cannot be loaded,
+     * like when it extends a class missing from the classpath, only read from its class file.
      */
-    private fun loadClass(name: String): Class<*>? {
-        var binaryName = name
+    private inner class FoundClass(val binaryName: String, val clazz: Class<*>?, readFile: ClassFile? = null) {
+
+        /**
+         * The class file, read once, and only when needed: already when the class cannot be loaded,
+         * otherwise only for the flags telling whether a listed class is usable, see [isUsableClass].
+         */
+        val classFile: ClassFile? by lazy { readFile ?: readClassFile(binaryName) }
+
+        // parsed once, and only when needed, as some classes are loaded only for the Java reflection
+        val metadata: KotlinClassMetadata? by lazy {
+            (if (clazz != null) clazz.getAnnotation(Metadata::class.java) else classFile?.metadata)
+                ?.let { parseMetadata(it) }
+        }
+
+    }
+
+    private val FoundClass.kmClass: KmClass?
+        get() = (metadata as? KotlinClassMetadata.Class)?.kmClass
+
+    /**
+     * Whether the found class is listed in its outer class, see [isListedClass],
+     * where a class file which cannot be read is judged by the metadata only.
+     */
+    private fun FoundClass.isListed(kmClass: KmClass): Boolean =
+        isListedClass(kmClass, classFile ?: ClassFile(null, isSynthetic = false, isHiddenDeprecated = false))
+
+    /**
+     * The classes found so far by their binary names, also the ones not found, as [Optional.empty],
+     * so that neither a class is loaded, nor its metadata parsed, nor a missing class looked up, more than once,
+     * like for every nested class listed on every page of a paged resolve.
+     * It is not bounded, just like the indexes built from the whole classpath on creation, as it holds
+     * only the classes reached by the resolves, which stay loaded anyway, for as long as the [classLoader] does.
+     * It is concurrent, so that the introspector can still be used by many threads at once,
+     * at worst finding a class twice, and then keeping the one found first.
+     */
+    private val foundClasses = ConcurrentHashMap<String, Optional<FoundClass>>()
+
+    /**
+     * Finds a class by its fully qualified name, either the metadata one, like `com/example/Outer.Nested`,
+     * or the Kotlin one, where nested classes are separated with `.` instead of the `$` of the JVM binary name,
+     * or the binary name itself.
+     */
+    private fun findClass(name: String): FoundClass? {
+        var binaryName = name.replace('/', '.')
         while (true) {
-            loadBinaryClass(binaryName)?.let { return it }
+            val foundClass = foundClasses.getOrPut(binaryName) {
+                Optional.ofNullable(findClassByBinaryName(binaryName))
+            }
+            if (foundClass.isPresent) return foundClass.get()
             val lastDot = binaryName.lastIndexOf('.')
             if (lastDot < 0) return null
             binaryName = binaryName.substring(0, lastDot) + "$" + binaryName.substring(lastDot + 1)
         }
     }
 
-    /**
-     * Loads a class by its JVM binary name, like `com.example.Outer${'$'}Nested`.
-     */
-    private fun loadBinaryClass(binaryName: String): Class<*>? = try {
-        classLoader.loadClass(binaryName)
+    private fun findClassByBinaryName(binaryName: String): FoundClass? = try {
+        val clazz = classLoader.loadClass(binaryName)
+        FoundClass(binaryName, clazz)
     } catch (_: ClassNotFoundException) {
         null
     } catch (_: LinkageError) {
+        // the class file is there, but refers to a class which is not, like its supertype,
+        // while its declarations can still be read from its metadata
+        readClassFile(binaryName)
+            ?.takeIf { it.metadata != null }
+            ?.let { classFile -> FoundClass(binaryName, clazz = null, classFile) }
+    }
+
+    /**
+     * Loads a class by its JVM binary name, like `com.example.Outer${'$'}Nested`, unless it cannot be loaded.
+     */
+    private fun loadBinaryClass(binaryName: String): Class<*>? =
+        foundClasses.getOrPut(binaryName) { Optional.ofNullable(findClassByBinaryName(binaryName)) }
+            .getOrNull()?.clazz
+
+    private fun parseMetadata(metadataAnnotation: Metadata): KotlinClassMetadata? = try {
+        KotlinClassMetadata.readLenient(metadataAnnotation)
+    } catch (_: IllegalArgumentException) {
         null
     }
 
-    private fun readMetadata(clazz: Class<*>): KotlinClassMetadata? {
-        val metadataAnnotation = clazz.getAnnotation(Metadata::class.java) ?: return null
-        return try {
-            KotlinClassMetadata.readLenient(metadataAnnotation)
-        } catch (_: IllegalArgumentException) {
-            null
-        }
-    }
+    private fun readMetadata(clazz: Class<*>): KotlinClassMetadata? =
+        clazz.getAnnotation(Metadata::class.java)?.let { parseMetadata(it) }
 
     private fun readKmClass(clazz: Class<*>): KmClass? =
         (readMetadata(clazz) as? KotlinClassMetadata.Class)?.kmClass
 
     /**
-     * Loads the metadata of a class by its name, either the metadata one, like `com/example/Outer.Nested`,
-     * or the one accepted by [loadClass].
+     * Loads the metadata of a class by its name, accepted by [findClass],
+     * also of a class which cannot be loaded, but whose class file can still be read.
      */
-    private fun loadKmClass(name: String): KmClass? = loadClass(name.replace('/', '.'))?.let { readKmClass(it) }
+    private fun loadKmClass(name: String): KmClass? = findClass(name)?.kmClass
 
     /**
      * The scopes of the classes enclosing the [kmClass], from the outermost one,
@@ -394,11 +451,13 @@ internal class DefaultKotlinIntrospector(
         }
 
     /**
-     * The package in which the types are referred to by their simple names when rendering the [clazz].
-     * For nested classes, it is the actual Java package, not the outer class.
+     * The package in which the types are referred to by their simple names when rendering the [kmClass].
+     * For nested classes, it is the actual Java package, not the outer class,
+     * also of a class which cannot be loaded, taken then from its metadata name.
      */
-    private fun contextPackageOf(clazz: Class<*>, className: String): String =
-        clazz.`package`?.name ?: className.substringBeforeLast(".", "")
+    private fun contextPackageOf(foundClass: FoundClass, kmClass: KmClass): String =
+        foundClass.clazz?.`package`?.name
+            ?: kmClass.name.substringBeforeLast('/', "").replace('/', '.')
 
     /**
      * Resolves the members and the extensions of a class named [memberName],
@@ -411,12 +470,12 @@ internal class DefaultKotlinIntrospector(
         kmClass: KmClass,
         scopes: List<ClassScope>,
         className: String,
-        clazz: Class<*>,
+        foundClass: FoundClass,
         memberName: String
     ): String? {
         val isInterface = kmClass.kind == ClassKind.INTERFACE
         val typeParameters = typeParametersInScope(kmClass)
-        val contextPackage = contextPackageOf(clazz, className)
+        val contextPackage = contextPackageOf(foundClass, kmClass)
 
         val members = kmClass.functions.filter {
             it.name == memberName && it.visibility.isApiIn(scopes)
@@ -721,7 +780,8 @@ internal class DefaultKotlinIntrospector(
     /**
      * @param scopes the scopes of the [kmClass] and its enclosing classes, from the outermost one.
      */
-    private fun formatClass(kmClass: KmClass, scopes: List<ClassScope>, className: String, clazz: Class<*>): String {
+    private fun formatClass(kmClass: KmClass, scopes: List<ClassScope>, className: String, foundClass: FoundClass): String {
+        val clazz = foundClass.clazz
         val isInterface = kmClass.kind == ClassKind.INTERFACE
         val isEnum = kmClass.kind == ClassKind.ENUM_CLASS
         val isAnnotation = kmClass.kind == ClassKind.ANNOTATION_CLASS
@@ -729,7 +789,7 @@ internal class DefaultKotlinIntrospector(
         val typeParameters = typeParametersInScope(kmClass)
 
         // Extract the package name for context-aware type formatting
-        val contextPackage = contextPackageOf(clazz, className)
+        val contextPackage = contextPackageOf(foundClass, kmClass)
 
         // Only the members which can be used from the user code
         val properties = kmClass.properties.filter { it.visibility.isApiIn(scopes) }
@@ -754,7 +814,7 @@ internal class DefaultKotlinIntrospector(
         }.toMap()
 
         // the binary name, as the class might be nested
-        val companionBinaryName = kmClass.companionObject?.let { "${clazz.name}\$$it" }
+        val companionBinaryName = kmClass.companionObject?.let { "${foundClass.binaryName}\$$it" }
         // The companion object, unless it is not part of the API, with its members which are
         val companion = companionBinaryName
             ?.let { loadKmClass(it) }
@@ -785,7 +845,7 @@ internal class DefaultKotlinIntrospector(
                     contextPackage,
                     prefix = "val ",
                     // the default values are only present in the JVM annotation, not in the Kotlin metadata
-                    defaultValue = { formatAnnotationDefaultValue(clazz, param.name, contextPackage) }
+                    defaultValue = { clazz?.let { formatAnnotationDefaultValue(it, param.name, contextPackage) } }
                 )
             }
             // the implicit constructor without parameters is omitted, unless there are other constructors,
@@ -829,7 +889,7 @@ internal class DefaultKotlinIntrospector(
 
             val enumEntries = if (isEnum) kmClass.kmEnumEntries else emptyList()
             val sealedSubclasses = if (isSealed) listedSealedSubclasses(kmClass) else emptyList()
-            val nestedClasses = listedNestedClasses(kmClass, scopes, clazz.name)
+            val nestedClasses = listedNestedClasses(kmClass, scopes, foundClass.binaryName)
 
             // The members are rendered before the enum entries, which depend on whether any members follow them
             val members = buildString {
@@ -1027,19 +1087,18 @@ internal class DefaultKotlinIntrospector(
     /**
      * The sealed subclasses of the [kmClass] which are part of the API, by their names relative to the [kmClass]
      * when nested within it, or else to their package, like `Holder.Nested`.
-     * The ones which cannot be loaded are not listed, as they cannot be resolved either,
-     * neither is the own companion object, already rendered as such,
+     * The ones which cannot be found are not listed, as they cannot be resolved either,
+     * while the ones which cannot be loaded, but whose class files can still be read, are, like by [findClass].
+     * Neither is the own companion object, already rendered as such,
      * while the companion object of another class is, as a branch of a `when` expression.
      */
     private fun listedSealedSubclasses(kmClass: KmClass): List<Pair<String, KmClass>> =
         kmClass.sealedSubclasses.mapNotNull { subclassName ->
             if (subclassName == "${kmClass.name}.${kmClass.companionObject}") return@mapNotNull null
-            val subclassClazz = loadClass(subclassName.replace('/', '.')) ?: return@mapNotNull null
-            val subclass = readKmClass(subclassClazz) ?: return@mapNotNull null
+            val subclassClass = findClass(subclassName) ?: return@mapNotNull null
+            val subclass = subclassClass.kmClass ?: return@mapNotNull null
             val enclosing = enclosingScopes(subclass) ?: return@mapNotNull null
-            val isListed = subclass.kind == ClassKind.COMPANION_OBJECT ||
-                // a class file which cannot be read is judged by the metadata only
-                isListedClass(subclass, readClassFile(subclassClazz) ?: ClassFile(null, false, false))
+            val isListed = subclass.kind == ClassKind.COMPANION_OBJECT || subclassClass.isListed(subclass)
             if (!isListed || !subclass.visibility.isApiIn(enclosing)) return@mapNotNull null
             subclassName.removePrefix("${kmClass.name}.").substringAfterLast('/') to subclass
         }
@@ -1048,6 +1107,8 @@ internal class DefaultKotlinIntrospector(
      * The nested classes worth listing in the outer class, by their simple names, excluding
      * the sealed subclasses and the companion object, which are already rendered,
      * and the ones not visible to the users of the outer class.
+     * Like the sealed subclasses, the ones which cannot be found are not listed, as neither their kind,
+     * nor their visibility, is known, and they cannot be resolved either.
      *
      * @param binaryName the binary name of the [kmClass], like `com.example.Outer$Companion`.
      * @param sealedSubclasses the declared sealed subclasses to exclude, the ones of the [kmClass],
@@ -1063,11 +1124,8 @@ internal class DefaultKotlinIntrospector(
             .filter { "${kmClass.name}.$it" !in sealedSubclasses }
             .mapNotNull { name ->
                 // the binary name, as the class might be nested
-                loadClass("$binaryName\$$name")?.let { nestedClazz ->
-                    readKmClass(nestedClazz)?.takeIf { nestedKmClass ->
-                        // a class file which cannot be read is judged by the metadata only
-                        isListedClass(nestedKmClass, readClassFile(nestedClazz) ?: ClassFile(null, false, false))
-                    }
+                findClass("$binaryName\$$name")?.let { nestedClass ->
+                    nestedClass.kmClass?.takeIf { nestedClass.isListed(it) }
                 }?.let { name to it }
             }
             .filter { (_, nestedKmClass) -> nestedKmClass.visibility.isApiIn(scopes) }
@@ -1858,13 +1916,13 @@ internal class DefaultKotlinIntrospector(
             kmClass.supertypes.any { (it.classifier as? KmClassifier.Class)?.name == GENERATED_SERIALIZER }
 
     /**
-     * Reads the class file of the loaded [clazz], to tell the flags,
+     * Reads the class file of a class by its JVM [binaryName], whether it can be loaded or not, to tell the flags,
      * which neither [Class.isSynthetic] tells for a nested class, as it reports the flags of the `InnerClasses` attribute,
-     * nor the reflection of annotations, which would load the classes of all of them.
+     * nor the reflection of annotations, which would load the classes of all of them,
+     * and the metadata of a class which cannot be loaded.
      */
-    private fun readClassFile(clazz: Class<*>): ClassFile? = try {
-        (clazz.classLoader ?: ClassLoader.getSystemClassLoader())
-            .getResourceAsStream(clazz.name.replace('.', '/') + ".class")
+    private fun readClassFile(binaryName: String): ClassFile? = try {
+        classLoader.getResourceAsStream(binaryName.replace('.', '/') + ".class")
             ?.use { readClassFile(ClassReader(it)) }
     } catch (_: Exception) {
         null

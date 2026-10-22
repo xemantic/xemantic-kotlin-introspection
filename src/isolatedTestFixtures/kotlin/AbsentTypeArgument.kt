@@ -19,8 +19,9 @@
 package com.xemantic.kotlin.introspection.isolated
 
 // Tests leave the class file of Absent out of the class loader,
-// so that the members and the generic supertypes referring to it cannot be reflected
-class Absent
+// so that the members and the generic supertypes referring to it cannot be reflected,
+// and the classes extending it cannot be loaded at all
+open class Absent
 
 class AbsentTypeArgumentComparable : Comparable<Absent> {
     override fun compareTo(other: Absent): Int = 0
@@ -106,4 +107,20 @@ class AbsentRawJavaSubclass : AbsentRawJavaMid() {
     override fun process(items: Array<Any?>) {}
     fun process(items: Array<Int>) {}
     fun <S : Number> bounded(x: S) {}
+}
+
+// the nested classes extending Absent cannot be loaded, only their class files can be read
+class AbsentNestedHolder {
+    class Present
+    class AbsentSubclass : Absent()
+    private class HiddenAbsentSubclass : Absent()
+    // tests leave this class file out as well
+    class Gone
+}
+
+sealed interface AbsentSealed {
+    class Present : AbsentSealed
+    class AbsentSubclass : Absent(), AbsentSealed
+    // tests leave this class file out as well
+    class Gone : AbsentSealed
 }
