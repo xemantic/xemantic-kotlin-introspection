@@ -3149,6 +3149,19 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should render inner class type of non-generic outer class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.NonGenericInnerTypes"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NonGenericInnerTypes [page 1/1]
+            class NonGenericInnerTypes {
+                fun cursor(): NonGenericInnerOuter.In<String>
+                fun accept(cursor: NonGenericInnerOuter.In<String>?)
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should render type arguments of outer class of Java inner class supertype`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.JavaGenericOuterString.Sub"

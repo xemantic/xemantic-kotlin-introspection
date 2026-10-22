@@ -41,6 +41,15 @@ class GenericInnerOuter<A> {
     inner class Inner<B>
 }
 
+class NonGenericInnerOuter {
+    inner class In<B>
+}
+
+class NonGenericInnerTypes {
+    fun cursor(): NonGenericInnerOuter.In<String> = NonGenericInnerOuter().In()
+    fun accept(cursor: NonGenericInnerOuter.In<String>?) {}
+}
+
 class GenericInnerTypes(
     val cursor: GenericInnerOuter<String>.Inner<Int>
 ) {
