@@ -1526,6 +1526,8 @@ class KotlinIntrospectorTest {
         """.trimIndent()
     }
 
+    // the internal override of reset is not part of the API since #94, so it is not listed,
+    // the public override of the internal state property still is
     @Test
     fun `should mark overrides of internal members of superclass of the same module`() {
         resolver.resolve(
@@ -1534,11 +1536,11 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.othermodule.SameModuleSubclass [page 1/1]
             class SameModuleSubclass : InternalBase {
                 override val state: Int
-                internal override fun reset()
             }
         """.trimIndent()
     }
 
+    // the internal override of reset is not listed, as in the same module case
     @Test
     fun `should mark overrides of internal members of superclass of a friend module`() {
         resolver.resolve(
@@ -1547,7 +1549,6 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.friendmodule.FriendModuleSubclass [page 1/1]
             class FriendModuleSubclass : com.xemantic.kotlin.introspection.othermodule.InternalBase {
                 override val state: Int
-                internal override fun reset()
             }
         """.trimIndent()
     }
