@@ -365,9 +365,7 @@ internal class OverrideResolver(
             }
 
             declaration.java?.let { javaClass ->
-                val substitution = javaClass.typeParameters.withIndex().associate { (index, typeVariable) ->
-                    typeVariable.name to (supertype.arguments.getOrNull(index)?.type ?: UnknownType)
-                }
+                val substitution = javaSubstitution(javaClass, supertype)
                 javaMethods(javaClass, ownerPackage, substitution).forEach { (name, method) ->
                     if (name !in declaration.hiddenJavaMethods) {
                         functions.getOrPut(name) { mutableListOf() } += method
@@ -674,12 +672,61 @@ internal class OverrideResolver(
     }
 
     /**
+     * The type arguments substituted for the type variables of a Java class, and of its outer classes if it is an inner class,
+     * bound per declaring class, from the innermost one.
+     *
+     * @param scopes the declaring classes with the type arguments of their type variables, by their names.
+     */
+    private class JavaSubstitution(private val scopes: List<Pair<Class<*>, Map<String, MemberType>>>) {
+
+        /**
+         * The type argument of a reflected type variable of a class, or `null` if it is not declared by one of the scopes.
+         */
+        operator fun get(typeVariable: TypeVariable<*>): MemberType? =
+            scopes.firstOrNull { (declaration, _) -> declaration == typeVariable.genericDeclaration }
+                ?.second?.get(typeVariable.name)
+
+        /**
+         * The type argument of a type variable of a class known only by its [name], like in a generic signature,
+         * declared by the innermost scope declaring this name, as it shadows the outer ones.
+         */
+        operator fun get(name: String): MemberType? =
+            scopes.firstNotNullOfOrNull { (_, typeArguments) -> typeArguments[name] }
+
+    }
+
+    /**
+     * The type variables of the [javaClass], and of its outer classes if it is an inner class,
+     * mapped to the type arguments of the [supertype], and of its outer types.
+     */
+    private fun javaSubstitution(javaClass: Class<*>, supertype: ClassType): JavaSubstitution {
+        val scopes = mutableListOf<Pair<Class<*>, Map<String, MemberType>>>()
+        var declaration: Class<*>? = javaClass
+        var type: ClassType? = supertype
+        while (declaration != null) {
+            val typeArguments = type?.arguments
+            scopes += declaration to declaration.typeParameters.withIndex().associate { (index, typeVariable) ->
+                typeVariable.name to (typeArguments?.getOrNull(index)?.type ?: UnknownType)
+            }
+            // a static nested class cannot refer to the type variables of its outer class
+            if (Modifier.isStatic(declaration.modifiers)) break
+            declaration = try {
+                declaration.declaringClass
+            } catch (_: LinkageError) {
+                null
+            }
+            type = type?.outer
+        }
+        return JavaSubstitution(scopes)
+    }
+
+    /**
      * The overridable methods of a Java class, by their names.
      */
     private fun javaMethods(
         javaClass: Class<*>,
         ownerPackage: String,
-        substitution: Map<String, MemberType>
+        substitution: JavaSubstitution
     ): List<Pair<String, Overridable>> {
         val methods = try {
             javaClass.declaredMethods
@@ -710,7 +757,7 @@ internal class OverrideResolver(
     /**
      * The generic types are resolved lazily, so this might throw when they refer to a class missing from the classpath.
      */
-    private fun javaOverridable(method: Method, substitution: Map<String, MemberType>): Overridable =
+    private fun javaOverridable(method: Method, substitution: JavaSubstitution): Overridable =
         Overridable(
             contexts = emptyList(),
             receiver = null,
@@ -719,7 +766,7 @@ internal class OverrideResolver(
             isJava = true
         )
 
-    private fun javaSupertypes(javaClass: Class<*>, substitution: Map<String, MemberType>): List<ClassType> {
+    private fun javaSupertypes(javaClass: Class<*>, substitution: JavaSubstitution): List<ClassType> {
         val rawSupertypes = listOfNotNull(javaClass.superclass) + javaClass.interfaces
         val supertypes = try {
             (listOfNotNull(javaClass.genericSuperclass) + javaClass.genericInterfaces)
@@ -739,7 +786,7 @@ internal class OverrideResolver(
      *
      * @param method the method declaring the [type], whose type variables are erased.
      */
-    private fun javaType(type: JavaType, substitution: Map<String, MemberType>, method: Method?): MemberType =
+    private fun javaType(type: JavaType, substitution: JavaSubstitution, method: Method?): MemberType =
         when (type) {
             is Class<*> -> javaClassType(type)
             is ParameterizedType -> {
@@ -771,7 +818,7 @@ internal class OverrideResolver(
             is TypeVariable<*> -> {
                 val declaration = type.genericDeclaration
                 if (declaration is Class<*>) {
-                    substitution[type.name] ?: UnknownType
+                    substitution[type] ?: UnknownType
                 } else {
                     // a type variable of the method, known only by its erasure
                     val erasure = javaErasure(type, substitution)
@@ -787,11 +834,11 @@ internal class OverrideResolver(
      * the erasure of the first bound for a type variable of a method,
      * and of the substituted type argument for a type variable of a class.
      */
-    private fun javaErasure(type: JavaType, substitution: Map<String, MemberType>): String? = when (type) {
+    private fun javaErasure(type: JavaType, substitution: JavaSubstitution): String? = when (type) {
         is Class<*> -> erasure(javaClassType(type))
         is ParameterizedType -> javaErasure(type.rawType, substitution)
         is TypeVariable<*> -> if (type.genericDeclaration is Class<*>) {
-            substitution[type.name]?.let { erasure(it) }
+            substitution[type]?.let { erasure(it) }
         } else {
             type.bounds.firstOrNull()?.let { javaErasure(it, substitution) }
         }
@@ -827,7 +874,7 @@ internal class OverrideResolver(
     private fun asmMethods(
         javaClass: Class<*>,
         ownerPackage: String,
-        substitution: Map<String, MemberType>
+        substitution: JavaSubstitution
     ): List<Pair<String, Overridable>> {
         val bytes = classBytes(javaClass.classLoader, javaClass.name.replace('.', '/')) ?: return emptyList()
         val methods = mutableListOf<Pair<String, Overridable>>()
@@ -839,23 +886,9 @@ internal class OverrideResolver(
             if (!isOverridable) return@readMethods
             val generic = signature?.let { GenericMethodSignature(it) }
             val parameters = AsmType.getArgumentTypes(descriptor).mapIndexed { index, parameterType ->
-                val typeVariable = generic?.typeVariableParameters?.get(index)
-                when {
-                    typeVariable == null -> asmType(parameterType)
-                    // a type variable of the method is known only by its erasure
-                    typeVariable in generic.typeParameters -> TypeParameterType(
-                        "F${generic.typeParameters.indexOf(typeVariable)}",
-                        false,
-                        // the descriptor erases a type variable bounded by one of the class to the bound of the latter
-                        generic.classTypeVariableBound(typeVariable).let { classTypeVariable ->
-                            if (classTypeVariable != null) {
-                                substitution[classTypeVariable]?.let { erasure(it) }
-                            } else {
-                                erasure(asmType(parameterType))
-                            }
-                        }
-                    )
-                    else -> substitution[typeVariable] ?: UnknownType
+                val parameterSignature = generic?.parameterTypes?.getOrNull(index)
+                if (parameterSignature == null) asmType(parameterType) else {
+                    asmType(parameterType, parameterSignature, generic, substitution)
                 }
             }
             methods += name to Overridable(
@@ -879,6 +912,58 @@ internal class OverrideResolver(
             ?.use { it.readBytes() }
     } catch (_: java.io.IOException) {
         null
+    }
+
+    /**
+     * Resolves the type of a method parameter read from the class file,
+     * its type variables, also as array components, resolved from the [generic] signature of the method:
+     * the ones of the method, shadowing the ones of the class, are known only by their erasure,
+     * and the ones of the class, or of its outer classes, are substituted.
+     *
+     * @param type the erased type, from the method descriptor.
+     * @param signature the generic type, from the method signature.
+     */
+    private fun asmType(
+        type: AsmType,
+        signature: SignatureType,
+        generic: GenericMethodSignature,
+        substitution: JavaSubstitution
+    ): MemberType = when (signature) {
+        is SignatureType.Variable -> {
+            val index = generic.typeParameters.indexOf(signature.name)
+            if (index >= 0) {
+                TypeParameterType(
+                    "F$index",
+                    false,
+                    // the descriptor erases a type variable bounded by one of the class to the bound of the latter
+                    generic.classTypeVariableBound(signature.name).let { classTypeVariable ->
+                        if (classTypeVariable != null) {
+                            substitution[classTypeVariable]?.let { erasure(it) }
+                        } else {
+                            erasure(asmType(type))
+                        }
+                    }
+                )
+            } else {
+                substitution[signature.name] ?: UnknownType
+            }
+        }
+        // an array of primitives or of classes is fully described by the descriptor
+        is SignatureType.ArrayOf -> if (type.sort != AsmType.ARRAY || signature.component == SignatureType.Other) {
+            asmType(type)
+        } else {
+            ClassType(
+                name = "kotlin/Array",
+                arguments = listOf(
+                    TypeArgument(
+                        KmVariance.INVARIANT,
+                        asmType(AsmType.getType(type.descriptor.substring(1)), signature.component, generic, substitution)
+                    )
+                ),
+                nullable = null
+            )
+        }
+        SignatureType.Other -> asmType(type)
     }
 
     private fun asmType(type: AsmType): MemberType = when (type.sort) {
@@ -905,17 +990,51 @@ internal class OverrideResolver(
     }
 
     /**
-     * The type parameters of a generic method signature,
-     * the type variables of the parameters by their indices, for the parameters whose type is a type variable,
+     * A type of a generic signature, as far as it is needed to resolve the type variables,
+     * which can be the types of parameters, or array components.
+     */
+    private sealed interface SignatureType {
+
+        data class Variable(val name: String) : SignatureType
+
+        data class ArrayOf(val component: SignatureType) : SignatureType
+
+        /**
+         * A class or a primitive type, fully described by the descriptor, as only its erasure is matched.
+         */
+        data object Other : SignatureType
+
+    }
+
+    /**
+     * Collects a type of a generic signature, passing it to [onType] when visited.
+     */
+    private class SignatureTypeCollector(private val onType: (SignatureType) -> Unit) : SignatureVisitor(Opcodes.ASM9) {
+
+        override fun visitTypeVariable(name: String) = onType(SignatureType.Variable(name))
+
+        override fun visitArrayType(): SignatureVisitor = SignatureTypeCollector { onType(SignatureType.ArrayOf(it)) }
+
+        override fun visitBaseType(descriptor: Char) = onType(SignatureType.Other)
+
+        override fun visitClassType(name: String) = onType(SignatureType.Other)
+
+        // the type arguments of a class type are visited by this visitor otherwise
+        override fun visitTypeArgument(wildcard: Char): SignatureVisitor = ignoringSignatureVisitor
+
+    }
+
+    /**
+     * The type parameters of a generic method signature, the generic types of its parameters,
      * and the type variables bounding the type parameters, for the type parameters whose first bound is a type variable.
      */
     private class GenericMethodSignature(signature: String) {
 
         val typeParameters = mutableListOf<String>()
 
-        val typeVariableParameters = mutableMapOf<Int, String>()
+        val parameterTypes = mutableListOf<SignatureType>()
 
-        val typeVariableBounds = mutableMapOf<String, String>()
+        private val firstBounds = mutableMapOf<String, SignatureType>()
 
         /**
          * The type variable of the class bounding the [typeVariable] of the method, directly or through other ones,
@@ -926,7 +1045,7 @@ internal class OverrideResolver(
             var current = typeVariable
             while (current in typeParameters) {
                 if (!visited.add(current)) return null
-                current = typeVariableBounds[current] ?: return null
+                current = (firstBounds[current] as? SignatureType.Variable)?.name ?: return null
             }
             return current
         }
@@ -934,56 +1053,24 @@ internal class OverrideResolver(
         init {
             SignatureReader(signature).accept(object : SignatureVisitor(Opcodes.ASM9) {
 
-                private var parameterIndex = -1
-
-                private var inParameter = false
-
-                private var boundedTypeParameter: String? = null
+                private fun boundCollector(): SignatureVisitor {
+                    val typeParameter = typeParameters.last()
+                    return SignatureTypeCollector { firstBounds.putIfAbsent(typeParameter, it) }
+                }
 
                 override fun visitFormalTypeParameter(name: String) {
                     typeParameters += name
-                    boundedTypeParameter = name
                 }
 
-                override fun visitClassBound(): SignatureVisitor = this
+                override fun visitClassBound(): SignatureVisitor = boundCollector()
 
-                override fun visitInterfaceBound(): SignatureVisitor = this
+                override fun visitInterfaceBound(): SignatureVisitor = boundCollector()
 
-                override fun visitParameterType(): SignatureVisitor {
-                    boundedTypeParameter = null
-                    parameterIndex++
-                    inParameter = true
-                    return this
-                }
+                override fun visitParameterType(): SignatureVisitor = SignatureTypeCollector { parameterTypes += it }
 
-                override fun visitReturnType(): SignatureVisitor {
-                    inParameter = false
-                    boundedTypeParameter = null
-                    return this
-                }
+                override fun visitReturnType(): SignatureVisitor = ignoringSignatureVisitor
 
-                override fun visitTypeVariable(name: String) {
-                    if (inParameter) typeVariableParameters[parameterIndex] = name
-                    boundedTypeParameter?.let { typeVariableBounds[it] = name }
-                    inParameter = false
-                    boundedTypeParameter = null
-                }
-
-                override fun visitClassType(name: String) {
-                    inParameter = false
-                    boundedTypeParameter = null
-                }
-
-                override fun visitBaseType(descriptor: Char) {
-                    inParameter = false
-                    boundedTypeParameter = null
-                }
-
-                override fun visitArrayType(): SignatureVisitor {
-                    inParameter = false
-                    boundedTypeParameter = null
-                    return this
-                }
+                override fun visitExceptionType(): SignatureVisitor = ignoringSignatureVisitor
 
             })
         }
@@ -991,6 +1078,11 @@ internal class OverrideResolver(
     }
 
     private companion object {
+
+        /**
+         * Visits a part of a generic signature which is not needed, its default methods doing nothing.
+         */
+        val ignoringSignatureVisitor = object : SignatureVisitor(Opcodes.ASM9) {}
 
         /**
          * The JVM methods of the collection interfaces not visible in Kotlin:

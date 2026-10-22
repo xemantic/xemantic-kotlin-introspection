@@ -1889,6 +1889,68 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should mark overrides of Java methods taking arrays of type variable`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaArraySubclass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaArraySubclass [page 1/1]
+            class JavaArraySubclass : com.xemantic.kotlin.introspection.test.other.JavaArrayBase<String> {
+                override fun process(items: Array<String>)
+                fun process(items: Array<Int>)
+                override fun <S : String> bounded(items: Array<S>)
+                fun <S : Number> bounded(items: Array<S>)
+                override fun nested(items: Array<Array<String>>)
+                fun nested(items: Array<Array<Int>>)
+                override fun lists(items: Array<List<String>>)
+                fun lists(items: Array<Set<String>>)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not bind Java method type variable shadowing type variable of its class to type argument of the class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaOuterSubclass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaOuterSubclass [page 1/1]
+            class JavaOuterSubclass : com.xemantic.kotlin.introspection.test.other.JavaOuterBase<String> {
+                inner class InnerSubclass : com.xemantic.kotlin.introspection.test.other.JavaOuterBase.Inner<Int>
+                inner class ShadowingSubclass : com.xemantic.kotlin.introspection.test.other.JavaOuterBase.Shadowing<Int>
+                override fun <T : Number> shadowing(x: T)
+                fun <T : String> shadowing(x: T)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should bind type variable of outer Java class to type argument of outer class of supertype`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaOuterSubclass.InnerSubclass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaOuterSubclass.InnerSubclass [page 1/1]
+            inner class InnerSubclass : com.xemantic.kotlin.introspection.test.other.JavaOuterBase.Inner<Int> {
+                override fun outer(x: String)
+                fun outer(x: Int)
+                override fun inner(x: Int)
+                fun inner(x: String)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should bind type variable of inner Java class shadowing type variable of outer class to its own type argument`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaOuterSubclass.ShadowingSubclass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaOuterSubclass.ShadowingSubclass [page 1/1]
+            inner class ShadowingSubclass : com.xemantic.kotlin.introspection.test.other.JavaOuterBase.Shadowing<Int> {
+                override fun shadowed(x: Int)
+                fun shadowed(x: String)
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should not mark function of other erasure as override of Java method whose type variable has parameterized bound`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.CharSequenceSorter"
