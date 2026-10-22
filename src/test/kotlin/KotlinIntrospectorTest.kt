@@ -1025,6 +1025,22 @@ class KotlinIntrospectorTest {
         """.trimIndent()
     }
 
+    // the private member, compiled with -jvm-default=disable, is present only in DefaultImplsGreeter$DefaultImpls,
+    // so its absence from the class file of the interface does not mean it was shrunk
+    @Test
+    fun `should not mark private overload of interface member relocated to DefaultImpls as override`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsGreeter"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsGreeter [page 1/1]
+            interface DefaultImplsGreeter : DefaultImplsBase {
+                override val label: String
+                override fun greet(name: String): String
+                private fun greet(times: Int): String
+            }
+        """.trimIndent()
+    }
+
     @Test
     fun `should not mark functions named like final Object methods as override`() {
         resolver.resolve(
