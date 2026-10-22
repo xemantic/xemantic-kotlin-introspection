@@ -41,12 +41,12 @@ class ObjectMethodNamesSubclass : NonAnyBase() {
     fun wait(ms: Int) {}
 }
 
-// Protected members can be overridden as well
+// Protected members can be overridden as well, the subclass is open, otherwise they would not be part of the API
 abstract class ProtectedAbstractBase {
     protected abstract fun bar()
 }
 
-class ProtectedOverrideSubclass : ProtectedAbstractBase() {
+open class ProtectedOverrideSubclass : ProtectedAbstractBase() {
     override fun bar() {}
 }
 
@@ -139,8 +139,9 @@ class StringItemsProcessor : ItemsProcessor<String> {
     fun process(items: Array<Int>) {}
 }
 
-// Overridable members of java.lang.Object, which are not members of Any
-class Finalizable {
+// Overridable members of java.lang.Object, which are not members of Any,
+// the class is open, so that its protected member is part of the API
+open class Finalizable {
     protected fun finalize() {}
 }
 
@@ -153,8 +154,8 @@ class PackagePrivateSubclass : PackagePrivateBase() {
     fun hidden() {}
 }
 
-// Members of a Java superclass
-class JavaProcessor : JavaProcessorBase<String>() {
+// Members of a Java superclass, the class is open, so that its protected member is part of the API
+open class JavaProcessor : JavaProcessorBase<String>() {
     override fun process(item: String) {}
     fun process(item: Int) {}
     override fun handle(items: List<String>) {}

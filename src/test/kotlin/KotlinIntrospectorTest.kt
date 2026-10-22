@@ -710,7 +710,8 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve class with companion object`() {
-        // an LLM needs to see companion object members to access static-like functionality
+        // an LLM needs to see companion object members to access static-like functionality,
+        // but not the private ones
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.CompanionTestClass"
         ) sameAsKotlin """
@@ -718,7 +719,6 @@ class KotlinIntrospectorTest {
             class CompanionTestClass {
                 companion object {
                     const val CONSTANT: String
-                    private const val PRIVATE_CONSTANT: String
                     fun create(): CompanionTestClass
                 }
             }
@@ -924,20 +924,15 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve class with visibility modifiers`() {
-        // members are output in declaration order
+        // private and internal members cannot be called from the user code,
+        // and protected ones neither, as a final class cannot be subclassed
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.VisibilityTestClass"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.VisibilityTestClass [page 1/1]
             class VisibilityTestClass {
                 val publicProperty: String
-                private val privateProperty: String
-                protected val protectedProperty: String
-                internal val internalProperty: String
                 fun publicFunction(): String
-                private fun privateFunction(): String
-                protected fun protectedFunction(): String
-                internal fun internalFunction(): String
             }
         """.trimIndent()
     }
@@ -1044,7 +1039,7 @@ class KotlinIntrospectorTest {
             "com.xemantic.kotlin.introspection.test.ProtectedOverrideSubclass"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.ProtectedOverrideSubclass [page 1/1]
-            class ProtectedOverrideSubclass : ProtectedAbstractBase {
+            open class ProtectedOverrideSubclass : ProtectedAbstractBase {
                 protected override fun bar()
             }
         """.trimIndent()
@@ -1239,7 +1234,7 @@ class KotlinIntrospectorTest {
             "com.xemantic.kotlin.introspection.test.Finalizable"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.Finalizable [page 1/1]
-            class Finalizable {
+            open class Finalizable {
                 protected fun finalize()
             }
         """.trimIndent()
@@ -1276,7 +1271,7 @@ class KotlinIntrospectorTest {
             "com.xemantic.kotlin.introspection.test.JavaProcessor"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.JavaProcessor [page 1/1]
-            class JavaProcessor : com.xemantic.kotlin.introspection.test.other.JavaProcessorBase<String> {
+            open class JavaProcessor : com.xemantic.kotlin.introspection.test.other.JavaProcessorBase<String> {
                 override fun process(item: String)
                 fun process(item: Int)
                 override fun handle(items: List<String>)
@@ -1799,7 +1794,8 @@ class KotlinIntrospectorTest {
     @Test
     fun `should list nested classes in the outer class`() {
         // an LLM cannot discover a nested class otherwise, the companion object is rendered with its members,
-        // while private, internal, and synthetic nested classes are not part of the API
+        // while private, internal, and synthetic nested classes are not part of the API,
+        // neither is the protected one, as the final outer class cannot be subclassed
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.NestedClassesHolder",
             pageSize = 20
@@ -1812,7 +1808,6 @@ class KotlinIntrospectorTest {
                 object NestedObject
                 enum class NestedEnum
                 data class NestedData : NestedClassesHolder.NestedInterface
-                protected class NestedProtectedClass
                 fun anonymous(): Any
                 fun whenMapping(nestedEnum: NestedClassesHolder.NestedEnum): Int
                 companion object {
@@ -2042,6 +2037,161 @@ class KotlinIntrospectorTest {
         assert(resolver.resolve("kotlin.String.internalStringHelper") == null)
     }
 
+    @Test
+    fun `should resolve only public function overloads through file facade`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.TestExtensionVisibilityKt.helper"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.TestExtensionVisibilityKt.helper [page 1/1]
+            fun com.xemantic.kotlin.introspection.test.ExtensionVisibilityTarget.helper(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve private property through file facade`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.TestExtensionVisibilityKt.privateCache") == null)
+    }
+
+    @Test
+    fun `should not resolve internal property through file facade`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.TestExtensionVisibilityKt.internalCache") == null)
+    }
+
+    @Test
+    fun `should not resolve internal function through file facade`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.TestExtensionVisibilityKt.useVisibilityTestExtensions") == null)
+    }
+
+    // TestMemberVisibility tests
+
+    @Test
+    fun `should list protected members of open class`() {
+        // a subclass can use them, unlike the private and internal ones
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.OpenVisibilityHolder"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OpenVisibilityHolder [page 1/1]
+            open class OpenVisibilityHolder {
+                protected class NestedProtected
+                val publicProperty: String
+                protected val protectedProperty: String
+                fun publicFunction(): String
+                protected fun protectedFunction(): String
+                fun usePrivate(): String
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve private member`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.OpenVisibilityHolder.privateFunction") == null)
+    }
+
+    @Test
+    fun `should not resolve internal member`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.OpenVisibilityHolder.internalProperty") == null)
+    }
+
+    @Test
+    fun `should not resolve protected member of final class`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.VisibilityTestClass.protectedFunction") == null)
+    }
+
+    @Test
+    fun `should resolve protected member of open class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.OpenVisibilityHolder.protectedFunction"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OpenVisibilityHolder.protectedFunction [page 1/1]
+            protected fun protectedFunction(): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should search protected nested class of open class`() {
+        resolver.search("NestedProtected") sameAsKotlin """
+            // search results for "NestedProtected" [page 1/1]
+            com.xemantic.kotlin.introspection.test.OpenVisibilityHolder.NestedProtected
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render properties of private constructor in class body`() {
+        // the constructor cannot be called, while its properties are still public
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.PrivateConstructorHolder"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PrivateConstructorHolder [page 1/1]
+            class PrivateConstructorHolder {
+                val id: Int
+                val label: String
+                companion object {
+                    fun create(id: Int): PrivateConstructorHolder
+                }
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render properties of internal constructor in class body`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InternalConstructorHolder"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InternalConstructorHolder [page 1/1]
+            class InternalConstructorHolder {
+                val id: Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render protected constructor of abstract class`() {
+        // a subclass can call it
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ProtectedConstructorHolder"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ProtectedConstructorHolder [page 1/1]
+            abstract class ProtectedConstructorHolder protected constructor(val id: Int)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render name of named companion object`() {
+        // an LLM needs the name to qualify the companion object members, like NamedCompanionHolder.Factory.of()
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.NamedCompanionHolder"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NamedCompanionHolder [page 1/1]
+            class NamedCompanionHolder {
+                companion object Factory {
+                    fun of(): NamedCompanionHolder
+                }
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not list private companion object`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.PrivateCompanionHolder"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PrivateCompanionHolder [page 1/1]
+            class PrivateCompanionHolder {
+                fun answer(): Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not list companion object without public members`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenCompanionMembersHolder"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenCompanionMembersHolder [page 1/1]
+            class HiddenCompanionMembersHolder
+        """.trimIndent()
+    }
+
     // TestOverloads tests
 
     @Test
@@ -2236,6 +2386,11 @@ class KotlinIntrospectorTest {
     @Test
     fun `search should not find private nested class`() {
         assert(resolver.search("NestedPrivateClass") == null)
+    }
+
+    @Test
+    fun `search should not find protected nested class of final class`() {
+        assert(resolver.search("NestedProtectedClass") == null)
     }
 
     @Test
