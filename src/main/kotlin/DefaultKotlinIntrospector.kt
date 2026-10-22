@@ -52,10 +52,9 @@ import kotlin.metadata.jvm.Metadata as jvmMetadata
 internal data class IndexedExtension(
     val function: KmFunction,
     val sourceClass: String,  // fully qualified class name where it's defined
-    val source: String  // the package, or the object, to import it from
-) {
-    val isObjectMember: Boolean get() = source != sourceClass.substringBeforeLast('.', "")
-}
+    val source: String,  // the package, or the object, to import it from
+    val isObjectMember: Boolean  // whether the source is an object
+)
 
 /**
  * Represents an indexed extension property with its source location.
@@ -63,10 +62,9 @@ internal data class IndexedExtension(
 internal data class IndexedExtensionProperty(
     val property: KmProperty,
     val sourceClass: String,  // fully qualified class name where it's defined
-    val source: String  // the package, or the object, to import it from
-) {
-    val isObjectMember: Boolean get() = source != sourceClass.substringBeforeLast('.', "")
-}
+    val source: String,  // the package, or the object, to import it from
+    val isObjectMember: Boolean  // whether the source is an object
+)
 
 /**
  * A Kotlin class found on the classpath, by its metadata name, like `com/example/Outer.Nested`,
@@ -1375,6 +1373,7 @@ internal class DefaultKotlinIntrospector(
                     indexedClass.extensionProperties,
                     indexedClass.binaryName,
                     source = indexedClass.name.replace('/', '.'),
+                    isObjectMember = true,
                     funcIndex,
                     propIndex
                 )
@@ -1538,7 +1537,9 @@ internal class DefaultKotlinIntrospector(
             kmPackage.functions,
             kmPackage.properties,
             className,
-            source = className.substringBeforeLast('.', ""),
+            // the facade class name for the default package, which has no name
+            source = className.substringBeforeLast('.'),
+            isObjectMember = false,
             funcIndex,
             propIndex
         )
@@ -1549,6 +1550,7 @@ internal class DefaultKotlinIntrospector(
         properties: List<KmProperty>,
         className: String,
         source: String,
+        isObjectMember: Boolean,
         funcIndex: MutableMap<String, MutableList<IndexedExtension>>,
         propIndex: MutableMap<String, MutableList<IndexedExtensionProperty>>
     ) {
@@ -1560,7 +1562,7 @@ internal class DefaultKotlinIntrospector(
             val receiverName = getReceiverTypeName(receiverType)
 
             funcIndex.getOrPut(receiverName) { mutableListOf() }
-                .add(IndexedExtension(function, className, source))
+                .add(IndexedExtension(function, className, source, isObjectMember))
         }
 
         for (property in properties) {
@@ -1569,7 +1571,7 @@ internal class DefaultKotlinIntrospector(
             val receiverName = getReceiverTypeName(receiverType)
 
             propIndex.getOrPut(receiverName) { mutableListOf() }
-                .add(IndexedExtensionProperty(property, className, source))
+                .add(IndexedExtensionProperty(property, className, source, isObjectMember))
         }
     }
 

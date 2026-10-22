@@ -1178,6 +1178,19 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve class with extensions from the default package under the facade class name`() {
+        // the default package has no name, so the header names the file facade class instead
+        resolver.resolve(
+            "DefaultPackageSubject"
+        ) sameAsKotlin """
+            // DefaultPackageSubject [page 1/1]
+            class DefaultPackageSubject
+            // from DefaultPackageExtensionsKt
+            fun DefaultPackageSubject.greet(): String
+        """.trimIndent()
+    }
+
+    @Test
     fun `should not resolve extensions of a kotlin type for a user class of a matching name`() {
         // collections.Iterator must not get the extensions of kotlin.collections.Iterator
         resolver.resolve(
