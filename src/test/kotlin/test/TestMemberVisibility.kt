@@ -114,3 +114,31 @@ class HiddenCompanionMembersHolder {
         internal fun internalHelper(): String = PRIVATE_CONSTANT
     }
 }
+
+// Only the sealed subclasses which are part of the API are listed, wherever they are declared
+sealed class SealedVisibilityHolder {
+    private class PrivateSubclass : SealedVisibilityHolder()
+    internal class InternalSubclass : SealedVisibilityHolder()
+    class PublicSubclass : SealedVisibilityHolder()
+
+    // uses the private subclass, so that the compiler does not report it as unused
+    fun usePrivate(): SealedVisibilityHolder = PrivateSubclass()
+}
+
+internal class InternalTopLevelSealedSubclass : SealedVisibilityHolder()
+
+class PublicTopLevelSealedSubclass : SealedVisibilityHolder()
+
+internal class InternalSealedSubclassHolder {
+    class NestedSubclass : SealedVisibilityHolder()
+}
+
+class PublicSealedSubclassHolder {
+    class NestedSubclass : SealedVisibilityHolder()
+}
+
+// A sealed class without any subclass of the API is rendered without a body
+sealed class HiddenSubclassesSealed {
+    private class Impl : HiddenSubclassesSealed()
+    internal object InternalImpl : HiddenSubclassesSealed()
+}

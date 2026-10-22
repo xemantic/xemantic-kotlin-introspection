@@ -79,3 +79,11 @@ class TypeParametersNestedHolder<K> {
     }
     class Sorted<T> where T : Comparable<T>, T : CharSequence
 }
+
+class InnerOfInnerHolder<A> {
+    inner class Mid<B> {
+        inner class Leaf(override val key: A, override val value: B) : Map.Entry<A, B> {
+            fun pair(): Pair<A, B> = key to value
+        }
+    }
+}

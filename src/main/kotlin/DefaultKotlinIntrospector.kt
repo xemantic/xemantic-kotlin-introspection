@@ -351,12 +351,18 @@ internal class DefaultKotlinIntrospector(
         (readMetadata(clazz) as? KotlinClassMetadata.Class)?.kmClass
 
     /**
+     * Loads the metadata of a class by its name, either the metadata one, like `com/example/Outer.Nested`,
+     * or the one accepted by [loadClass].
+     */
+    private fun loadKmClass(name: String): KmClass? = loadClass(name.replace('/', '.'))?.let { readKmClass(it) }
+
+    /**
      * The scopes of the classes enclosing the [kmClass], from the outermost one,
      * or null if any of them cannot be loaded.
      */
     private fun enclosingScopes(kmClass: KmClass): List<ClassScope>? =
         enclosingClassNames(kmClass.name).map { name ->
-            loadClass(name.replace('/', '.'))?.let { readKmClass(it) }?.scope ?: return null
+            loadKmClass(name)?.scope ?: return null
         }
 
     /**
@@ -381,7 +387,7 @@ internal class DefaultKotlinIntrospector(
         memberName: String
     ): String? {
         val isInterface = kmClass.kind == ClassKind.INTERFACE
-        val typeParameters = kmClass.typeParameters.namesById()
+        val typeParameters = typeParametersInScope(kmClass)
         val contextPackage = contextPackageOf(clazz, className)
 
         val members = kmClass.functions.filter {
@@ -594,7 +600,7 @@ internal class DefaultKotlinIntrospector(
             for (supertype in pending.removeFirst().supertypes) {
                 val name = (supertype.classifier as? KmClassifier.Class)?.name?.replace('/', '.') ?: continue
                 if (name.startsWith("kotlin.") || name.startsWith("java.") || !supertypeNames.add(name)) continue
-                loadClass(name)?.let { readKmClass(it) }?.let { pending.add(it) }
+                loadKmClass(name)?.let { pending.add(it) }
             }
         }
         return supertypeNames
@@ -728,7 +734,7 @@ internal class DefaultKotlinIntrospector(
         val isEnum = kmClass.kind == ClassKind.ENUM_CLASS
         val isAnnotation = kmClass.kind == ClassKind.ANNOTATION_CLASS
         val isSealed = kmClass.modality == Modality.SEALED
-        val typeParameters = kmClass.typeParameters.namesById()
+        val typeParameters = typeParametersInScope(kmClass)
 
         // Extract the package name for context-aware type formatting
         val contextPackage = contextPackageOf(clazz, className)
@@ -753,52 +759,39 @@ internal class DefaultKotlinIntrospector(
         // The companion object, unless it is not part of the API, with its members which are
         val companion = kmClass.companionObject
             // the binary name, as the class might be nested
-            ?.let { name -> loadClass("${clazz.name}\$$name")?.let { readKmClass(it) } }
+            ?.let { name -> loadKmClass("${clazz.name}\$$name") }
             ?.takeIf { it.visibility.isApiIn(scopes) }
         val companionScopes = scopes + listOfNotNull(companion?.scope)
         val companionProperties = companion?.properties.orEmpty().filter { it.visibility.isApiIn(companionScopes) }
         val companionFunctions = companion?.functions.orEmpty().filter { it.visibility.isApiIn(companionScopes) }
-
-        val supertypes = formatSupertypes(kmClass, contextPackage, typeParameters)
 
         // Extensions from the index on this type and its supertypes (shown after class body with source)
         val receiverNames = listOf(className) + userSupertypes(kmClass)
         val extensions = receiverNames.flatMap { getExtensionsFor(it) }
         val extensionProperties = receiverNames.flatMap { getExtensionPropertiesFor(it) }
 
-        return buildString {
-            +formatClassPrefix(kmClass)
+        // For annotation classes, the parameters are shown inline, without body
+        val annotationParameters = primaryConstructor?.valueParameters
+            ?.takeIf { isAnnotation && it.isNotEmpty() }
 
-            // Class name (simple name, not FQN)
-            // For nested classes, the name might be "Parent.Nested" or "Parent$Nested"
-            +kmClass.name.substringAfterLast("/").substringAfterLast(".").substringAfterLast("$")
-            +formatTypeParameters(kmClass.typeParameters, typeParameters, contextPackage)
-
-            // For annotation classes, show parameters inline without body
-            if (isAnnotation && primaryConstructor != null && primaryConstructor.valueParameters.isNotEmpty()) {
-                +"("
-                +(primaryConstructor.valueParameters.joinToString(", ") { param ->
-                    formatValueParameter(
-                        param,
-                        contextPackage,
-                        prefix = "val ",
-                        // the default values are only present in the JVM annotation, not in the Kotlin metadata
-                        defaultValue = { formatAnnotationDefaultValue(clazz, param.name, contextPackage) }
-                    )
-                })
-                +")"
-                return@buildString
+        val constructorDeclaration = when {
+            annotationParameters != null -> annotationParameters.joinToString(", ", "(", ")") { param ->
+                formatValueParameter(
+                    param,
+                    contextPackage,
+                    prefix = "val ",
+                    // the default values are only present in the JVM annotation, not in the Kotlin metadata
+                    defaultValue = { formatAnnotationDefaultValue(clazz, param.name, contextPackage) }
+                )
             }
-
-            if (renderedConstructor != null && renderedConstructor.valueParameters.isNotEmpty()) {
+            renderedConstructor != null && renderedConstructor.valueParameters.isNotEmpty() -> buildString {
                 // a protected constructor can be called only from a subclass
                 if (!isEnum && renderedConstructor.visibility != Visibility.PUBLIC) {
                     +" "
                     +formatVisibility(renderedConstructor.visibility)
                     +"constructor"
                 }
-                +"("
-                +(renderedConstructor.valueParameters.joinToString(", ") { param ->
+                +(renderedConstructor.valueParameters.joinToString(", ", "(", ")") { param ->
                     // a parameter not declaring a property is still needed to call the constructor
                     val prop = constructorProperties[param.name]
                     val prefix = if (prop == null) "" else buildString {
@@ -808,19 +801,21 @@ internal class DefaultKotlinIntrospector(
                     }
                     formatValueParameter(param, contextPackage, typeParameters, prefix)
                 })
-                +")"
             }
+            else -> ""
+        }
 
-            if (supertypes.isNotEmpty()) {
-                +" : "
-                +supertypes.joinToString(", ")
-            }
+        return buildString {
+            // For nested classes, the name might be "Parent.Nested" or "Parent$Nested"
+            val simpleName = kmClass.name.substringAfterLast("/").substringAfterLast(".").substringAfterLast("$")
+            +formatClassHeader(kmClass, simpleName, contextPackage, typeParameters, constructorDeclaration)
 
-            +formatWhereClause(kmClass.typeParameters, typeParameters, contextPackage)
+            if (annotationParameters != null) return@buildString
 
             // Check if there's any body content
             val hasEnumEntries = isEnum && kmClass.kmEnumEntries.isNotEmpty()
-            val hasSealedSubclasses = isSealed && kmClass.sealedSubclasses.isNotEmpty()
+            val sealedSubclasses = if (isSealed) listedSealedSubclasses(kmClass) else emptyList()
+            val hasSealedSubclasses = sealedSubclasses.isNotEmpty()
             val hasBodyProperties = properties.any { it.name !in constructorParamNames }
             val hasFunctions = functions.isNotEmpty()
             // even without members of the API, the companion object is a value, like a CoroutineContext.Key
@@ -854,37 +849,11 @@ internal class DefaultKotlinIntrospector(
                 }
             }
 
-            // For sealed classes, show sealed subclasses
-            if (hasSealedSubclasses) {
-                val parentSimpleName = kmClass.name.substringAfterLast("/")
-                kmClass.sealedSubclasses.forEach { subclassName ->
-                    // subclassName format: "com/example/Parent.SubClass" or "com/example/Parent$SubClass"
-                    val simpleName = subclassName.substringAfterLast("/")
-                        .substringAfterLast(".")  // Remove parent class prefix like "Parent."
-                        .substringAfterLast("$")  // Remove parent class prefix like "Parent$"
-                    val subclassPrefix = loadClass(subclassName.replace('/', '.'))
-                        ?.let { readKmClass(it) }
-                        ?.let { formatClassPrefix(it) }
-                        ?: "class "
-                    +"    $subclassPrefix$simpleName : $parentSimpleName\n"
-                }
-            }
-
-            // Nested classes, only referenced, as they can be resolved by their own name
-            nestedClasses.forEach { (name, nestedKmClass) ->
+            // The sealed subclasses first, then the other nested classes, only referenced,
+            // as they can be resolved by their own name
+            (sealedSubclasses + nestedClasses).forEach { (name, listedKmClass) ->
                 +"    "
-                +formatClassPrefix(nestedKmClass)
-                +name
-                // an inner class can refer to the type parameters of its outer class
-                val nestedTypeParameters = (if (nestedKmClass.isInner) typeParameters else emptyMap()) +
-                    nestedKmClass.typeParameters.namesById()
-                +formatTypeParameters(nestedKmClass.typeParameters, nestedTypeParameters, contextPackage)
-                val nestedSupertypes = formatSupertypes(nestedKmClass, contextPackage, nestedTypeParameters)
-                if (nestedSupertypes.isNotEmpty()) {
-                    +" : "
-                    +nestedSupertypes.joinToString(", ")
-                }
-                +formatWhereClause(nestedKmClass.typeParameters, nestedTypeParameters, contextPackage)
+                +formatClassHeader(listedKmClass, name, contextPackage, typeParametersInScope(listedKmClass))
                 +"\n"
             }
 
@@ -906,17 +875,10 @@ internal class DefaultKotlinIntrospector(
 
             // Companion object members
             if (companion != null) {
-                +"    "
-                +formatVisibility(companion.visibility)
-                +"companion object"
                 // a custom name is needed to qualify the members, like Outer.Factory.create()
-                val companionName = kmClass.companionObject
-                if (companionName != DEFAULT_COMPANION_NAME) +" $companionName"
-                val companionSupertypes = formatSupertypes(companion, contextPackage, emptyMap())
-                if (companionSupertypes.isNotEmpty()) {
-                    +" : "
-                    +companionSupertypes.joinToString(", ")
-                }
+                val companionName = kmClass.companionObject.takeIf { it != DEFAULT_COMPANION_NAME } ?: ""
+                +"    "
+                +formatClassHeader(companion, companionName, contextPackage)
 
                 // a companion object without members of the API is rendered without a body
                 if (companionProperties.isEmpty() && companionFunctions.isEmpty()) {
@@ -950,15 +912,48 @@ internal class DefaultKotlinIntrospector(
         }
     }
 
+    /**
+     * The header of a class declaration: the modifiers and the kind, the [name], the type parameters,
+     * the [constructor] declaration, if any, the supertypes and the where clause.
+     *
+     * @param name the name to render, possibly qualified, like `Holder.Nested`, or empty for a default companion object.
+     * @param typeParameters the names of the type parameters in scope, including the ones
+     *   of the outer class of an inner class.
+     */
+    private fun formatClassHeader(
+        kmClass: KmClass,
+        name: String,
+        contextPackage: String,
+        typeParameters: Map<Int, String> = kmClass.typeParameters.namesById(),
+        constructor: String = ""
+    ): String = buildString {
+        // the prefix ends with a space, like in `companion object `
+        +formatClassPrefix(kmClass).let { if (name.isEmpty()) it.trimEnd() else it + name }
+        +formatTypeParameters(kmClass.typeParameters, typeParameters, contextPackage)
+        +constructor
+        val supertypes = formatSupertypes(kmClass, contextPackage, typeParameters)
+        if (supertypes.isNotEmpty()) {
+            +" : "
+            +supertypes.joinToString(", ")
+        }
+        +formatWhereClause(kmClass.typeParameters, typeParameters, contextPackage)
+    }
+
     private fun formatSupertypes(
         kmClass: KmClass,
         contextPackage: String,
         typeParameters: Map<Int, String>
     ): List<String> = kmClass.supertypes
+        .filter { supertype ->
+            // the implicit supertypes are redundant
+            when ((supertype.classifier as? KmClassifier.Class)?.name) {
+                "kotlin/Any" -> false
+                "kotlin/Enum" -> kmClass.kind != ClassKind.ENUM_CLASS
+                "kotlin/Annotation" -> kmClass.kind != ClassKind.ANNOTATION_CLASS
+                else -> true
+            }
+        }
         .map { formatType(it, contextPackage, typeParameters) }
-        .filter { it != "Any" }
-        // Enum supertype is redundant for enum classes
-        .filter { !(kmClass.kind == ClassKind.ENUM_CLASS && it.startsWith("Enum<")) }
 
     /**
      * Renders the extensions shown after a class body, grouped under a `// from <source>` comment
@@ -988,6 +983,23 @@ internal class DefaultKotlinIntrospector(
     }
 
     /**
+     * The sealed subclasses of the [kmClass] which are part of the API, by their names relative to the [kmClass]
+     * when nested within it, or else to their package, like `Holder.Nested`.
+     * The ones which cannot be loaded are not listed, as they cannot be resolved either,
+     * neither is the own companion object, already rendered as such,
+     * while the companion object of another class is, as a branch of a `when` expression.
+     */
+    private fun listedSealedSubclasses(kmClass: KmClass): List<Pair<String, KmClass>> =
+        kmClass.sealedSubclasses.mapNotNull { subclassName ->
+            if (subclassName == "${kmClass.name}.${kmClass.companionObject}") return@mapNotNull null
+            val subclass = loadKmClass(subclassName) ?: return@mapNotNull null
+            val enclosing = enclosingScopes(subclass) ?: return@mapNotNull null
+            val isListed = subclass.kind == ClassKind.COMPANION_OBJECT || isListedNestedClass(subclass)
+            if (!isListed || !subclass.visibility.isApiIn(enclosing)) return@mapNotNull null
+            subclassName.removePrefix("${kmClass.name}.").substringAfterLast('/') to subclass
+        }
+
+    /**
      * The nested classes worth listing in the outer class, by their simple names, excluding
      * the sealed subclasses and the companion object, which are already rendered,
      * and the ones not visible to the users of the outer class.
@@ -1002,7 +1014,7 @@ internal class DefaultKotlinIntrospector(
             .filter { "${kmClass.name}.$it" !in sealedSubclasses }
             .mapNotNull { name ->
                 // the binary name, as the class might be nested
-                loadClass("${clazz.name}\$$name")?.let { readKmClass(it) }?.let { name to it }
+                loadKmClass("${clazz.name}\$$name")?.let { name to it }
             }
             .filter { (_, nestedKmClass) ->
                 isListedNestedClass(nestedKmClass) && nestedKmClass.visibility.isApiIn(scopes)
@@ -1235,6 +1247,16 @@ internal class DefaultKotlinIntrospector(
     }
 
     private fun List<KmTypeParameter>.namesById(): Map<Int, String> = associate { it.id to it.name }
+
+    /**
+     * The names of the type parameters which the [kmClass] can refer to, by their ids,
+     * including the ones of its outer classes when it is an inner class,
+     * which can be declared in a class other than the one listing it, like a sealed subclass.
+     */
+    private fun typeParametersInScope(kmClass: KmClass): Map<Int, String> {
+        val outerClass = if (kmClass.isInner) enclosingClassNames(kmClass.name).lastOrNull()?.let { loadKmClass(it) } else null
+        return outerClass?.let { typeParametersInScope(it) }.orEmpty() + kmClass.typeParameters.namesById()
+    }
 
     private fun KmType.isNullableAny(): Boolean =
         (classifier as? KmClassifier.Class)?.name == "kotlin/Any" && isNullable

@@ -709,6 +709,15 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve annotation class without parameters`() {
+        // the Annotation supertype is implicit, like the Enum one of an enum class
+        resolver.resolve("kotlin.jvm.JvmStatic") sameAsKotlin """
+            // kotlin.jvm.JvmStatic [page 1/1]
+            annotation class JvmStatic
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve class with companion object`() {
         // an LLM needs to see companion object members to access static-like functionality,
         // but not the private ones
@@ -2017,6 +2026,49 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve inner class with type parameters of the outer class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.TypeParametersNestedHolder.Cursor"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.TypeParametersNestedHolder.Cursor [page 1/1]
+            inner class Cursor : Iterator<K> {
+                override operator fun hasNext(): Boolean
+                override operator fun next(): K
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of inner class with type parameters of the outer class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.TypeParametersNestedHolder.Cursor.next"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.TypeParametersNestedHolder.Cursor.next [page 1/1]
+            override operator fun next(): K
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve function of inner class of inner class with type parameters of all outer classes`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InnerOfInnerHolder.Mid.Leaf.pair"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InnerOfInnerHolder.Mid.Leaf.pair [page 1/1]
+            fun pair(): Pair<A, B>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve property of inner class of inner class with type parameters of all outer classes`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InnerOfInnerHolder.Mid.Leaf.key"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InnerOfInnerHolder.Mid.Leaf.key [page 1/1]
+            override val key: A
+        """.trimIndent()
+    }
+
+    @Test
     fun `should separate enum entries from nested classes`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.NestedClassEnum"
@@ -2458,6 +2510,85 @@ class KotlinIntrospectorTest {
             sealed class SealedShape {
                 class Square : SealedShape
                 val code: Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render inner sealed subclass of another class with its outer type parameters`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.GenericSealedHolder"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GenericSealedHolder [page 1/1]
+            sealed class GenericSealedHolder<A> {
+                inner class GenericSealedOuter.Sub : GenericSealedHolder<T>
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render inner subclass of sealed interface with its outer type parameters`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InnerSealedInterface"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InnerSealedInterface [page 1/1]
+            sealed interface InnerSealedInterface {
+                inner class InnerSealedInterfaceHolder.Sub : InnerSealedInterface, Comparable<X>
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should list companion object of another class as sealed subclass`() {
+        // the own companion object is rendered as such, while the one of another class is a branch of a when expression
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.CompanionSealedHolder"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.CompanionSealedHolder [page 1/1]
+            sealed class CompanionSealedHolder {
+                class Sub : CompanionSealedHolder
+                companion object CompanionSealedSubclassHolder.Companion : CompanionSealedHolder
+                companion object : CompanionSealedHolder
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should list only sealed subclasses of the API`() {
+        // the private and internal ones, also the ones nested in an internal class, cannot be used in a when expression
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.SealedVisibilityHolder"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SealedVisibilityHolder [page 1/1]
+            sealed class SealedVisibilityHolder {
+                class PublicSealedSubclassHolder.NestedSubclass : SealedVisibilityHolder
+                class PublicTopLevelSealedSubclass : SealedVisibilityHolder
+                class PublicSubclass : SealedVisibilityHolder
+                fun usePrivate(): SealedVisibilityHolder
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render sealed class without body when no subclass is part of the API`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenSubclassesSealed"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenSubclassesSealed [page 1/1]
+            sealed class HiddenSubclassesSealed
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render sealed subclasses with all their supertypes`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.SealedSupertypesHolder"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SealedSupertypesHolder [page 1/1]
+            sealed class SealedSupertypesHolder {
+                class Box<T : CharSequence> : SealedSupertypesHolder, Iterable<T>
+                class Circle : SealedSupertypesHolder, Comparable<SealedSupertypesHolder.Circle>
+                data object Empty : SealedSupertypesHolder
             }
         """.trimIndent()
     }
