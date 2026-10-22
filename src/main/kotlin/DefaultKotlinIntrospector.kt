@@ -509,6 +509,9 @@ internal class DefaultKotlinIntrospector(
                 .filter { it.classifier !in javaOnlyInterfaces }
                 .map { formatKTypeProjection(it) }
             declaration = buildString {
+                // the unsigned types are value classes
+                +formatJvmInline(kClass.java.isAnnotationPresent(JvmInline::class.java))
+                if (kClass.isValue) +"value "
                 +(if (kClass.java.isInterface) "interface " else "class ")
                 +simpleName
                 +formatKTypeParameters(kClass.typeParameters)
@@ -676,10 +679,20 @@ internal class DefaultKotlinIntrospector(
     }
 
     /**
+     * The `@JvmInline` annotation, which a value class with a single underlying property requires on the JVM.
+     * It is rendered inline, so that the class declaration stays on a single line,
+     * also when re-parsed for pagination.
+     */
+    private fun formatJvmInline(isJvmInline: Boolean): String = if (isJvmInline) "@JvmInline " else ""
+
+    /**
      * The modifiers and the kind of the class, like `data class ` or `object `.
      */
     private fun formatClassPrefix(kmClass: KmClass): String = buildString {
         val isInterface = kmClass.kind == ClassKind.INTERFACE
+
+        // a value class with multiple underlying properties (-Xvalue-classes) is not annotated
+        +formatJvmInline(kmClass.isValue && kmClass.inlineClassUnderlyingPropertyName != null)
 
         // Visibility and modifiers
         +formatVisibility(kmClass.visibility)
@@ -690,6 +703,8 @@ internal class DefaultKotlinIntrospector(
         if (kmClass.isData) +"data "
         if (kmClass.isValue) +"value "
         if (kmClass.isInner) +"inner "
+        // a lambda can be passed for a fun interface, by SAM conversion
+        if (kmClass.isFunInterface) +"fun "
 
         // Class kind
         +when (kmClass.kind) {

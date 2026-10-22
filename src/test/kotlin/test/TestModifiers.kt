@@ -95,3 +95,17 @@ sealed class CompanionSealedHolder {
 class CompanionSealedSubclassHolder {
     companion object : CompanionSealedHolder()
 }
+
+// A fun interface accepts a lambda by SAM conversion
+fun interface SamHandler {
+    fun handle(x: Int)
+}
+
+// The value classes and fun interfaces listed as nested classes and sealed subclasses
+sealed interface ClassModifiersHolder {
+    @JvmInline
+    value class Id(val v: Int) : ClassModifiersHolder
+    fun interface Callback {
+        fun call(): Int
+    }
+}
