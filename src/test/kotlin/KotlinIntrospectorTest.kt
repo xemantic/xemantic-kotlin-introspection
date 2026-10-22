@@ -845,6 +845,45 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve suspend function types`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.SuspendFunctionTypesTestClass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SuspendFunctionTypesTestClass [page 1/1]
+            class SuspendFunctionTypesTestClass {
+                val handler: suspend (String) -> Unit
+                fun launch(block: suspend () -> String)
+                fun launchWithParameters(block: suspend (Int, String) -> Boolean)
+                fun launchWithReceiver(block: suspend FunctionModifiersTestClass.() -> Unit)
+                fun launchNullable(block: (suspend () -> Unit)?)
+                fun supplier(): suspend () -> List<String>
+                fun launchAll(blocks: List<suspend () -> Unit>)
+                fun launchWithNullableReceiver(block: suspend (suspend () -> Unit)?.() -> Unit)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension function on suspend function type`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.TestFunctionModifiersKt.retry"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.TestFunctionModifiersKt.retry [page 1/1]
+            fun (suspend () -> Unit).retry()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension property on suspend function type`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.TestFunctionModifiersKt.retryCount"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.TestFunctionModifiersKt.retryCount [page 1/1]
+            val (suspend () -> Unit).retryCount: Int
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve class with property modifiers`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.PropertyModifiersTestClass"
@@ -1142,7 +1181,7 @@ class KotlinIntrospectorTest {
     fun `search should find class by partial name match`() {
         // should find our test classes
         resolver.search("TestClass") sameAsKotlin """
-            // search results for "TestClass" [page 1/2]
+            // search results for "TestClass" [page 1/3]
             com.xemantic.kotlin.introspection.test.AbstractTestClass
             com.xemantic.kotlin.introspection.test.AnnotationDefaultsTestClass
             com.xemantic.kotlin.introspection.test.AnnotationTestClass
@@ -1160,7 +1199,7 @@ class KotlinIntrospectorTest {
     fun `search should be case-insensitive`() {
         // should still find test classes despite uppercase query
         resolver.search("TESTCLASS") sameAsKotlin """
-            // search results for "TESTCLASS" [page 1/2]
+            // search results for "TESTCLASS" [page 1/3]
             com.xemantic.kotlin.introspection.test.AbstractTestClass
             com.xemantic.kotlin.introspection.test.AnnotationDefaultsTestClass
             com.xemantic.kotlin.introspection.test.AnnotationTestClass
@@ -1181,7 +1220,7 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `search should support pagination with pageSize`() {
-        // should show first 3 results (20 total classes, 7 pages)
+        // should show first 3 results (21 total classes, 7 pages)
         resolver.search("TestClass", pageSize = 3) sameAsKotlin """
             // search results for "TestClass" [page 1/7]
             com.xemantic.kotlin.introspection.test.AbstractTestClass
@@ -1192,7 +1231,7 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `search should support pagination with page parameter`() {
-        // should show results 4-6 (20 total classes, 7 pages)
+        // should show results 4-6 (21 total classes, 7 pages)
         resolver.search("TestClass", page = 2, pageSize = 3) sameAsKotlin """
             // search results for "TestClass" [page 2/7]
             com.xemantic.kotlin.introspection.test.CompanionTestClass
