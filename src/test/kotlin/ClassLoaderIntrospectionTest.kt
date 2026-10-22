@@ -196,6 +196,7 @@ class ClassLoaderIntrospectionTest {
                 fun process(item: Int)
                 override fun run()
                 fun run(times: Int)
+                fun prim(x: Int?)
             }
         """.trimIndent()
     }
@@ -216,6 +217,7 @@ class ClassLoaderIntrospectionTest {
             class AbsentBoundJavaSubclass : AbsentBoundJavaBase {
                 override fun run()
                 override fun <T : Comparable<Absent>> compare(item: T)
+                fun <T : CharSequence> compare(item: T)
                 fun compare(item: Int)
             }
         """.trimIndent()
@@ -350,6 +352,7 @@ class ClassLoaderIntrospectionTest {
                 fun process(item: Int)
                 override fun run()
                 fun run(times: Int)
+                fun prim(x: Int?)
             }
         """.trimIndent()
     }
@@ -376,6 +379,7 @@ class ClassLoaderIntrospectionTest {
                 fun process(item: Int)
                 open fun run()
                 fun run(times: Int)
+                fun prim(x: Int?)
             }
         """.trimIndent()
     }

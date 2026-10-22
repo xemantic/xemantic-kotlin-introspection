@@ -62,7 +62,8 @@ import org.objectweb.asm.Type as AsmType
  * or the JVM names of the built-in members, like `charAt` for `CharSequence.get`, are irrelevant.
  *
  * Only Java supertypes are reflected, and their methods are matched by the erasure of the parameter types,
- * as the nullability and the mutability of their types are not known in Kotlin.
+ * as the nullability and the mutability of their types are not known in Kotlin,
+ * except for a primitive type, which is not nullable.
  * A Java type mapped to a Kotlin built-in type, like `java.util.List`, is replaced with the built-in type.
  *
  * The overridable members of the supertypes are collected once per class.
@@ -86,12 +87,15 @@ internal class OverrideResolver(
 
     /**
      * @param nullable `null` for a type coming from Java, which can be seen in Kotlin as both nullable and not.
+     * @param isJavaPrimitive whether this is a Java primitive type, seen in Kotlin as not nullable,
+     *   unlike a Kotlin type substituted for a Java type variable, also not nullable, but flexible in Kotlin.
      */
     private data class ClassType(
         val name: String,
         val arguments: List<TypeArgument> = emptyList(),
         val nullable: Boolean? = false,
-        val outer: ClassType? = null
+        val outer: ClassType? = null,
+        val isJavaPrimitive: Boolean = false
     ) : MemberType {
         val isFlexible: Boolean get() = nullable == null
     }
@@ -200,8 +204,10 @@ internal class OverrideResolver(
         val overridesProperty = overridables.properties[property.name].orEmpty().any {
             it.matches(receiver, emptyList(), typeParameters.size, isSuspend = false)
         }
-        // a property of a Kotlin supertype without metadata is known only by its JVM getter
-        val overridesGetter = overridables.functions[getterName(property.name)].orEmpty().any {
+        // a property of a Kotlin supertype without metadata is known only by its JVM getter,
+        // which a private or a @JvmField property does not have, and which might be renamed or mangled
+        val getter = property.getterSignature?.takeIf { property.visibility.isOverridable }
+        val overridesGetter = getter != null && overridables.functions[getter.name].orEmpty().any {
             it.isJava && it.matches(receiver, emptyList(), typeParameters.size, isSuspend = false)
         }
         return overridesProperty || overridesGetter ||
@@ -217,13 +223,6 @@ internal class OverrideResolver(
      */
     private fun Overridables.isShrunk(signature: JvmMethodSignature?): Boolean =
         signature != null && ownerJvmMethods?.let { "${signature.name}${signature.descriptor}" !in it } == true
-
-    private fun getterName(propertyName: String): String =
-        if (propertyName.length > 2 && propertyName.startsWith("is") && !propertyName[2].isLowerCase()) {
-            propertyName
-        } else {
-            "get${propertyName.replaceFirstChar { it.uppercaseChar() }}"
-        }
 
     private fun Overridable.matches(
         receiver: MemberType?,
@@ -550,11 +549,23 @@ internal class OverrideResolver(
         return effective(a) == effective(b)
     }
 
-    private fun erasuresMatch(a: MemberType, b: MemberType): Boolean {
-        val erasureA = erasure(a) ?: return true
-        val erasureB = erasure(b) ?: return true
+    /**
+     * Whether the type of a Java method parameter, [overridden], has the same erasure as the [overriding] one,
+     * a Java primitive type matching only a non-nullable type, as a nullable one is boxed on the JVM.
+     */
+    private fun erasuresMatch(overridden: MemberType, overriding: MemberType): Boolean {
+        if (overridden is ClassType && overridden.isJavaPrimitive && overriding.isNullable) return false
+        val erasureA = erasure(overridden) ?: return true
+        val erasureB = erasure(overriding) ?: return true
         return erasureA == erasureB
     }
+
+    private val MemberType.isNullable: Boolean
+        get() = when (this) {
+            is ClassType -> nullable == true
+            is TypeParameterType -> nullable
+            UnknownType -> false
+        }
 
     /**
      * The name of the class the [type] is erased to on the JVM, or `null` if unknown.
@@ -714,15 +725,23 @@ internal class OverrideResolver(
                     substitution[type.name] ?: UnknownType
                 } else {
                     // a type variable of the method, known only by its erasure
-                    val erasure = type.bounds.firstOrNull()?.let { bound ->
-                        (bound as? Class<*>)?.let { (javaClassType(it) as? ClassType)?.let { erasure(it) } }
-                    }
+                    val erasure = javaErasure(type)?.let { (javaClassType(it) as? ClassType)?.let { erasure(it) } }
                     val index = (declaration as? Method)?.typeParameters?.indexOfFirst { it.name == type.name } ?: -1
                     TypeParameterType("F$index", false, erasure)
                 }
             }
             else -> UnknownType
         }
+
+    /**
+     * The class a Java [type] is erased to, the erasure of the first bound for a type variable.
+     */
+    private fun javaErasure(type: JavaType): Class<*>? = when (type) {
+        is Class<*> -> type
+        is ParameterizedType -> type.rawType as? Class<*>
+        is TypeVariable<*> -> type.bounds.firstOrNull()?.let { javaErasure(it) }
+        else -> null
+    }
 
     private fun javaClassType(javaClass: Class<*>): MemberType = when {
         javaClass.isArray -> {
@@ -741,7 +760,8 @@ internal class OverrideResolver(
             name = javaToKotlinNames[javaClass.name] ?: kotlinClassName(javaClass),
             // the type arguments of a raw type are unknown
             arguments = javaClass.typeParameters.map { TypeArgument(null, UnknownType) },
-            nullable = if (javaClass.isPrimitive) false else null
+            nullable = if (javaClass.isPrimitive) false else null,
+            isJavaPrimitive = javaClass.isPrimitive
         )
     }
 
@@ -813,7 +833,7 @@ internal class OverrideResolver(
                 nullable = null
             )
         }
-        else -> ClassType(primitiveNames.getValue(type.className), nullable = false)
+        else -> ClassType(primitiveNames.getValue(type.className), nullable = false, isJavaPrimitive = true)
     }
 
     /**

@@ -1619,6 +1619,84 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should not mark properties without JVM getter named like Java method as override`() {
+        // a @JvmField or private property has no getter, the getters of foo and value are named fooValue and getValue-<hash>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaGetterSubclass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaGetterSubclass [page 1/1]
+            class JavaGetterSubclass : com.xemantic.kotlin.introspection.test.other.JavaGetterBase {
+                val bar: Int
+                private val parent: String
+                val foo: Int
+                val value: UInt
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not mark function taking nullable type as override of Java method taking primitive`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaPrimitiveSubclass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaPrimitiveSubclass [page 1/1]
+            class JavaPrimitiveSubclass : com.xemantic.kotlin.introspection.test.other.JavaPrimitiveBase {
+                fun prim(x: Int?)
+                override fun boxed(x: Int)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark overrides of Java methods taking primitive and boxed types`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaNullablePrimitiveSubclass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaNullablePrimitiveSubclass [page 1/1]
+            class JavaNullablePrimitiveSubclass : com.xemantic.kotlin.introspection.test.other.JavaPrimitiveBase {
+                override fun prim(x: Int)
+                override fun boxed(x: Int?)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark override taking nullable type of Java method taking type variable substituted with Int`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaNullableIntProcessor"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaNullableIntProcessor [page 1/1]
+            abstract class JavaNullableIntProcessor : com.xemantic.kotlin.introspection.test.other.JavaProcessorBase<Int> {
+                override fun process(item: Int?)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark override of Java method whose type variable has parameterized bound`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaSorter"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaSorter [page 1/1]
+            class JavaSorter : com.xemantic.kotlin.introspection.test.other.JavaSortBase {
+                override fun <T : Comparable<T>> sort(x: T)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not mark function of other erasure as override of Java method whose type variable has parameterized bound`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.CharSequenceSorter"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.CharSequenceSorter [page 1/1]
+            class CharSequenceSorter : com.xemantic.kotlin.introspection.test.other.JavaSortBase {
+                fun <T : CharSequence> sort(x: T)
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should mark overrides of Any members of data class implementing Java interface`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.SerializableData"
