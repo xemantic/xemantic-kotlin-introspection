@@ -95,6 +95,68 @@ class ClassLoaderIntrospectionTest {
         signature sameAsKotlin isolatedTestClassSignature
     }
 
+    /**
+     * An introspector of the isolated test fixture [className] alone,
+     * without the classes it refers to.
+     */
+    private fun introspectorOfIsolatedClassAlone(className: String): KotlinIntrospector {
+        val classFile = "${className.replace('.', '/')}.class"
+        val root = tempDir.resolve("alone")
+        root.resolve(classFile).parent.createDirectories()
+        isolatedTestFixtures
+            .map { it.resolve(classFile) }
+            .first { it.exists() }
+            .copyTo(root.resolve(classFile).toFile())
+        val classLoader = URLClassLoader(
+            arrayOf(root.toUri().toURL()),
+            javaClass.classLoader
+        )
+        return KotlinIntrospector(classLoader)
+    }
+
+    @Test
+    fun `should resolve class whose generic supertype refers to a class missing from the classpath`() {
+        // given
+        val introspector = introspectorOfIsolatedClassAlone(
+            "com.xemantic.kotlin.introspection.isolated.AbsentTypeArgumentHolder"
+        )
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.AbsentTypeArgumentHolder"
+        )
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.AbsentTypeArgumentHolder [page 1/1]
+            abstract class AbsentTypeArgumentHolder : Comparable<Absent> {
+                fun hold()
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class whose members refer to a class missing from the classpath`() {
+        // given
+        val introspector = introspectorOfIsolatedClassAlone(
+            "com.xemantic.kotlin.introspection.isolated.AbsentTypeArgumentComparable"
+        )
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.AbsentTypeArgumentComparable"
+        )
+
+        // then
+        // the override cannot be told without reflection, but resolving does not fail
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.AbsentTypeArgumentComparable [page 1/1]
+            class AbsentTypeArgumentComparable : Comparable<Absent> {
+                open operator fun compareTo(other: Absent): Int
+            }
+        """.trimIndent()
+    }
+
     @Test
     fun `should not duplicate declarations of a class present twice on the classpath`() {
         // given
