@@ -73,11 +73,50 @@ internal data class IndexedExtensionProperty(
 private class IndexedClass(
     val name: String,
     val binaryName: String,
-    val visibility: Visibility,
+    val scope: ClassScope,
     val isSearchable: Boolean,
     val extensions: List<KmFunction>,
     val extensionProperties: List<KmProperty>
 )
+
+/**
+ * What decides whether the declarations within a class are part of the API.
+ *
+ * @param isOpen whether the user code can declare a subclass of this class.
+ */
+private class ClassScope(
+    val visibility: Visibility,
+    val isOpen: Boolean,
+    val isCompanion: Boolean
+)
+
+private val KmClass.scope: ClassScope
+    get() = ClassScope(
+        visibility = visibility,
+        // a sealed class cannot be extended outside its own module, and an interface cannot have protected members
+        isOpen = kind == ClassKind.CLASS && (modality == Modality.OPEN || modality == Modality.ABSTRACT),
+        isCompanion = kind == ClassKind.COMPANION_OBJECT
+    )
+
+/**
+ * Whether a declaration of this visibility is part of the API, the one which can be used from the user code,
+ * and therefore listed, resolved, and found.
+ * Private and internal declarations are not, neither are the `@PublishedApi internal` ones,
+ * callable only from public inline functions.
+ * Protected members are, but only of an open class, or of the companion object of an open class,
+ * as no subclass using them can be declared otherwise.
+ * Nothing declared within a class which is not part of the API is.
+ *
+ * @param enclosing the classes enclosing the declaration, from the outermost one, empty for a top-level declaration.
+ */
+private fun Visibility.isApiIn(enclosing: List<ClassScope>): Boolean {
+    val owner = enclosing.lastOrNull() ?: return this == Visibility.PUBLIC
+    val outerClasses = enclosing.dropLast(1)
+    // the protected members of a companion object are accessible to the subclasses of its outer class
+    val subclassed = if (owner.isCompanion) outerClasses.lastOrNull() else owner
+    val isVisible = this == Visibility.PUBLIC || (this == Visibility.PROTECTED && subclassed?.isOpen == true)
+    return isVisible && owner.visibility.isApiIn(outerClasses)
+}
 
 internal class DefaultKotlinIntrospector(
     private val classLoader: ClassLoader = Thread.currentThread().contextClassLoader,
@@ -198,6 +237,8 @@ internal class DefaultKotlinIntrospector(
          */
         private const val DEFAULT_VALUE_MARKER = "…"
 
+        private const val DEFAULT_COMPANION_NAME = "Companion"
+
     }
 
     init {
@@ -243,10 +284,15 @@ internal class DefaultKotlinIntrospector(
 
                 is KotlinClassMetadata.Class -> {
                     val kmClass = metadata.kmClass
+                    // neither a class which is not part of the API, nor anything declared within it, is resolved,
+                    // while its name might still be a member of the outer class, like an extension property
+                    val outerScopes = enclosingScopes(kmClass) ?: continue
+                    if (!kmClass.visibility.isApiIn(outerScopes)) continue
+                    val scopes = outerScopes + kmClass.scope
                     if (memberName != null) {
-                        resolveMember(kmClass, className, memberName)
+                        resolveMember(kmClass, scopes, className, memberName)
                     } else {
-                        formatClass(kmClass, className, clazz)
+                        formatClass(kmClass, scopes, className, clazz)
                     }
                 }
 
@@ -307,13 +353,34 @@ internal class DefaultKotlinIntrospector(
     private fun readKmClass(clazz: Class<*>): KmClass? =
         (readMetadata(clazz) as? KotlinClassMetadata.Class)?.kmClass
 
-    private fun resolveMember(kmClass: KmClass, className: String, memberName: String): String? {
+    /**
+     * The scopes of the classes enclosing the [kmClass], from the outermost one,
+     * or null if any of them cannot be loaded.
+     */
+    private fun enclosingScopes(kmClass: KmClass): List<ClassScope>? =
+        enclosingClassNames(kmClass.name).map { name ->
+            loadClass(name.replace('/', '.'))?.let { readKmClass(it) }?.scope ?: return null
+        }
+
+    /**
+     * @param scopes the scopes of the [kmClass] and its enclosing classes, from the outermost one.
+     */
+    private fun resolveMember(
+        kmClass: KmClass,
+        scopes: List<ClassScope>,
+        className: String,
+        memberName: String
+    ): String? {
         val isInterface = kmClass.kind == ClassKind.INTERFACE
         val typeParameters = kmClass.typeParameters.namesById()
 
-        val signatures = kmClass.functions.filter { it.name == memberName }.map { function ->
+        val signatures = kmClass.functions.filter {
+            it.name == memberName && it.visibility.isApiIn(scopes)
+        }.map { function ->
             formatFunction(function, inInterface = isInterface, owner = kmClass, classTypeParameters = typeParameters)
-        } + kmClass.properties.filter { it.name == memberName }.map { property ->
+        } + kmClass.properties.filter {
+            it.name == memberName && it.visibility.isApiIn(scopes)
+        }.map { property ->
             formatProperty(property, inInterface = isInterface, owner = kmClass, classTypeParameters = typeParameters)
         } + getExtensionPropertiesFor(className).filter { it.property.name == memberName }.map { extProp ->
             formatExtensionProperty(extProp.property)
@@ -326,8 +393,8 @@ internal class DefaultKotlinIntrospector(
 
     private fun resolvePackageMember(kmPackages: List<KmPackage>, memberName: String): String? {
         val signatures = kmPackages.flatMap { kmPackage ->
-            kmPackage.functions.filter { it.name == memberName }.map { formatFunction(it) } +
-                kmPackage.properties.filter { it.name == memberName }.map { property ->
+            kmPackage.functions.filter { it.name == memberName && it.visibility.isApiIn(emptyList()) }.map { formatFunction(it) } +
+                kmPackage.properties.filter { it.name == memberName && it.visibility.isApiIn(emptyList()) }.map { property ->
                     if (property.receiverParameterType != null) {
                         formatExtensionProperty(property)
                     } else {
@@ -753,7 +820,10 @@ internal class DefaultKotlinIntrospector(
         }
     }
 
-    private fun formatClass(kmClass: KmClass, className: String, clazz: Class<*>): String {
+    /**
+     * @param scopes the scopes of the [kmClass] and its enclosing classes, from the outermost one.
+     */
+    private fun formatClass(kmClass: KmClass, scopes: List<ClassScope>, className: String, clazz: Class<*>): String {
         val isInterface = kmClass.kind == ClassKind.INTERFACE
         val isEnum = kmClass.kind == ClassKind.ENUM_CLASS
         val isAnnotation = kmClass.kind == ClassKind.ANNOTATION_CLASS
@@ -764,12 +834,31 @@ internal class DefaultKotlinIntrospector(
         // For nested classes, use the actual Java package, not the parent class
         val contextPackage = clazz.`package`?.name ?: className.substringBeforeLast(".", "")
 
+        // Only the members which can be used from the user code
+        val properties = kmClass.properties.filter { it.visibility.isApiIn(scopes) }
+        val functions = kmClass.functions.filter { it.visibility.isApiIn(scopes) }
+
         // Find primary constructor and its parameter names
         val primaryConstructor = kmClass.constructors.firstOrNull { !it.isSecondary }
-        val constructorParamNames = primaryConstructor?.valueParameters?.map { it.name }?.toSet() ?: emptySet()
+        // The parameters of a constructor which cannot be called are not rendered, while the properties
+        // they declare still are, in the class body. Except for an enum class, whose constructor is always private,
+        // while its parameters are the idiomatic way of declaring the properties of the entries.
+        val renderedConstructor = primaryConstructor?.takeIf {
+            isEnum || it.visibility.isApiIn(scopes)
+        }
+        val constructorParamNames = renderedConstructor?.valueParameters?.map { it.name }?.toSet() ?: emptySet()
 
         // Constructor parameters - properties that match constructor parameter names
-        val constructorProperties = kmClass.properties.filter { it.name in constructorParamNames }.associateBy { it.name }
+        val constructorProperties = properties.filter { it.name in constructorParamNames }.associateBy { it.name }
+
+        // The companion object, unless it is not part of the API, with its members which are
+        val companion = kmClass.companionObject
+            // the binary name, as the class might be nested
+            ?.let { name -> loadClass("${clazz.name}\$$name")?.let { readKmClass(it) } }
+            ?.takeIf { it.visibility.isApiIn(scopes) }
+        val companionScopes = scopes + listOfNotNull(companion?.scope)
+        val companionProperties = companion?.properties.orEmpty().filter { it.visibility.isApiIn(companionScopes) }
+        val companionFunctions = companion?.functions.orEmpty().filter { it.visibility.isApiIn(companionScopes) }
 
         val supertypes = formatSupertypes(kmClass, contextPackage, typeParameters)
 
@@ -802,16 +891,22 @@ internal class DefaultKotlinIntrospector(
                 return@buildString
             }
 
-            if (primaryConstructor != null && primaryConstructor.valueParameters.isNotEmpty()) {
+            if (renderedConstructor != null && renderedConstructor.valueParameters.isNotEmpty()) {
+                // a protected constructor can be called only from a subclass
+                if (!isEnum && renderedConstructor.visibility != Visibility.PUBLIC) {
+                    +" "
+                    +formatVisibility(renderedConstructor.visibility)
+                    +"constructor"
+                }
                 +"("
-                +(primaryConstructor.valueParameters.joinToString(", ") { param ->
+                +(renderedConstructor.valueParameters.joinToString(", ") { param ->
                     // a parameter not declaring a property is still needed to call the constructor
                     val prop = constructorProperties[param.name]
-                    val prefix = when {
-                        prop == null -> ""
-                        prop.isVar -> "var "
-                        else -> "val "
-                    }.let { if (prop != null && isOverride(kmClass, prop)) "override $it" else it }
+                    val prefix = if (prop == null) "" else buildString {
+                        +formatVisibility(prop.visibility)
+                        if (isOverride(kmClass, prop)) +"override "
+                        +(if (prop.isVar) "var " else "val ")
+                    }
                     formatValueParameter(param, contextPackage, typeParameters, prefix)
                 })
                 +")"
@@ -827,10 +922,11 @@ internal class DefaultKotlinIntrospector(
             // Check if there's any body content
             val hasEnumEntries = isEnum && kmClass.kmEnumEntries.isNotEmpty()
             val hasSealedSubclasses = isSealed && kmClass.sealedSubclasses.isNotEmpty()
-            val hasBodyProperties = kmClass.properties.any { it.name !in constructorParamNames }
-            val hasFunctions = kmClass.functions.isNotEmpty()
-            val hasCompanion = kmClass.companionObject != null
-            val nestedClasses = listedNestedClasses(kmClass, clazz)
+            val hasBodyProperties = properties.any { it.name !in constructorParamNames }
+            val hasFunctions = functions.isNotEmpty()
+            // even without members of the API, the companion object is a value, like a CoroutineContext.Key
+            val hasCompanion = companion != null
+            val nestedClasses = listedNestedClasses(kmClass, scopes, clazz)
             val hasBodyContent = hasEnumEntries || hasSealedSubclasses || nestedClasses.isNotEmpty() ||
                 hasBodyProperties || hasFunctions || hasCompanion
 
@@ -894,7 +990,7 @@ internal class DefaultKotlinIntrospector(
             }
 
             // Properties (excluding constructor properties)
-            kmClass.properties
+            properties
                 .filter { it.name !in constructorParamNames }
                 .forEach { property ->
                     +"    "
@@ -903,32 +999,43 @@ internal class DefaultKotlinIntrospector(
                 }
 
             // Functions
-            kmClass.functions.forEach { function ->
+            functions.forEach { function ->
                 +"    "
                 +formatFunction(function, inInterface = isInterface, owner = kmClass, contextPackage = contextPackage, classTypeParameters = typeParameters)
                 +"\n"
             }
 
             // Companion object members
-            val companionObjectName = kmClass.companionObject
-            if (companionObjectName != null) {
-                // the binary name, as the class might be nested
-                val companionClazz = loadClass("${clazz.name}\$$companionObjectName")
-                val companionKmClass = companionClazz?.let { readKmClass(it) }
-                if (companionKmClass != null) {
-                    +"    companion object {\n"
+            if (companion != null) {
+                +"    "
+                +formatVisibility(companion.visibility)
+                +"companion object"
+                // a custom name is needed to qualify the members, like Outer.Factory.create()
+                val companionName = kmClass.companionObject
+                if (companionName != DEFAULT_COMPANION_NAME) +" $companionName"
+                val companionSupertypes = formatSupertypes(companion, contextPackage, emptyMap())
+                if (companionSupertypes.isNotEmpty()) {
+                    +" : "
+                    +companionSupertypes.joinToString(", ")
+                }
+
+                // a companion object without members of the API is rendered without a body
+                if (companionProperties.isEmpty() && companionFunctions.isEmpty()) {
+                    +"\n"
+                } else {
+                    +" {\n"
 
                     // Companion properties
-                    companionKmClass.properties.forEach { property ->
+                    companionProperties.forEach { property ->
                         +"        "
-                        +formatProperty(property, owner = companionKmClass, contextPackage = contextPackage)
+                        +formatProperty(property, owner = companion, contextPackage = contextPackage)
                         +"\n"
                     }
 
                     // Companion functions
-                    companionKmClass.functions.forEach { function ->
+                    companionFunctions.forEach { function ->
                         +"        "
-                        +formatFunction(function, inInterface = false, owner = companionKmClass, contextPackage = contextPackage)
+                        +formatFunction(function, inInterface = false, owner = companion, contextPackage = contextPackage)
                         +"\n"
                     }
 
@@ -985,7 +1092,11 @@ internal class DefaultKotlinIntrospector(
      * the sealed subclasses and the companion object, which are already rendered,
      * and the ones not visible to the users of the outer class.
      */
-    private fun listedNestedClasses(kmClass: KmClass, clazz: Class<*>): List<Pair<String, KmClass>> {
+    private fun listedNestedClasses(
+        kmClass: KmClass,
+        scopes: List<ClassScope>,
+        clazz: Class<*>
+    ): List<Pair<String, KmClass>> {
         val sealedSubclasses = kmClass.sealedSubclasses.toSet()
         return kmClass.nestedClasses
             .filter { "${kmClass.name}.$it" !in sealedSubclasses }
@@ -993,11 +1104,10 @@ internal class DefaultKotlinIntrospector(
                 // the binary name, as the class might be nested
                 loadClass("${clazz.name}\$$name")?.let { readKmClass(it) }?.let { name to it }
             }
-            .filter { (_, nestedKmClass) -> isListedNestedClass(nestedKmClass) }
+            .filter { (_, nestedKmClass) ->
+                isListedNestedClass(nestedKmClass) && nestedKmClass.visibility.isApiIn(scopes)
+            }
     }
-
-    private fun Visibility.isApi(): Boolean =
-        this == Visibility.PUBLIC || this == Visibility.PROTECTED
 
     private fun formatAnnotationDefaultValue(
         annotationClass: Class<*>,
@@ -1419,12 +1529,20 @@ internal class DefaultKotlinIntrospector(
             }
         }
 
-        fun isEnclosedIn(indexedClass: IndexedClass, isAllowed: (Visibility) -> Boolean) =
-            enclosingClassNames(indexedClass.name).all { name -> classes[name]?.visibility?.let(isAllowed) == true }
+        // the scopes of the enclosing classes, from the outermost one, unless any of them is missing
+        fun enclosingScopes(indexedClass: IndexedClass): List<ClassScope>? =
+            enclosingClassNames(indexedClass.name).map { name -> classes[name]?.scope ?: return null }
 
-        // the member extensions of public objects, which can be imported like the top-level ones
+        fun isApi(indexedClass: IndexedClass): Boolean =
+            enclosingScopes(indexedClass)?.let { indexedClass.scope.visibility.isApiIn(it) } == true
+
+        // the member extensions of public objects, which can be imported like the top-level ones,
+        // not the ones of protected objects, as they would be shown to all the users of the receiver type
         classes.values
-            .filter { it.visibility == Visibility.PUBLIC && isEnclosedIn(it) { visibility -> visibility == Visibility.PUBLIC } }
+            .filter { indexedClass ->
+                indexedClass.scope.visibility == Visibility.PUBLIC &&
+                    enclosingScopes(indexedClass)?.all { it.visibility == Visibility.PUBLIC } == true
+            }
             .forEach { indexedClass ->
                 indexExtensions(
                     indexedClass.extensions,
@@ -1440,7 +1558,7 @@ internal class DefaultKotlinIntrospector(
         // Index the classes by their simple names (lowercase for case-insensitive search)
         val clsIndex = mutableMapOf<String, MutableList<String>>()
         classes.values
-            .filter { it.isSearchable && isEnclosedIn(it) { visibility -> visibility.isApi() } }
+            .filter { it.isSearchable && isApi(it) }
             .forEach { indexedClass ->
                 // the Kotlin name, like com.example.Outer.Nested, which can be resolved
                 val kotlinName = indexedClass.name.replace('/', '.')
@@ -1573,7 +1691,7 @@ internal class DefaultKotlinIntrospector(
                 IndexedClass(
                     name = kmClass.name,
                     binaryName = className,
-                    visibility = kmClass.visibility,
+                    scope = kmClass.scope,
                     isSearchable = !isNested || isListedNestedClass(kmClass),
                     extensions = if (isObject) {
                         kmClass.functions.filter { it.receiverParameterType != null }
@@ -1612,10 +1730,9 @@ internal class DefaultKotlinIntrospector(
         funcIndex: MutableMap<String, MutableList<IndexedExtension>>,
         propIndex: MutableMap<String, MutableList<IndexedExtensionProperty>>
     ) {
-        // Only public extensions are indexed, as only they can be called from the user code.
-        // This also excludes `@PublishedApi internal` ones, callable only from public inline functions.
-        for (function in functions) {
-            if (function.visibility != Visibility.PUBLIC) continue
+        // Only the extensions of the API are indexed. Once imported, even the members of an object
+        // are shown to all the users of the receiver type, like the top-level ones, so only the public ones are.
+        for (function in functions.filter { it.visibility.isApiIn(emptyList()) }) {
             val receiverType = function.receiverParameterType ?: continue
             val receiverName = receiverIndexKey(receiverType)
 
@@ -1623,8 +1740,7 @@ internal class DefaultKotlinIntrospector(
                 .add(IndexedExtension(function, className, source, isObjectMember))
         }
 
-        for (property in properties) {
-            if (property.visibility != Visibility.PUBLIC) continue
+        for (property in properties.filter { it.visibility.isApiIn(emptyList()) }) {
             val receiverType = property.receiverParameterType ?: continue
             val receiverName = receiverIndexKey(receiverType)
 
@@ -1635,14 +1751,13 @@ internal class DefaultKotlinIntrospector(
 
     /**
      * Whether the nested class is listed in its outer class, and found by the [search],
-     * provided that all its enclosing classes are part of the API.
+     * provided that it is part of the API, as well as all its enclosing classes.
      * Companion objects are not, as they are already rendered within their outer class,
      * neither are the synthetic classes, like the `$serializer` generated by kotlinx.serialization.
      */
     private fun isListedNestedClass(kmClass: KmClass): Boolean =
         kmClass.kind != ClassKind.COMPANION_OBJECT &&
-            !kmClass.name.substringAfterLast('/').contains('$') &&
-            kmClass.visibility.isApi()
+            !kmClass.name.substringAfterLast('/').contains('$')
 
     /**
      * Reads the `@Metadata` annotation from the class bytes, without loading the class.
