@@ -626,10 +626,51 @@ class KotlinIntrospectorTest {
             "com.xemantic.kotlin.introspection.test.ValueTestClass"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.ValueTestClass [page 1/1]
-            value class ValueTestClass(val value: String) {
+            @JvmInline value class ValueTestClass(val value: String) {
                 override operator fun equals(other: Any?): Boolean
                 override fun hashCode(): Int
                 override fun toString(): String
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should paginate value class`() {
+        // the annotation is a part of the class declaration line, restored on every page
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ValueTestClass",
+            page = 2,
+            pageSize = 2
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ValueTestClass [page 2/2]
+            @JvmInline value class ValueTestClass(val value: String) {
+                override fun toString(): String
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve fun interface`() {
+        // an LLM needs to know that a lambda can be passed by SAM conversion
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.SamHandler"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SamHandler [page 1/1]
+            fun interface SamHandler {
+                fun handle(x: Int)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should list value class and fun interface with their modifiers`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ClassModifiersHolder"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ClassModifiersHolder [page 1/1]
+            sealed interface ClassModifiersHolder {
+                @JvmInline value class Id : ClassModifiersHolder
+                fun interface Callback
             }
         """.trimIndent()
     }
@@ -1501,7 +1542,7 @@ class KotlinIntrospectorTest {
             "com.xemantic.kotlin.introspection.test.ValueComparable"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.ValueComparable [page 1/1]
-            value class ValueComparable(val x: Int) : Comparable<ValueComparable> {
+            @JvmInline value class ValueComparable(val x: Int) : Comparable<ValueComparable> {
                 override operator fun compareTo(other: ValueComparable): Int
                 override operator fun equals(other: Any?): Boolean
                 override fun hashCode(): Int
@@ -2713,6 +2754,21 @@ class KotlinIntrospectorTest {
             have("    val seconds: Duration" !in lines())
             have("// from kotlin.time.Duration.Companion" in lines())
             have("val Int.seconds: Duration" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve built-in unsigned type as value class`() {
+        // the unsigned types are described by kotlin-reflect, not by their Kotlin metadata
+        resolver.resolve("kotlin.UInt", pageSize = 1) should {
+            have(lines()[1] == "@JvmInline value class UInt : Comparable<UInt> {")
+        }
+    }
+
+    @Test
+    fun `should resolve standard library value class`() {
+        resolver.resolve("kotlin.time.Duration", pageSize = 1) should {
+            have(lines()[1] == "@JvmInline value class Duration : Comparable<Duration> {")
         }
     }
 

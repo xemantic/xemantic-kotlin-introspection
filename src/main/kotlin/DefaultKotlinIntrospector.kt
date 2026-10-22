@@ -509,6 +509,9 @@ internal class DefaultKotlinIntrospector(
                 .filter { it.classifier !in javaOnlyInterfaces }
                 .map { formatKTypeProjection(it) }
             declaration = buildString {
+                // the unsigned types are value classes, rendered like in formatClassPrefix
+                if (kClass.isValue) +"@JvmInline value "
+                if (kClass.isFun) +"fun "
                 +(if (kClass.java.isInterface) "interface " else "class ")
                 +simpleName
                 +formatKTypeParameters(kClass.typeParameters)
@@ -681,6 +684,10 @@ internal class DefaultKotlinIntrospector(
     private fun formatClassPrefix(kmClass: KmClass): String = buildString {
         val isInterface = kmClass.kind == ClassKind.INTERFACE
 
+        // A value class does not compile on the JVM without the annotation. It is rendered inline,
+        // so that the class declaration stays on a single line, also when re-parsed for pagination.
+        if (kmClass.isValue) +"@JvmInline "
+
         // Visibility and modifiers
         +formatVisibility(kmClass.visibility)
         // Skip 'abstract' for interfaces - they're always abstract
@@ -690,6 +697,8 @@ internal class DefaultKotlinIntrospector(
         if (kmClass.isData) +"data "
         if (kmClass.isValue) +"value "
         if (kmClass.isInner) +"inner "
+        // a lambda can be passed for a fun interface, by SAM conversion
+        if (kmClass.isFunInterface) +"fun "
 
         // Class kind
         +when (kmClass.kind) {
