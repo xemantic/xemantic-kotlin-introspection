@@ -18,6 +18,7 @@
 
 package com.xemantic.kotlin.introspection.test
 
+import com.xemantic.kotlin.introspection.test.other.JavaClassBoundBase
 import com.xemantic.kotlin.introspection.test.other.JavaFunctionTaker
 import com.xemantic.kotlin.introspection.test.other.JavaGetterBase
 import com.xemantic.kotlin.introspection.test.other.JavaPrimitiveBase
@@ -406,6 +407,12 @@ class JavaSorter : JavaSortBase() {
 
 class CharSequenceSorter : JavaSortBase() {
     fun <T : CharSequence> sort(x: T) {}
+}
+
+// A Java method type variable bounded by a type variable of the class is erased to its type argument
+class JavaClassBoundSubclass : JavaClassBoundBase<CharSequence>() {
+    override fun <T : CharSequence> bounded(x: T) {}
+    fun <T : Number> bounded(x: T) {}
 }
 
 // Members of Any, reached only through Java interfaces

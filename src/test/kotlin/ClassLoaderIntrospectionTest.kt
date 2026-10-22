@@ -197,6 +197,7 @@ class ClassLoaderIntrospectionTest {
                 override fun run()
                 fun run(times: Int)
                 fun prim(x: Int?)
+                override fun <S : String> bounded(x: S)
             }
         """.trimIndent()
     }
@@ -353,6 +354,7 @@ class ClassLoaderIntrospectionTest {
                 override fun run()
                 fun run(times: Int)
                 fun prim(x: Int?)
+                override fun <S : String> bounded(x: S)
             }
         """.trimIndent()
     }
@@ -380,6 +382,7 @@ class ClassLoaderIntrospectionTest {
                 open fun run()
                 fun run(times: Int)
                 fun prim(x: Int?)
+                open fun <S : String> bounded(x: S)
             }
         """.trimIndent()
     }
