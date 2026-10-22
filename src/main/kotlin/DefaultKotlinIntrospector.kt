@@ -811,8 +811,8 @@ internal class DefaultKotlinIntrospector(
         }
 
         return buildString {
-            // For nested classes, the name might be "Parent.Nested" or "Parent$Nested"
-            val simpleName = kmClass.name.substringAfterLast("/").substringAfterLast(".").substringAfterLast("$")
+            // the metadata name of a nested class, like "com/example/Parent.Nested", where "$" can be part of a name
+            val simpleName = kmClass.name.substringAfterLast("/").substringAfterLast(".")
             +formatClassHeader(kmClass, simpleName, contextPackage, typeParameters, constructorDeclaration)
 
             if (annotationParameters != null) return@buildString
@@ -997,9 +997,11 @@ internal class DefaultKotlinIntrospector(
     private fun listedSealedSubclasses(kmClass: KmClass): List<Pair<String, KmClass>> =
         kmClass.sealedSubclasses.mapNotNull { subclassName ->
             if (subclassName == "${kmClass.name}.${kmClass.companionObject}") return@mapNotNull null
-            val subclass = loadKmClass(subclassName) ?: return@mapNotNull null
+            val subclassClazz = loadClass(subclassName.replace('/', '.')) ?: return@mapNotNull null
+            val subclass = readKmClass(subclassClazz) ?: return@mapNotNull null
             val enclosing = enclosingScopes(subclass) ?: return@mapNotNull null
-            val isListed = subclass.kind == ClassKind.COMPANION_OBJECT || isListedNestedClass(subclass)
+            val isListed = subclass.kind == ClassKind.COMPANION_OBJECT ||
+                isListedClass(subclass, isSyntheticClassFile(subclassClazz))
             if (!isListed || !subclass.visibility.isApiIn(enclosing)) return@mapNotNull null
             subclassName.removePrefix("${kmClass.name}.").substringAfterLast('/') to subclass
         }
@@ -1019,11 +1021,11 @@ internal class DefaultKotlinIntrospector(
             .filter { "${kmClass.name}.$it" !in sealedSubclasses }
             .mapNotNull { name ->
                 // the binary name, as the class might be nested
-                loadKmClass("${clazz.name}\$$name")?.let { name to it }
+                loadClass("${clazz.name}\$$name")?.let { nestedClazz ->
+                    readKmClass(nestedClazz)?.takeIf { isListedClass(it, isSyntheticClassFile(nestedClazz)) }
+                }?.let { name to it }
             }
-            .filter { (_, nestedKmClass) ->
-                isListedNestedClass(nestedKmClass) && nestedKmClass.visibility.isApiIn(scopes)
-            }
+            .filter { (_, nestedKmClass) -> nestedKmClass.visibility.isApiIn(scopes) }
     }
 
     private fun formatAnnotationDefaultValue(
@@ -1578,11 +1580,11 @@ internal class DefaultKotlinIntrospector(
     /**
      * Whether the class file might contain a named Kotlin class, which is decided by its metadata eventually,
      * the anonymous classes, like `Outer$1` or `Outer$function$1`, are skipped here already,
-     * to avoid reading them.
+     * to avoid reading them, while the other ones are read, as `$` can be part of a class name, like in `Outer$$Named`.
      */
     private fun isIndexedClassFile(fileName: String): Boolean =
         fileName.endsWith(".class") && fileName != "module-info.class" &&
-            fileName.removeSuffix(".class").split('$').drop(1).none { it.isEmpty() || it.first().isDigit() }
+            fileName.removeSuffix(".class").split('$').drop(1).none { it.firstOrNull()?.isDigit() == true }
 
     private fun scanJarFile(
         jarFile: File,
@@ -1644,7 +1646,6 @@ internal class DefaultKotlinIntrospector(
             val kmClass = metadata.kmClass
             // local and anonymous classes have names starting with '.'
             if (kmClass.name.startsWith('.')) return
-            val isNested = kmClass.name.substringAfterLast('/').contains('.')
             // the member extensions of classes can be called only in the scope of their dispatch receiver,
             // while the ones of objects can be imported, which is decided once all the enclosing classes are known
             val isObject = kmClass.kind == ClassKind.OBJECT || kmClass.kind == ClassKind.COMPANION_OBJECT
@@ -1653,7 +1654,7 @@ internal class DefaultKotlinIntrospector(
                     name = kmClass.name,
                     binaryName = className,
                     scope = kmClass.scope,
-                    isSearchable = !isNested || isListedNestedClass(kmClass),
+                    isSearchable = isListedClass(kmClass, isSynthetic = reader.access and Opcodes.ACC_SYNTHETIC != 0),
                     extensions = if (isObject) {
                         kmClass.functions.filter { it.receiverParameterType != null }
                     } else emptyList(),
@@ -1711,14 +1712,28 @@ internal class DefaultKotlinIntrospector(
     }
 
     /**
-     * Whether the nested class is listed in its outer class, and found by the [search],
+     * Whether the class is listed in its outer class, if nested, and found by the [search],
      * provided that it is part of the API, as well as all its enclosing classes.
      * Companion objects are not, as they are already rendered within their outer class,
-     * neither are the synthetic classes, like the `$serializer` generated by kotlinx.serialization.
+     * neither are the synthetic classes, like the `$serializer` generated by kotlinx.serialization,
+     * which is declared in the metadata of its outer class, but its class file is `ACC_SYNTHETIC`.
      */
-    private fun isListedNestedClass(kmClass: KmClass): Boolean =
+    private fun isListedClass(kmClass: KmClass, isSynthetic: Boolean): Boolean =
         kmClass.kind != ClassKind.COMPANION_OBJECT &&
-            !kmClass.name.substringAfterLast('/').contains('$')
+            !isSynthetic
+
+    /**
+     * Whether the class file has the `ACC_SYNTHETIC` flag, which [Class.isSynthetic] does not tell for a nested class,
+     * as it reports the flags of the `InnerClasses` attribute instead, where kotlinx.serialization does not set it.
+     */
+    private fun isSyntheticClassFile(clazz: Class<*>): Boolean = try {
+        (clazz.classLoader ?: ClassLoader.getSystemClassLoader())
+            .getResourceAsStream(clazz.name.replace('.', '/') + ".class")
+            ?.use { ClassReader(it).access and Opcodes.ACC_SYNTHETIC != 0 }
+            ?: false
+    } catch (_: Exception) {
+        false
+    }
 
     /**
      * Reads the `@Metadata` annotation from the class bytes, without loading the class.

@@ -2198,12 +2198,24 @@ class KotlinIntrospectorTest {
                 object NestedObject
                 enum class NestedEnum
                 data class NestedData : NestedClassesHolder.NestedInterface
+                class Dollar${'$'}Nested
+                class ${'$'}Prefixed
                 fun anonymous(): Any
                 fun whenMapping(nestedEnum: NestedClassesHolder.NestedEnum): Int
                 companion object {
                     fun create(): NestedClassesHolder
                 }
             }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve nested class named with dollar sign`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.NestedClassesHolder.Dollar\$Nested"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NestedClassesHolder.Dollar${'$'}Nested [page 1/1]
+            class Dollar${'$'}Nested
         """.trimIndent()
     }
 
@@ -3267,8 +3279,43 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `search should not find synthetic nested class`() {
-        assert(resolver.search("Synthetic\$Nested") == null)
+    fun `search should find nested class named with dollar sign`() {
+        // only the synthetic classes are excluded, not the ones legitimately named with a $
+        resolver.search("Dollar\$Nested") sameAsKotlin """
+            // search results for "Dollar${'$'}Nested" [page 1/1]
+            com.xemantic.kotlin.introspection.test.NestedClassesHolder.Dollar${'$'}Nested
+        """.trimIndent()
+    }
+
+    @Test
+    fun `search should find nested class named with dollar sign prefix`() {
+        resolver.search("\$Prefixed") sameAsKotlin """
+            // search results for "${'$'}Prefixed" [page 1/1]
+            com.xemantic.kotlin.introspection.test.NestedClassesHolder.${'$'}Prefixed
+        """.trimIndent()
+    }
+
+    @Test
+    fun `search should not find internal top-level class`() {
+        assert(resolver.search("InternalNestedHolder") == null)
+    }
+
+    @Test
+    fun `search should not find internal top-level object`() {
+        assert(resolver.search("InternalExtensionObject") == null)
+    }
+
+    @Test
+    fun `search should not find private top-level class`() {
+        assert(resolver.search("PrivateTopLevelHolder") == null)
+    }
+
+    @Test
+    fun `should resolve internal top-level class by its name`() {
+        // resolve takes the exact name, so it is not limited to the API, unlike search
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InternalNestedHolder") should {
+            have(contains("class InternalNestedHolder"))
+        }
     }
 
     @Test

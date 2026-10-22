@@ -405,6 +405,60 @@ class ClassLoaderIntrospectionTest {
         """.trimIndent()
     }
 
+    @Test
+    fun `should neither find nor list synthetic nested class declared in metadata of outer class`() {
+        // given
+        val root = tempDir.resolve("synthetic")
+        isolatedTestFixtures.filter { it.exists() }.forEach { dir ->
+            dir.walkTopDown().filter { it.isFile }.forEach { file ->
+                val target = root.resolve(file.relativeTo(dir).path).toFile()
+                target.parentFile.mkdirs()
+                target.writeBytes(
+                    if (file.name == "SyntheticNestedHolder\$\$serializer.class") {
+                        synthetic(file.readBytes())
+                    } else {
+                        file.readBytes()
+                    }
+                )
+            }
+        }
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val searchResult = introspector.search("\$serializer")
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.SyntheticNestedHolder")
+
+        // then
+        assert(searchResult == null)
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.SyntheticNestedHolder [page 1/1]
+            class SyntheticNestedHolder {
+                class Visible
+            }
+        """.trimIndent()
+    }
+
+    /**
+     * Adds the `ACC_SYNTHETIC` flag to the class, like kotlinx.serialization does for the `$serializer`,
+     * leaving the flags of the `InnerClasses` attribute, which [Class.isSynthetic] reports, intact.
+     */
+    private fun synthetic(bytes: ByteArray): ByteArray {
+        val writer = ClassWriter(0)
+        ClassReader(bytes).accept(object : ClassVisitor(Opcodes.ASM9, writer) {
+            override fun visit(
+                version: Int,
+                access: Int,
+                name: String,
+                signature: String?,
+                superName: String?,
+                interfaces: Array<out String>?
+            ) {
+                super.visit(version, access or Opcodes.ACC_SYNTHETIC, name, signature, superName, interfaces)
+            }
+        }, 0)
+        return writer.toByteArray()
+    }
+
     /**
      * Removes the JVM methods `shrunk(int)` and `shrunkAlone()` from the class bytes, like R8 might.
      */
