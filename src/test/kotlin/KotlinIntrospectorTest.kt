@@ -709,6 +709,15 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve annotation class without parameters`() {
+        // the Annotation supertype is implicit, like the Enum one of an enum class
+        resolver.resolve("kotlin.jvm.JvmStatic") sameAsKotlin """
+            // kotlin.jvm.JvmStatic [page 1/1]
+            annotation class JvmStatic
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve class with companion object`() {
         // an LLM needs to see companion object members to access static-like functionality,
         // but not the private ones
@@ -2458,6 +2467,46 @@ class KotlinIntrospectorTest {
             sealed class SealedShape {
                 class Square : SealedShape
                 val code: Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should list only sealed subclasses of the API`() {
+        // the private and internal ones, also the ones nested in an internal class, cannot be used in a when expression
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.SealedVisibilityHolder"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SealedVisibilityHolder [page 1/1]
+            sealed class SealedVisibilityHolder {
+                class PublicSealedSubclassHolder.NestedSubclass : SealedVisibilityHolder
+                class PublicTopLevelSealedSubclass : SealedVisibilityHolder
+                class PublicSubclass : SealedVisibilityHolder
+                fun usePrivate(): SealedVisibilityHolder
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render sealed class without body when no subclass is part of the API`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenSubclassesSealed"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenSubclassesSealed [page 1/1]
+            sealed class HiddenSubclassesSealed
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render sealed subclasses with all their supertypes`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.SealedSupertypesHolder"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SealedSupertypesHolder [page 1/1]
+            sealed class SealedSupertypesHolder {
+                class Box<T : CharSequence> : SealedSupertypesHolder, Iterable<T>
+                class Circle : SealedSupertypesHolder, Comparable<SealedSupertypesHolder.Circle>
+                data object Empty : SealedSupertypesHolder
             }
         """.trimIndent()
     }

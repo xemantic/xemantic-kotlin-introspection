@@ -59,3 +59,14 @@ abstract class AbstractTestClass {
 class OverrideTestClass : Comparable<OverrideTestClass> {
     override fun compareTo(other: OverrideTestClass): Int = 0
 }
+
+// The sealed subclasses with their own type parameters and other supertypes than the sealed class
+sealed class SealedSupertypesHolder {
+    class Circle : SealedSupertypesHolder(), Comparable<Circle> {
+        override fun compareTo(other: Circle): Int = 0
+    }
+    class Box<T : CharSequence>(val content: T) : SealedSupertypesHolder(), Iterable<T> {
+        override fun iterator(): Iterator<T> = listOf(content).iterator()
+    }
+    data object Empty : SealedSupertypesHolder()
+}
