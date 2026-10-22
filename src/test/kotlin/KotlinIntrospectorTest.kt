@@ -1884,7 +1884,7 @@ class KotlinIntrospectorTest {
             "com.xemantic.kotlin.introspection.test.ProbeOuterString.Sub"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.ProbeOuterString.Sub [page 1/1]
-            inner class Sub : ProbeOuter.Inner {
+            inner class Sub : ProbeOuter<String>.Inner {
                 override fun f(t: String)
                 fun f(t: Int)
             }
@@ -3131,6 +3131,30 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.test.GenericTestClass.swap [page 1/1]
             // from com.xemantic.kotlin.introspection.test
             fun <K, V> GenericTestClass<K, V>.swap(): GenericTestClass<V, K>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render type arguments of outer class of inner class type`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.GenericInnerTypes"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GenericInnerTypes [page 1/1]
+            class GenericInnerTypes(val cursor: GenericInnerOuter<String>.Inner<Int>) {
+                fun cursor(): GenericInnerOuter<String>.Inner<Int>
+                fun nullableCursor(): GenericInnerOuter<String>.Inner<Int>?
+                fun accept(cursor: GenericInnerOuter<Long>.Inner<GenericInnerOuter<Int>.Inner<String>>)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render type arguments of outer class of Java inner class supertype`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaGenericOuterString.Sub"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaGenericOuterString.Sub [page 1/1]
+            inner class Sub : com.xemantic.kotlin.introspection.test.other.JavaGenericOuter<String>.Inner<Int>
         """.trimIndent()
     }
 

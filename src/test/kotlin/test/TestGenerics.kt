@@ -18,6 +18,8 @@
 
 package com.xemantic.kotlin.introspection.test
 
+import com.xemantic.kotlin.introspection.test.other.JavaGenericOuter
+
 // Generic class with a variance-annotated type parameter
 class GenericTestClass<K, out V>(val key: K, val value: V) {
     fun <R : Any> transform(block: (K, V) -> R): R = block(key, value)
@@ -33,3 +35,21 @@ inline fun <reified T> GenericTestClass<*, *>.valueAs(): T? = value as? T
 // Type parameter with multiple upper bounds
 fun <T> GenericTestClass<T, T>.longest(): T where T : CharSequence, T : Comparable<T> =
     if (key.length >= value.length) key else value
+
+// Types of inner classes of a generic class carry the type arguments of the outer class
+class GenericInnerOuter<A> {
+    inner class Inner<B>
+}
+
+class GenericInnerTypes(
+    val cursor: GenericInnerOuter<String>.Inner<Int>
+) {
+    fun cursor(): GenericInnerOuter<String>.Inner<Int> = cursor
+    fun nullableCursor(): GenericInnerOuter<String>.Inner<Int>? = null
+    fun accept(cursor: GenericInnerOuter<Long>.Inner<GenericInnerOuter<Int>.Inner<String>>) {}
+}
+
+// A Java inner class of a generic Java class as a supertype
+class JavaGenericOuterString : JavaGenericOuter<String>() {
+    inner class Sub : JavaGenericOuter<String>.Inner<Int>()
+}

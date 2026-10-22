@@ -1364,7 +1364,14 @@ internal class DefaultKotlinIntrospector(
         contextPackage: String?,
         typeParameters: Map<Int, String>
     ): String {
+        val outerType = type.outerType
         val baseName = when (val classifier = type.classifier) {
+            // an inner class of a generic class, like `Outer<String>.Inner`,
+            // carries the type arguments of the outer class in the outer type
+            is KmClassifier.Class if outerType != null -> {
+                val outer = formatType(outerType, contextPackage, typeParameters)
+                "$outer.${classifier.name.substringAfterLast("/").substringAfterLast(".")}"
+            }
             is KmClassifier.Class -> {
                 val fqn = classifier.name.replace("/", ".")
                 // the package is separated with '/', and nested classes with '.'
