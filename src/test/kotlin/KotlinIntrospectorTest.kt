@@ -1467,7 +1467,7 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.CompanionModalityOverrides [page 1/1]
             class CompanionModalityOverrides {
-                companion object {
+                companion object : ModalityBase {
                     override fun finalized()
                     override fun reopened()
                 }
