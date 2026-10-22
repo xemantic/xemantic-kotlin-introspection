@@ -1642,14 +1642,14 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should not mark properties without JVM getter named like Java method as override`() {
-        // a @JvmField or private property has no getter, the getters of foo and value are named fooValue and getValue-<hash>
+        // a @JvmField or private property has no getter, the getters of foo and value are named fooValue and getValue-<hash>,
+        // the private property is not part of the API, so it is not rendered
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.JavaGetterSubclass"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.JavaGetterSubclass [page 1/1]
             class JavaGetterSubclass : com.xemantic.kotlin.introspection.test.other.JavaGetterBase {
                 val bar: Int
-                private val parent: String
                 val foo: Int
                 val value: UInt
             }
