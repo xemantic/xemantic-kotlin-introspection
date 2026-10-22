@@ -395,6 +395,11 @@ class JavaNullablePrimitiveSubclass : JavaPrimitiveBase() {
     override fun boxed(x: Int?) {}
 }
 
+// A type parameter bounded by Int? is boxed on the JVM, and not seen as Int by Kotlin
+class JavaPrimitiveTypeParameterSubclass<T : Int?> : JavaPrimitiveBase() {
+    fun prim(x: T) {}
+}
+
 // A Java type variable substituted with Int is of flexible nullability, not primitive
 abstract class JavaNullableIntProcessor : JavaProcessorBase<Int>() {
     override fun process(item: Int?) {}
