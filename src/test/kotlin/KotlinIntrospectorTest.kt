@@ -38,13 +38,13 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // kotlin.String [page 1/42]
             class String : Comparable<String>, CharSequence {
-                fun byteInputStream(charset: java.nio.charset.Charset = …): java.io.ByteArrayInputStream
+                inline fun byteInputStream(charset: java.nio.charset.Charset = …): java.io.ByteArrayInputStream
                 fun capitalize(): String
                 fun capitalize(locale: java.util.Locale): String
                 fun chars(): java.util.stream.IntStream
-                fun codePointAt(index: Int): Int
-                fun codePointBefore(index: Int): Int
-                fun codePointCount(beginIndex: Int, endIndex: Int): Int
+                inline fun codePointAt(index: Int): Int
+                inline fun codePointBefore(index: Int): Int
+                inline fun codePointCount(beginIndex: Int, endIndex: Int): Int
                 fun codePoints(): java.util.stream.IntStream
                 override operator fun compareTo(other: String): Int
                 fun compareTo(other: String, ignoreCase: Boolean = …): Int
@@ -61,15 +61,15 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // kotlin.String [page 2/42]
             class String : Comparable<String>, CharSequence {
-                fun contentEquals(charSequence: CharSequence): Boolean
-                fun contentEquals(stringBuilder: java.lang.StringBuffer): Boolean
+                inline fun contentEquals(charSequence: CharSequence): Boolean
+                inline fun contentEquals(stringBuilder: java.lang.StringBuffer): Boolean
                 fun decapitalize(): String
                 fun decapitalize(locale: java.util.Locale): String
                 fun describeConstable(): java.util.Optional<String>
                 fun drop(n: Int): String
                 fun dropLast(n: Int): String
-                fun dropLastWhile(predicate: (Char) -> Boolean): String
-                fun dropWhile(predicate: (Char) -> Boolean): String
+                inline fun dropLastWhile(predicate: (Char) -> Boolean): String
+                inline fun dropWhile(predicate: (Char) -> Boolean): String
                 fun encodeToByteArray(): ByteArray
             }
         """.trimIndent()
@@ -88,11 +88,11 @@ class KotlinIntrospectorTest {
                 fun endsWith(suffix: String, ignoreCase: Boolean = …): Boolean
                 override operator fun equals(other: Any?): Boolean
                 fun equals(other: String?, ignoreCase: Boolean = …): Boolean
-                fun filter(predicate: (Char) -> Boolean): String
-                fun filterIndexed(predicate: (index: Int, Char) -> Boolean): String
-                fun filterNot(predicate: (Char) -> Boolean): String
-                fun format(vararg args: Any?): String
-                fun format(locale: java.util.Locale?, vararg args: Any?): String
+                inline fun filter(predicate: (Char) -> Boolean): String
+                inline fun filterIndexed(predicate: (index: Int, Char) -> Boolean): String
+                inline fun filterNot(predicate: (Char) -> Boolean): String
+                inline fun format(vararg args: Any?): String
+                inline fun format(locale: java.util.Locale?, vararg args: Any?): String
                 override operator fun get(index: Int): Char
             }
         """.trimIndent()
@@ -107,7 +107,7 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // kotlin.String [page 19/42]
             class String : Comparable<String>, CharSequence {
-                fun uppercase(locale: java.util.Locale): String
+                inline fun uppercase(locale: java.util.Locale): String
             }
             // from kotlin
             inline infix fun <T> Comparable<T>.compareTo(other: T): Int
@@ -145,35 +145,35 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // kotlin.String [page 1/1]
             class String : Comparable<String>, CharSequence {
-                fun byteInputStream(charset: java.nio.charset.Charset = …): java.io.ByteArrayInputStream
+                inline fun byteInputStream(charset: java.nio.charset.Charset = …): java.io.ByteArrayInputStream
                 fun capitalize(): String
                 fun capitalize(locale: java.util.Locale): String
                 fun chars(): java.util.stream.IntStream
-                fun codePointAt(index: Int): Int
-                fun codePointBefore(index: Int): Int
-                fun codePointCount(beginIndex: Int, endIndex: Int): Int
+                inline fun codePointAt(index: Int): Int
+                inline fun codePointBefore(index: Int): Int
+                inline fun codePointCount(beginIndex: Int, endIndex: Int): Int
                 fun codePoints(): java.util.stream.IntStream
                 override operator fun compareTo(other: String): Int
                 fun compareTo(other: String, ignoreCase: Boolean = …): Int
-                fun contentEquals(charSequence: CharSequence): Boolean
-                fun contentEquals(stringBuilder: java.lang.StringBuffer): Boolean
+                inline fun contentEquals(charSequence: CharSequence): Boolean
+                inline fun contentEquals(stringBuilder: java.lang.StringBuffer): Boolean
                 fun decapitalize(): String
                 fun decapitalize(locale: java.util.Locale): String
                 fun describeConstable(): java.util.Optional<String>
                 fun drop(n: Int): String
                 fun dropLast(n: Int): String
-                fun dropLastWhile(predicate: (Char) -> Boolean): String
-                fun dropWhile(predicate: (Char) -> Boolean): String
+                inline fun dropLastWhile(predicate: (Char) -> Boolean): String
+                inline fun dropWhile(predicate: (Char) -> Boolean): String
                 fun encodeToByteArray(): ByteArray
                 fun encodeToByteArray(startIndex: Int = …, endIndex: Int = …, throwOnInvalidSequence: Boolean = …): ByteArray
                 fun endsWith(suffix: String, ignoreCase: Boolean = …): Boolean
                 override operator fun equals(other: Any?): Boolean
                 fun equals(other: String?, ignoreCase: Boolean = …): Boolean
-                fun filter(predicate: (Char) -> Boolean): String
-                fun filterIndexed(predicate: (index: Int, Char) -> Boolean): String
-                fun filterNot(predicate: (Char) -> Boolean): String
-                fun format(vararg args: Any?): String
-                fun format(locale: java.util.Locale?, vararg args: Any?): String
+                inline fun filter(predicate: (Char) -> Boolean): String
+                inline fun filterIndexed(predicate: (index: Int, Char) -> Boolean): String
+                inline fun filterNot(predicate: (Char) -> Boolean): String
+                inline fun format(vararg args: Any?): String
+                inline fun format(locale: java.util.Locale?, vararg args: Any?): String
                 override operator fun get(index: Int): Char
                 fun hashCode(): Int
                 fun hexToByte(format: HexFormat = …): Byte
@@ -181,29 +181,29 @@ class KotlinIntrospectorTest {
                 fun hexToInt(format: HexFormat = …): Int
                 fun hexToLong(format: HexFormat = …): Long
                 fun hexToShort(format: HexFormat = …): Short
-                fun hexToUByte(format: HexFormat = …): UByte
-                fun hexToUByteArray(format: HexFormat = …): UByteArray
-                fun hexToUInt(format: HexFormat = …): UInt
-                fun hexToULong(format: HexFormat = …): ULong
-                fun hexToUShort(format: HexFormat = …): UShort
-                fun intern(): String
+                inline fun hexToUByte(format: HexFormat = …): UByte
+                inline fun hexToUByteArray(format: HexFormat = …): UByteArray
+                inline fun hexToUInt(format: HexFormat = …): UInt
+                inline fun hexToULong(format: HexFormat = …): ULong
+                inline fun hexToUShort(format: HexFormat = …): UShort
+                inline fun intern(): String
                 fun isEmpty(): Boolean
                 fun isLocalClassName(): Boolean
                 override val length: Int
-                fun lowercase(): String
-                fun lowercase(locale: java.util.Locale): String
-                fun offsetByCodePoints(index: Int, codePointOffset: Int): Int
-                fun orEmpty(): String
+                inline fun lowercase(): String
+                inline fun lowercase(locale: java.util.Locale): String
+                inline fun offsetByCodePoints(index: Int, codePointOffset: Int): Int
+                inline fun orEmpty(): String
                 fun padEnd(length: Int, padChar: Char = …): String
                 fun padStart(length: Int, padChar: Char = …): String
-                fun partition(predicate: (Char) -> Boolean): Pair<String, String>
+                inline fun partition(predicate: (Char) -> Boolean): Pair<String, String>
                 operator fun plus(other: Any?): String
                 fun prependIndent(indent: String = …): String
-                fun reader(): java.io.StringReader
+                inline fun reader(): java.io.StringReader
                 fun regionMatches(thisOffset: Int, other: String, otherOffset: Int, length: Int, ignoreCase: Boolean = …): Boolean
                 fun removePrefix(prefix: CharSequence): String
-                fun removeRange(startIndex: Int, endIndex: Int): String
-                fun removeRange(range: IntRange): String
+                inline fun removeRange(startIndex: Int, endIndex: Int): String
+                inline fun removeRange(range: IntRange): String
                 fun removeSuffix(suffix: CharSequence): String
                 fun removeSurrounding(prefix: CharSequence, suffix: CharSequence): String
                 fun removeSurrounding(delimiter: CharSequence): String
@@ -219,15 +219,15 @@ class KotlinIntrospectorTest {
                 fun replaceBeforeLast(delimiter: String, replacement: String, missingDelimiterValue: String = …): String
                 fun replaceFirst(oldChar: Char, newChar: Char, ignoreCase: Boolean = …): String
                 fun replaceFirst(oldValue: String, newValue: String, ignoreCase: Boolean = …): String
-                fun replaceFirstChar(transform: (Char) -> Char): String
-                fun replaceFirstChar(transform: (Char) -> CharSequence): String
+                inline fun replaceFirstChar(transform: (Char) -> Char): String
+                inline fun replaceFirstChar(transform: (Char) -> CharSequence): String
                 fun replaceIndent(newIndent: String = …): String
                 fun replaceIndentByMargin(newIndent: String = …, marginPrefix: String = …): String
-                fun replaceRange(startIndex: Int, endIndex: Int, replacement: CharSequence): String
-                fun replaceRange(range: IntRange, replacement: CharSequence): String
-                fun reversed(): String
+                inline fun replaceRange(startIndex: Int, endIndex: Int, replacement: CharSequence): String
+                inline fun replaceRange(range: IntRange, replacement: CharSequence): String
+                inline fun reversed(): String
                 fun slice(indices: IntRange): String
-                fun slice(indices: Iterable<Int>): String
+                inline fun slice(indices: Iterable<Int>): String
                 fun startsWith(prefix: String, ignoreCase: Boolean = …): Boolean
                 fun startsWith(prefix: String, startIndex: Int, ignoreCase: Boolean = …): Boolean
                 fun strip(): String
@@ -235,9 +235,9 @@ class KotlinIntrospectorTest {
                 fun stripLeading(): String
                 fun stripTrailing(): String
                 override fun subSequence(startIndex: Int, endIndex: Int): CharSequence
-                fun subSequence(start: Int, end: Int): CharSequence
-                fun substring(startIndex: Int): String
-                fun substring(startIndex: Int, endIndex: Int): String
+                inline fun subSequence(start: Int, end: Int): CharSequence
+                inline fun substring(startIndex: Int): String
+                inline fun substring(startIndex: Int, endIndex: Int): String
                 fun substring(range: IntRange): String
                 fun substringAfter(delimiter: Char, missingDelimiterValue: String = …): String
                 fun substringAfter(delimiter: String, missingDelimiterValue: String = …): String
@@ -249,48 +249,48 @@ class KotlinIntrospectorTest {
                 fun substringBeforeLast(delimiter: String, missingDelimiterValue: String = …): String
                 fun take(n: Int): String
                 fun takeLast(n: Int): String
-                fun takeLastWhile(predicate: (Char) -> Boolean): String
-                fun takeWhile(predicate: (Char) -> Boolean): String
-                fun toBigDecimal(): java.math.BigDecimal
-                fun toBigDecimal(mathContext: java.math.MathContext): java.math.BigDecimal
+                inline fun takeLastWhile(predicate: (Char) -> Boolean): String
+                inline fun takeWhile(predicate: (Char) -> Boolean): String
+                inline fun toBigDecimal(): java.math.BigDecimal
+                inline fun toBigDecimal(mathContext: java.math.MathContext): java.math.BigDecimal
                 fun toBigDecimalOrNull(): java.math.BigDecimal?
                 fun toBigDecimalOrNull(mathContext: java.math.MathContext): java.math.BigDecimal?
-                fun toBigInteger(): java.math.BigInteger
-                fun toBigInteger(radix: Int): java.math.BigInteger
+                inline fun toBigInteger(): java.math.BigInteger
+                inline fun toBigInteger(radix: Int): java.math.BigInteger
                 fun toBigIntegerOrNull(): java.math.BigInteger?
                 fun toBigIntegerOrNull(radix: Int): java.math.BigInteger?
-                fun toBoolean(): Boolean
+                inline fun toBoolean(): Boolean
                 fun toBooleanStrict(): Boolean
                 fun toBooleanStrictOrNull(): Boolean?
-                fun toByte(): Byte
-                fun toByte(radix: Int): Byte
-                fun toByteArray(charset: java.nio.charset.Charset = …): ByteArray
+                inline fun toByte(): Byte
+                inline fun toByte(radix: Int): Byte
+                inline fun toByteArray(charset: java.nio.charset.Charset = …): ByteArray
                 fun toByteOrNull(): Byte?
                 fun toByteOrNull(radix: Int): Byte?
                 fun toCharArray(startIndex: Int = …, endIndex: Int = …): CharArray
-                fun toCharArray(): CharArray
-                fun toCharArray(destination: CharArray, destinationOffset: Int = …, startIndex: Int = …, endIndex: Int = …): CharArray
-                fun toDouble(): Double
+                inline fun toCharArray(): CharArray
+                inline fun toCharArray(destination: CharArray, destinationOffset: Int = …, startIndex: Int = …, endIndex: Int = …): CharArray
+                inline fun toDouble(): Double
                 fun toDoubleOrNull(): Double?
-                fun toFloat(): Float
+                inline fun toFloat(): Float
                 fun toFloatOrNull(): Float?
-                fun toInt(): Int
-                fun toInt(radix: Int): Int
+                inline fun toInt(): Int
+                inline fun toInt(radix: Int): Int
                 fun toIntOrNull(): Int?
                 fun toIntOrNull(radix: Int): Int?
                 fun toJvmInternalName(): String
-                fun toLong(): Long
-                fun toLong(radix: Int): Long
+                inline fun toLong(): Long
+                inline fun toLong(radix: Int): Long
                 fun toLongOrNull(): Long?
                 fun toLongOrNull(radix: Int): Long?
-                fun toLowerCase(): String
-                fun toLowerCase(locale: java.util.Locale): String
-                fun toPattern(flags: Int = …): java.util.regex.Pattern
-                fun toRegex(): Regex
-                fun toRegex(option: RegexOption): Regex
-                fun toRegex(options: Set<RegexOption>): Regex
-                fun toShort(): Short
-                fun toShort(radix: Int): Short
+                inline fun toLowerCase(): String
+                inline fun toLowerCase(locale: java.util.Locale): String
+                inline fun toPattern(flags: Int = …): java.util.regex.Pattern
+                inline fun toRegex(): Regex
+                inline fun toRegex(option: RegexOption): Regex
+                inline fun toRegex(options: Set<RegexOption>): Regex
+                inline fun toShort(): Short
+                inline fun toShort(radix: Int): Short
                 fun toShortOrNull(): Short?
                 fun toShortOrNull(radix: Int): Short?
                 override fun toString(): String
@@ -310,22 +310,22 @@ class KotlinIntrospectorTest {
                 fun toUShort(radix: Int): UShort
                 fun toUShortOrNull(): UShort?
                 fun toUShortOrNull(radix: Int): UShort?
-                fun toUpperCase(): String
-                fun toUpperCase(locale: java.util.Locale): String
+                inline fun toUpperCase(): String
+                inline fun toUpperCase(locale: java.util.Locale): String
                 fun translateEscapes(): String
-                fun trim(predicate: (Char) -> Boolean): String
+                inline fun trim(predicate: (Char) -> Boolean): String
                 fun trim(vararg chars: Char): String
-                fun trim(): String
-                fun trimEnd(predicate: (Char) -> Boolean): String
+                inline fun trim(): String
+                inline fun trimEnd(predicate: (Char) -> Boolean): String
                 fun trimEnd(vararg chars: Char): String
-                fun trimEnd(): String
+                inline fun trimEnd(): String
                 fun trimIndent(): String
                 fun trimMargin(marginPrefix: String = …): String
-                fun trimStart(predicate: (Char) -> Boolean): String
+                inline fun trimStart(predicate: (Char) -> Boolean): String
                 fun trimStart(vararg chars: Char): String
-                fun trimStart(): String
-                fun uppercase(): String
-                fun uppercase(locale: java.util.Locale): String
+                inline fun trimStart(): String
+                inline fun uppercase(): String
+                inline fun uppercase(locale: java.util.Locale): String
             }
             // from kotlin
             inline infix fun <T> Comparable<T>.compareTo(other: T): Int
@@ -1964,6 +1964,20 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should not mark property as override of function of the same name`() {
+        // the length() function is overridden, while the length property overrides nothing
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.LenProbe"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.LenProbe [page 1/1]
+            class LenProbe : LenBase {
+                val length: Int
+                override fun length(): Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should not mark value class property as override of function named like its getter`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.UValueNoOverride"
@@ -2585,6 +2599,14 @@ class KotlinIntrospectorTest {
             // from com.xemantic.kotlin.introspection.test.MemberExtensionHolder.Companion
             fun ExtensionTarget.fromCompanion(): String
         """.trimIndent()
+    }
+
+    @Test
+    fun `should render modifiers of extensions listed in the body of built-in type like top-level ones`() {
+        // String.filter is an inline extension function, which keeps its modifiers when listed as a member
+        resolver.resolve("kotlin.String", pageSize = 10000) should {
+            have("    inline fun filter(predicate: (Char) -> Boolean): String" in lines())
+        }
     }
 
     @Test
@@ -3360,7 +3382,7 @@ class KotlinIntrospectorTest {
                 fun addAll(index: Int, elements: Collection<E>): Boolean
                 fun <T> asReversed(): MutableList<T>
                 override fun clear()
-                fun <T> fill(value: T)
+                inline fun <T> fill(value: T)
                 override fun listIterator(): MutableListIterator<E>
                 override fun listIterator(index: Int): MutableListIterator<E>
                 override fun remove(element: E): Boolean

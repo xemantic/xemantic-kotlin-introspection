@@ -438,13 +438,7 @@ internal class DefaultKotlinIntrospector(
     private fun resolvePackageMember(kmPackages: List<KmPackage>, memberName: String): String? {
         val signatures = kmPackages.flatMap { kmPackage ->
             kmPackage.functions.filter { it.name == memberName && it.visibility.isApiIn(emptyList()) }.map { formatFunction(it) } +
-                kmPackage.properties.filter { it.name == memberName && it.visibility.isApiIn(emptyList()) }.map { property ->
-                    if (property.receiverParameterType != null) {
-                        formatExtensionProperty(property)
-                    } else {
-                        formatProperty(property)
-                    }
-                }
+                kmPackage.properties.filter { it.name == memberName && it.visibility.isApiIn(emptyList()) }.map { formatProperty(it) }
         }
         return signatures.joinToString("\n").ifEmpty { null }
     }
@@ -550,7 +544,7 @@ internal class DefaultKotlinIntrospector(
             .filter { isPublicStdlibSource(it.sourceClass) }
             .partition { it.isObjectMember }
         packageExtensions.forEach { ext ->
-            allMembers.add(Member(ext.function.name, formatFunctionWithoutReceiver(ext.function)))
+            allMembers.add(Member(ext.function.name, formatFunction(ext.function, withReceiver = false)))
         }
 
         // Extension properties on this exact type (shown inside class body)
@@ -558,7 +552,7 @@ internal class DefaultKotlinIntrospector(
             .filter { isPublicStdlibSource(it.sourceClass) }
             .partition { it.isObjectMember }
         packageExtensionProperties.forEach { extProp ->
-            allMembers.add(Member(extProp.property.name, formatExtensionPropertyWithoutReceiver(extProp.property)))
+            allMembers.add(Member(extProp.property.name, formatProperty(extProp.property, withReceiver = false)))
         }
 
         // Extension functions and properties on all the supertypes (shown outside class body)
@@ -672,50 +666,6 @@ internal class DefaultKotlinIntrospector(
         )
 
         return memberSignatures(members, extensions)
-    }
-
-    /**
-     * Format an extension function without the receiver prefix (for showing inside class body).
-     */
-    private fun formatFunctionWithoutReceiver(function: KmFunction): String = buildString {
-        val typeParameters = function.typeParameters.namesById()
-        +formatVisibility(function.visibility)
-        if (function.isOperator) +"operator "
-        if (function.isInfix) +"infix "
-        if (function.isSuspend) +"suspend "
-
-        +"fun "
-        formatTypeParameters(function.typeParameters, typeParameters).let { if (it.isNotEmpty()) +"$it " }
-        +function.name
-        +"("
-
-        +(function.valueParameters.joinToString(", ") { param ->
-            formatValueParameter(param, typeParameters = typeParameters)
-        })
-
-        +")"
-
-        function.returnType.let { returnType ->
-            val typeName = formatType(returnType, typeParameters = typeParameters)
-            if (typeName != "Unit") {
-                +": "
-                +typeName
-            }
-        }
-        +formatWhereClause(function.typeParameters, typeParameters)
-    }
-
-    /**
-     * Format an extension property without the receiver prefix (for showing inside class body).
-     */
-    private fun formatExtensionPropertyWithoutReceiver(property: KmProperty): String = buildString {
-        val typeParameters = property.typeParameters.namesById()
-        +formatVisibility(property.visibility)
-        +(if (property.isVar) "var " else "val ")
-        formatTypeParameters(property.typeParameters, typeParameters).let { if (it.isNotEmpty()) +"$it " }
-        +property.name
-        +": "
-        +formatType(property.returnType, typeParameters = typeParameters)
     }
 
     /**
@@ -1000,7 +950,7 @@ internal class DefaultKotlinIntrospector(
             +"\n// from $source"
             propertiesBySource[source].orEmpty()
                 .sortedWith(extensionPropertyOrder)
-                .forEach { +"\n${formatExtensionProperty(it.property, contextPackage)}" }
+                .forEach { +"\n${formatProperty(it.property, contextPackage = contextPackage)}" }
             functionsBySource[source].orEmpty()
                 .sortedWith(extensionFunctionOrder)
                 .forEach { +"\n${formatFunction(it.function, contextPackage = contextPackage)}" }
@@ -1132,13 +1082,16 @@ internal class DefaultKotlinIntrospector(
 
     /**
      * @param owner the class declaring the [function], to tell whether it is an override.
+     * @param withReceiver whether to render the receiver of an extension function,
+     *   which is omitted when the extension is listed in the body of its receiver class.
      */
     private fun formatFunction(
         function: KmFunction,
         inInterface: Boolean = false,
         owner: KmClass? = null,
         contextPackage: String? = null,
-        classTypeParameters: Map<Int, String> = emptyMap()
+        classTypeParameters: Map<Int, String> = emptyMap(),
+        withReceiver: Boolean = true
     ): String = buildString {
         val typeParameters = classTypeParameters + function.typeParameters.namesById()
 
@@ -1158,8 +1111,8 @@ internal class DefaultKotlinIntrospector(
             if (it.isNotEmpty()) +"$it "
         }
 
-        // Handle extension function receiver
-        function.receiverParameterType?.let { receiverType ->
+        // the receiver of an extension function
+        function.receiverParameterType?.takeIf { withReceiver }?.let { receiverType ->
             +formatReceiverType(receiverType, contextPackage, typeParameters)
             +"."
         }
@@ -1215,14 +1168,19 @@ internal class DefaultKotlinIntrospector(
     }
 
     /**
+     * Format a member, top-level or extension property.
+     *
      * @param owner the class declaring the [property], to tell whether it is an override.
+     * @param withReceiver whether to render the receiver of an extension property,
+     *   which is omitted when the extension is listed in the body of its receiver class.
      */
     private fun formatProperty(
         property: KmProperty,
         inInterface: Boolean = false,
         owner: KmClass? = null,
         contextPackage: String? = null,
-        classTypeParameters: Map<Int, String> = emptyMap()
+        classTypeParameters: Map<Int, String> = emptyMap(),
+        withReceiver: Boolean = true
     ): String = buildString {
         val typeParameters = classTypeParameters + property.typeParameters.namesById()
 
@@ -1236,29 +1194,8 @@ internal class DefaultKotlinIntrospector(
             if (it.isNotEmpty()) +"$it "
         }
 
-        // a member extension property
-        property.receiverParameterType?.let { receiverType ->
-            +formatReceiverType(receiverType, contextPackage, typeParameters)
-            +"."
-        }
-
-        +property.name
-        +": "
-        +formatType(property.returnType, contextPackage, typeParameters)
-        +formatWhereClause(property.typeParameters, typeParameters, contextPackage)
-    }
-
-    private fun formatExtensionProperty(property: KmProperty, contextPackage: String? = null): String = buildString {
-        val typeParameters = property.typeParameters.namesById()
-
-        +formatVisibility(property.visibility)
-        +(if (property.isVar) "var " else "val ")
-        formatTypeParameters(property.typeParameters, typeParameters, contextPackage).let {
-            if (it.isNotEmpty()) +"$it "
-        }
-
-        // Extension property receiver
-        property.receiverParameterType?.let { receiverType ->
+        // the receiver of an extension property
+        property.receiverParameterType?.takeIf { withReceiver }?.let { receiverType ->
             +formatReceiverType(receiverType, contextPackage, typeParameters)
             +"."
         }

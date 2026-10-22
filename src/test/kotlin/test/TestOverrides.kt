@@ -285,6 +285,16 @@ class JvmFieldBar : GetBarBase() {
     val bar: Int = 0
 }
 
+// A property named like a function of the superclass, which is overridden as well
+open class LenBase {
+    open fun length(): Int = 0
+}
+
+class LenProbe : LenBase() {
+    val length: Int = 0
+    override fun length(): Int = 1
+}
+
 // A property of value class type, while the supertype has a function named like its getter
 open class GetValueBase {
     open fun getValue(): Int = 0
