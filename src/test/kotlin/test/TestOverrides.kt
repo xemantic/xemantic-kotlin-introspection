@@ -154,3 +154,68 @@ class DashedNameProcessor : Processor<String> {
     override fun process(item: String) {}
     fun `process-item`(item: String) {}
 }
+
+// The getter of an isXxx property is named isXxx, not getIsXxx
+interface Toggle {
+    val isEnabled: Boolean
+}
+
+class EnabledToggle : Toggle {
+    override val isEnabled: Boolean = true
+}
+
+class StandaloneToggle {
+    val isEnabled: Boolean = true
+}
+
+// A getter renamed with @get:JvmName does not override a supertype function named like the default getter
+open class FooGetterBase {
+    open fun getFoo(): Int = 0
+}
+
+class RenamedFooGetter : FooGetterBase() {
+    @get:JvmName("fooValue")
+    val foo: Int = 0
+}
+
+// A @JvmField property has no getter, so it does not override a supertype function named like one
+open class GetBarBase {
+    open fun getBar(): Int = 0
+}
+
+class JvmFieldBar : GetBarBase() {
+    @JvmField
+    val bar: Int = 0
+}
+
+// The getter of a member extension property takes the receiver as a parameter
+interface StringMeasure {
+    val String.measure: Int
+}
+
+class StringLengthMeasure : StringMeasure {
+    override val String.measure: Int get() = length
+}
+
+// A value class receiver of a member extension property overriding a generic one
+interface GenericReceiverMeasure<T> {
+    val T.measure: Int
+}
+
+class UIntReceiverMeasure : GenericReceiverMeasure<UInt> {
+    override val UInt.measure: Int get() = 0
+}
+
+// The getter of a property of value class type has a mangled JVM name
+interface UIntValueHolder {
+    val value: UInt
+}
+
+class UIntValue : UIntValueHolder {
+    override val value: UInt = 0u
+}
+
+// Mapped Java collection members, like Collection.size being size() on the JVM
+abstract class SizedCollection : java.util.AbstractCollection<String>() {
+    override val size: Int get() = 0
+}

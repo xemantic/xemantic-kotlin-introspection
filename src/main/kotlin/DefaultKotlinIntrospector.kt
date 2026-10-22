@@ -42,6 +42,8 @@ import java.util.jar.JarFile
 import kotlin.metadata.*
 import kotlin.metadata.internal.common.KotlinCommonMetadata
 import kotlin.metadata.jvm.KotlinClassMetadata
+import kotlin.metadata.jvm.JvmMethodSignature
+import kotlin.metadata.jvm.getterSignature
 import kotlin.metadata.jvm.signature
 import kotlin.reflect.KClass
 import kotlin.reflect.KFunction
@@ -84,6 +86,19 @@ private val javaCollectionGenericParameters: Map<String, Map<String, List<String
         "remove" to listOf("K", "V"),
         "getOrDefault" to listOf("K")
     )
+)
+
+/**
+ * The properties of Kotlin built-in types mapped to Java methods not named like getters,
+ * like `Collection.size` being `size()` on the JVM:
+ * property name -> JVM method name.
+ */
+private val mappedPropertyMethodNames = mapOf(
+    "size" to "size",
+    "length" to "length",
+    "keys" to "keySet",
+    "values" to "values",
+    "entries" to "entrySet"
 )
 
 /**
@@ -1142,7 +1157,7 @@ internal class DefaultKotlinIntrospector(
 
         // Check for override - either FAKE_OVERRIDE or explicit override detected via reflection
         val isOverride = property.kind == MemberKind.FAKE_OVERRIDE ||
-            (clazz != null && isPropertyOverride(clazz, property.name))
+            (clazz != null && isPropertyOverride(clazz, property))
         if (isOverride) +"override "
 
         // Skip 'abstract' in interfaces - all interface members are implicitly abstract
@@ -1151,9 +1166,20 @@ internal class DefaultKotlinIntrospector(
         if (property.isConst) +"const "
 
         +(if (property.isVar) "var " else "val ")
+        formatTypeParameters(property.typeParameters, typeParameters, contextPackage).let {
+            if (it.isNotEmpty()) +"$it "
+        }
+
+        // Member extension property receiver
+        property.receiverParameterType?.let { receiverType ->
+            +formatType(receiverType, contextPackage, typeParameters)
+            +"."
+        }
+
         +property.name
         +": "
         +formatType(property.returnType, contextPackage, typeParameters)
+        +formatWhereClause(property.typeParameters, typeParameters, contextPackage)
     }
 
     private fun formatExtensionProperty(property: KmProperty, contextPackage: String? = null): String = buildString {
@@ -1439,9 +1465,30 @@ internal class DefaultKotlinIntrospector(
 
     private fun isMethodOverride(clazz: Class<*>, function: KmFunction): Boolean {
         val signature = function.signature ?: return false
+        return isJvmMethodOverride(
+            clazz,
+            signature,
+            function.receiverParameterType,
+            function.valueParameters.map { it.type },
+            function.isSuspend
+        )
+    }
+
+    /**
+     * Whether the method of [clazz] with the JVM [signature] overrides a supertype method,
+     * where [receiverType] and [valueParameterTypes] are the Kotlin types of its parameters,
+     * followed on the JVM by a `Continuation` if it [isSuspend].
+     */
+    private fun isJvmMethodOverride(
+        clazz: Class<*>,
+        signature: JvmMethodSignature,
+        receiverType: KmType?,
+        valueParameterTypes: List<KmType>,
+        isSuspend: Boolean
+    ): Boolean {
         // the receiver precedes the value parameters, and a suspend function takes a trailing Continuation
-        val kotlinTypes = listOfNotNull(function.receiverParameterType) + function.valueParameters.map { it.type }
-        val expectedSize = kotlinTypes.size + if (function.isSuspend) 1 else 0
+        val kotlinTypes = listOfNotNull(receiverType) + valueParameterTypes
+        val expectedSize = kotlinTypes.size + if (isSuspend) 1 else 0
         val jvmParameterTypes = Type.getArgumentTypes(signature.descriptor).map { it.descriptor }.let {
             // members of value classes are compiled to static methods taking the underlying value first
             if (it.size == expectedSize + 1 && readKmClass(clazz)?.isValue == true) it.drop(1) else it
@@ -1456,9 +1503,26 @@ internal class DefaultKotlinIntrospector(
         return overridesSupertypeMethod(clazz, signature.name, jvmParameterTypes, kotlinParameterTypes)
     }
 
-    private fun isPropertyOverride(clazz: Class<*>, propertyName: String): Boolean {
-        val getterName = "get${propertyName.replaceFirstChar { it.uppercase() }}"
-        return overridesSupertypeMethod(clazz, getterName, emptyList(), lazyOf(emptyList()))
+    private fun isPropertyOverride(clazz: Class<*>, property: KmProperty): Boolean {
+        // a property without a getter, like a @JvmField or const one, cannot be an override
+        val getterSignature = property.getterSignature ?: return false
+        if (isJvmMethodOverride(
+                clazz,
+                getterSignature,
+                property.receiverParameterType,
+                emptyList(),
+                isSuspend = false
+            )
+        ) return true
+        // an override of a property mapped to a Java method, like Collection.size,
+        // keeps its getter, and is accompanied by a bridge implementing the Java method
+        val mappedName = mappedPropertyMethodNames[property.name] ?: return false
+        val hasBridge = try {
+            clazz.declaredMethods.any { it.name == mappedName && it.parameterCount == 0 }
+        } catch (_: LinkageError) {
+            false
+        }
+        return hasBridge && overridesSupertypeMethod(clazz, mappedName, emptyList(), lazyOf(emptyList()))
     }
 
     private fun buildFullClasspathIndex(): Triple<Map<String, List<IndexedExtension>>, Map<String, List<IndexedExtensionProperty>>, Map<String, List<String>>> {

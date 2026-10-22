@@ -1087,6 +1087,102 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should mark override of isXxx property`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.EnabledToggle"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.EnabledToggle [page 1/1]
+            class EnabledToggle : Toggle {
+                override val isEnabled: Boolean
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not mark isXxx property without overridden supertype property as override`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.StandaloneToggle"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.StandaloneToggle [page 1/1]
+            class StandaloneToggle {
+                val isEnabled: Boolean
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not mark property with getter renamed by JvmName as override of function named like default getter`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.RenamedFooGetter"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.RenamedFooGetter [page 1/1]
+            class RenamedFooGetter : FooGetterBase {
+                val foo: Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not mark JvmField property as override of function named like default getter`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JvmFieldBar"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JvmFieldBar [page 1/1]
+            class JvmFieldBar : GetBarBase {
+                val bar: Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark override of member extension property`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.StringLengthMeasure"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.StringLengthMeasure [page 1/1]
+            class StringLengthMeasure : StringMeasure {
+                override val String.measure: Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark override of member extension property with value class receiver as type argument`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.UIntReceiverMeasure"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.UIntReceiverMeasure [page 1/1]
+            class UIntReceiverMeasure : GenericReceiverMeasure<UInt> {
+                override val UInt.measure: Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark override of property of value class type`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.UIntValue"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.UIntValue [page 1/1]
+            class UIntValue : UIntValueHolder {
+                override val value: UInt
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark override of mapped Java collection property`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.SizedCollection"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SizedCollection [page 1/1]
+            abstract class SizedCollection : java.util.AbstractCollection<String> {
+                override val size: Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve member of nested class`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.SealedTestClass.SubClass1.name"
