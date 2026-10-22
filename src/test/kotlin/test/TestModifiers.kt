@@ -85,3 +85,13 @@ class InnerSealedInterfaceHolder<X> {
         override fun compareTo(other: X): Int = 0
     }
 }
+
+// The companion object of another class can be a sealed subclass, unlike the own one, already rendered
+sealed class CompanionSealedHolder {
+    companion object : CompanionSealedHolder()
+    class Sub : CompanionSealedHolder()
+}
+
+class CompanionSealedSubclassHolder {
+    companion object : CompanionSealedHolder()
+}

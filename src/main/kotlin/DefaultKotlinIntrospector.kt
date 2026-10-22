@@ -985,13 +985,17 @@ internal class DefaultKotlinIntrospector(
     /**
      * The sealed subclasses of the [kmClass] which are part of the API, by their names relative to the [kmClass]
      * when nested within it, or else to their package, like `Holder.Nested`.
-     * The ones which cannot be loaded are not listed, as they cannot be resolved either.
+     * The ones which cannot be loaded are not listed, as they cannot be resolved either,
+     * neither is the own companion object, already rendered as such,
+     * while the companion object of another class is, as a branch of a `when` expression.
      */
     private fun listedSealedSubclasses(kmClass: KmClass): List<Pair<String, KmClass>> =
         kmClass.sealedSubclasses.mapNotNull { subclassName ->
+            if (subclassName == "${kmClass.name}.${kmClass.companionObject}") return@mapNotNull null
             val subclass = loadKmClass(subclassName) ?: return@mapNotNull null
             val enclosing = enclosingScopes(subclass) ?: return@mapNotNull null
-            if (!isListedNestedClass(subclass) || !subclass.visibility.isApiIn(enclosing)) return@mapNotNull null
+            val isListed = subclass.kind == ClassKind.COMPANION_OBJECT || isListedNestedClass(subclass)
+            if (!isListed || !subclass.visibility.isApiIn(enclosing)) return@mapNotNull null
             subclassName.removePrefix("${kmClass.name}.").substringAfterLast('/') to subclass
         }
 

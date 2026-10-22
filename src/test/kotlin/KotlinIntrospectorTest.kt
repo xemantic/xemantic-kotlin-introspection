@@ -2049,13 +2049,17 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should resolve members of inner class of inner class with type parameters of all outer classes`() {
+    fun `should resolve function of inner class of inner class with type parameters of all outer classes`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.InnerOfInnerHolder.Mid.Leaf.pair"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.InnerOfInnerHolder.Mid.Leaf.pair [page 1/1]
             fun pair(): Pair<A, B>
         """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve property of inner class of inner class with type parameters of all outer classes`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.InnerOfInnerHolder.Mid.Leaf.key"
         ) sameAsKotlin """
@@ -2530,6 +2534,21 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.test.InnerSealedInterface [page 1/1]
             sealed interface InnerSealedInterface {
                 inner class InnerSealedInterfaceHolder.Sub : InnerSealedInterface, Comparable<X>
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should list companion object of another class as sealed subclass`() {
+        // the own companion object is rendered as such, while the one of another class is a branch of a when expression
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.CompanionSealedHolder"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.CompanionSealedHolder [page 1/1]
+            sealed class CompanionSealedHolder {
+                class Sub : CompanionSealedHolder
+                companion object CompanionSealedSubclassHolder.Companion : CompanionSealedHolder
+                companion object : CompanionSealedHolder
             }
         """.trimIndent()
     }
