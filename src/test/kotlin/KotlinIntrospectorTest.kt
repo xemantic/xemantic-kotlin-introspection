@@ -1360,7 +1360,7 @@ class KotlinIntrospectorTest {
             "com.xemantic.kotlin.introspection.test.ProbeOuterString.Sub"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.ProbeOuterString.Sub [page 1/1]
-            class Sub : ProbeOuter.Inner {
+            inner class Sub : ProbeOuter.Inner {
                 override fun f(t: String)
                 fun f(t: Int)
             }
