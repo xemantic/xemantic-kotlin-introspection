@@ -2430,8 +2430,8 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.JavaOuterSubclass [page 1/1]
             class JavaOuterSubclass : com.xemantic.kotlin.introspection.test.other.JavaOuterBase<String> {
-                inner class InnerSubclass : com.xemantic.kotlin.introspection.test.other.JavaOuterBase.Inner<Int>
-                inner class ShadowingSubclass : com.xemantic.kotlin.introspection.test.other.JavaOuterBase.Shadowing<Int>
+                inner class InnerSubclass : com.xemantic.kotlin.introspection.test.other.JavaOuterBase<String>.Inner<Int>
+                inner class ShadowingSubclass : com.xemantic.kotlin.introspection.test.other.JavaOuterBase<String>.Shadowing<Int>
                 override fun <T : Number> shadowing(x: T)
                 fun <T : String> shadowing(x: T)
             }
@@ -2444,7 +2444,7 @@ class KotlinIntrospectorTest {
             "com.xemantic.kotlin.introspection.test.JavaOuterSubclass.InnerSubclass"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.JavaOuterSubclass.InnerSubclass [page 1/1]
-            inner class InnerSubclass : com.xemantic.kotlin.introspection.test.other.JavaOuterBase.Inner<Int> {
+            inner class InnerSubclass : com.xemantic.kotlin.introspection.test.other.JavaOuterBase<String>.Inner<Int> {
                 override fun outer(x: String)
                 fun outer(x: Int)
                 override fun inner(x: Int)
@@ -2459,7 +2459,7 @@ class KotlinIntrospectorTest {
             "com.xemantic.kotlin.introspection.test.JavaOuterSubclass.ShadowingSubclass"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.JavaOuterSubclass.ShadowingSubclass [page 1/1]
-            inner class ShadowingSubclass : com.xemantic.kotlin.introspection.test.other.JavaOuterBase.Shadowing<Int> {
+            inner class ShadowingSubclass : com.xemantic.kotlin.introspection.test.other.JavaOuterBase<String>.Shadowing<Int> {
                 override fun shadowed(x: Int)
                 fun shadowed(x: String)
             }
