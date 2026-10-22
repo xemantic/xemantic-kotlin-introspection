@@ -698,6 +698,111 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve enum class without entries but with a companion object`() {
+        // without entries, the members still have to be preceded by a semicolon, otherwise the rendered Kotlin is invalid
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.EntrylessCompanionEnum"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.EntrylessCompanionEnum [page 1/1]
+            enum class EntrylessCompanionEnum {
+                ;
+                companion object {
+                    fun x(): Int
+                }
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve enum class without entries but with members`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.EntrylessEnum"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.EntrylessEnum [page 1/1]
+            enum class EntrylessEnum {
+                ;
+                val a: Int
+                fun f1()
+                fun f2()
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should paginate members of enum class without entries - the first page`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.EntrylessEnum",
+            pageSize = 2
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.EntrylessEnum [page 1/2]
+            enum class EntrylessEnum {
+                ;
+                val a: Int
+                fun f1()
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should paginate members of enum class without entries - the last page`() {
+        // the semicolon is not an item of its own, but it precedes the members on every page
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.EntrylessEnum",
+            page = 2,
+            pageSize = 2
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.EntrylessEnum [page 2/2]
+            enum class EntrylessEnum {
+                ;
+                fun f2()
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve enum class without entries but with a nested class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.EntrylessNestedEnum"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.EntrylessNestedEnum [page 1/1]
+            enum class EntrylessNestedEnum {
+                ;
+                class Nested
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should paginate enum class without entries - the page with the members`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.EntrylessExtendedEnum",
+            pageSize = 2
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.EntrylessExtendedEnum [page 1/2]
+            enum class EntrylessExtendedEnum {
+                ;
+                fun f()
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun EntrylessExtendedEnum.e1()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should paginate enum class without entries - the page with only extensions`() {
+        // the semicolon belongs to the class body, which is not shown without members on the page
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.EntrylessExtendedEnum",
+            page = 2,
+            pageSize = 2
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.EntrylessExtendedEnum [page 2/2]
+            // from com.xemantic.kotlin.introspection.test
+            fun EntrylessExtendedEnum.e2()
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve annotation class`() {
         // an LLM needs to see annotation parameters to know how to use the annotation
         resolver.resolve(
