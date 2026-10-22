@@ -596,7 +596,7 @@ internal class DefaultKotlinIntrospector(
             val supertypes = mutableKmClass.supertypes.map { formatType(it, typeParameters = typeParameters) }
             declaration = buildString {
                 +"interface "
-                +simpleName
+                +escapeIdentifier(simpleName)
                 +formatTypeParameters(mutableKmClass.typeParameters, typeParameters)
                 if (supertypes.isNotEmpty()) {
                     +" : "
@@ -635,7 +635,7 @@ internal class DefaultKotlinIntrospector(
                 +formatJvmInline(kClass.java.isAnnotationPresent(JvmInline::class.java))
                 if (kClass.isValue) +"value "
                 +(if (kClass.java.isInterface) "interface " else "class ")
-                +simpleName
+                +escapeIdentifier(simpleName)
                 +formatKTypeParameters(kClass.typeParameters)
                 if (supertypes.isNotEmpty()) {
                     +" : "
@@ -1008,7 +1008,7 @@ internal class DefaultKotlinIntrospector(
         return ClassListing(
             header = header,
             isEnum = isEnum,
-            enumEntryNames = if (isEnum) kmClass.kmEnumEntries.map { it.name } else emptyList(),
+            enumEntryNames = if (isEnum) kmClass.kmEnumEntries.map { escapeIdentifier(it.name) } else emptyList(),
             members = members,
             extensions = extensionSignatures(extensions, extensionProperties, contextPackage)
         )
@@ -1033,7 +1033,8 @@ internal class DefaultKotlinIntrospector(
      * The header of a class declaration: the modifiers and the kind, the [name], the type parameters,
      * the [constructor] declaration, if any, the supertypes and the where clause.
      *
-     * @param name the name to render, possibly qualified, like `Holder.Nested`, or empty for a default companion object.
+     * @param name the name to render, possibly qualified, like `Holder.Nested`, or empty for a default companion object,
+     *   unescaped, as each of its segments is escaped with [escapeQualifiedName].
      * @param typeParameters the names of the type parameters in scope, including the ones
      *   of the outer class of an inner class.
      */
@@ -1045,7 +1046,7 @@ internal class DefaultKotlinIntrospector(
         constructor: String = ""
     ): String = buildString {
         // the prefix ends with a space, like in `companion object `
-        +formatClassPrefix(kmClass).let { if (name.isEmpty()) it.trimEnd() else it + name }
+        +formatClassPrefix(kmClass).let { if (name.isEmpty()) it.trimEnd() else it + escapeQualifiedName(name) }
         +formatTypeParameters(kmClass.typeParameters, typeParameters, contextPackage)
         +constructor
         val supertypes = formatSupertypes(kmClass, contextPackage, typeParameters)
@@ -1178,7 +1179,7 @@ internal class DefaultKotlinIntrospector(
         is Char -> "'${value.toString().escapeKotlin('\'')}'"
         is Long -> "${value}L"
         is Float -> "${value}f"
-        is Enum<*> -> "${formatJavaClassName(value.declaringJavaClass, contextPackage)}.${value.name}"
+        is Enum<*> -> "${formatJavaClassName(value.declaringJavaClass, contextPackage)}.${escapeIdentifier(value.name)}"
         is Class<*> -> "${formatJavaClassName(value, contextPackage)}::class"
         is Annotation -> {
             val annotationType = value.annotationClass.java
@@ -1187,7 +1188,7 @@ internal class DefaultKotlinIntrospector(
                 prefix = "${formatJavaClassName(annotationType, contextPackage)}(",
                 postfix = ")"
             ) { method ->
-                "${method.name} = ${formatAnnotationValue(method.invoke(value), contextPackage)}"
+                "${escapeIdentifier(method.name)} = ${formatAnnotationValue(method.invoke(value), contextPackage)}"
             }
         }
         is Array<*> -> value.joinToString(", ", "[", "]") { formatAnnotationValue(it!!, contextPackage) }
@@ -1232,7 +1233,9 @@ internal class DefaultKotlinIntrospector(
             // a JVM type mapped to a Kotlin built-in type, like java.lang.String
             kotlinName.substringAfterLast('.')
         }
-        return if (isWellKnownType(kotlinName) || javaClass.packageName == contextPackage) simpleName else kotlinName
+        return escapeQualifiedName(
+            if (isWellKnownType(kotlinName) || javaClass.packageName == contextPackage) simpleName else kotlinName
+        )
     }
 
     /**
@@ -1273,7 +1276,7 @@ internal class DefaultKotlinIntrospector(
             +"."
         }
 
-        +function.name
+        +escapeIdentifier(function.name)
         +"("
 
         // an override cannot declare a default value, but inherits the one of the overridden function
@@ -1318,7 +1321,7 @@ internal class DefaultKotlinIntrospector(
         +modifiers
         if (parameter.varargElementType != null) +"vararg "
         +prefix
-        +parameter.name
+        +escapeIdentifier(parameter.name)
         +": "
         // a vararg parameter is typed as an array, like Array<out T>, while its element type is rendered
         +formatType(parameter.varargElementType ?: parameter.type, contextPackage, typeParameters)
@@ -1361,13 +1364,13 @@ internal class DefaultKotlinIntrospector(
             +"."
         }
 
-        +property.name
+        +escapeIdentifier(property.name)
         +": "
         +formatType(property.returnType, contextPackage, typeParameters)
         +formatWhereClause(property.typeParameters, typeParameters, contextPackage)
     }
 
-    private fun List<KmTypeParameter>.namesById(): Map<Int, String> = associate { it.id to it.name }
+    private fun List<KmTypeParameter>.namesById(): Map<Int, String> = associate { it.id to escapeIdentifier(it.name) }
 
     /**
      * The names of the type parameters which the [kmClass] can refer to, by their ids,
@@ -1400,7 +1403,7 @@ internal class DefaultKotlinIntrospector(
                     KmVariance.OUT -> +"out "
                     KmVariance.INVARIANT -> {}
                 }
-                +typeParameter.name
+                +escapeIdentifier(typeParameter.name)
                 typeParameter.upperBounds.singleOrNull()?.takeUnless { it.isNullableAny() }?.let {
                     +" : "
                     +formatType(it, contextPackage, typeParameters)
@@ -1415,7 +1418,7 @@ internal class DefaultKotlinIntrospector(
         contextPackage: String? = null
     ): String {
         val constraints = declarations.filter { it.upperBounds.size > 1 }.flatMap { typeParameter ->
-            typeParameter.upperBounds.map { "${typeParameter.name} : ${formatType(it, contextPackage, typeParameters)}" }
+            typeParameter.upperBounds.map { "${escapeIdentifier(typeParameter.name)} : ${formatType(it, contextPackage, typeParameters)}" }
         }
         return if (constraints.isEmpty()) "" else " where ${constraints.joinToString(", ")}"
     }
@@ -1453,7 +1456,7 @@ internal class DefaultKotlinIntrospector(
             // carries the type arguments of the outer class in the outer type
             is KmClassifier.Class if outerType != null -> {
                 val outer = formatType(outerType, contextPackage, typeParameters)
-                "$outer.${simpleClassName(classifier.name)}"
+                "$outer.${escapeIdentifier(simpleClassName(classifier.name))}"
             }
             is KmClassifier.Class -> {
                 val fqn = classifier.name.replace("/", ".")
@@ -1462,13 +1465,15 @@ internal class DefaultKotlinIntrospector(
                 // Use simple name for:
                 // 1. Well-known stdlib types (kotlin.*, java.*)
                 // 2. Types from the same package as the context
-                if (isWellKnownType(fqn) || typePackage == contextPackage) {
-                    classifier.name.substringAfterLast("/")
-                } else {
-                    fqn
-                }
+                escapeQualifiedName(
+                    if (isWellKnownType(fqn) || typePackage == contextPackage) {
+                        classifier.name.substringAfterLast("/")
+                    } else {
+                        fqn
+                    }
+                )
             }
-            is KmClassifier.TypeAlias -> classifier.name.substringAfterLast("/")
+            is KmClassifier.TypeAlias -> escapeQualifiedName(classifier.name.substringAfterLast("/"))
             // a type parameter of an outer declaration might be unknown in this context
             is KmClassifier.TypeParameter -> typeParameters[classifier.id] ?: "T"
         }

@@ -200,7 +200,7 @@ internal fun <T> FunctionType<T>.format(
     }
     append(valueParameters.joinToString(", ", prefix = "(", postfix = ")") { parameter ->
         val type = formatType(parameter)
-        parameterName(parameter)?.let { "$it: $type" } ?: type
+        parameterName(parameter)?.let { "${escapeIdentifier(it)}: $type" } ?: type
     })
     append(" -> ")
     append(formatType(returnType))
