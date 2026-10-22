@@ -18,6 +18,7 @@
 
 package com.xemantic.kotlin.introspection.test
 
+import com.xemantic.kotlin.introspection.othermodule.InternalBase
 import com.xemantic.kotlin.introspection.test.other.JavaClassBoundBase
 import com.xemantic.kotlin.introspection.test.other.JavaFunctionTaker
 import com.xemantic.kotlin.introspection.test.other.JavaGetterBase
@@ -479,4 +480,74 @@ interface RunnableExtension : Runnable
 class RunnableExtensionImpl : RunnableExtension {
     override fun run() {}
     override fun hashCode(): Int = 1
+}
+
+// Context parameters are a part of the signature, a function with other ones is an overload
+class Logger
+
+class Ctx
+
+open class ContextBase {
+    context(log: Logger)
+    open fun run() {}
+    context(log: Logger)
+    open val label: String get() = ""
+}
+
+class ContextOverloadingSubclass : ContextBase() {
+    fun run() {}
+    context(c: Ctx)
+    fun run() {}
+    context(c: Ctx)
+    val label: String get() = ""
+}
+
+class ContextOverridingSubclass : ContextBase() {
+    context(log: Logger)
+    override fun run() {}
+    context(log: Logger)
+    override val label: String get() = ""
+}
+
+interface ContextProcessor<T> {
+    context(c: Ctx)
+    fun process(item: T)
+}
+
+class UIntContextProcessor : ContextProcessor<UInt> {
+    context(c: Ctx)
+    override fun process(item: UInt) {}
+    fun process(item: Int) {}
+}
+
+@JvmInline
+value class ValueContextProcessor(val value: Int) : ContextProcessor<UInt> {
+    context(c: Ctx)
+    override fun process(item: UInt) {}
+}
+
+interface Contextual<C> {
+    context(c: C)
+    fun act()
+}
+
+class CtxContextual : Contextual<Ctx> {
+    context(c: Ctx)
+    override fun act() {}
+    context(log: Logger)
+    fun act() {}
+}
+
+// A Java method has no context parameters
+class ContextRunnable : Runnable {
+    override fun run() {}
+    context(c: Ctx)
+    fun run() {}
+}
+
+// The internal members of a class of another module cannot be overridden
+class OtherModuleSubclass : InternalBase() {
+    fun reset() {}
+    val state: Int get() = 1
+    override fun keep() {}
 }

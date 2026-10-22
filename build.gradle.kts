@@ -78,6 +78,9 @@ tasks.named<KotlinCompile>("compileJvmDefaultDisabledTestFixturesKotlin") {
     compilerOptions.jvmDefault = JvmDefaultMode.DISABLE
 }
 
+// a separate Kotlin module, whose internal members are not visible to the test module
+val otherModuleTestFixtures: SourceSet = sourceSets.create("otherModuleTestFixtures")
+
 dependencies {
     implementation(libs.kotlin.metadata.jvm)
     implementation(libs.kotlin.reflect)
@@ -89,6 +92,7 @@ dependencies {
     implementation(libs.slf4j.api)
 
     testImplementation(jvmDefaultDisabledTestFixtures.output)
+    testImplementation(otherModuleTestFixtures.output)
     testImplementation(libs.kotlin.test)
     testImplementation(libs.xemantic.kotlin.test)
     testRuntimeOnly(libs.logback.classic)
