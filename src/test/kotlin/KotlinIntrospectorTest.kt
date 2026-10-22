@@ -4463,6 +4463,37 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve built-in type with members deprecated without explicit level`() {
+        // kotlin-reflect cannot tell the default level of the @Deprecated of the built-in Long.toChar()
+        resolver.resolve("kotlin.Long", pageSize = 10000) should {
+            have("    override fun toChar(): Char" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve member of built-in type deprecated without explicit level`() {
+        resolver.resolve("kotlin.Number.toChar") sameAsKotlin """
+            // kotlin.Number.toChar [page 1/1]
+            fun toChar(): Char
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve every built-in type and all its members`() {
+        DefaultKotlinIntrospector.builtinTypes.forEach { (name, kClass) ->
+            // when
+            val signature = resolver.resolve(name)
+            val memberSignatures = kClass.members.map { it.name }.distinct().associateWith { member ->
+                resolver.resolve("$name.$member")
+            }
+
+            // then
+            assert(signature != null)
+            assert(memberSignatures.isNotEmpty())
+        }
+    }
+
+    @Test
     fun `should not list interface properties deprecated with hidden level`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.HiddenDeprecationInterface"

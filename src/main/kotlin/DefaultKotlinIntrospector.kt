@@ -158,15 +158,18 @@ internal class DefaultKotlinIntrospector(
      */
     private val stdlibVersion: KotlinVersion by lazy {
         try {
-            // the Implementation-Version of the manifest of the jar of the standard library seen by the class loader,
-            // which can differ from the one of this library, while loading the KotlinVersion class would,
-            // with the parent-first delegation, rather give the one of this library;
+            // the Implementation-Version of the manifest of the jar of the standard library the class loader finds,
+            // which is the same as the one of this library, unless the class loader prefers its own resources;
             // unless the manifest is of another jar, like a fat jar with the standard library inside
-            (classLoader.getResource("kotlin/KotlinVersion.class")?.openConnection() as? JarURLConnection)
-                ?.manifest?.mainAttributes
-                ?.takeIf { it.getValue(Attributes.Name.IMPLEMENTATION_TITLE) == "kotlin-stdlib" }
-                ?.getValue(Attributes.Name.IMPLEMENTATION_VERSION)
-                ?.let { parseKotlinVersion(it) }
+            val connection = classLoader.getResource("kotlin/KotlinVersion.class")?.openConnection() as? JarURLConnection
+            // not cached, so that the jar file is closed, and not locked for the life of the JVM
+            connection?.useCaches = false
+            connection?.jarFile?.use { jarFile ->
+                jarFile.manifest?.mainAttributes
+                    ?.takeIf { it.getValue(Attributes.Name.IMPLEMENTATION_TITLE) == "kotlin-stdlib" }
+                    ?.getValue(Attributes.Name.IMPLEMENTATION_VERSION)
+                    ?.let { parseKotlinVersion(it) }
+            }
         } catch (_: Exception) {
             null
         } ?: KotlinVersion.CURRENT // like for a standard library in a directory, or in a fat jar
@@ -199,7 +202,7 @@ internal class DefaultKotlinIntrospector(
          * These types map to JVM types and don't have Kotlin metadata.
          */
         @OptIn(ExperimentalUnsignedTypes::class)
-        private val builtinTypes: Map<String, KClass<*>> = mapOf(
+        internal val builtinTypes: Map<String, KClass<*>> = mapOf(
             "kotlin.Any" to Any::class,
             "kotlin.String" to String::class,
             "kotlin.CharSequence" to CharSequence::class,
@@ -446,6 +449,21 @@ internal class DefaultKotlinIntrospector(
         filter { it.visibility.isApiIn(scopes) && declaringClass?.isHidden(it) != true }
 
     /**
+     * The functions of a mutable built-in collection type which are part of the API.
+     * Whether one is hidden cannot be told: kotlin-metadata-jvm does not read the annotations of the built-ins,
+     * while kotlin-reflect describes the read-only counterpart, sharing the same JVM type, instead.
+     * None of the built-in collection declarations is deprecated, which `KotlinBuiltinsTest` guards.
+     */
+    @JvmName("mutableBuiltinApiFunctions")
+    private fun List<KmFunction>.inMutableBuiltinApi(): List<KmFunction> = inApi(emptyList(), declaringClass = null)
+
+    /**
+     * The properties of a mutable built-in collection type which are part of the API, see the functions.
+     */
+    @JvmName("mutableBuiltinApiProperties")
+    private fun List<KmProperty>.inMutableBuiltinApi(): List<KmProperty> = inApi(emptyList(), declaringClass = null)
+
+    /**
      * Whether a member of a built-in type, described by kotlin-reflect, is part of the API:
      * public, and not hidden, see [isHiddenDeprecated].
      */
@@ -679,7 +697,7 @@ internal class DefaultKotlinIntrospector(
                     +supertypes.joinToString(", ")
                 }
             }
-            mutableKmClass.properties.inApi(emptyList(), declaringClass = null).forEach { property ->
+            mutableKmClass.properties.inMutableBuiltinApi().forEach { property ->
                 allMembers.add(
                     Member(
                         property.name,
@@ -687,7 +705,7 @@ internal class DefaultKotlinIntrospector(
                     )
                 )
             }
-            mutableKmClass.functions.inApi(emptyList(), declaringClass = null).forEach { function ->
+            mutableKmClass.functions.inMutableBuiltinApi().forEach { function ->
                 allMembers.add(
                     Member(
                         function.name,
@@ -786,10 +804,31 @@ internal class DefaultKotlinIntrospector(
      * Whether a member of a built-in type, described by kotlin-reflect, is hidden, like the `getFirst()`
      * of `java.util.List` since JDK 21, which Kotlin hides in favor of the `first()` extension,
      * see [hiddenDeprecationVisitor].
+     * The annotations are built by kotlin-reflect from the metadata of the built-ins, never failing the resolve.
      */
-    private fun isHiddenDeprecated(member: KCallable<*>): Boolean = member.annotations.any { annotation ->
-        (annotation is Deprecated && annotation.level == DeprecationLevel.HIDDEN) ||
-            (annotation is DeprecatedSinceKotlin && isHiddenSince(annotation.hiddenSince))
+    private fun isHiddenDeprecated(member: KCallable<*>): Boolean = reflectedAnnotationValue(default = false) {
+        member.annotations.any { annotation ->
+            val isHidden = annotation is Deprecated &&
+                reflectedAnnotationValue(DeprecationLevel.WARNING) { annotation.level } == DeprecationLevel.HIDDEN
+            isHidden || (
+                annotation is DeprecatedSinceKotlin &&
+                    isHiddenSince(reflectedAnnotationValue("") { annotation.hiddenSince })
+                )
+        }
+    }
+
+    /**
+     * A [value] read from an annotation which kotlin-reflect builds from the metadata of the built-ins,
+     * or the [default] when it cannot be read, like a parameter with the default value, absent from the metadata,
+     * whose getter throws `KotlinReflectionInternalError`, as for the `level` of `@Deprecated` of `Long.toChar()`.
+     */
+    private inline fun <T> reflectedAnnotationValue(default: T, value: () -> T): T = try {
+        value()
+    } catch (_: Exception) {
+        default
+    } catch (e: Error) {
+        if (e is VirtualMachineError) throw e
+        default
     }
 
     /**
@@ -846,9 +885,9 @@ internal class DefaultKotlinIntrospector(
         val mutableKmClass = if (className in mutableBuiltinTypes) builtinKmClass else null
         val mutableMembers = mutableKmClass?.let { kmClass ->
             val typeParameters = kmClass.typeParameters.namesById()
-            kmClass.functions.filter { it.name == memberName }.map {
+            kmClass.functions.filter { it.name == memberName }.inMutableBuiltinApi().map {
                 formatFunction(it, inInterface = true, owner = kmClass, classTypeParameters = typeParameters)
-            } + kmClass.properties.filter { it.name == memberName }.map {
+            } + kmClass.properties.filter { it.name == memberName }.inMutableBuiltinApi().map {
                 formatProperty(it, inInterface = true, owner = kmClass, classTypeParameters = typeParameters)
             }
         } ?: emptyList()
