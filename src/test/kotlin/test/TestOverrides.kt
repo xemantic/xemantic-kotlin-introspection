@@ -27,6 +27,8 @@ import com.xemantic.kotlin.introspection.test.other.JavaLabelBase
 import com.xemantic.kotlin.introspection.test.other.JavaOuterBase
 import com.xemantic.kotlin.introspection.test.other.JavaPrimitiveBase
 import com.xemantic.kotlin.introspection.test.other.JavaProcessorBase
+import com.xemantic.kotlin.introspection.test.other.JavaRawArrayMid
+import com.xemantic.kotlin.introspection.test.other.JavaRawClassBoundMid
 import com.xemantic.kotlin.introspection.test.other.JavaSortBase
 import com.xemantic.kotlin.introspection.test.other.JavaVoidBase
 import com.xemantic.kotlin.introspection.test.other.PackagePrivateBase
@@ -596,4 +598,14 @@ class JavaOuterSubclass : JavaOuterBase<String>() {
         override fun shadowed(x: Int) {}
         fun shadowed(x: String) {}
     }
+}
+
+// The type variable of a raw Java superclass is erased to its bound
+class JavaRawArraySubclass : JavaRawArrayMid() {
+    override fun process(items: Array<Any?>) {}
+    fun process(items: Array<Int>) {}
+}
+
+class JavaRawClassBoundSubclass : JavaRawClassBoundMid() {
+    fun <T : Number> bounded(x: T) {}
 }

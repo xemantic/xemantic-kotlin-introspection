@@ -95,3 +95,10 @@ class AbsentJavaOuterSubclass : AbsentJavaOuter<String>() {
         fun shadowed(x: String) {}
     }
 }
+
+// the type variable of the raw Java superclass, declaring a method taking Absent, is erased to its bound
+class AbsentRawJavaSubclass : AbsentRawJavaMid() {
+    override fun process(items: Array<Any?>) {}
+    fun process(items: Array<Int>) {}
+    fun <S : Number> bounded(x: S) {}
+}

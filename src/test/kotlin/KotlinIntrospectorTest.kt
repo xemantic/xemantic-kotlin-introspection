@@ -1908,6 +1908,31 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should erase type variable of raw Java superclass taken as array to its bound`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaRawArraySubclass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaRawArraySubclass [page 1/1]
+            class JavaRawArraySubclass : com.xemantic.kotlin.introspection.test.other.JavaRawArrayMid {
+                override fun process(items: Array<Any?>)
+                fun process(items: Array<Int>)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should erase type variable of raw Java superclass bounding method type variable to its bound`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaRawClassBoundSubclass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaRawClassBoundSubclass [page 1/1]
+            class JavaRawClassBoundSubclass : com.xemantic.kotlin.introspection.test.other.JavaRawClassBoundMid {
+                fun <T : Number> bounded(x: T)
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should not bind Java method type variable shadowing type variable of its class to type argument of the class`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.JavaOuterSubclass"

@@ -91,13 +91,16 @@ internal class OverrideResolver(
      * @param nullable `null` for a type coming from Java, which can be seen in Kotlin as both nullable and not.
      * @param isJavaPrimitive whether this is a Java primitive type, seen in Kotlin as not nullable,
      *   unlike a Kotlin type substituted for a Java type variable, also not nullable, but flexible in Kotlin.
+     * @param isRaw whether this is a raw Java supertype, like `Base` in `class Mid extends Base`,
+     *   whose type variables are erased to their bounds, unlike a type with unknown type arguments.
      */
     private data class ClassType(
         val name: String,
         val arguments: List<TypeArgument> = emptyList(),
         val nullable: Boolean? = false,
         val outer: ClassType? = null,
-        val isJavaPrimitive: Boolean = false
+        val isJavaPrimitive: Boolean = false,
+        val isRaw: Boolean = false
     ) : MemberType {
         val isFlexible: Boolean get() = nullable == null
     }
@@ -697,16 +700,29 @@ internal class OverrideResolver(
 
     /**
      * The type variables of the [javaClass], and of its outer classes if it is an inner class,
-     * mapped to the type arguments of the [supertype], and of its outer types.
+     * mapped to the type arguments of the [supertype], and of its outer types,
+     * or to the erasures of their bounds if the [supertype] is raw.
      */
     private fun javaSubstitution(javaClass: Class<*>, supertype: ClassType): JavaSubstitution {
         val scopes = mutableListOf<Pair<Class<*>, Map<String, MemberType>>>()
         var declaration: Class<*>? = javaClass
         var type: ClassType? = supertype
+        // the outer type of a raw inner type is raw as well
+        val isRaw = supertype.isRaw
         while (declaration != null) {
             val typeArguments = type?.arguments
-            scopes += declaration to declaration.typeParameters.withIndex().associate { (index, typeVariable) ->
-                typeVariable.name to (typeArguments?.getOrNull(index)?.type ?: UnknownType)
+            val typeParameters = try {
+                declaration.typeParameters
+            } catch (_: LinkageError) {
+                // a malformed generic signature
+                break
+            }
+            scopes += declaration to typeParameters.withIndex().associate { (index, typeVariable) ->
+                typeVariable.name to if (isRaw) {
+                    boundErasure(typeVariable)
+                } else {
+                    typeArguments?.getOrNull(index)?.type ?: UnknownType
+                }
             }
             // a static nested class cannot refer to the type variables of its outer class
             if (Modifier.isStatic(declaration.modifiers)) break
@@ -718,6 +734,29 @@ internal class OverrideResolver(
             type = type?.outer
         }
         return JavaSubstitution(scopes)
+    }
+
+    /**
+     * The type a [typeVariable] of a raw type is erased to: the erasure of its first bound,
+     * or an unknown type if the bound refers to a class missing from the classpath.
+     */
+    private fun boundErasure(typeVariable: TypeVariable<*>): MemberType = try {
+        var bound: JavaType? = typeVariable
+        val visited = mutableSetOf<TypeVariable<*>>()
+        while (bound is TypeVariable<*> && visited.add(bound)) {
+            bound = bound.bounds.firstOrNull()
+        }
+        when (bound) {
+            is Class<*> -> javaClassType(bound)
+            is ParameterizedType -> javaClassType(bound.rawType as Class<*>)
+            else -> UnknownType
+        }
+    } catch (_: TypeNotPresentException) {
+        UnknownType
+    } catch (_: java.lang.reflect.MalformedParameterizedTypeException) {
+        UnknownType
+    } catch (_: LinkageError) {
+        UnknownType
     }
 
     /**
@@ -769,8 +808,14 @@ internal class OverrideResolver(
     private fun javaSupertypes(javaClass: Class<*>, substitution: JavaSubstitution): List<ClassType> {
         val rawSupertypes = listOfNotNull(javaClass.superclass) + javaClass.interfaces
         val supertypes = try {
-            (listOfNotNull(javaClass.genericSuperclass) + javaClass.genericInterfaces)
-                .map { javaType(it, substitution, method = null) }
+            (listOfNotNull(javaClass.genericSuperclass) + javaClass.genericInterfaces).map { type ->
+                // a generic supertype given as a class is raw
+                if (type is Class<*>) {
+                    javaClassType(type).let { if (it is ClassType) it.copy(isRaw = true) else it }
+                } else {
+                    javaType(type, substitution, method = null)
+                }
+            }
         } catch (_: TypeNotPresentException) {
             null
         } catch (_: java.lang.reflect.MalformedParameterizedTypeException) {

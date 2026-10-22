@@ -230,6 +230,27 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should erase type variable of raw Java superclass to its bound when another method refers to class missing from the classpath`() {
+        // given
+        val introspector = introspectorWithoutAbsentClass()
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.AbsentRawJavaSubclass"
+        )
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.AbsentRawJavaSubclass [page 1/1]
+            class AbsentRawJavaSubclass : AbsentRawJavaMid {
+                override fun process(items: Array<Any?>)
+                fun process(items: Array<Int>)
+                fun <S : Number> bounded(x: S)
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should not bind Java method type variable shadowing type variable of its class when another method refers to class missing from the classpath`() {
         // given
         val introspector = introspectorWithoutAbsentClass()
