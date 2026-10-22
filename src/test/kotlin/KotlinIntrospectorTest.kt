@@ -2817,6 +2817,37 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve member named like hard keyword by its escaped name`() {
+        // the escaped name is the one rendered, and therefore the one an LLM is likely to ask for
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.KeywordMembersSample.`return`"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.KeywordMembersSample.`return` [page 1/1]
+            fun <`class`> `return`(value: `class`): `class`
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve nested class named like hard keyword by its escaped name`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.KeywordMembersSample.`interface`"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.KeywordMembersSample.`interface` [page 1/1]
+            class `interface`
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve nested class named with dollar sign by its escaped name`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.NestedClassesHolder.`Dollar\$Nested`"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NestedClassesHolder.`Dollar${'$'}Nested` [page 1/1]
+            class `Dollar${'$'}Nested`
+        """.trimIndent()
+    }
+
+    @Test
     fun `should escape enum entry named like hard keyword in annotation default value`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.KeywordDefaultAnnotation"

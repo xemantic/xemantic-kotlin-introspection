@@ -46,11 +46,24 @@ internal fun escapeQualifiedName(name: String): String =
     name.split('.').joinToString(".") { escapeIdentifier(it) }
 
 /**
- * Tells if this string is an identifier by the Kotlin grammar:
- * a letter or `_`, followed by letters, `_` and digits.
+ * Tells if this string is an identifier accepted by the Kotlin compiler:
+ * a letter or `_`, followed by letters, `_` and digits, checked by code points,
+ * as a letter can be outside of the Basic Multilingual Plane, like `𝑥`.
+ * The letters are the ones of [Character.isLetter], without the letter numbers, like `Ⅻ`,
+ * which the Kotlin grammar lists, but the compiler does not accept.
+ * A name made of underscores only, like `_`, is reserved, unless escaped.
  */
-private fun String.isIdentifier(): Boolean =
-    first().isIdentifierLetter() && all { it.isIdentifierLetter() || it.isDigit() }
+private fun String.isIdentifier(): Boolean {
+    val codePoints = codePoints().toArray()
+    return codePoints.first().let { it == '_'.code || Character.isLetter(it) } &&
+        codePoints.all { it == '_'.code || Character.isLetter(it) || Character.isDigit(it) } &&
+        any { it != '_' }
+}
 
-private fun Char.isIdentifierLetter(): Boolean =
-    this == '_' || isLetter() || category == CharCategory.LETTER_NUMBER
+/**
+ * Removes the backticks escaping any segment of a [name] qualified with `.`, like ``Outer.`in` ``,
+ * the reverse of [escapeQualifiedName], so that the names can be given as they are rendered.
+ * No escaped segment can contain a `.`, which is not allowed in a JVM name, even in backticks.
+ */
+internal fun unescapeQualifiedName(name: String): String =
+    name.split('.').joinToString(".") { it.removeSurrounding("`") }

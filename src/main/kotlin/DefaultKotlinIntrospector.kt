@@ -283,7 +283,7 @@ internal class DefaultKotlinIntrospector(
     }
 
     private fun resolve(name: String): Resolved? {
-        val parts = name.split(".")
+        val parts = unescapeQualifiedName(name).split(".")
 
         // Try to find where the class name ends and member name begins
         // by progressively trying to load the class
@@ -596,7 +596,7 @@ internal class DefaultKotlinIntrospector(
             val supertypes = mutableKmClass.supertypes.map { formatType(it, typeParameters = typeParameters) }
             declaration = buildString {
                 +"interface "
-                +escapeIdentifier(simpleName)
+                +simpleName
                 +formatTypeParameters(mutableKmClass.typeParameters, typeParameters)
                 if (supertypes.isNotEmpty()) {
                     +" : "
@@ -635,7 +635,7 @@ internal class DefaultKotlinIntrospector(
                 +formatJvmInline(kClass.java.isAnnotationPresent(JvmInline::class.java))
                 if (kClass.isValue) +"value "
                 +(if (kClass.java.isInterface) "interface " else "class ")
-                +escapeIdentifier(simpleName)
+                +simpleName
                 +formatKTypeParameters(kClass.typeParameters)
                 if (supertypes.isNotEmpty()) {
                     +" : "
@@ -1225,7 +1225,7 @@ internal class DefaultKotlinIntrospector(
      * following the same rules as [formatType].
      */
     private fun formatJavaClassName(javaClass: Class<*>, contextPackage: String): String {
-        val kotlinName = javaClass.kotlin.qualifiedName ?: return javaClass.name
+        val kotlinName = javaClass.kotlin.qualifiedName ?: return escapeQualifiedName(javaClass.name)
         val javaName = javaClass.packageName.let { if (it.isEmpty()) "" else "$it." } + javaClass.nestedClassName()
         val simpleName = if (kotlinName == javaName) {
             kotlinName.removePrefix("${javaClass.packageName}.")
@@ -1370,7 +1370,7 @@ internal class DefaultKotlinIntrospector(
         +formatWhereClause(property.typeParameters, typeParameters, contextPackage)
     }
 
-    private fun List<KmTypeParameter>.namesById(): Map<Int, String> = associate { it.id to escapeIdentifier(it.name) }
+    private fun List<KmTypeParameter>.namesById(): Map<Int, String> = associate { it.id to it.name }
 
     /**
      * The names of the type parameters which the [kmClass] can refer to, by their ids,
@@ -1475,7 +1475,7 @@ internal class DefaultKotlinIntrospector(
             }
             is KmClassifier.TypeAlias -> escapeQualifiedName(classifier.name.substringAfterLast("/"))
             // a type parameter of an outer declaration might be unknown in this context
-            is KmClassifier.TypeParameter -> typeParameters[classifier.id] ?: "T"
+            is KmClassifier.TypeParameter -> typeParameters[classifier.id]?.let(::escapeIdentifier) ?: "T"
         }
 
         val typeArgs = type.arguments.map { projection ->

@@ -62,6 +62,48 @@ class IdentifiersTest {
     }
 
     @Test
+    fun `should escape letter numbers, which are not letters of an identifier`() {
+        // when
+        val escaped = escapeIdentifier("Ⅻ")
+
+        // then
+        assert(escaped == "`Ⅻ`")
+    }
+
+    @Test
+    fun `should escape names made of underscores only, which are reserved`() {
+        // given
+        val names = listOf("_", "__")
+
+        // when
+        val escaped = names.map { escapeIdentifier(it) }
+
+        // then
+        assert(escaped == listOf("`_`", "`__`"))
+    }
+
+    @Test
+    fun `should not escape identifier with letters outside of basic multilingual plane`() {
+        // given
+        val name = "𝑥𝑦" // mathematical italic small x and y
+
+        // when
+        val escaped = escapeIdentifier(name)
+
+        // then
+        assert(escaped == name)
+    }
+
+    @Test
+    fun `should unescape each segment of qualified name`() {
+        // when
+        val unescaped = unescapeQualifiedName("com.example.`in`.Outer.`Dollar\$Nested`.`my name`")
+
+        // then
+        assert(unescaped == "com.example.in.Outer.Dollar\$Nested.my name")
+    }
+
+    @Test
     fun `should not escape empty name or name containing backtick`() {
         // given
         val names = listOf("", "a`b")
