@@ -3120,6 +3120,101 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should not render constructor parameter as body property of the same name and another type`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ConstructorParameterShadowedByProperty"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ConstructorParameterShadowedByProperty [page 1/1]
+            class ConstructorParameterShadowedByProperty(x: Int) {
+                val x: Long
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not render constructor parameter as computed body property of the same name and type`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ConstructorParameterShadowedByComputedProperty"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ConstructorParameterShadowedByComputedProperty [page 1/1]
+            class ConstructorParameterShadowedByComputedProperty(x: Int) {
+                val initial: Int
+                val x: Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render constructor parameter assigned to body property of the same name and type as constructor property`() {
+        // the metadata and the bytecode are the same as of `class ConstructorParameterAssignedToProperty(val x: Int)`,
+        // and so is the API
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ConstructorParameterAssignedToProperty"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ConstructorParameterAssignedToProperty [page 1/1]
+            class ConstructorParameterAssignedToProperty(val x: Int)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not render constructor parameter as abstract body property of the same name and type`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ConstructorParameterShadowedByAbstractProperty"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ConstructorParameterShadowedByAbstractProperty [page 1/1]
+            abstract class ConstructorParameterShadowedByAbstractProperty(x: Int, y: String) {
+                abstract val x: Int
+                abstract var y: String
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not render constructor parameter as constant initialized body property of the same name and type`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ConstructorParameterShadowedByConstantProperty"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ConstructorParameterShadowedByConstantProperty [page 1/1]
+            class ConstructorParameterShadowedByConstantProperty(x: Int, y: String) {
+                val x: Int
+                val y: String
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render constructor properties with accessors renamed for the JVM`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ConstructorPropertiesWithJvmNames"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ConstructorPropertiesWithJvmNames [page 1/1]
+            class ConstructorPropertiesWithJvmNames(val x: Int, var y: Int)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render IntRange bounds overriding body properties as in the source`() {
+        // the parameters are passed to the IntProgression constructor, while the overriding properties are computed
+        resolver.resolve("kotlin.ranges.IntRange") should {
+            have(lines().contains("class IntRange(start: Int, endInclusive: Int) : IntProgression, ClosedRange<Int>, OpenEndRange<Int> {"))
+            have(lines().contains("    override val start: Int"))
+            have(lines().contains("    override val endInclusive: Int"))
+        }
+    }
+
+    @Test
+    fun `should render member extension property named like constructor property in class body`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.CtorClash"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.CtorClash [page 1/1]
+            class CtorClash(val measure: Int) : MeasureX {
+                override val String.measure: Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should render name of named companion object`() {
         // an LLM needs the name to qualify the companion object members, like NamedCompanionHolder.Factory.of()
         resolver.resolve(
