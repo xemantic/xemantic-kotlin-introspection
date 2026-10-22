@@ -76,6 +76,12 @@ com.example.AnnotationTestClass
 
 * Both `resolve` and `search` take the 1-based `page`, and the positive `pageSize`, `10` by default,
   and return `null` if nothing is found.
+* A class is paged by items: its enum entries, its members, and its extensions, one item each.
+  A member is never split across pages,
+  so a multi-line block, like a `companion object { … }`, counts as a single item,
+  and the `pageSize` does not bound the number of lines of a page.
+  A large companion object can be paged through by resolving it directly,
+  like `introspector.resolve("com.example.Outer.Companion")`.
 * The Kotlin built-in types, like `kotlin.String` or `kotlin.collections.List`,
   which are mapped to the JVM types and have no Kotlin metadata, are resolved through `kotlin-reflect`.
   The mutable collection types, like `kotlin.collections.MutableList`,

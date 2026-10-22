@@ -18,7 +18,6 @@
 
 package com.xemantic.kotlin.introspection
 
-import com.xemantic.kotlin.core.text.trimLastNewLine
 import com.xemantic.kotlin.core.text.unaryPlus
 import io.github.oshai.kotlinlogging.KotlinLogging
 import org.objectweb.asm.AnnotationVisitor
@@ -283,7 +282,7 @@ internal class DefaultKotlinIntrospector(
         logger.info { "Classpath scan completed in $scanTime, found $extensionsFound extensions" }
     }
 
-    private fun resolve(name: String): String? {
+    private fun resolve(name: String): Resolved? {
         val parts = name.split(".")
 
         // Try to find where the class name ends and member name begins
@@ -295,7 +294,7 @@ internal class DefaultKotlinIntrospector(
             // Check if this className is a built-in type
             builtinTypes[className]?.let { kClass ->
                 return if (memberName != null) {
-                    resolveBuiltinMember(kClass, className, memberName)
+                    resolveBuiltinMember(kClass, className, memberName)?.let(::Signatures)
                 } else {
                     formatBuiltinClass(kClass, className)
                 }
@@ -314,18 +313,18 @@ internal class DefaultKotlinIntrospector(
                     if (!kmClass.visibility.isApiIn(outerScopes)) continue
                     val scopes = outerScopes + kmClass.scope
                     if (memberName != null) {
-                        resolveMember(kmClass, scopes, className, foundClass, memberName)
+                        resolveMember(kmClass, scopes, className, foundClass, memberName)?.let(::Signatures)
                     } else {
                         formatClass(kmClass, scopes, className, foundClass)
                     }
                 }
 
                 is KotlinClassMetadata.FileFacade -> memberName?.let {
-                    resolvePackageMember(listOf(metadata.kmPackage), it)
+                    resolvePackageMember(listOf(metadata.kmPackage), it)?.let(::Signatures)
                 }
 
                 is KotlinClassMetadata.MultiFileClassPart -> memberName?.let {
-                    resolvePackageMember(listOf(metadata.kmPackage), it)
+                    resolvePackageMember(listOf(metadata.kmPackage), it)?.let(::Signatures)
                 }
 
                 // the facade only lists the parts holding the actual declarations
@@ -335,7 +334,7 @@ internal class DefaultKotlinIntrospector(
                             findClassByMetadataName(partName)?.metadata
                         }.filterIsInstance<KotlinClassMetadata.MultiFileClassPart>().map { it.kmPackage },
                         it
-                    )
+                    )?.let(::Signatures)
                 }
 
                 else -> null
@@ -579,7 +578,7 @@ internal class DefaultKotlinIntrospector(
     private fun formatBuiltinClass(
         kClass: KClass<*>,
         kotlinName: String
-    ): String {
+    ): ClassListing {
         val simpleName = kotlinName.substringAfterLast(".")
         val builtinKmClass = builtinKotlinClasses[kotlinName]
         val mutableKmClass = if (kotlinName in mutableBuiltinTypes) builtinKmClass else null
@@ -699,21 +698,12 @@ internal class DefaultKotlinIntrospector(
                 .filter { isPublicStdlibSource(it.sourceClass) }
         }
 
-        return buildString {
-            +declaration
-            +" {\n"
-
-            // Sort all members alphabetically and output
-            for (member in allMembers.sortedBy { it.name }) {
-                +"    "
-                +member.formatted
-                +"\n"
-            }
-
-            +"}"
-
-            +renderExtensions(supertypeExtensions, supertypeExtensionProperties, contextPackage = null)
-        }
+        return ClassListing(
+            header = declaration,
+            // Sort all members alphabetically
+            members = allMembers.sortedBy { it.name }.map { listOf(it.formatted) },
+            extensions = extensionSignatures(supertypeExtensions, supertypeExtensionProperties, contextPackage = null)
+        )
     }
 
     /**
@@ -804,8 +794,7 @@ internal class DefaultKotlinIntrospector(
 
     /**
      * The `@JvmInline` annotation, which a value class with a single underlying property requires on the JVM.
-     * It is rendered inline, so that the class declaration stays on a single line,
-     * also when re-parsed for pagination.
+     * It is rendered inline, so that the class declaration stays on a single line.
      */
     private fun formatJvmInline(isJvmInline: Boolean): String = if (isJvmInline) "@JvmInline " else ""
 
@@ -845,7 +834,7 @@ internal class DefaultKotlinIntrospector(
     /**
      * @param scopes the scopes of the [kmClass] and its enclosing classes, from the outermost one.
      */
-    private fun formatClass(kmClass: KmClass, scopes: List<ClassScope>, className: String, foundClass: FoundClass): String {
+    private fun formatClass(kmClass: KmClass, scopes: List<ClassScope>, className: String, foundClass: FoundClass): ClassListing {
         val clazz = foundClass.clazz
         val isInterface = kmClass.kind == ClassKind.INTERFACE
         val isEnum = kmClass.kind == ClassKind.ENUM_CLASS
@@ -946,118 +935,83 @@ internal class DefaultKotlinIntrospector(
             else -> ""
         }
 
-        return buildString {
-            val simpleName = simpleClassName(kmClass.name)
-            +formatClassHeader(kmClass, simpleName, contextPackage, typeParameters, constructorDeclaration)
+        val header = formatClassHeader(
+            kmClass, simpleClassName(kmClass.name), contextPackage, typeParameters, constructorDeclaration
+        )
 
-            if (annotationParameters != null) return@buildString
+        // the parameters are the only members of an annotation class, listed without its extensions
+        if (annotationParameters != null) return ClassListing(header)
 
-            val enumEntries = if (isEnum) kmClass.kmEnumEntries else emptyList()
-            val sealedSubclasses = if (isSealed) listedSealedSubclasses(kmClass) else emptyList()
-            val nestedClasses = listedNestedClasses(kmClass, scopes, foundClass.binaryName)
+        val sealedSubclasses = if (isSealed) listedSealedSubclasses(kmClass) else emptyList()
+        val nestedClasses = listedNestedClasses(kmClass, scopes, foundClass.binaryName)
 
-            // The members are rendered before the enum entries, which depend on whether any members follow them
-            val members = buildString {
-                // The sealed subclasses first, then the other nested classes, only referenced,
-                // as they can be resolved by their own name
-                (sealedSubclasses + nestedClasses).forEach { (name, listedKmClass) ->
-                    +"    "
-                    +formatClassHeader(listedKmClass, name, contextPackage, typeParametersInScope(listedKmClass))
-                    +"\n"
+        val members = buildList {
+            // The sealed subclasses first, then the other nested classes, only referenced,
+            // as they can be resolved by their own name
+            (sealedSubclasses + nestedClasses).forEach { (name, listedKmClass) ->
+                add(listOf(formatClassHeader(listedKmClass, name, contextPackage, typeParametersInScope(listedKmClass))))
+            }
+
+            // Properties (excluding constructor properties)
+            val declaredInConstructor = constructorProperties.values.toSet()
+            properties
+                .filter { it !in declaredInConstructor }
+                .forEach { property ->
+                    add(listOf(formatProperty(property, inInterface = isInterface, owner = kmClass, contextPackage = contextPackage, classTypeParameters = typeParameters)))
                 }
 
-                // Properties (excluding constructor properties)
-                val declaredInConstructor = constructorProperties.values.toSet()
-                properties
-                    .filter { it !in declaredInConstructor }
-                    .forEach { property ->
-                        +"    "
-                        +formatProperty(property, inInterface = isInterface, owner = kmClass, contextPackage = contextPackage, classTypeParameters = typeParameters)
-                        +"\n"
-                    }
+            // Secondary constructors, in the conventional order, between the properties and the functions
+            secondaryConstructors.forEach { constructor ->
+                add(listOf(formatSecondaryConstructor(constructor, contextPackage, typeParameters)))
+            }
 
-                // Secondary constructors, in the conventional order, between the properties and the functions
-                secondaryConstructors.forEach { constructor ->
-                    +"    "
-                    +formatSecondaryConstructor(constructor, contextPackage, typeParameters)
-                    +"\n"
-                }
+            // Functions
+            functions.forEach { function ->
+                add(listOf(formatFunction(function, inInterface = isInterface, owner = kmClass, contextPackage = contextPackage, classTypeParameters = typeParameters)))
+            }
 
-                // Functions
-                functions.forEach { function ->
-                    +"    "
-                    +formatFunction(function, inInterface = isInterface, owner = kmClass, contextPackage = contextPackage, classTypeParameters = typeParameters)
-                    +"\n"
-                }
+            // even without members of the API, the companion object is a value, like a CoroutineContext.Key
+            if (companion != null) {
+                // a custom name is needed to qualify the members, like Outer.Factory.create()
+                val companionName = kmClass.companionObject.takeIf { it != DEFAULT_COMPANION_NAME } ?: ""
+                val companionHeader = formatClassHeader(companion, companionName, contextPackage)
 
-                // even without members of the API, the companion object is a value, like a CoroutineContext.Key
-                if (companion != null) {
-                    // a custom name is needed to qualify the members, like Outer.Factory.create()
-                    val companionName = kmClass.companionObject.takeIf { it != DEFAULT_COMPANION_NAME } ?: ""
-                    +"    "
-                    +formatClassHeader(companion, companionName, contextPackage)
-
-                    // a companion object without members of the API is rendered without a body
-                    if (companionNestedClasses.isEmpty() && companionProperties.isEmpty() && companionFunctions.isEmpty()) {
-                        +"\n"
-                    } else {
-                        +" {\n"
+                // a companion object without members of the API is rendered without a body
+                if (companionNestedClasses.isEmpty() && companionProperties.isEmpty() && companionFunctions.isEmpty()) {
+                    add(listOf(companionHeader))
+                } else {
+                    // a single member of the outer class, never split across pages
+                    add(buildList {
+                        add("$companionHeader {")
 
                         // Companion nested classes, only referenced, like the ones of the outer class
                         companionNestedClasses.forEach { (name, listedKmClass) ->
-                            +"        "
-                            +formatClassHeader(listedKmClass, name, contextPackage, typeParametersInScope(listedKmClass))
-                            +"\n"
+                            add("    " + formatClassHeader(listedKmClass, name, contextPackage, typeParametersInScope(listedKmClass)))
                         }
 
                         // Companion properties
                         companionProperties.forEach { property ->
-                            +"        "
-                            +formatProperty(property, owner = companion, contextPackage = contextPackage)
-                            +"\n"
+                            add("    " + formatProperty(property, owner = companion, contextPackage = contextPackage))
                         }
 
                         // Companion functions
                         companionFunctions.forEach { function ->
-                            +"        "
-                            +formatFunction(function, inInterface = false, owner = companion, contextPackage = contextPackage)
-                            +"\n"
+                            add("    " + formatFunction(function, inInterface = false, owner = companion, contextPackage = contextPackage))
                         }
 
-                        +"    }\n"
-                    }
+                        add("}")
+                    })
                 }
             }
-
-            // Only add braces if there's body content or extensions
-            if (enumEntries.isEmpty() && members.isEmpty() && extensions.isEmpty() && extensionProperties.isEmpty()) {
-                return@buildString
-            }
-
-            +" {\n"
-
-            // The members of an enum class have to be separated from its entries with a semicolon,
-            // following the last entry, or on a line of its own, if there are no entries
-            enumEntries.forEachIndexed { index, entry ->
-                +"    "
-                +entry.name
-                if (index < enumEntries.lastIndex) {
-                    +","
-                } else if (members.isNotEmpty()) {
-                    +";"
-                }
-                +"\n"
-            }
-            if (isEnum && enumEntries.isEmpty() && members.isNotEmpty()) {
-                +"    ;\n"
-            }
-
-            +members
-
-            +"}"
-
-            +renderExtensions(extensions, extensionProperties, contextPackage)
         }
+
+        return ClassListing(
+            header = header,
+            isEnum = isEnum,
+            enumEntryNames = if (isEnum) kmClass.kmEnumEntries.map { it.name } else emptyList(),
+            members = members,
+            extensions = extensionSignatures(extensions, extensionProperties, contextPackage)
+        )
     }
 
     /**
@@ -1133,19 +1087,26 @@ internal class DefaultKotlinIntrospector(
         functions: List<IndexedExtension>,
         properties: List<IndexedExtensionProperty>,
         contextPackage: String?
-    ): String = buildString {
+    ): String = extensionSignatures(functions, properties, contextPackage).renderLines().joinToString("") { "\n$it" }
+
+    /**
+     * The extensions of [renderExtensions], each with its source, in the order of rendering.
+     */
+    private fun extensionSignatures(
+        functions: List<IndexedExtension>,
+        properties: List<IndexedExtensionProperty>,
+        contextPackage: String?
+    ): List<ListingItem.Extension> {
         val functionsBySource = functions.groupBy { it.source }
         val propertiesBySource = properties.groupBy { it.source }
         val sources = (functionsBySource.keys + propertiesBySource.keys).sorted()
-        for (source in sources) {
-            // each line starts with a new line, so that there is no blank line between the groups
-            +"\n// from $source"
+        return sources.flatMap { source ->
             propertiesBySource[source].orEmpty()
                 .sortedWith(extensionPropertyOrder)
-                .forEach { +"\n${formatProperty(it.property, contextPackage = contextPackage)}" }
-            functionsBySource[source].orEmpty()
-                .sortedWith(extensionFunctionOrder)
-                .forEach { +"\n${formatFunction(it.function, contextPackage = contextPackage)}" }
+                .map { ListingItem.Extension(source, formatProperty(it.property, contextPackage = contextPackage)) } +
+                functionsBySource[source].orEmpty()
+                    .sortedWith(extensionFunctionOrder)
+                    .map { ListingItem.Extension(source, formatFunction(it.function, contextPackage = contextPackage)) }
         }
     }
 
@@ -2144,148 +2105,20 @@ internal class DefaultKotlinIntrospector(
         require(pageSize > 0) { "pageSize must be positive, but was: $pageSize" }
     }
 
-    /**
-     * The number of pages, at least 1 even without items.
-     * Computed without `totalItems + pageSize - 1`, which overflows for a `pageSize` near [Int.MAX_VALUE].
-     */
-    private fun pageCount(totalItems: Int, pageSize: Int): Int =
-        if (totalItems == 0) 1 else (totalItems - 1) / pageSize + 1
-
     override fun resolve(
         name: String,
         page: Int,
         pageSize: Int
     ): String? {
         requirePositivePageSize(pageSize)
-        val content = resolve(name) ?: return null
-
-        // Parse the content into class header, members, and extensions
-        val lines = content.lines()
-
-        // Find the class/interface declaration line (first line)
-        val classDeclarationLine = lines.firstOrNull() ?: return null
-
-        // Find closing brace of class body
-        val closingBraceIndex = lines.indexOfFirst { it == "}" }
-        if (closingBraceIndex < 0) {
-            // No class body, return as-is
-            val header = "// $name [page 1/1]"
-            return "$header\n$content"
-        }
-
-        // Extract members (lines between class declaration and closing brace)
-        // Preserve relative indentation by only removing the base 4-space indent
-        val memberLines = lines.subList(1, closingBraceIndex)
-            .filter { it.isNotBlank() }
-            .map { line ->
-                // Remove exactly 4 spaces if present, preserving any additional indentation
-                if (line.startsWith("    ")) line.substring(4) else line.trimStart()
-            }
-
-        // The members of an enum class are separated from its entries with a semicolon,
-        // following the last entry, or on a line of its own, if there are no entries,
-        // which is not an item to paginate, but is restored on every page of members
-        val isEnum = classDeclarationLine.contains("enum class ")
-        val hasSemicolonLine = isEnum && ";" in memberLines
-
-        // A member is paginated as a whole: the lines indented deeper, and the closing brace
-        // of a block like the companion object, belong to the member started above them
-        val members = buildList<MutableList<String>> {
-            for (line in memberLines) {
-                if (hasSemicolonLine && line == ";") continue
-                if (isNotEmpty() && (line.first().isWhitespace() || line == "}")) {
-                    last().add(line)
-                } else {
-                    add(mutableListOf(line))
-                }
-            }
-        }.map { it.joinToString("\n") }
-
-        val lastEntryIndex = if (isEnum) members.indexOfFirst { it.endsWith(";") } else -1
-        val needsSemicolon = hasSemicolonLine || lastEntryIndex >= 0
-        val enumEntryCount = lastEntryIndex + 1
-
-        // Extract extensions (lines after closing brace), preserving package headers
-        // We need to parse extensions as items with their package context
-        data class ExtensionItem(val line: String, val packageHeader: String?)
-        val extensionItems = mutableListOf<ExtensionItem>()
-        var currentPackage: String? = null
-
-        if (closingBraceIndex < lines.size - 1) {
-            for (line in lines.subList(closingBraceIndex + 1, lines.size)) {
-                if (line.isBlank()) continue
-                if (line.startsWith("// from ")) {
-                    currentPackage = line
-                } else {
-                    extensionItems.add(ExtensionItem(line, currentPackage))
-                }
+        return when (val resolved = resolve(name) ?: return null) {
+            is Signatures -> "// $name [page 1/1]\n${resolved.text}"
+            is ClassListing -> {
+                val classPage = paginate(resolved.items, page, pageSize)
+                (listOf("// $name [page ${classPage.number}/${classPage.count}]") + resolved.renderPage(classPage))
+                    .joinToString("\n")
             }
         }
-
-        // Combine members and extensions for pagination
-        // Members are represented as items without package context
-        val allItems = members.map { ExtensionItem(it, null) } + extensionItems
-        val totalItems = allItems.size
-
-        // Calculate total pages based on all items (members + extensions)
-        val totalPages = pageCount(totalItems, pageSize)
-        val actualPage = page.coerceIn(1, totalPages)
-
-        // Get items for this page
-        val startIndex = (actualPage - 1) * pageSize
-        val endIndex = startIndex + minOf(pageSize, totalItems - startIndex)
-        val pageItems = if (totalItems > 0) allItems.subList(startIndex, endIndex) else emptyList()
-
-        // Build the page content
-        return buildString {
-            +"// $name [page $actualPage/$totalPages]\n"
-
-            // Separate members (no package header) from extensions (have package header)
-            val pageMembers = pageItems.filter { it.packageHeader == null }
-            val pageExtensions = pageItems.filter { it.packageHeader != null }
-
-            // Only include class body if there are members on this page
-            if (pageMembers.isNotEmpty()) {
-                +classDeclarationLine
-                +"\n"
-                if (needsSemicolon && startIndex >= enumEntryCount) {
-                    // without the entries on this page, the semicolon still has to precede the members
-                    +"    ;\n"
-                }
-                for (item in pageMembers) {
-                    for (line in item.line.lines()) {
-                        +"    "
-                        +line
-                        +"\n"
-                    }
-                }
-                +"}"
-                if (pageExtensions.isNotEmpty()) {
-                    +"\n"
-                }
-            } else if (members.isEmpty() && actualPage == 1) {
-                // A class without members still needs its declaration, e.g. to show the constructor
-                +classDeclarationLine.removeSuffix(" {")
-                +"\n"
-            }
-
-            // Add extensions that are on this page
-            if (pageExtensions.isNotEmpty()) {
-                var lastPackage: String? = null
-                for ((line, packageHeader) in pageExtensions) {
-                    if (packageHeader != lastPackage) {
-                        +packageHeader!! // filtered above to be non-null
-                        +"\n"
-                        lastPackage = packageHeader
-                    }
-                    +line
-                    +"\n"
-                }
-            }
-
-            trimLastNewLine()
-        }
-
     }
 
     override fun search(query: String, page: Int, pageSize: Int): String? {
@@ -2302,26 +2135,123 @@ internal class DefaultKotlinIntrospector(
             return null
         }
 
-        // Calculate pagination
-        val totalItems = matchingClasses.size
-        val totalPages = pageCount(totalItems, pageSize)
-        val actualPage = page.coerceIn(1, totalPages)
-
-        // Get items for this page
-        val startIndex = (actualPage - 1) * pageSize
-        val endIndex = startIndex + minOf(pageSize, totalItems - startIndex)
-        val pageItems = matchingClasses.subList(startIndex, endIndex)
-
-        // Build the result
-        return buildString {
-            +"// search results for \"$query\" [page $actualPage/$totalPages]\n"
-            for (className in pageItems) {
-                +className
-                +"\n"
-            }
-            trimLastNewLine()
-        }
+        val resultPage = paginate(matchingClasses, page, pageSize)
+        return (listOf("// search results for \"$query\" [page ${resultPage.number}/${resultPage.count}]") +
+            resultPage.items).joinToString("\n")
     }
+}
+
+/**
+ * A page of [items], the [number]th, 1-based, of [count] pages,
+ * starting at the [startIndex] of all the items.
+ */
+private class Page<T>(val items: List<T>, val number: Int, val count: Int, val startIndex: Int)
+
+/**
+ * The [page] of the [items], coerced into the range of the pages, of which there is at least one, even without items.
+ */
+private fun <T> paginate(items: List<T>, page: Int, pageSize: Int): Page<T> {
+    // computed without `items.size + pageSize - 1`, which overflows for a `pageSize` near Int.MAX_VALUE
+    val count = if (items.isEmpty()) 1 else (items.size - 1) / pageSize + 1
+    val number = page.coerceIn(1, count)
+    val startIndex = (number - 1) * pageSize
+    val endIndex = startIndex + minOf(pageSize, items.size - startIndex)
+    return Page(items.subList(startIndex, endIndex), number, count, startIndex)
+}
+
+/**
+ * A resolved declaration, rendered by the paginated [DefaultKotlinIntrospector.resolve].
+ */
+private sealed interface Resolved
+
+/**
+ * The signatures of a member, like the overloads of a function, always on a single page.
+ */
+private class Signatures(val text: String) : Resolved
+
+/**
+ * An item of a [ClassListing], the unit of pagination, never split across pages.
+ */
+private sealed interface ListingItem {
+
+    /**
+     * An enum entry, or a member of the class body, rendered on the [lines] indented relative to the body,
+     * like a whole `companion object { … }` block.
+     */
+    class Body(val lines: List<String>) : ListingItem
+
+    /**
+     * An extension shown after the class body, listed under the `// from` header of its [source].
+     */
+    class Extension(val source: String, val signature: String) : ListingItem
+
+}
+
+/**
+ * The extensions rendered under the `// from` header of their source, repeated whenever the source changes.
+ */
+private fun List<ListingItem.Extension>.renderLines(): List<String> = buildList {
+    var source: String? = null
+    for (extension in this@renderLines) {
+        if (extension.source != source) {
+            add("// from ${extension.source}")
+            source = extension.source
+        }
+        add(extension.signature)
+    }
+}
+
+/**
+ * A class listed with its [header], the declaration line without the body,
+ * the [enumEntryNames], the [members], and the [extensions],
+ * paginated as [items], so that a page boundary never falls within a member.
+ *
+ * @param members the members of the class body, each rendered on its lines, see [ListingItem.Body].
+ */
+private class ClassListing(
+    val header: String,
+    val isEnum: Boolean = false,
+    val enumEntryNames: List<String> = emptyList(),
+    val members: List<List<String>> = emptyList(),
+    val extensions: List<ListingItem.Extension> = emptyList()
+) : Resolved {
+
+    /**
+     * The enum entries, then the members, then the extensions.
+     * The members of an enum class have to be separated from its entries with a semicolon,
+     * following the last entry, or on a line of its own, if there are no entries.
+     */
+    val items: List<ListingItem> = enumEntryNames.mapIndexed { index, name ->
+        ListingItem.Body(listOf(
+            name + when {
+                index < enumEntryNames.lastIndex -> ","
+                members.isNotEmpty() -> ";"
+                else -> ""
+            }
+        ))
+    } + members.map { ListingItem.Body(it) } + extensions
+
+    /**
+     * The lines of the [page] of the [items].
+     * The class body is shown only on a page with entries or members, and the semicolon separating the members
+     * of an enum class from its entries on every such page without the last entry, which carries it.
+     * A class without a body still has its header shown on the first page, e.g. to show the constructor.
+     */
+    fun renderPage(page: Page<ListingItem>): List<String> = buildList {
+        val body = page.items.filterIsInstance<ListingItem.Body>()
+        if (body.isNotEmpty()) {
+            add("$header {")
+            if (isEnum && members.isNotEmpty() && page.startIndex >= enumEntryNames.size) {
+                add("    ;")
+            }
+            body.forEach { item -> item.lines.forEach { add("    $it") } }
+            add("}")
+        } else if (enumEntryNames.isEmpty() && members.isEmpty() && page.number == 1) {
+            add(header)
+        }
+        addAll(page.items.filterIsInstance<ListingItem.Extension>().renderLines())
+    }
+
 }
 
 /**

@@ -30,8 +30,13 @@ public interface KotlinIntrospector {
     /**
      * Resolves metadata for a Kotlin declaration by its fully qualified name.
      *
+     * A class is paginated by items: its enum entries, its members, and its extensions, one item each.
+     * A member is never split across pages, so a multi-line block, like a `companion object { … }`,
+     * counts as a single item, and the [pageSize] does not bound the number of lines of a page.
+     * A large companion object can be paged through by resolving it directly, like `com.example.Outer.Companion`.
+     *
      * @param name fully qualified name (e.g., "kotlin.collections.List")
-     * @param page 1-based page index
+     * @param page 1-based page index, coerced into the range of the pages
      * @param pageSize number of items per page, must be positive
      * @return a Kotlin signature, including members (classes),
      *      overloads (functions), or `null` if not found
