@@ -34,3 +34,31 @@ class ReflectedValueParametersSample {
     fun sumUnsigned(vararg uints: UInt): UInt = uints.sum()
     fun join(vararg parts: String, separator: String = ", "): String = parts.joinToString(separator)
 }
+
+// an override cannot redeclare a default value, it inherits the one of the overridden declaration
+interface Repo {
+    fun find(limit: Int = 10)
+}
+
+class SqlRepo : Repo {
+    override fun find(limit: Int) {}
+    fun find(limit: Long) {}
+}
+
+// an override of an override inherits the default value of the original declaration
+interface CachedRepo : Repo {
+    override fun find(limit: Int)
+}
+
+class CachingSqlRepo : CachedRepo {
+    override fun find(limit: Int) {}
+}
+
+// a member extension of a generic interface
+interface Formatter<T> {
+    fun T.format(width: Int = 80, pad: Char): String
+}
+
+class IntFormatter : Formatter<Int> {
+    override fun Int.format(width: Int, pad: Char): String = toString().padStart(width, pad)
+}

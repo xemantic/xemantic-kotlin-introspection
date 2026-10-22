@@ -1144,7 +1144,8 @@ internal class DefaultKotlinIntrospector(
 
         +formatVisibility(function.visibility)
 
-        +formatModalityModifiers(function.modality, isOverride(owner, function), inInterface, owner)
+        val isOverride = isOverride(owner, function)
+        +formatModalityModifiers(function.modality, isOverride, inInterface, owner)
 
         // Function-specific modifiers
         if (function.isTailrec) +"tailrec "
@@ -1167,8 +1168,12 @@ internal class DefaultKotlinIntrospector(
         +function.name
         +"("
 
-        +(function.valueParameters.joinToString(", ") { param ->
-            formatValueParameter(param, contextPackage, typeParameters)
+        // an override cannot declare a default value, but inherits the one of the overridden function
+        val inheritedDefaultValues = if (isOverride && owner != null) {
+            overrideResolver.inheritedDefaultValues(owner, function)
+        } else emptySet()
+        +(function.valueParameters.withIndex().joinToString(", ") { (index, param) ->
+            formatValueParameter(param, contextPackage, typeParameters, hasDefaultValue = index in inheritedDefaultValues)
         })
 
         +")"
@@ -1190,6 +1195,8 @@ internal class DefaultKotlinIntrospector(
      * @param modifiers the modifiers of a constructor parameter declaring a property, like `protected open `,
      *   preceding `vararg` in the order of the Kotlin coding conventions.
      * @param prefix the `val ` or `var ` of a constructor parameter declaring a property.
+     * @param hasDefaultValue whether the parameter has a default value it does not declare,
+     *   like the one inherited by an override.
      * @param defaultValue the rendering of the declared default value,
      *   which is otherwise not present in the Kotlin metadata, and therefore rendered as a marker.
      */
@@ -1199,6 +1206,7 @@ internal class DefaultKotlinIntrospector(
         typeParameters: Map<Int, String> = emptyMap(),
         prefix: String = "",
         modifiers: String = "",
+        hasDefaultValue: Boolean = false,
         defaultValue: () -> String? = { null }
     ): String = buildString {
         +modifiers
@@ -1208,7 +1216,7 @@ internal class DefaultKotlinIntrospector(
         +": "
         // a vararg parameter is typed as an array, like Array<out T>, while its element type is rendered
         +formatType(parameter.varargElementType ?: parameter.type, contextPackage, typeParameters)
-        if (parameter.declaresDefaultValue) {
+        if (parameter.declaresDefaultValue || hasDefaultValue) {
             +" = "
             +(defaultValue() ?: DEFAULT_VALUE_MARKER)
         }

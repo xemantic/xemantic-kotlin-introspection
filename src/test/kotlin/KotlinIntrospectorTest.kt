@@ -963,6 +963,55 @@ class KotlinIntrospectorTest {
         """.trimIndent()
     }
 
+    @Test
+    fun `should mark parameter of override inheriting default value`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.SqlRepo"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SqlRepo [page 1/1]
+            class SqlRepo : Repo {
+                override fun find(limit: Int = …)
+                fun find(limit: Long)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark parameter of interface override inheriting default value`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.CachedRepo"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.CachedRepo [page 1/1]
+            interface CachedRepo : Repo {
+                override fun find(limit: Int = …)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark parameter of override of override inheriting default value`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.CachingSqlRepo"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.CachingSqlRepo [page 1/1]
+            class CachingSqlRepo : CachedRepo {
+                override fun find(limit: Int = …)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark parameter of member extension override inheriting default value`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.IntFormatter"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.IntFormatter [page 1/1]
+            class IntFormatter : Formatter<Int> {
+                override fun Int.format(width: Int = …, pad: Char): String
+            }
+        """.trimIndent()
+    }
+
     // TestFunctionModifiers tests
 
     @Test
