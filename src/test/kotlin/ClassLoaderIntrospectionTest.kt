@@ -95,6 +95,104 @@ class ClassLoaderIntrospectionTest {
         signature sameAsKotlin isolatedTestClassSignature
     }
 
+    /**
+     * An introspector of the isolated test fixtures without the class `Absent`,
+     * which they refer to.
+     */
+    private fun introspectorWithoutAbsentClass(): KotlinIntrospector {
+        val root = tempDir.resolve("withoutAbsent")
+        isolatedTestFixtures.filter { it.exists() }.forEach { dir ->
+            dir.walkTopDown()
+                .filter { it.isFile && it.name != "Absent.class" }
+                .forEach { it.copyTo(root.resolve(it.relativeTo(dir).path).toFile(), overwrite = true) }
+        }
+        val classLoader = URLClassLoader(
+            arrayOf(root.toUri().toURL()),
+            javaClass.classLoader
+        )
+        return KotlinIntrospector(classLoader)
+    }
+
+    @Test
+    fun `should resolve class whose generic supertype refers to a class missing from the classpath`() {
+        // given
+        val introspector = introspectorWithoutAbsentClass()
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.AbsentTypeArgumentHolder"
+        )
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.AbsentTypeArgumentHolder [page 1/1]
+            abstract class AbsentTypeArgumentHolder : Comparable<Absent> {
+                fun hold()
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark override of function taking class missing from the classpath`() {
+        // given
+        val introspector = introspectorWithoutAbsentClass()
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.AbsentTypeArgumentComparable"
+        )
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.AbsentTypeArgumentComparable [page 1/1]
+            class AbsentTypeArgumentComparable : Comparable<Absent> {
+                override operator fun compareTo(other: Absent): Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark override of function taking array of type parameter when supertype refers to class missing from the classpath`() {
+        // given
+        val introspector = introspectorWithoutAbsentClass()
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.StringAbsentArrayProcessor"
+        )
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.StringAbsentArrayProcessor [page 1/1]
+            abstract class StringAbsentArrayProcessor : AbsentArrayProcessor<String, Absent> {
+                override fun process(items: Array<String>)
+                fun process(items: Array<Absent>)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark overrides of Java superclass methods when another method refers to class missing from the classpath`() {
+        // given
+        val introspector = introspectorWithoutAbsentClass()
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.AbsentJavaSubclass"
+        )
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.AbsentJavaSubclass [page 1/1]
+            class AbsentJavaSubclass : AbsentJavaBase<String> {
+                override fun process(item: String)
+                fun process(item: Int)
+                override fun run()
+                fun run(times: Int)
+            }
+        """.trimIndent()
+    }
+
     @Test
     fun `should not duplicate declarations of a class present twice on the classpath`() {
         // given
