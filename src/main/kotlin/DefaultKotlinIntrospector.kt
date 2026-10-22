@@ -1618,7 +1618,7 @@ internal class DefaultKotlinIntrospector(
         for (function in functions) {
             if (function.visibility != Visibility.PUBLIC) continue
             val receiverType = function.receiverParameterType ?: continue
-            val receiverName = getReceiverTypeName(receiverType)
+            val receiverName = receiverIndexKey(receiverType)
 
             funcIndex.getOrPut(receiverName) { mutableListOf() }
                 .add(IndexedExtension(function, className, source, isObjectMember))
@@ -1627,7 +1627,7 @@ internal class DefaultKotlinIntrospector(
         for (property in properties) {
             if (property.visibility != Visibility.PUBLIC) continue
             val receiverType = property.receiverParameterType ?: continue
-            val receiverName = getReceiverTypeName(receiverType)
+            val receiverName = receiverIndexKey(receiverType)
 
             propIndex.getOrPut(receiverName) { mutableListOf() }
                 .add(IndexedExtensionProperty(property, className, source, isObjectMember))
@@ -1696,14 +1696,6 @@ internal class DefaultKotlinIntrospector(
             )
         }
 
-    }
-
-    private fun getReceiverTypeName(type: KmType): String {
-        return when (val classifier = type.classifier) {
-            is KmClassifier.Class -> classifier.name.replace('/', '.')
-            is KmClassifier.TypeAlias -> classifier.name.replace('/', '.')
-            is KmClassifier.TypeParameter -> "TypeParameter"
-        }
     }
 
     /**
@@ -1893,5 +1885,33 @@ internal class DefaultKotlinIntrospector(
             }
             trimLastNewLine()
         }
+    }
+}
+
+/**
+ * The key of the extension index under which an extension with the given receiver [type] is listed.
+ * Extensions on a type parameter, like `fun <T> T.let()`, are not listed for any class,
+ * so their key contains `<`, which cannot appear in a class name.
+ * A suspend function type, like `suspend () -> Unit`, is stored in the metadata as `Function1<Continuation<Unit>, Any?>`,
+ * so it is keyed as `kotlin.coroutines.SuspendFunction0` instead, not to be listed as an extension of `kotlin.Function1`.
+ */
+internal fun receiverIndexKey(type: KmType): String = when (val classifier = type.classifier) {
+    is KmClassifier.Class -> suspendFunctionTypeKey(type, classifier.name) ?: classifier.name.replace('/', '.')
+    is KmClassifier.TypeAlias -> classifier.name.replace('/', '.')
+    is KmClassifier.TypeParameter -> TYPE_PARAMETER_RECEIVER_KEY
+}
+
+private const val TYPE_PARAMETER_RECEIVER_KEY = "<type parameter>"
+
+private val runtimeFunctionTypeRegex = Regex("kotlin/(reflect/K)?Function\\d+")
+
+private fun suspendFunctionTypeKey(type: KmType, name: String): String? {
+    if (!type.isSuspend || type.arguments.size < 2) return null
+    val match = runtimeFunctionTypeRegex.matchEntire(name) ?: return null
+    val arity = type.arguments.size - 2
+    return if (match.groupValues[1].isEmpty()) {
+        "kotlin.coroutines.SuspendFunction$arity"
+    } else {
+        "kotlin.reflect.KSuspendFunction$arity"
     }
 }

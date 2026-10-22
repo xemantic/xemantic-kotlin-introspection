@@ -21,3 +21,6 @@
 class DefaultPackageSubject
 
 fun DefaultPackageSubject.greet(): String = "hello"
+
+// shares the simple name with the former index key of the extensions on a type parameter receiver, like `fun <T> T.let()`
+class TypeParameter
