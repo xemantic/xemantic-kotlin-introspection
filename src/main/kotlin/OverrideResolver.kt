@@ -80,8 +80,9 @@ import org.objectweb.asm.Type as AsmType
  *   through the [classLoader], unless it cannot be loaded.
  * @param loadKmClassByMetadataName reads the Kotlin metadata of a class by its Kotlin class name, if it is a Kotlin class,
  *   also of one which cannot be loaded, but whose class file can still be read.
- * @param readClassBytesByMetadataName reads the class file of a class by its Kotlin class name,
- *   also of one which cannot be loaded.
+ * @param readClassBytesByMetadataName reads the class file of a class by its Kotlin class name, like `com/example/Foo.DefaultImpls`,
+ *   through the [classLoader], without loading the class, so also of one which cannot be loaded,
+ *   or `null` if there is no such class file.
  * @param builtinClasses the declarations of the Kotlin built-in types, by their Kotlin class name, like `kotlin/collections/List`.
  * @param builtinTypes the JVM classes of the Kotlin built-in types, by their fully qualified Kotlin name.
  */

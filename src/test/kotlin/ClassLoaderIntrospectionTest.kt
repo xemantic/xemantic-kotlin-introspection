@@ -844,4 +844,39 @@ class ClassLoaderIntrospectionTest {
         assert(missingClasses.none { it.startsWith("kotlin.") })
     }
 
+    @Test
+    fun `should read DefaultImpls class files of interfaces without loading the classes`() {
+        // given
+        val requestedClasses = Collections.synchronizedList(mutableListOf<String>())
+        val classLoader = object : ClassLoader(javaClass.classLoader) {
+            override fun loadClass(name: String, resolve: Boolean): Class<*> {
+                requestedClasses += name
+                return super.loadClass(name, resolve)
+            }
+        }
+        val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
+
+        // when
+        // the JVM methods of an interface owning an overload are read, also the ones relocated to DefaultImpls,
+        // which most interfaces do not have, compiled with the default -jvm-default
+        val greeter = introspector.resolve("com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsGreeter")
+        val processor = introspector.resolve("com.xemantic.kotlin.introspection.test.OverloadingProcessorInterface")
+
+        // then
+        greeter sameAsKotlin """
+            // com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsGreeter [page 1/1]
+            interface DefaultImplsGreeter : DefaultImplsBase {
+                override val label: String
+                override fun greet(name: String): String
+            }
+        """.trimIndent()
+        processor sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OverloadingProcessorInterface [page 1/1]
+            interface OverloadingProcessorInterface : Processor<String> {
+                fun process(item: Int)
+            }
+        """.trimIndent()
+        assert(requestedClasses.none { it.endsWith("\$DefaultImpls") })
+    }
+
 }

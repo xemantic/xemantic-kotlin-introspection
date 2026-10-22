@@ -159,7 +159,8 @@ internal class DefaultKotlinIntrospector(
         classLoader = classLoader,
         loadClassByMetadataName = { name -> findClassByMetadataName(name)?.clazz },
         loadKmClassByMetadataName = ::loadKmClass,
-        readClassBytesByMetadataName = { name -> findClassByMetadataName(name)?.let { readClassBytes(it.binaryName) } },
+        // read directly, without loading the class, like a DefaultImpls class probed for every interface
+        readClassBytesByMetadataName = { name -> readClassBytes(binaryNameOf(name)) },
         builtinClasses = { builtinClasses },
         builtinTypes = builtinTypes
     )
@@ -404,10 +405,15 @@ internal class DefaultKotlinIntrospector(
     /**
      * Finds a class by its metadata name, like `com/example/Outer.Nested`.
      */
-    private fun findClassByMetadataName(name: String): FoundClass? {
-        val packageName = name.substringBeforeLast('/', "")
-        val simpleName = name.substringAfterLast('/').replace('.', '$')
-        return findClassByBinaryName(if (packageName.isEmpty()) simpleName else "${packageName.replace('/', '.')}.$simpleName")
+    private fun findClassByMetadataName(name: String): FoundClass? = findClassByBinaryName(binaryNameOf(name))
+
+    /**
+     * The JVM binary name, like `com.example.Outer${'$'}Nested`, of a metadata name, like `com/example/Outer.Nested`.
+     */
+    private fun binaryNameOf(metadataName: String): String {
+        val packageName = metadataName.substringBeforeLast('/', "")
+        val simpleName = metadataName.substringAfterLast('/').replace('.', '$')
+        return if (packageName.isEmpty()) simpleName else "${packageName.replace('/', '.')}.$simpleName"
     }
 
     /**

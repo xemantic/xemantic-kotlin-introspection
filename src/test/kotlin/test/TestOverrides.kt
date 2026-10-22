@@ -193,6 +193,11 @@ interface StringProcessorInterface : Processor<String> {
     override fun process(item: String)
 }
 
+// An interface overloading a member of its superinterface, compiled without DefaultImpls
+interface OverloadingProcessorInterface : Processor<String> {
+    fun process(item: Int)
+}
+
 // A type parameter of the class passed as a type argument of its supertype
 class Box<T> : Processor<T> {
     override fun process(item: T) {}
