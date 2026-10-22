@@ -3350,6 +3350,15 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `search should find hand-written nested serializer`() {
+        resolver.search("HandWrittenSerializer") sameAsKotlin """
+            // search results for "HandWrittenSerializer" [page 1/1]
+            com.xemantic.kotlin.introspection.test.HandWrittenSerializerHolder
+            com.xemantic.kotlin.introspection.test.HandWrittenSerializerHolder.HandWrittenSerializer
+        """.trimIndent()
+    }
+
+    @Test
     fun `should not list generated serializer not deprecated with hidden level in outer class`() {
         resolver.resolve("com.xemantic.kotlin.introspection.test.LegacySerializableHolder") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.LegacySerializableHolder [page 1/1]
