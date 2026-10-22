@@ -23,4 +23,14 @@ class ValueParametersSample(vararg val names: String, val count: Int = 0, label:
     fun join(vararg parts: Int, separator: String = ", "): String = parts.joinToString(separator)
 }
 
-fun <T> valueParametersSample(vararg elements: T, limit: Int = -1): List<T> = elements.take(limit)
+fun <T> valueParametersSample(vararg elements: T, limit: Int = Int.MAX_VALUE): List<T> = elements.take(limit)
+
+// members rendered with kotlin-reflect, like the ones of the built-in types,
+// with parameter names starting with "arg", which are nevertheless real names
+class ReflectedValueParametersSample {
+    fun format(vararg args: Any?): String = args.joinToString()
+    fun call(argument: String): String = argument
+    fun sum(vararg ints: Int): Int = ints.sum()
+    fun sumUnsigned(vararg uints: UInt): UInt = uints.sum()
+    fun join(vararg parts: String, separator: String = ", "): String = parts.joinToString(separator)
+}
