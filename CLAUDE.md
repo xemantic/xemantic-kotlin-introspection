@@ -62,7 +62,6 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 
 - In a function type the `suspend` modifier precedes the context parameters: `suspend context(Ctx) () -> Unit` —
   the `context(Ctx) suspend () -> Unit` order, which the GitHub issues used, does not compile.
-  Context parameters are stable in Kotlin 2.4 and need no `-Xcontext-parameters` flag.
 
 ## Anti-patterns to avoid
 

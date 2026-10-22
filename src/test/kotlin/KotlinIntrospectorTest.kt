@@ -2205,7 +2205,7 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `search should support pagination with pageSize`() {
-        // should show first 3 results (21 total classes, 7 pages)
+        // should show first 3 results (22 total classes, 8 pages)
         resolver.search("TestClass", pageSize = 3) sameAsKotlin """
             // search results for "TestClass" [page 1/8]
             com.xemantic.kotlin.introspection.test.AbstractTestClass
@@ -2216,7 +2216,7 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `search should support pagination with page parameter`() {
-        // should show results 4-6 (21 total classes, 7 pages)
+        // should show results 4-6 (22 total classes, 8 pages)
         resolver.search("TestClass", page = 2, pageSize = 3) sameAsKotlin """
             // search results for "TestClass" [page 2/8]
             com.xemantic.kotlin.introspection.test.CompanionTestClass
