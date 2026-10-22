@@ -844,6 +844,36 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should paginate enum entries named in backticks one by one`() {
+        // the entries are separate items, even when rendered like the continuation of a multi-line member
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BacktickedEntryEnum",
+            page = 2,
+            pageSize = 1
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BacktickedEntryEnum [page 2/4]
+            enum class BacktickedEntryEnum {
+                 SECOND,
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should paginate the last enum entry named in backticks with the members`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BacktickedEntryEnum",
+            page = 2,
+            pageSize = 2
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BacktickedEntryEnum [page 2/2]
+            enum class BacktickedEntryEnum {
+                };
+                fun f()
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve annotation class`() {
         // an LLM needs to see annotation parameters to know how to use the annotation
         resolver.resolve(
@@ -922,6 +952,21 @@ class KotlinIntrospectorTest {
                     const val CONSTANT: String
                     fun create(): PaginatedCompanionClass
                 }
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should paginate members of companion object resolved directly`() {
+        // the companion object is a single item of the outer class, but its members are paged one by one
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.PaginatedCompanionClass.Companion",
+            page = 2,
+            pageSize = 1
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PaginatedCompanionClass.Companion [page 2/2]
+            companion object Companion {
+                fun create(): PaginatedCompanionClass
             }
         """.trimIndent()
     }

@@ -102,6 +102,16 @@ fun EntrylessExtendedEnum.e1() {}
 
 fun EntrylessExtendedEnum.e2() {}
 
+// Enum class with entries named in backticks, rendered on lines shaped like
+// the continuation of a member: indented deeper, or a closing brace
+enum class BacktickedEntryEnum {
+    FIRST,
+    ` SECOND`,
+    `}`;
+
+    fun f() {}
+}
+
 // Annotation class
 annotation class AnnotationTestClass(
     val message: String = ""
