@@ -888,6 +888,21 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve context parameters of suspend function types`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.SuspendContextFunctionTypesTestClass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SuspendContextFunctionTypesTestClass [page 1/1]
+            class SuspendContextFunctionTypesTestClass {
+                fun launchInContext(block: suspend context(FunctionModifiersTestClass) () -> Unit)
+                fun launchInContexts(block: suspend context(FunctionModifiersTestClass, String) (Int) -> Boolean)
+                fun launchInContextWithReceiver(block: suspend context(FunctionModifiersTestClass) String.(Int) -> Unit)
+                fun launchInContextNullable(block: (suspend context(FunctionModifiersTestClass) () -> Unit)?)
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve extension function on suspend function type`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.TestFunctionModifiersKt.retry"
@@ -2259,9 +2274,9 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `search should support pagination with pageSize`() {
-        // should show first 3 results (21 total classes, 7 pages)
+        // should show first 3 results (22 total classes, 8 pages)
         resolver.search("TestClass", pageSize = 3) sameAsKotlin """
-            // search results for "TestClass" [page 1/7]
+            // search results for "TestClass" [page 1/8]
             com.xemantic.kotlin.introspection.test.AbstractTestClass
             com.xemantic.kotlin.introspection.test.AnnotationDefaultsTestClass
             com.xemantic.kotlin.introspection.test.AnnotationTestClass
@@ -2270,9 +2285,9 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `search should support pagination with page parameter`() {
-        // should show results 4-6 (21 total classes, 7 pages)
+        // should show results 4-6 (22 total classes, 8 pages)
         resolver.search("TestClass", page = 2, pageSize = 3) sameAsKotlin """
-            // search results for "TestClass" [page 2/7]
+            // search results for "TestClass" [page 2/8]
             com.xemantic.kotlin.introspection.test.CompanionTestClass
             com.xemantic.kotlin.introspection.test.DataTestClass
             com.xemantic.kotlin.introspection.test.EnumTestClass
