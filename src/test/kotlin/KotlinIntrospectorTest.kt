@@ -1486,6 +1486,32 @@ class KotlinIntrospectorTest {
         """.trimIndent()
     }
 
+    // context(c: Ctx) fun accept() is accept(Ctx) on the JVM, like Consumer<Ctx>.accept, but not an override in Kotlin
+    @Test
+    fun `should not mark function with context parameter taken as parameter by Java method as override`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ContextConsumer"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ContextConsumer [page 1/1]
+            abstract class ContextConsumer : java.util.function.Consumer<Ctx> {
+                fun accept()
+            }
+        """.trimIndent()
+    }
+
+    // context(c: Ctx) val label has the getter getLabel(Ctx), like the Java method of JavaLabelBase<Ctx>
+    @Test
+    fun `should not mark property with context parameter named like Java getter taking it as override`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ContextLabel"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ContextLabel [page 1/1]
+            abstract class ContextLabel : com.xemantic.kotlin.introspection.test.other.JavaLabelBase<Ctx> {
+                val label: String
+            }
+        """.trimIndent()
+    }
+
     @Test
     fun `should not mark members named like internal members of superclass of another module as override`() {
         resolver.resolve(

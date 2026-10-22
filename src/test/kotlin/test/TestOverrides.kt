@@ -22,6 +22,7 @@ import com.xemantic.kotlin.introspection.othermodule.InternalBase
 import com.xemantic.kotlin.introspection.test.other.JavaClassBoundBase
 import com.xemantic.kotlin.introspection.test.other.JavaFunctionTaker
 import com.xemantic.kotlin.introspection.test.other.JavaGetterBase
+import com.xemantic.kotlin.introspection.test.other.JavaLabelBase
 import com.xemantic.kotlin.introspection.test.other.JavaPrimitiveBase
 import com.xemantic.kotlin.introspection.test.other.JavaProcessorBase
 import com.xemantic.kotlin.introspection.test.other.JavaSortBase
@@ -496,6 +497,7 @@ open class ContextBase {
 
 class ContextOverloadingSubclass : ContextBase() {
     fun run() {}
+    @Suppress("CONTEXTUAL_OVERLOAD_SHADOWED")
     context(c: Ctx)
     fun run() {}
     context(c: Ctx)
@@ -541,8 +543,20 @@ class CtxContextual : Contextual<Ctx> {
 // A Java method has no context parameters
 class ContextRunnable : Runnable {
     override fun run() {}
+    @Suppress("CONTEXTUAL_OVERLOAD_SHADOWED")
     context(c: Ctx)
     fun run() {}
+}
+
+// A Kotlin member with context parameters does not override a Java method taking them as its parameters
+abstract class ContextConsumer : java.util.function.Consumer<Ctx> {
+    context(c: Ctx)
+    fun accept() {}
+}
+
+abstract class ContextLabel : JavaLabelBase<Ctx>() {
+    context(c: Ctx)
+    val label: String get() = ""
 }
 
 // The internal members of a class of another module cannot be overridden

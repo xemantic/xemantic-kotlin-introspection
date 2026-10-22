@@ -128,10 +128,12 @@ internal class OverrideResolver(
      * A member of a supertype, which can be overridden.
      *
      * @param isJava whether the member is a Java method, matched by the erasure of its parameter types.
-     * @param friendJvmMethod the JVM name followed by the descriptor of an internal member of another module,
-     *   which can be overridden only from a friend module, like the test module of the main one,
-     *   in which case the overriding class declares a JVM method of this name, mangled with the module name
-     *   of the overridden member.
+     * @param friendJvmMethod for an internal member of another module, which can be overridden only
+     *   from a friend module, like the test module of the main one, whose overriding class declares
+     *   the JVM method of the member, mangled with the module name of the member:
+     *   the JVM name followed by the descriptor of this method,
+     *   or an empty string for a member without a JVM method, which is never visible.
+     *   `null` for any other member, always visible.
      */
     private class Overridable(
         val contexts: List<MemberType>,
@@ -233,21 +235,21 @@ internal class OverrideResolver(
     }
 
     /**
-     * Whether the JVM method of a member, declared in the metadata, has been removed from the class file of its owner,
-     * like by R8, so that it cannot be told from an overload of a supertype member,
-     * which is then assumed to be overridden, as one with the same name is known.
-     * The caller checks that a supertype member of the same name exists.
-     * A member whose owner class files cannot be read is not considered shrunk.
-     */
-    /**
      * Whether the [overridable] member is visible to the owner, which is not known for an internal member
      * of another module, until it is told that the owner class is in a friend module.
      */
     private fun Overridables.isVisible(overridable: Overridable): Boolean =
         overridable.friendJvmMethod == null || ownerJvmMethods?.contains(overridable.friendJvmMethod) == true
 
+    /**
+     * Whether the JVM method of a member, declared in the metadata, has been removed from the class file of its owner,
+     * like by R8, so that it cannot be told from an overload of a supertype member,
+     * which is then assumed to be overridden, as one with the same name is known.
+     * The caller checks that a supertype member of the same name exists.
+     * A member whose owner class files cannot be read is not considered shrunk.
+     */
     private fun Overridables.isShrunk(signature: JvmMethodSignature?): Boolean =
-        signature != null && ownerJvmMethods?.let { "${signature.name}${signature.descriptor}" !in it } == true
+        signature != null && ownerJvmMethods?.let { signature.toString() !in it } == true
 
     private fun Overridable.matches(
         contexts: List<MemberType>,
@@ -258,9 +260,12 @@ internal class OverrideResolver(
     ): Boolean {
         if (this.typeParameterCount != typeParameterCount) return false
         if (isJava) {
-            // on the JVM, the context parameters come first, followed by the receiver,
-            // and a suspend function takes a trailing Continuation
-            val jvmParameters = contexts + listOfNotNull(receiver) + parameters +
+            // a Java method has no context parameters, so it is not overridden by a member having them,
+            // even if they are its parameters on the JVM, which also applies to a Kotlin supertype without metadata,
+            // as it cannot be told from a Java one
+            if (contexts.isNotEmpty()) return false
+            // on the JVM, the receiver is the first parameter, and a suspend function takes a trailing Continuation
+            val jvmParameters = listOfNotNull(receiver) + parameters +
                 if (isSuspend) listOf(ClassType("kotlin/coroutines/Continuation")) else emptyList()
             return this.parameters.size == jvmParameters.size &&
                 this.parameters.zip(jvmParameters).all { (overridden, overriding) -> erasuresMatch(overridden, overriding) }
@@ -322,7 +327,7 @@ internal class OverrideResolver(
                 fun friendJvmMethod(visibility: Visibility, signature: JvmMethodSignature?): String? =
                     if (visibility == Visibility.INTERNAL && !isSameModule) {
                         // an internal member without a JVM method cannot be told to be overridden
-                        signature?.let { "${it.name}${it.descriptor}" } ?: ""
+                        signature?.toString() ?: ""
                     } else null
                 kmClass.functions.filter { it.visibility.isOverridable }.forEach { function ->
                     functions.getOrPut(function.name) { mutableListOf() } += Overridable(
