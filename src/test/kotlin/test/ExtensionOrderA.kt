@@ -31,3 +31,6 @@ fun ExtensionOrderSubject.mike(): Int = value
 val ExtensionOrderSubject.yankee: Int get() = value
 
 val ExtensionOrderSubject.charlie: Int get() = value
+
+// an overload of the one in ExtensionOrderB.kt, sorted before it by the declaring file
+fun ExtensionOrderSubject.foxtrot(factor: Int): Int = value * factor

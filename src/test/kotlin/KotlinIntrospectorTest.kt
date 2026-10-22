@@ -1957,8 +1957,23 @@ class KotlinIntrospectorTest {
             val ExtensionOrderSubject.charlie: Int
             val ExtensionOrderSubject.yankee: Int
             fun ExtensionOrderSubject.alpha(): Int
+            fun ExtensionOrderSubject.foxtrot(factor: Int): Int
+            fun ExtensionOrderSubject.foxtrot(): Int
             fun ExtensionOrderSubject.mike(): Int
             fun ExtensionOrderSubject.zulu(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve same-named extensions as class member sorted by declaring file regardless of scan order`() {
+        // the overloads are declared in 2 files, scanned in the order depending on the file system
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ExtensionOrderSubject.foxtrot"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ExtensionOrderSubject.foxtrot [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            fun ExtensionOrderSubject.foxtrot(factor: Int): Int
+            fun ExtensionOrderSubject.foxtrot(): Int
         """.trimIndent()
     }
 
@@ -2008,11 +2023,33 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.test.GenericTestClass [page 1/1]
             class GenericTestClass<K, out V>(val key: K, val value: V) {
                 fun <R : Any> transform(block: Function2<K, V, R>): R
+                fun withKey(newKey: K): GenericTestClass<K, V>
             }
             // from com.xemantic.kotlin.introspection.test
             fun <T> GenericTestClass<T, T>.longest(): T where T : CharSequence, T : Comparable<T>
             fun <K, V> GenericTestClass<K, V>.swap(): GenericTestClass<V, K>
             inline fun <reified T> GenericTestClass<*, *>.valueAs(): T?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class member referring to a type of the same package by its simple name`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.GenericTestClass.withKey"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GenericTestClass.withKey [page 1/1]
+            fun withKey(newKey: K): GenericTestClass<K, V>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension referring to types of the same package by their simple names as class member`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.GenericTestClass.swap"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GenericTestClass.swap [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            fun <K, V> GenericTestClass<K, V>.swap(): GenericTestClass<V, K>
         """.trimIndent()
     }
 
@@ -2039,7 +2076,8 @@ class KotlinIntrospectorTest {
             "com.xemantic.kotlin.introspection.test.ExtensionVisibilityTarget.helper"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.ExtensionVisibilityTarget.helper [page 1/1]
-            fun com.xemantic.kotlin.introspection.test.ExtensionVisibilityTarget.helper(): Int
+            // from com.xemantic.kotlin.introspection.test
+            fun ExtensionVisibilityTarget.helper(): Int
         """.trimIndent()
     }
 
@@ -2051,6 +2089,38 @@ class KotlinIntrospectorTest {
     @Test
     fun `should not resolve non-public extension of built-in type as its member`() {
         assert(resolver.resolve("kotlin.String.internalStringHelper") == null)
+    }
+
+    @Test
+    fun `should not resolve extension of built-in type from outside of the standard library as its member`() {
+        // String.wordCount() of the test package is not listed with kotlin.String either
+        assert(resolver.resolve("kotlin.String.wordCount") == null)
+    }
+
+    @Test
+    fun `should resolve extension of built-in type as its member with the object to import it from`() {
+        // without the header, the reader would not know to import kotlin.time.Duration.Companion.seconds
+        resolver.resolve(
+            "kotlin.Int.seconds"
+        ) sameAsKotlin """
+            // kotlin.Int.seconds [page 1/1]
+            // from kotlin.time.Duration.Companion
+            val Int.seconds: Duration
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve same-named extensions as class member grouped by the package to import them from`() {
+        // both kotlin-reflect and the standard library declare KClass.cast
+        resolver.resolve(
+            "kotlin.reflect.KClass.cast"
+        ) sameAsKotlin """
+            // kotlin.reflect.KClass.cast [page 1/1]
+            // from kotlin.reflect
+            fun <T : Any> KClass<T>.cast(value: Any?): T
+            // from kotlin.reflect.full
+            fun <T : Any> KClass<T>.cast(value: Any?): T
+        """.trimIndent()
     }
 
     // TestOverloads tests
@@ -2083,6 +2153,7 @@ class KotlinIntrospectorTest {
             "kotlin.String.substring"
         ) sameAsKotlin """
             // kotlin.String.substring [page 1/1]
+            // from kotlin.text
             inline fun String.substring(startIndex: Int): String
             inline fun String.substring(startIndex: Int, endIndex: Int): String
             fun String.substring(range: IntRange): String

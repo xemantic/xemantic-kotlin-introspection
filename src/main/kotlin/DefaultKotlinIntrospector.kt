@@ -205,8 +205,9 @@ internal class DefaultKotlinIntrospector(
         val scanTime = measureTime {
             if (scanEntireClasspath) {
                 val (funcIndex, propIndex, clsIndex) = buildFullClasspathIndex()
-                extensionIndex = funcIndex
-                extensionPropertyIndex = propIndex
+                // sorted once, so that the output does not depend on the classpath scan order
+                extensionIndex = funcIndex.sortedByNameAndSourceClass()
+                extensionPropertyIndex = propIndex.sortedByNameAndSourceClass()
                 classIndex = clsIndex
             } else {
                 extensionIndex = emptyMap()
@@ -245,7 +246,7 @@ internal class DefaultKotlinIntrospector(
                 is KotlinClassMetadata.Class -> {
                     val kmClass = metadata.kmClass
                     if (memberName != null) {
-                        resolveMember(kmClass, className, memberName)
+                        resolveMember(kmClass, className, clazz, memberName)
                     } else {
                         formatClass(kmClass, className, clazz)
                     }
@@ -308,22 +309,42 @@ internal class DefaultKotlinIntrospector(
     private fun readKmClass(clazz: Class<*>): KmClass? =
         (readMetadata(clazz) as? KotlinClassMetadata.Class)?.kmClass
 
-    private fun resolveMember(kmClass: KmClass, className: String, memberName: String): String? {
+    /**
+     * The package in which the types are referred to by their simple names when rendering the [clazz].
+     * For nested classes, it is the actual Java package, not the outer class.
+     */
+    private fun contextPackageOf(clazz: Class<*>, className: String): String =
+        clazz.`package`?.name ?: className.substringBeforeLast(".", "")
+
+    /**
+     * Resolves the members and the extensions of a class named [memberName],
+     * rendered like in the listing of the class, the extensions under the `// from …` header
+     * of the package, or the object, to import them from.
+     */
+    private fun resolveMember(kmClass: KmClass, className: String, clazz: Class<*>, memberName: String): String? {
         val isInterface = kmClass.kind == ClassKind.INTERFACE
         val typeParameters = kmClass.typeParameters.namesById()
+        val contextPackage = contextPackageOf(clazz, className)
 
-        val signatures = kmClass.functions.filter { it.name == memberName }.map { function ->
-            formatFunction(function, inInterface = isInterface, owner = kmClass, classTypeParameters = typeParameters)
+        val members = kmClass.functions.filter { it.name == memberName }.map { function ->
+            formatFunction(function, inInterface = isInterface, owner = kmClass, contextPackage = contextPackage, classTypeParameters = typeParameters)
         } + kmClass.properties.filter { it.name == memberName }.map { property ->
-            formatProperty(property, inInterface = isInterface, owner = kmClass, classTypeParameters = typeParameters)
-        } + getExtensionPropertiesFor(className).filter { it.property.name == memberName }.map { extProp ->
-            formatExtensionProperty(extProp.property)
-        } + getExtensionsFor(className).filter { it.function.name == memberName }.map { ext ->
-            formatFunction(ext.function)
+            formatProperty(property, inInterface = isInterface, owner = kmClass, contextPackage = contextPackage, classTypeParameters = typeParameters)
         }
+        val extensions = renderExtensions(
+            getExtensionsFor(className).filter { it.function.name == memberName },
+            getExtensionPropertiesFor(className).filter { it.property.name == memberName },
+            contextPackage
+        )
 
-        return signatures.joinToString("\n").ifEmpty { null }
+        return memberSignatures(members, extensions)
     }
+
+    /**
+     * The [members] followed by the [extensions] rendered by [renderExtensions], or `null` if there are none.
+     */
+    private fun memberSignatures(members: List<String>, extensions: String): String? =
+        (members.joinToString("\n") + extensions).removePrefix("\n").ifEmpty { null }
 
     private fun resolvePackageMember(kmPackages: List<KmPackage>, memberName: String): String? {
         val signatures = kmPackages.flatMap { kmPackage ->
@@ -555,13 +576,18 @@ internal class DefaultKotlinIntrospector(
             }.map { formatKProperty(it) }
         }
 
-        val signatures = members + getExtensionPropertiesFor(className).filter {
-            it.property.name == memberName
-        }.map { formatExtensionProperty(it.property) } + getExtensionsFor(className).filter {
-            it.function.name == memberName
-        }.map { formatFunction(it.function) }
+        // Only the extensions from the standard library, like in the listing of the built-in type
+        val extensions = renderExtensions(
+            getExtensionsFor(className).filter {
+                it.function.name == memberName && isPublicStdlibSource(it.sourceClass)
+            },
+            getExtensionPropertiesFor(className).filter {
+                it.property.name == memberName && isPublicStdlibSource(it.sourceClass)
+            },
+            contextPackage = null
+        )
 
-        return signatures.joinToString("\n").ifEmpty { null }
+        return memberSignatures(members, extensions)
     }
 
     /**
@@ -762,8 +788,7 @@ internal class DefaultKotlinIntrospector(
         val typeParameters = kmClass.typeParameters.namesById()
 
         // Extract the package name for context-aware type formatting
-        // For nested classes, use the actual Java package, not the parent class
-        val contextPackage = clazz.`package`?.name ?: className.substringBeforeLast(".", "")
+        val contextPackage = contextPackageOf(clazz, className)
 
         // Find primary constructor and its parameter names
         val primaryConstructor = kmClass.constructors.firstOrNull { !it.isSecondary }
@@ -958,8 +983,9 @@ internal class DefaultKotlinIntrospector(
     /**
      * Renders the extensions shown after a class body, grouped under a `// from <source>` comment
      * for each package, or object, to import them from, properties first, then functions.
-     * Both are sorted by name, and then by source class, so that the output does not depend
-     * on the classpath scan order, while overloads declared in one file keep their declaration order.
+     * Both are sorted by name, and then by source class, like each list of the extension index,
+     * still sorted here, as the extensions of several receiver types, like the supertypes, are merged.
+     * Overloads declared in one file keep their declaration order.
      */
     private fun renderExtensions(
         functions: List<IndexedExtension>,
@@ -1893,6 +1919,22 @@ internal fun receiverIndexKey(type: KmType): String = when (val classifier = typ
     is KmClassifier.TypeAlias -> classifier.name.replace('/', '.')
     is KmClassifier.TypeParameter -> TYPE_PARAMETER_RECEIVER_KEY
 }
+
+/**
+ * The extension index with each list sorted by name, and then by the declaring class,
+ * so that the output does not depend on the classpath scan order, which differs between file systems.
+ * The sort is stable, so overloads declared in one file keep their declaration order.
+ */
+@JvmName("sortedExtensionIndex")
+internal fun Map<String, List<IndexedExtension>>.sortedByNameAndSourceClass(): Map<String, List<IndexedExtension>> =
+    mapValues { (_, extensions) -> extensions.sortedWith(compareBy({ it.function.name }, { it.sourceClass })) }
+
+/**
+ * The extension property index with each list sorted like in the extension index.
+ */
+@JvmName("sortedExtensionPropertyIndex")
+internal fun Map<String, List<IndexedExtensionProperty>>.sortedByNameAndSourceClass(): Map<String, List<IndexedExtensionProperty>> =
+    mapValues { (_, properties) -> properties.sortedWith(compareBy({ it.property.name }, { it.sourceClass })) }
 
 private const val TYPE_PARAMETER_RECEIVER_KEY = "<type parameter>"
 

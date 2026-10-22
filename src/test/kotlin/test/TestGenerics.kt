@@ -21,6 +21,7 @@ package com.xemantic.kotlin.introspection.test
 // Generic class with a variance-annotated type parameter
 class GenericTestClass<K, out V>(val key: K, val value: V) {
     fun <R : Any> transform(block: (K, V) -> R): R = block(key, value)
+    fun withKey(newKey: K): GenericTestClass<K, V> = GenericTestClass(newKey, value)
 }
 
 // Generic extension function
