@@ -22,6 +22,8 @@ package com.xemantic.kotlin.introspection
  * Provides introspection capabilities for Kotlin APIs available on the classpath.
  * Use [resolve] to get detailed signatures for known types (e.g., extension functions of String).
  * Use [search] to discover APIs when the exact name is unknown.
+ *
+ * The introspector created by the [KotlinIntrospector] function is safe for concurrent use.
  */
 public interface KotlinIntrospector {
 

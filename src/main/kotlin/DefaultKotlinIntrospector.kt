@@ -32,7 +32,6 @@ import java.net.URLClassLoader
 import java.util.jar.Attributes
 import java.util.jar.JarFile
 import kotlin.metadata.*
-import kotlin.metadata.internal.common.KotlinCommonMetadata
 import kotlin.metadata.jvm.KotlinClassMetadata
 import kotlin.reflect.KClass
 import kotlin.reflect.KFunction
@@ -135,7 +134,7 @@ internal class DefaultKotlinIntrospector(
     private val classIndex: Map<String, List<String>>
 
     // Declarations of the built-in types, by their Kotlin class name, like kotlin/collections/List
-    private val builtinClasses: Map<String, KmClass> by lazy { readBuiltinClasses() }
+    private val builtinClasses: Map<String, KmClass> by lazy { readKotlinBuiltinClasses() }
 
     // Declarations of the built-in types, by their fully qualified Kotlin name, like kotlin.collections.List,
     // telling apart the built-in collection types from their mutable counterparts, which kotlin-reflect cannot,
@@ -145,7 +144,8 @@ internal class DefaultKotlinIntrospector(
     }
 
     private val overrideResolver = OverrideResolver(
-        loadClass = ::loadClass,
+        classLoader = classLoader,
+        loadClass = ::loadBinaryClass,
         readKmClass = ::readKmClass,
         builtinClasses = { builtinClasses },
         builtinTypes = builtinTypes
@@ -223,14 +223,6 @@ internal class DefaultKotlinIntrospector(
         }.toSet()
 
         private const val METADATA_DESCRIPTOR = "Lkotlin/Metadata;"
-
-        private val builtinsResources = listOf(
-            "kotlin/kotlin.kotlin_builtins",
-            "kotlin/annotation/annotation.kotlin_builtins",
-            "kotlin/collections/collections.kotlin_builtins",
-            "kotlin/ranges/ranges.kotlin_builtins",
-            "kotlin/reflect/reflect.kotlin_builtins"
-        )
 
         /**
          * Marks a parameter declaring a default value, which is not present in the metadata,
@@ -332,15 +324,22 @@ internal class DefaultKotlinIntrospector(
     private fun loadClass(name: String): Class<*>? {
         var binaryName = name
         while (true) {
-            try {
-                return classLoader.loadClass(binaryName)
-            } catch (_: ClassNotFoundException) {
-            } catch (_: LinkageError) {
-            }
+            loadBinaryClass(binaryName)?.let { return it }
             val lastDot = binaryName.lastIndexOf('.')
             if (lastDot < 0) return null
             binaryName = binaryName.substring(0, lastDot) + "$" + binaryName.substring(lastDot + 1)
         }
+    }
+
+    /**
+     * Loads a class by its JVM binary name, like `com.example.Outer${'$'}Nested`.
+     */
+    private fun loadBinaryClass(binaryName: String): Class<*>? = try {
+        classLoader.loadClass(binaryName)
+    } catch (_: ClassNotFoundException) {
+        null
+    } catch (_: LinkageError) {
+        null
     }
 
     private fun readMetadata(clazz: Class<*>): KotlinClassMetadata? {
@@ -432,15 +431,6 @@ internal class DefaultKotlinIntrospector(
         }
         return signatures.joinToString("\n").ifEmpty { null }
     }
-
-    /**
-     * Reads the declarations of the built-in types from the `.kotlin_builtins` files of the standard library.
-     */
-    private fun readBuiltinClasses(): Map<String, KmClass> = builtinsResources.flatMap { resource ->
-        val stream = KotlinIntrospector::class.java.classLoader.getResourceAsStream(resource)
-        val fragment = stream?.use { KotlinCommonMetadata.read(it) }?.kmModuleFragment
-        fragment?.classes.orEmpty()
-    }.associateBy { it.name }
 
     /**
      * Format a Kotlin built-in type using kotlin-reflect.
