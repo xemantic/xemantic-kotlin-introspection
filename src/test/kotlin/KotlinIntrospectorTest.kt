@@ -1514,6 +1514,19 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should mark overrides of internal members of superclass of a friend module`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.friendmodule.FriendModuleSubclass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.friendmodule.FriendModuleSubclass [page 1/1]
+            class FriendModuleSubclass : com.xemantic.kotlin.introspection.othermodule.InternalBase {
+                override val state: Int
+                internal override fun reset()
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should match type parameters of overridden functions by position`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.GenericFunctionsImpl"

@@ -81,6 +81,13 @@ tasks.named<KotlinCompile>("compileJvmDefaultDisabledTestFixturesKotlin") {
 // a separate Kotlin module, whose internal members are not visible to the test module
 val otherModuleTestFixtures: SourceSet = sourceSets.create("otherModuleTestFixtures")
 
+// a friend module of otherModuleTestFixtures, like a test module of the main one, seeing its internal members
+val friendModuleTestFixtures: SourceSet = sourceSets.create("friendModuleTestFixtures")
+
+kotlin.target.compilations.named(friendModuleTestFixtures.name) {
+    associateWith(kotlin.target.compilations.getByName(otherModuleTestFixtures.name))
+}
+
 dependencies {
     implementation(libs.kotlin.metadata.jvm)
     implementation(libs.kotlin.reflect)
@@ -93,6 +100,7 @@ dependencies {
 
     testImplementation(jvmDefaultDisabledTestFixtures.output)
     testImplementation(otherModuleTestFixtures.output)
+    testImplementation(friendModuleTestFixtures.output)
     testImplementation(libs.kotlin.test)
     testImplementation(libs.xemantic.kotlin.test)
     testRuntimeOnly(libs.logback.classic)

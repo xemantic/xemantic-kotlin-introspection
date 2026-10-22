@@ -128,13 +128,18 @@ internal class OverrideResolver(
      * A member of a supertype, which can be overridden.
      *
      * @param isJava whether the member is a Java method, matched by the erasure of its parameter types.
+     * @param friendJvmMethod the JVM name followed by the descriptor of an internal member of another module,
+     *   which can be overridden only from a friend module, like the test module of the main one,
+     *   in which case the overriding class declares a JVM method of this name, mangled with the module name
+     *   of the overridden member.
      */
     private class Overridable(
         val contexts: List<MemberType>,
         val receiver: MemberType?,
         val parameters: List<MemberType>,
         val typeParameterCount: Int,
-        val isJava: Boolean
+        val isJava: Boolean,
+        val friendJvmMethod: String? = null
     )
 
     /**
@@ -197,7 +202,10 @@ internal class OverrideResolver(
         val parameters = function.valueParameters.map {
             kotlinType(it.type, overridables.substitution, typeParameters)
         }
-        return candidates.any { it.matches(contexts, receiver, parameters, typeParameters.size, function.isSuspend) } ||
+        return candidates.any {
+            it.matches(contexts, receiver, parameters, typeParameters.size, function.isSuspend) &&
+                overridables.isVisible(it)
+        } ||
             overridables.isShrunk(function.signature)
     }
 
@@ -211,7 +219,8 @@ internal class OverrideResolver(
             kotlinType(it, overridables.substitution, typeParameters)
         }
         val overridesProperty = overridables.properties[property.name].orEmpty().any {
-            it.matches(contexts, receiver, emptyList(), typeParameters.size, isSuspend = false)
+            it.matches(contexts, receiver, emptyList(), typeParameters.size, isSuspend = false) &&
+                overridables.isVisible(it)
         }
         // a property of a Kotlin supertype without metadata is known only by its JVM getter,
         // which a private or a @JvmField property does not have, and which might be renamed or mangled
@@ -230,6 +239,13 @@ internal class OverrideResolver(
      * The caller checks that a supertype member of the same name exists.
      * A member whose owner class files cannot be read is not considered shrunk.
      */
+    /**
+     * Whether the [overridable] member is visible to the owner, which is not known for an internal member
+     * of another module, until it is told that the owner class is in a friend module.
+     */
+    private fun Overridables.isVisible(overridable: Overridable): Boolean =
+        overridable.friendJvmMethod == null || ownerJvmMethods?.contains(overridable.friendJvmMethod) == true
+
     private fun Overridables.isShrunk(signature: JvmMethodSignature?): Boolean =
         signature != null && ownerJvmMethods?.let { "${signature.name}${signature.descriptor}" !in it } == true
 
@@ -301,10 +317,14 @@ internal class OverrideResolver(
             declaration.kotlin?.let { kmClass ->
                 val substitution = supertypeSubstitution(kmClass, supertype)
                 // an internal member is visible only within its module, told by the module name in the metadata,
-                // a friend module, like the test module of the main one, is not recognized
+                // or within a friend module, told by the JVM method of the overriding class
                 val isSameModule = kmClass.moduleName == owner.moduleName
-                fun Visibility.isOverridableHere() = isOverridable && (this != Visibility.INTERNAL || isSameModule)
-                kmClass.functions.filter { it.visibility.isOverridableHere() }.forEach { function ->
+                fun friendJvmMethod(visibility: Visibility, signature: JvmMethodSignature?): String? =
+                    if (visibility == Visibility.INTERNAL && !isSameModule) {
+                        // an internal member without a JVM method cannot be told to be overridden
+                        signature?.let { "${it.name}${it.descriptor}" } ?: ""
+                    } else null
+                kmClass.functions.filter { it.visibility.isOverridable }.forEach { function ->
                     functions.getOrPut(function.name) { mutableListOf() } += Overridable(
                         contexts = function.contextParameters.map {
                             kotlinType(it.type, substitution, function.typeParameters)
@@ -316,10 +336,11 @@ internal class OverrideResolver(
                             kotlinType(it.type, substitution, function.typeParameters)
                         },
                         typeParameterCount = function.typeParameters.size,
-                        isJava = false
+                        isJava = false,
+                        friendJvmMethod = friendJvmMethod(function.visibility, function.signature)
                     )
                 }
-                kmClass.properties.filter { it.visibility.isOverridableHere() }.forEach { property ->
+                kmClass.properties.filter { it.visibility.isOverridable }.forEach { property ->
                     properties.getOrPut(property.name) { mutableListOf() } += Overridable(
                         contexts = property.contextParameters.map {
                             kotlinType(it.type, substitution, property.typeParameters)
@@ -329,7 +350,8 @@ internal class OverrideResolver(
                         },
                         parameters = emptyList(),
                         typeParameterCount = property.typeParameters.size,
-                        isJava = false
+                        isJava = false,
+                        friendJvmMethod = friendJvmMethod(property.visibility, property.getterSignature)
                     )
                 }
                 kmClass.supertypes.forEach { type ->
@@ -831,7 +853,13 @@ internal class OverrideResolver(
                     else -> substitution[typeVariable] ?: UnknownType
                 }
             }
-            methods += name to Overridable(emptyList(), null, parameters, generic?.typeParameters?.size ?: 0, isJava = true)
+            methods += name to Overridable(
+                contexts = emptyList(),
+                receiver = null,
+                parameters = parameters,
+                typeParameterCount = generic?.typeParameters?.size ?: 0,
+                isJava = true
+            )
         }
         // the methods of a class file which cannot be parsed are unknown
         return if (isRead) methods else emptyList()
