@@ -822,8 +822,7 @@ internal class DefaultKotlinIntrospector(
         }
 
         return buildString {
-            // the metadata name of a nested class, like "com/example/Parent.Nested", where "$" can be part of a name
-            val simpleName = kmClass.name.substringAfterLast("/").substringAfterLast(".")
+            val simpleName = simpleClassName(kmClass.name)
             +formatClassHeader(kmClass, simpleName, contextPackage, typeParameters, constructorDeclaration)
 
             if (annotationParameters != null) return@buildString
@@ -1364,7 +1363,14 @@ internal class DefaultKotlinIntrospector(
         contextPackage: String?,
         typeParameters: Map<Int, String>
     ): String {
+        val outerType = type.outerType
         val baseName = when (val classifier = type.classifier) {
+            // an inner class of a generic class, like `Outer<String>.Inner`,
+            // carries the type arguments of the outer class in the outer type
+            is KmClassifier.Class if outerType != null -> {
+                val outer = formatType(outerType, contextPackage, typeParameters)
+                "$outer.${simpleClassName(classifier.name)}"
+            }
             is KmClassifier.Class -> {
                 val fqn = classifier.name.replace("/", ".")
                 // the package is separated with '/', and nested classes with '.'
@@ -1409,6 +1415,13 @@ internal class DefaultKotlinIntrospector(
         contextPackage: String?,
         typeParameters: Map<Int, String>
     ): String = formatType(type, contextPackage, typeParameters).parenthesizedIf(type.needsParenthesesAsReceiver)
+
+    /**
+     * The simple name of a metadata class name, like `Nested` of `pkg/Parent.Nested`,
+     * where the nested classes are separated with `.`, as `$` can be part of a class name.
+     */
+    private fun simpleClassName(name: String): String =
+        name.substringAfterLast("/").substringAfterLast(".")
 
     /**
      * Determines if a type is a well-known stdlib type that should use simple name.

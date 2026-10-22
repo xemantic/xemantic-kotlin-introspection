@@ -267,8 +267,8 @@ class ClassLoaderIntrospectionTest {
         signature sameAsKotlin """
             // com.xemantic.kotlin.introspection.isolated.AbsentJavaOuterSubclass [page 1/1]
             class AbsentJavaOuterSubclass : AbsentJavaOuter<String> {
-                inner class InnerSubclass : AbsentJavaOuter.Inner<Int>
-                inner class ShadowingSubclass : AbsentJavaOuter.Shadowing<Int>
+                inner class InnerSubclass : AbsentJavaOuter<String>.Inner<Int>
+                inner class ShadowingSubclass : AbsentJavaOuter<String>.Shadowing<Int>
                 override fun <T : Number> shadowing(x: T)
                 fun <T : String> shadowing(x: T)
             }
@@ -288,7 +288,7 @@ class ClassLoaderIntrospectionTest {
         // then
         signature sameAsKotlin """
             // com.xemantic.kotlin.introspection.isolated.AbsentJavaOuterSubclass.InnerSubclass [page 1/1]
-            inner class InnerSubclass : AbsentJavaOuter.Inner<Int> {
+            inner class InnerSubclass : AbsentJavaOuter<String>.Inner<Int> {
                 override fun outer(x: String)
                 fun outer(x: Int)
                 override fun inner(x: Int)
@@ -310,7 +310,7 @@ class ClassLoaderIntrospectionTest {
         // then
         signature sameAsKotlin """
             // com.xemantic.kotlin.introspection.isolated.AbsentJavaOuterSubclass.ShadowingSubclass [page 1/1]
-            inner class ShadowingSubclass : AbsentJavaOuter.Shadowing<Int> {
+            inner class ShadowingSubclass : AbsentJavaOuter<String>.Shadowing<Int> {
                 override fun shadowed(x: Int)
                 fun shadowed(x: String)
             }
