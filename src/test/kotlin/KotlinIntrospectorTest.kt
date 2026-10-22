@@ -612,9 +612,9 @@ class KotlinIntrospectorTest {
                 operator fun component1(): Int
                 operator fun component2(): String
                 fun copy(id: Int = …, name: String = …): DataTestClass
-                open operator fun equals(other: Any?): Boolean
-                open fun hashCode(): Int
-                open fun toString(): String
+                override operator fun equals(other: Any?): Boolean
+                override fun hashCode(): Int
+                override fun toString(): String
             }
         """.trimIndent()
     }
@@ -627,9 +627,9 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.ValueTestClass [page 1/1]
             value class ValueTestClass(val value: String) {
-                open operator fun equals(other: Any?): Boolean
-                open fun hashCode(): Int
-                open fun toString(): String
+                override operator fun equals(other: Any?): Boolean
+                override fun hashCode(): Int
+                override fun toString(): String
             }
         """.trimIndent()
     }
@@ -1007,6 +1007,767 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.test.OverrideTestClass [page 1/1]
             class OverrideTestClass : Comparable<OverrideTestClass> {
                 override operator fun compareTo(other: OverrideTestClass): Int
+            }
+        """.trimIndent()
+    }
+
+    // TestOverrides tests
+
+    @Test
+    fun `should not mark overload of superclass function as override`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.OverloadingSubclass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OverloadingSubclass [page 1/1]
+            class OverloadingSubclass : OverloadedBase {
+                fun foo(x: Int)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not mark functions named like final Object methods as override`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ObjectMethodNamesSubclass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ObjectMethodNamesSubclass [page 1/1]
+            class ObjectMethodNamesSubclass : NonAnyBase {
+                fun notify(msg: String)
+                fun wait(ms: Int)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark override of protected abstract function`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ProtectedOverrideSubclass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ProtectedOverrideSubclass [page 1/1]
+            class ProtectedOverrideSubclass : ProtectedAbstractBase {
+                protected override fun bar()
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should tell override of generic function from its overload`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.StringProcessor"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.StringProcessor [page 1/1]
+            abstract class StringProcessor : Processor<String> {
+                override fun process(item: String)
+                fun process(item: Int)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should tell override of generic function with primitive type argument from its overload`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.IntProcessor"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.IntProcessor [page 1/1]
+            class IntProcessor : Processor<Int> {
+                override fun process(item: Int)
+                fun process(item: String)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should tell override of generic function with nullable type argument from its overload`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.NullableStringProcessor"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NullableStringProcessor [page 1/1]
+            class NullableStringProcessor : Processor<String?> {
+                override fun process(item: String?)
+                fun process(item: Int?)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark override of function declared further up the hierarchy`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.DeepProcessor"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DeepProcessor [page 1/1]
+            class DeepProcessor : IntermediateProcessor {
+                override fun process(item: String)
+                override fun toString(): String
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark override of Kotlin collection function`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.StringList"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.StringList [page 1/1]
+            abstract class StringList : AbstractList<String> {
+                override operator fun contains(element: String): Boolean
+                override fun indexOf(element: String): Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark override of Kotlin collection function with primitive type argument`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.IntList"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.IntList [page 1/1]
+            abstract class IntList : AbstractList<Int> {
+                override operator fun contains(element: Int): Boolean
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark override of Kotlin map function`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.StringKeyMap"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.StringKeyMap [page 1/1]
+            abstract class StringKeyMap : AbstractMap<String, Int> {
+                override operator fun get(key: String): Int?
+                override fun containsKey(key: String): Boolean
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark override of Java collection function declaring Object parameter`() {
+        // AbstractList.contains(Object) is seen in Kotlin as contains(element: E) of MutableCollection
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaStringList"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaStringList [page 1/1]
+            abstract class JavaStringList : java.util.AbstractList<String> {
+                override operator fun get(index: Int): String
+                override operator fun contains(element: String): Boolean
+                fun contains(element: Int): Boolean
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark override of generic function with value class type argument`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.UIntProcessor"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.UIntProcessor [page 1/1]
+            class UIntProcessor : Processor<UInt> {
+                override fun process(item: UInt)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should tell override of function with value class parameter from its overload`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.UIntSubclass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.UIntSubclass [page 1/1]
+            class UIntSubclass : UIntBase {
+                override fun take(x: UInt)
+                fun take(x: Int)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark override of value class member with value class parameter`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ValueComparable"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ValueComparable [page 1/1]
+            value class ValueComparable(val x: Int) : Comparable<ValueComparable> {
+                override operator fun compareTo(other: ValueComparable): Int
+                override operator fun equals(other: Any?): Boolean
+                override fun hashCode(): Int
+                override fun toString(): String
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark override with value class type argument`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ValueComparableHolder"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ValueComparableHolder [page 1/1]
+            class ValueComparableHolder : Comparable<ValueComparable> {
+                override operator fun compareTo(other: ValueComparable): Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark override with type argument nested in another type`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.StringArrayProcessor"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.StringArrayProcessor [page 1/1]
+            class StringArrayProcessor : ArrayProcessor<String> {
+                override fun process(item: Array<String>)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should tell override of function with array of type parameter from its overload`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.StringItemsProcessor"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.StringItemsProcessor [page 1/1]
+            class StringItemsProcessor : ItemsProcessor<String> {
+                override fun process(items: Array<String>)
+                fun process(items: Array<Int>)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not mark finalize as override`() {
+        // Object.finalize is overridable on the JVM, but it is not a member of Any
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.Finalizable"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.Finalizable [page 1/1]
+            class Finalizable {
+                protected fun finalize()
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark override of clone of Cloneable`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.CloneableCopy"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.CloneableCopy [page 1/1]
+            class CloneableCopy : Cloneable {
+                override fun clone(): Any
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not mark function named like package-private Java method of another package as override`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.PackagePrivateSubclass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PackagePrivateSubclass [page 1/1]
+            class PackagePrivateSubclass : com.xemantic.kotlin.introspection.test.other.PackagePrivateBase {
+                fun hidden()
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark overrides of generic Java superclass methods`() {
+        // JavaProcessorBase.finish(int) is final, and count() protected
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaProcessor"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaProcessor [page 1/1]
+            class JavaProcessor : com.xemantic.kotlin.introspection.test.other.JavaProcessorBase<String> {
+                override fun process(item: String)
+                fun process(item: Int)
+                override fun handle(items: List<String>)
+                protected override fun count(): Int
+                fun finish()
+                override fun <N : Number> measure(value: N)
+                fun measure(value: String)
+                override fun all(items: Array<String>)
+                fun all(items: Array<Int>)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark override in interface`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.StringProcessorInterface"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.StringProcessorInterface [page 1/1]
+            interface StringProcessorInterface : Processor<String> {
+                override fun process(item: String)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark override of function taking type parameter passed as type argument of supertype`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.Box"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.Box [page 1/1]
+            class Box<T> : Processor<T> {
+                override fun process(item: T)
+                fun process(item: List<T>)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark suspend override with value class type argument`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.UIntSuspendProcessor"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.UIntSuspendProcessor [page 1/1]
+            class UIntSuspendProcessor : SuspendProcessor<UInt> {
+                override suspend fun process(item: UInt)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark member extension overrides with value class type argument`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.UIntReceiverProcessor"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.UIntReceiverProcessor [page 1/1]
+            class UIntReceiverProcessor : ReceiverProcessor<UInt> {
+                override suspend fun Int.handle(x: UInt)
+                override fun UInt.describe(): String
+                fun describe(): String
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not mark function with dash in its name as override`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.DashedNameProcessor"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DashedNameProcessor [page 1/1]
+            class DashedNameProcessor : Processor<String> {
+                override fun process(item: String)
+                fun process-handler(item: String)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark override of function of inner class referring to type parameter of outer class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ProbeOuterString.Sub"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ProbeOuterString.Sub [page 1/1]
+            inner class Sub : ProbeOuter.Inner {
+                override fun f(t: String)
+                fun f(t: Int)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should match type parameters of overridden functions by position`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.GenericFunctionsImpl"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GenericFunctionsImpl [page 1/1]
+            class GenericFunctionsImpl : GenericFunctions {
+                override fun <R> transform(item: R): R
+                override fun <A, B> pair(key: A, value: B)
+                fun <A, B> pair(key: B, value: A, extra: Int)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark override of isXxx property`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.EnabledToggle"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.EnabledToggle [page 1/1]
+            class EnabledToggle : Toggle {
+                override val isEnabled: Boolean
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not mark isXxx property without overridden supertype property as override`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.StandaloneToggle"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.StandaloneToggle [page 1/1]
+            class StandaloneToggle {
+                val isEnabled: Boolean
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not mark property with getter renamed by JvmName as override of function named like default getter`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.RenamedFooGetter"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.RenamedFooGetter [page 1/1]
+            class RenamedFooGetter : FooGetterBase {
+                val foo: Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not mark JvmField property as override of function named like default getter`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JvmFieldBar"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JvmFieldBar [page 1/1]
+            class JvmFieldBar : GetBarBase {
+                val bar: Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not mark value class property as override of function named like its getter`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.UValueNoOverride"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.UValueNoOverride [page 1/1]
+            class UValueNoOverride : GetValueBase {
+                val value: UInt
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark override of member extension property`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.StringLengthMeasure"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.StringLengthMeasure [page 1/1]
+            class StringLengthMeasure : StringMeasure {
+                override val String.measure: Int
+                val Int.measure: Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark override of member extension property with value class receiver as type argument`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.UIntReceiverMeasure"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.UIntReceiverMeasure [page 1/1]
+            class UIntReceiverMeasure : GenericReceiverMeasure<UInt> {
+                override val UInt.measure: Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark override of property of value class type`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.UIntValue"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.UIntValue [page 1/1]
+            class UIntValue : UIntValueHolder {
+                override val value: UInt
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark override of primary constructor property`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HasUImpl"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HasUImpl [page 1/1]
+            class HasUImpl(override val u: UInt, val extra: Int) : HasU
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark override of mapped Java collection property`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.SizedCollection"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SizedCollection [page 1/1]
+            abstract class SizedCollection : java.util.AbstractCollection<String> {
+                override val size: Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark override of built-in collection function mapped to differently named JVM method`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.RemovingList"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.RemovingList [page 1/1]
+            abstract class RemovingList : java.util.ArrayList<String> {
+                override fun removeAt(index: Int): String
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark overrides of CharSequence members mapped to differently named JVM methods`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.Chars"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.Chars [page 1/1]
+            abstract class Chars : CharSequence {
+                override val length: Int
+                override operator fun get(index: Int): Char
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark overrides of Number members mapped to differently named JVM methods`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.SmallNumber"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SmallNumber [page 1/1]
+            abstract class SmallNumber : Number {
+                override fun toInt(): Int
+                override fun toByte(): Byte
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark overrides of Map properties mapped to differently named JVM methods`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.KeyedMap"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.KeyedMap [page 1/1]
+            abstract class KeyedMap : Map<String, Int> {
+                override val keys: Set<String>
+                override val entries: Set<Map.Entry<String, Int>>
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark overrides of Throwable members of both Kotlin and Java`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.StacklessException"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.StacklessException [page 1/1]
+            class StacklessException : java.lang.Exception {
+                override val message: String?
+                override fun fillInStackTrace(): Throwable
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark override of invoke of function type supertype`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.FunctionTypeImpl"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.FunctionTypeImpl [page 1/1]
+            class FunctionTypeImpl : Function1<String, Int> {
+                override operator fun invoke(p1: String): Int
+                fun invoke(p1: Int): Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark override of invoke of suspend function type supertype`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.SuspendFunctionTypeImpl"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SuspendFunctionTypeImpl [page 1/1]
+            class SuspendFunctionTypeImpl : suspend (String) -> Int {
+                override suspend operator fun invoke(p1: String): Int
+                fun invoke(p1: String, p2: Int): Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark override of Java method taking Void`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaVoidVisitor"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaVoidVisitor [page 1/1]
+            class JavaVoidVisitor : com.xemantic.kotlin.introspection.test.other.JavaVoidBase {
+                override fun visit(v: java.lang.Void?)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark overrides of Any members of data class implementing Java interface`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.SerializableData"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SerializableData [page 1/1]
+            data class SerializableData(val a: Int) : java.io.Serializable {
+                operator fun component1(): Int
+                fun copy(a: Int = …): SerializableData
+                override operator fun equals(other: Any?): Boolean
+                override fun hashCode(): Int
+                override fun toString(): String
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark overrides of Any members of class implementing Java interface`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.AnyMembersRunnable"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.AnyMembersRunnable [page 1/1]
+            class AnyMembersRunnable : java.lang.Runnable {
+                override fun run()
+                override fun toString(): String
+                override operator fun equals(other: Any?): Boolean
+                override fun hashCode(): Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark override of Any member of class implementing interface extending Java interface`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.RunnableExtensionImpl"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.RunnableExtensionImpl [page 1/1]
+            class RunnableExtensionImpl : RunnableExtension {
+                override fun run()
+                override fun hashCode(): Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark overrides of JDK members of read-only collection`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JdkList"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JdkList [page 1/1]
+            abstract class JdkList : List<String> {
+                override fun spliterator(): java.util.Spliterator<String>
+                override fun forEach(action: java.util.function.Consumer<in String>)
+                override fun stream(): java.util.stream.Stream<String>
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark overrides of JDK members of mutable list`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JdkMutableList"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JdkMutableList [page 1/1]
+            abstract class JdkMutableList : AbstractMutableList<String> {
+                override fun removeIf(filter: java.util.function.Predicate<in String>): Boolean
+                override fun replaceAll(operator: java.util.function.UnaryOperator<String>)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark override of JDK member of mutable map`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JdkMap"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JdkMap [page 1/1]
+            abstract class JdkMap : MutableMap<String, Int> {
+                override fun putIfAbsent(key: String, value: Int): Int?
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not mark JDK members hidden from Kotlin collections as override`() {
+        // Collection.toArray is not visible in Kotlin, AbstractCollection declares its own
+        resolver.resolve(
+            "kotlin.collections.AbstractCollection.toArray"
+        ) sameAsKotlin """
+            // kotlin.collections.AbstractCollection.toArray [page 1/1]
+            protected open fun toArray(): Array<Any?>
+            protected open fun <T> toArray(array: Array<T>): Array<T>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not mark functions named like JDK 21 sequenced collection members as override`() {
+        // the standard library is compiled against JDK 8, without List.addFirst
+        resolver.resolve(
+            "kotlin.collections.ArrayDeque.addFirst"
+        ) sameAsKotlin """
+            // kotlin.collections.ArrayDeque.addFirst [page 1/1]
+            fun addFirst(element: E)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark override of Java method taking Kotlin function type`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.KotlinFunctionTaker"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.KotlinFunctionTaker [page 1/1]
+            class KotlinFunctionTaker : com.xemantic.kotlin.introspection.test.other.JavaFunctionTaker {
+                override fun onEvent(callback: Function1<String, Unit>)
+                fun onEvent(callback: Function1<Int, Unit>, extra: Int)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark overrides without redundant use-site projections`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.RedundantProjectionImpl"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.RedundantProjectionImpl [page 1/1]
+            abstract class RedundantProjectionImpl : RedundantProjection {
+                override fun f(x: List<String>)
+                override fun c(x: Comparable<in String>)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark overrides with redundant use-site projections`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.PlainProjectionImpl"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PlainProjectionImpl [page 1/1]
+            abstract class PlainProjectionImpl : PlainProjection {
+                override fun f(x: List<out String>)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark override in object`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ObjectProcessor"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ObjectProcessor [page 1/1]
+            object ObjectProcessor : Processor<String> {
+                override fun process(item: String)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark override in companion object`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.CompanionProcessor"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.CompanionProcessor [page 1/1]
+            class CompanionProcessor {
+                companion object {
+                    override fun process(item: Int)
+                }
             }
         """.trimIndent()
     }

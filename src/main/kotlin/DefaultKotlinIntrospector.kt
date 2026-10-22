@@ -96,9 +96,21 @@ internal class DefaultKotlinIntrospector(
     // Index of all Kotlin classes: simple name (lowercase) -> list of fully qualified names
     private val classIndex: Map<String, List<String>>
 
+    // Declarations of the built-in types, by their Kotlin class name, like kotlin/collections/List
+    private val builtinClasses: Map<String, KmClass> by lazy { readBuiltinClasses() }
+
     // Declarations of the built-in collection types, which kotlin-reflect cannot tell apart
     // from their mutable counterparts, as both map to the same JVM type
-    private val builtinCollectionClasses: Map<String, KmClass> by lazy { readBuiltinCollectionClasses() }
+    private val builtinCollectionClasses: Map<String, KmClass> by lazy {
+        builtinClasses.filterKeys { it.startsWith("kotlin/collections/") }.mapKeys { it.key.replace('/', '.') }
+    }
+
+    private val overrideResolver = OverrideResolver(
+        loadClass = ::loadClass,
+        readKmClass = ::readKmClass,
+        builtinClasses = { builtinClasses },
+        builtinTypes = builtinTypes
+    )
 
     companion object {
 
@@ -173,6 +185,14 @@ internal class DefaultKotlinIntrospector(
 
         private const val METADATA_DESCRIPTOR = "Lkotlin/Metadata;"
 
+        private val builtinsResources = listOf(
+            "kotlin/kotlin.kotlin_builtins",
+            "kotlin/annotation/annotation.kotlin_builtins",
+            "kotlin/collections/collections.kotlin_builtins",
+            "kotlin/ranges/ranges.kotlin_builtins",
+            "kotlin/reflect/reflect.kotlin_builtins"
+        )
+
         /**
          * Marks a parameter declaring a default value, which is not present in the metadata,
          * telling that the argument can be omitted.
@@ -225,7 +245,7 @@ internal class DefaultKotlinIntrospector(
                 is KotlinClassMetadata.Class -> {
                     val kmClass = metadata.kmClass
                     if (memberName != null) {
-                        resolveMember(kmClass, className, memberName, clazz)
+                        resolveMember(kmClass, className, memberName)
                     } else {
                         formatClass(kmClass, className, clazz)
                     }
@@ -288,14 +308,14 @@ internal class DefaultKotlinIntrospector(
     private fun readKmClass(clazz: Class<*>): KmClass? =
         (readMetadata(clazz) as? KotlinClassMetadata.Class)?.kmClass
 
-    private fun resolveMember(kmClass: KmClass, className: String, memberName: String, clazz: Class<*>): String? {
+    private fun resolveMember(kmClass: KmClass, className: String, memberName: String): String? {
         val isInterface = kmClass.kind == ClassKind.INTERFACE
         val typeParameters = kmClass.typeParameters.namesById()
 
         val signatures = kmClass.functions.filter { it.name == memberName }.map { function ->
-            formatFunction(function, inInterface = isInterface, clazz = clazz, classTypeParameters = typeParameters)
+            formatFunction(function, inInterface = isInterface, owner = kmClass, classTypeParameters = typeParameters)
         } + kmClass.properties.filter { it.name == memberName }.map { property ->
-            formatProperty(property, inInterface = isInterface, clazz = clazz, classTypeParameters = typeParameters)
+            formatProperty(property, inInterface = isInterface, owner = kmClass, classTypeParameters = typeParameters)
         } + getExtensionPropertiesFor(className).filter { it.property.name == memberName }.map { extProp ->
             formatExtensionProperty(extProp.property)
         } + getExtensionsFor(className).filter { it.function.name == memberName }.map { ext ->
@@ -320,15 +340,13 @@ internal class DefaultKotlinIntrospector(
     }
 
     /**
-     * Reads the declarations of the built-in collection types from the `.kotlin_builtins` file of the standard library.
+     * Reads the declarations of the built-in types from the `.kotlin_builtins` files of the standard library.
      */
-    private fun readBuiltinCollectionClasses(): Map<String, KmClass> {
-        val stream = KotlinIntrospector::class.java.classLoader
-            .getResourceAsStream("kotlin/collections/collections.kotlin_builtins")
-            ?: return emptyMap()
-        val fragment = stream.use { KotlinCommonMetadata.read(it) }?.kmModuleFragment ?: return emptyMap()
-        return fragment.classes.associateBy { it.name.replace('/', '.') }
-    }
+    private fun readBuiltinClasses(): Map<String, KmClass> = builtinsResources.flatMap { resource ->
+        val stream = KotlinIntrospector::class.java.classLoader.getResourceAsStream(resource)
+        val fragment = stream?.use { KotlinCommonMetadata.read(it) }?.kmModuleFragment
+        fragment?.classes.orEmpty()
+    }.associateBy { it.name }
 
     /**
      * Format a Kotlin built-in type using kotlin-reflect.
@@ -794,7 +812,7 @@ internal class DefaultKotlinIntrospector(
                         prop == null -> ""
                         prop.isVar -> "var "
                         else -> "val "
-                    }
+                    }.let { if (prop != null && isOverride(kmClass, prop)) "override $it" else it }
                     formatValueParameter(param, contextPackage, typeParameters, prefix)
                 })
                 +")"
@@ -881,14 +899,14 @@ internal class DefaultKotlinIntrospector(
                 .filter { it.name !in constructorParamNames }
                 .forEach { property ->
                     +"    "
-                    +formatProperty(property, inInterface = isInterface, clazz = clazz, contextPackage = contextPackage, classTypeParameters = typeParameters)
+                    +formatProperty(property, inInterface = isInterface, owner = kmClass, contextPackage = contextPackage, classTypeParameters = typeParameters)
                     +"\n"
                 }
 
             // Functions
             kmClass.functions.forEach { function ->
                 +"    "
-                +formatFunction(function, inInterface = isInterface, clazz = clazz, contextPackage = contextPackage, classTypeParameters = typeParameters)
+                +formatFunction(function, inInterface = isInterface, owner = kmClass, contextPackage = contextPackage, classTypeParameters = typeParameters)
                 +"\n"
             }
 
@@ -904,14 +922,14 @@ internal class DefaultKotlinIntrospector(
                     // Companion properties
                     companionKmClass.properties.forEach { property ->
                         +"        "
-                        +formatProperty(property, clazz = companionClazz, contextPackage = contextPackage)
+                        +formatProperty(property, owner = companionKmClass, contextPackage = contextPackage)
                         +"\n"
                     }
 
                     // Companion functions
                     companionKmClass.functions.forEach { function ->
                         +"        "
-                        +formatFunction(function, inInterface = false, clazz = companionClazz, contextPackage = contextPackage)
+                        +formatFunction(function, inInterface = false, owner = companionKmClass, contextPackage = contextPackage)
                         +"\n"
                     }
 
@@ -1060,10 +1078,13 @@ internal class DefaultKotlinIntrospector(
         return if (isWellKnownType(kotlinName) || javaClass.packageName == contextPackage) simpleName else kotlinName
     }
 
+    /**
+     * @param owner the class declaring the [function], to tell whether it is an override.
+     */
     private fun formatFunction(
         function: KmFunction,
         inInterface: Boolean = false,
-        clazz: Class<*>? = null,
+        owner: KmClass? = null,
         contextPackage: String? = null,
         classTypeParameters: Map<Int, String> = emptyMap()
     ): String = buildString {
@@ -1071,9 +1092,7 @@ internal class DefaultKotlinIntrospector(
 
         +formatVisibility(function.visibility)
 
-        // Check for override - either FAKE_OVERRIDE or explicit override detected via reflection
-        val isOverride = function.kind == MemberKind.FAKE_OVERRIDE ||
-            (clazz != null && isMethodOverride(clazz, function.name))
+        val isOverride = isOverride(owner, function)
         if (isOverride) +"override "
 
         // Skip 'abstract' in interfaces - all interface members are implicitly abstract
@@ -1146,10 +1165,13 @@ internal class DefaultKotlinIntrospector(
         }
     }
 
+    /**
+     * @param owner the class declaring the [property], to tell whether it is an override.
+     */
     private fun formatProperty(
         property: KmProperty,
         inInterface: Boolean = false,
-        clazz: Class<*>? = null,
+        owner: KmClass? = null,
         contextPackage: String? = null,
         classTypeParameters: Map<Int, String> = emptyMap()
     ): String = buildString {
@@ -1157,9 +1179,7 @@ internal class DefaultKotlinIntrospector(
 
         +formatVisibility(property.visibility)
 
-        // Check for override - either FAKE_OVERRIDE or explicit override detected via reflection
-        val isOverride = property.kind == MemberKind.FAKE_OVERRIDE ||
-            (clazz != null && isPropertyOverride(clazz, property.name))
+        val isOverride = isOverride(owner, property)
         if (isOverride) +"override "
 
         // Skip 'abstract' in interfaces - all interface members are implicitly abstract
@@ -1168,9 +1188,20 @@ internal class DefaultKotlinIntrospector(
         if (property.isConst) +"const "
 
         +(if (property.isVar) "var " else "val ")
+        formatTypeParameters(property.typeParameters, typeParameters, contextPackage).let {
+            if (it.isNotEmpty()) +"$it "
+        }
+
+        // a member extension property
+        property.receiverParameterType?.let { receiverType ->
+            +formatReceiverType(receiverType, contextPackage, typeParameters)
+            +"."
+        }
+
         +property.name
         +": "
         +formatType(property.returnType, contextPackage, typeParameters)
+        +formatWhereClause(property.typeParameters, typeParameters, contextPackage)
     }
 
     private fun formatExtensionProperty(property: KmProperty, contextPackage: String? = null): String = buildString {
@@ -1358,32 +1389,11 @@ internal class DefaultKotlinIntrospector(
         }
     }
 
-    private fun hasMethodInHierarchy(clazz: Class<*>, methodName: String): Boolean {
-        // Check interfaces
-        for (iface in clazz.interfaces) {
-            if (iface.methods.any { it.name == methodName }) {
-                return true
-            }
-        }
-        // Check superclass (excluding Object's methods like hashCode, equals, toString
-        // which are almost always overrides but we might not want to mark them)
-        clazz.superclass?.let { superclass ->
-            if (superclass != Any::class.java) {
-                if (superclass.methods.any { it.name == methodName }) {
-                    return true
-                }
-            }
-        }
-        return false
-    }
+    private fun isOverride(owner: KmClass?, function: KmFunction): Boolean =
+        function.kind == MemberKind.FAKE_OVERRIDE || (owner != null && overrideResolver.isOverride(owner, function))
 
-    private fun isMethodOverride(clazz: Class<*>, methodName: String): Boolean =
-        hasMethodInHierarchy(clazz, methodName)
-
-    private fun isPropertyOverride(clazz: Class<*>, propertyName: String): Boolean {
-        val getterName = "get${propertyName.replaceFirstChar { it.uppercase() }}"
-        return hasMethodInHierarchy(clazz, getterName)
-    }
+    private fun isOverride(owner: KmClass?, property: KmProperty): Boolean =
+        property.kind == MemberKind.FAKE_OVERRIDE || (owner != null && overrideResolver.isOverride(owner, property))
 
     private fun buildFullClasspathIndex(): Triple<Map<String, List<IndexedExtension>>, Map<String, List<IndexedExtensionProperty>>, Map<String, List<String>>> {
         val funcIndex = mutableMapOf<String, MutableList<IndexedExtension>>()
