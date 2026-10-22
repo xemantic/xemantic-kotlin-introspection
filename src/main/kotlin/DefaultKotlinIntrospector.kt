@@ -1822,31 +1822,28 @@ internal class DefaultKotlinIntrospector(
                 if (line.startsWith("    ")) line.substring(4) else line.trimStart()
             }
 
+        // The members of an enum class are separated from its entries with a semicolon,
+        // following the last entry, or on a line of its own, if there are no entries,
+        // which is not an item to paginate, but is restored on every page of members
+        val isEnum = classDeclarationLine.contains("enum class ")
+        val hasSemicolonLine = isEnum && ";" in memberLines
+
         // A member is paginated as a whole: the lines indented deeper, and the closing brace
         // of a block like the companion object, belong to the member started above them
         val members = buildList<MutableList<String>> {
             for (line in memberLines) {
+                if (hasSemicolonLine && line == ";") continue
                 if (isNotEmpty() && (line.first().isWhitespace() || line == "}")) {
                     last().add(line)
                 } else {
                     add(mutableListOf(line))
                 }
             }
-        }.map { it.joinToString("\n") }.toMutableList()
+        }.map { it.joinToString("\n") }
 
-        // The members of an enum class are separated from its entries with a semicolon,
-        // following the last entry, or on a line of its own, which is not an item to paginate,
-        // if there are no entries
-        val enumSemicolonIndex = if (classDeclarationLine.contains("enum class ")) {
-            members.indexOfFirst { it.endsWith(";") }
-        } else -1
-        val hasSemicolonLine = enumSemicolonIndex >= 0 && members[enumSemicolonIndex] == ";"
-        if (hasSemicolonLine) members.removeAt(enumSemicolonIndex)
-        val enumEntryCount = when {
-            enumSemicolonIndex < 0 -> -1 // no members after the entries, if any, so no semicolon to restore
-            hasSemicolonLine -> 0
-            else -> enumSemicolonIndex + 1
-        }
+        val lastEntryIndex = if (isEnum) members.indexOfFirst { it.endsWith(";") } else -1
+        val needsSemicolon = hasSemicolonLine || lastEntryIndex >= 0
+        val enumEntryCount = lastEntryIndex + 1
 
         // Extract extensions (lines after closing brace), preserving package headers
         // We need to parse extensions as items with their package context
@@ -1891,7 +1888,7 @@ internal class DefaultKotlinIntrospector(
             if (pageMembers.isNotEmpty()) {
                 +classDeclarationLine
                 +"\n"
-                if (enumEntryCount >= 0 && startIndex >= enumEntryCount) {
+                if (needsSemicolon && startIndex >= enumEntryCount) {
                     // without the entries on this page, the semicolon still has to precede the members
                     +"    ;\n"
                 }

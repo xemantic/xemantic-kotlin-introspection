@@ -760,6 +760,49 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve enum class without entries but with a nested class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.EntrylessNestedEnum"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.EntrylessNestedEnum [page 1/1]
+            enum class EntrylessNestedEnum {
+                ;
+                class Nested
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should paginate enum class without entries - the page with the members`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.EntrylessExtendedEnum",
+            pageSize = 2
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.EntrylessExtendedEnum [page 1/2]
+            enum class EntrylessExtendedEnum {
+                ;
+                fun f()
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun EntrylessExtendedEnum.e1()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should paginate enum class without entries - the page with only extensions`() {
+        // the semicolon belongs to the class body, which is not shown without members on the page
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.EntrylessExtendedEnum",
+            page = 2,
+            pageSize = 2
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.EntrylessExtendedEnum [page 2/2]
+            // from com.xemantic.kotlin.introspection.test
+            fun EntrylessExtendedEnum.e2()
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve annotation class`() {
         // an LLM needs to see annotation parameters to know how to use the annotation
         resolver.resolve(

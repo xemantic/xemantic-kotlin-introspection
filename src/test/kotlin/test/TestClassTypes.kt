@@ -84,6 +84,24 @@ enum class EntrylessEnum {
     fun f2() {}
 }
 
+// Enum class without entries, whose only member is a nested class
+enum class EntrylessNestedEnum {
+    ;
+
+    class Nested
+}
+
+// Enum class without entries, with a member and extensions
+enum class EntrylessExtendedEnum {
+    ;
+
+    fun f() {}
+}
+
+fun EntrylessExtendedEnum.e1() {}
+
+fun EntrylessExtendedEnum.e2() {}
+
 // Annotation class
 annotation class AnnotationTestClass(
     val message: String = ""
