@@ -52,7 +52,9 @@ import kotlin.metadata.jvm.Metadata as jvmMetadata
  */
 internal data class IndexedExtension(
     val function: KmFunction,
-    val sourceClass: String  // fully qualified class name where it's defined
+    val sourceClass: String,  // fully qualified class name where it's defined
+    val source: String,  // the package, or the object, to import it from
+    val isObjectMember: Boolean  // whether the source is an object
 )
 
 /**
@@ -60,7 +62,22 @@ internal data class IndexedExtension(
  */
 internal data class IndexedExtensionProperty(
     val property: KmProperty,
-    val sourceClass: String  // fully qualified class name where it's defined
+    val sourceClass: String,  // fully qualified class name where it's defined
+    val source: String,  // the package, or the object, to import it from
+    val isObjectMember: Boolean  // whether the source is an object
+)
+
+/**
+ * A Kotlin class found on the classpath, by its metadata name, like `com/example/Outer.Nested`,
+ * with the member extensions, in case of an object, which can be imported from it.
+ */
+private class IndexedClass(
+    val name: String,
+    val binaryName: String,
+    val visibility: Visibility,
+    val isSearchable: Boolean,
+    val extensions: List<KmFunction>,
+    val extensionProperties: List<KmProperty>
 )
 
 internal class DefaultKotlinIntrospector(
@@ -406,26 +423,29 @@ internal class DefaultKotlinIntrospector(
 
         // Extension functions on this exact type (shown inside class body)
         // Only include extensions from kotlin.* packages for built-in types
-        getExtensionsFor(kotlinName)
+        // The ones to import from an object, like Int.seconds of Duration.Companion, are shown outside class body
+        val (objectExtensions, packageExtensions) = getExtensionsFor(kotlinName)
             .filter { isPublicStdlibSource(it.sourceClass) }
-            .forEach { ext ->
-                allMembers.add(Member(ext.function.name, formatFunctionWithoutReceiver(ext.function)))
-            }
+            .partition { it.isObjectMember }
+        packageExtensions.forEach { ext ->
+            allMembers.add(Member(ext.function.name, formatFunctionWithoutReceiver(ext.function)))
+        }
 
         // Extension properties on this exact type (shown inside class body)
-        getExtensionPropertiesFor(kotlinName)
+        val (objectExtensionProperties, packageExtensionProperties) = getExtensionPropertiesFor(kotlinName)
             .filter { isPublicStdlibSource(it.sourceClass) }
-            .forEach { extProp ->
-                allMembers.add(Member(extProp.property.name, formatExtensionPropertyWithoutReceiver(extProp.property)))
-            }
+            .partition { it.isObjectMember }
+        packageExtensionProperties.forEach { extProp ->
+            allMembers.add(Member(extProp.property.name, formatExtensionPropertyWithoutReceiver(extProp.property)))
+        }
 
         // Extension functions and properties on all the supertypes (shown outside class body)
         // Only include extensions from kotlin.* packages for built-in types
-        val supertypeExtensions = supertypeNames.flatMap { supertypeName ->
+        val supertypeExtensions = objectExtensions + supertypeNames.flatMap { supertypeName ->
             getExtensionsFor(supertypeName)
                 .filter { isPublicStdlibSource(it.sourceClass) }
         }
-        val supertypeExtensionProperties = supertypeNames.flatMap { supertypeName ->
+        val supertypeExtensionProperties = objectExtensionProperties + supertypeNames.flatMap { supertypeName ->
             getExtensionPropertiesFor(supertypeName)
                 .filter { isPublicStdlibSource(it.sourceClass) }
         }
@@ -702,6 +722,7 @@ internal class DefaultKotlinIntrospector(
         if (kmClass.modality == Modality.SEALED) +"sealed "
         if (kmClass.isData) +"data "
         if (kmClass.isValue) +"value "
+        if (kmClass.isInner) +"inner "
 
         // Class kind
         +when (kmClass.kind) {
@@ -733,11 +754,7 @@ internal class DefaultKotlinIntrospector(
         // Constructor parameters - properties that match constructor parameter names
         val constructorProperties = kmClass.properties.filter { it.name in constructorParamNames }.associateBy { it.name }
 
-        // Supertypes
-        val supertypes = kmClass.supertypes
-            .map { formatType(it, contextPackage, typeParameters) }
-            .filter { it != "Any" }
-            .filter { !(isEnum && it.startsWith("Enum<")) }  // Enum supertype is redundant for enum classes
+        val supertypes = formatSupertypes(kmClass, contextPackage, typeParameters)
 
         // Extensions from the index on this type and its supertypes (shown after class body with source)
         val receiverNames = listOf(className) + userSupertypes(kmClass)
@@ -796,7 +813,9 @@ internal class DefaultKotlinIntrospector(
             val hasBodyProperties = kmClass.properties.any { it.name !in constructorParamNames }
             val hasFunctions = kmClass.functions.isNotEmpty()
             val hasCompanion = kmClass.companionObject != null
-            val hasBodyContent = hasEnumEntries || hasSealedSubclasses || hasBodyProperties || hasFunctions || hasCompanion
+            val nestedClasses = listedNestedClasses(kmClass, clazz)
+            val hasBodyContent = hasEnumEntries || hasSealedSubclasses || nestedClasses.isNotEmpty() ||
+                hasBodyProperties || hasFunctions || hasCompanion
 
             // Only add braces if there's body content or extensions
             if (!hasBodyContent && extensions.isEmpty() && extensionProperties.isEmpty()) {
@@ -808,7 +827,7 @@ internal class DefaultKotlinIntrospector(
             // For enum classes, show enum entries
             if (hasEnumEntries) {
                 // Check if there are any members rendered after the entries
-                val hasMembers = hasBodyProperties || hasFunctions || hasCompanion
+                val hasMembers = nestedClasses.isNotEmpty() || hasBodyProperties || hasFunctions || hasCompanion
 
                 kmClass.kmEnumEntries.forEachIndexed { index, entry ->
                     +"    "
@@ -837,6 +856,24 @@ internal class DefaultKotlinIntrospector(
                         ?: "class "
                     +"    $subclassPrefix$simpleName : $parentSimpleName\n"
                 }
+            }
+
+            // Nested classes, only referenced, as they can be resolved by their own name
+            nestedClasses.forEach { (name, nestedKmClass) ->
+                +"    "
+                +formatClassPrefix(nestedKmClass)
+                +name
+                // an inner class can refer to the type parameters of its outer class
+                val nestedTypeParameters = (if (nestedKmClass.isInner) typeParameters else emptyMap()) +
+                    nestedKmClass.typeParameters.namesById()
+                +formatTypeParameters(nestedKmClass.typeParameters, nestedTypeParameters, contextPackage)
+                val nestedSupertypes = formatSupertypes(nestedKmClass, contextPackage, nestedTypeParameters)
+                if (nestedSupertypes.isNotEmpty()) {
+                    +" : "
+                    +nestedSupertypes.joinToString(", ")
+                }
+                +formatWhereClause(nestedKmClass.typeParameters, nestedTypeParameters, contextPackage)
+                +"\n"
             }
 
             // Properties (excluding constructor properties)
@@ -890,9 +927,19 @@ internal class DefaultKotlinIntrospector(
         }
     }
 
+    private fun formatSupertypes(
+        kmClass: KmClass,
+        contextPackage: String,
+        typeParameters: Map<Int, String>
+    ): List<String> = kmClass.supertypes
+        .map { formatType(it, contextPackage, typeParameters) }
+        .filter { it != "Any" }
+        // Enum supertype is redundant for enum classes
+        .filter { !(kmClass.kind == ClassKind.ENUM_CLASS && it.startsWith("Enum<")) }
+
     /**
-     * Renders the extensions shown after a class body, grouped under a `// from <package>` comment
-     * for each source package, properties first, then functions.
+     * Renders the extensions shown after a class body, grouped under a `// from <source>` comment
+     * for each package, or object, to import them from, properties first, then functions.
      * Both are sorted by name, and then by source class, so that the output does not depend
      * on the classpath scan order, while overloads declared in one file keep their declaration order.
      */
@@ -901,20 +948,39 @@ internal class DefaultKotlinIntrospector(
         properties: List<IndexedExtensionProperty>,
         contextPackage: String?
     ): String = buildString {
-        val functionsBySource = functions.groupBy { it.sourceClass.substringBeforeLast('.') }
-        val propertiesBySource = properties.groupBy { it.sourceClass.substringBeforeLast('.') }
-        val sourcePackages = (functionsBySource.keys + propertiesBySource.keys).sorted()
-        for (sourcePackage in sourcePackages) {
+        val functionsBySource = functions.groupBy { it.source }
+        val propertiesBySource = properties.groupBy { it.source }
+        val sources = (functionsBySource.keys + propertiesBySource.keys).sorted()
+        for (source in sources) {
             // each line starts with a new line, so that there is no blank line between the groups
-            +"\n// from $sourcePackage"
-            propertiesBySource[sourcePackage].orEmpty()
+            +"\n// from $source"
+            propertiesBySource[source].orEmpty()
                 .sortedWith(compareBy({ it.property.name }, { it.sourceClass }))
                 .forEach { +"\n${formatExtensionProperty(it.property, contextPackage)}" }
-            functionsBySource[sourcePackage].orEmpty()
+            functionsBySource[source].orEmpty()
                 .sortedWith(compareBy({ it.function.name }, { it.sourceClass }))
                 .forEach { +"\n${formatFunction(it.function, contextPackage = contextPackage)}" }
         }
     }
+
+    /**
+     * The nested classes worth listing in the outer class, by their simple names, excluding
+     * the sealed subclasses and the companion object, which are already rendered,
+     * and the ones not visible to the users of the outer class.
+     */
+    private fun listedNestedClasses(kmClass: KmClass, clazz: Class<*>): List<Pair<String, KmClass>> {
+        val sealedSubclasses = kmClass.sealedSubclasses.toSet()
+        return kmClass.nestedClasses
+            .filter { "${kmClass.name}.$it" !in sealedSubclasses }
+            .mapNotNull { name ->
+                // the binary name, as the class might be nested
+                loadClass("${clazz.name}\$$name")?.let { readKmClass(it) }?.let { name to it }
+            }
+            .filter { (_, nestedKmClass) -> isListedNestedClass(nestedKmClass) }
+    }
+
+    private fun Visibility.isApi(): Boolean =
+        this == Visibility.PUBLIC || this == Visibility.PROTECTED
 
     private fun formatAnnotationDefaultValue(
         annotationClass: Class<*>,
@@ -1322,7 +1388,7 @@ internal class DefaultKotlinIntrospector(
     private fun buildFullClasspathIndex(): Triple<Map<String, List<IndexedExtension>>, Map<String, List<IndexedExtensionProperty>>, Map<String, List<String>>> {
         val funcIndex = mutableMapOf<String, MutableList<IndexedExtension>>()
         val propIndex = mutableMapOf<String, MutableList<IndexedExtensionProperty>>()
-        val clsIndex = mutableMapOf<String, MutableList<String>>()
+        val classes = mutableMapOf<String, IndexedClass>()
 
         // The first occurrence of a class on the classpath wins, as with class loading
         val indexedClasses = mutableSetOf<String>()
@@ -1337,14 +1403,53 @@ internal class DefaultKotlinIntrospector(
                 root.walkTopDown()
                     .filter { it.isFile && isIndexedClassFile(it.name) }
                     .forEach { file ->
-                        indexClass(file.readBytes(), indexedClasses, funcIndex, propIndex, clsIndex)
+                        indexClass(file.readBytes(), indexedClasses, funcIndex, propIndex, classes)
                     }
             } else {
-                scanJarFile(root, roots, indexedClasses, funcIndex, propIndex, clsIndex)
+                scanJarFile(root, roots, indexedClasses, funcIndex, propIndex, classes)
             }
         }
 
+        fun isEnclosedIn(indexedClass: IndexedClass, isAllowed: (Visibility) -> Boolean) =
+            enclosingClassNames(indexedClass.name).all { name -> classes[name]?.visibility?.let(isAllowed) == true }
+
+        // the member extensions of public objects, which can be imported like the top-level ones
+        classes.values
+            .filter { it.visibility == Visibility.PUBLIC && isEnclosedIn(it) { visibility -> visibility == Visibility.PUBLIC } }
+            .forEach { indexedClass ->
+                indexExtensions(
+                    indexedClass.extensions,
+                    indexedClass.extensionProperties,
+                    indexedClass.binaryName,
+                    source = indexedClass.name.replace('/', '.'),
+                    isObjectMember = true,
+                    funcIndex,
+                    propIndex
+                )
+            }
+
+        // Index the classes by their simple names (lowercase for case-insensitive search)
+        val clsIndex = mutableMapOf<String, MutableList<String>>()
+        classes.values
+            .filter { it.isSearchable && isEnclosedIn(it) { visibility -> visibility.isApi() } }
+            .forEach { indexedClass ->
+                // the Kotlin name, like com.example.Outer.Nested, which can be resolved
+                val kotlinName = indexedClass.name.replace('/', '.')
+                val simpleName = kotlinName.substringAfterLast('.').lowercase()
+                clsIndex.getOrPut(simpleName) { mutableListOf() }.add(kotlinName)
+            }
+
         return Triple(funcIndex, propIndex, clsIndex)
+    }
+
+    /**
+     * The metadata names of the classes enclosing the class named like `com/example/Outer.Middle.Nested`,
+     * which are `com/example/Outer` and `com/example/Outer.Middle`.
+     */
+    private fun enclosingClassNames(name: String): List<String> {
+        val packagePrefix = name.substringBeforeLast('/', "").let { if (it.isEmpty()) "" else "$it/" }
+        val parts = name.substringAfterLast('/').split('.')
+        return (1 until parts.size).map { packagePrefix + parts.take(it).joinToString(".") }
     }
 
     /**
@@ -1382,8 +1487,14 @@ internal class DefaultKotlinIntrospector(
         null
     }
 
+    /**
+     * Whether the class file might contain a named Kotlin class, which is decided by its metadata eventually,
+     * the anonymous classes, like `Outer$1` or `Outer$function$1`, are skipped here already,
+     * to avoid reading them.
+     */
     private fun isIndexedClassFile(fileName: String): Boolean =
-        fileName.endsWith(".class") && !fileName.contains('$') && fileName != "module-info.class"
+        fileName.endsWith(".class") && fileName != "module-info.class" &&
+            fileName.removeSuffix(".class").split('$').drop(1).none { it.isEmpty() || it.first().isDigit() }
 
     private fun scanJarFile(
         jarFile: File,
@@ -1391,7 +1502,7 @@ internal class DefaultKotlinIntrospector(
         indexedClasses: MutableSet<String>,
         funcIndex: MutableMap<String, MutableList<IndexedExtension>>,
         propIndex: MutableMap<String, MutableList<IndexedExtensionProperty>>,
-        clsIndex: MutableMap<String, MutableList<String>>
+        classes: MutableMap<String, IndexedClass>
     ) {
         try {
             JarFile(jarFile).use { jar ->
@@ -1412,7 +1523,7 @@ internal class DefaultKotlinIntrospector(
                     .filter { isIndexedClassFile(it.name.substringAfterLast('/')) }
                     .forEach { entry ->
                         val bytes = jar.getInputStream(entry).use { it.readBytes() }
-                        indexClass(bytes, indexedClasses, funcIndex, propIndex, clsIndex)
+                        indexClass(bytes, indexedClasses, funcIndex, propIndex, classes)
                     }
             }
         } catch (_: Exception) {
@@ -1425,7 +1536,7 @@ internal class DefaultKotlinIntrospector(
         indexedClasses: MutableSet<String>,
         funcIndex: MutableMap<String, MutableList<IndexedExtension>>,
         propIndex: MutableMap<String, MutableList<IndexedExtensionProperty>>,
-        clsIndex: MutableMap<String, MutableList<String>>
+        classes: MutableMap<String, IndexedClass>
     ) {
         val reader = try {
             ClassReader(bytes)
@@ -1441,18 +1552,57 @@ internal class DefaultKotlinIntrospector(
             null
         } ?: return
 
-        val (functions, properties) = when (metadata) {
-            is KotlinClassMetadata.Class -> {
-                // Index the class by its simple name (lowercase for case-insensitive search)
-                val simpleName = className.substringAfterLast('.').lowercase()
-                clsIndex.getOrPut(simpleName) { mutableListOf() }.add(className)
-                metadata.kmClass.functions to metadata.kmClass.properties
+        if (metadata is KotlinClassMetadata.Class) {
+            val kmClass = metadata.kmClass
+            // local and anonymous classes have names starting with '.'
+            if (kmClass.name.startsWith('.')) return
+            val isNested = kmClass.name.substringAfterLast('/').contains('.')
+            // the member extensions of classes can be called only in the scope of their dispatch receiver,
+            // while the ones of objects can be imported, which is decided once all the enclosing classes are known
+            val isObject = kmClass.kind == ClassKind.OBJECT || kmClass.kind == ClassKind.COMPANION_OBJECT
+            classes.getOrPut(kmClass.name) {
+                IndexedClass(
+                    name = kmClass.name,
+                    binaryName = className,
+                    visibility = kmClass.visibility,
+                    isSearchable = !isNested || isListedNestedClass(kmClass),
+                    extensions = if (isObject) {
+                        kmClass.functions.filter { it.receiverParameterType != null }
+                    } else emptyList(),
+                    extensionProperties = if (isObject) {
+                        kmClass.properties.filter { it.receiverParameterType != null }
+                    } else emptyList()
+                )
             }
-            is KotlinClassMetadata.FileFacade -> metadata.kmPackage.functions to metadata.kmPackage.properties
-            is KotlinClassMetadata.MultiFileClassPart -> metadata.kmPackage.functions to metadata.kmPackage.properties
-            else -> return
+            return
         }
 
+        val kmPackage = when (metadata) {
+            is KotlinClassMetadata.FileFacade -> metadata.kmPackage
+            is KotlinClassMetadata.MultiFileClassPart -> metadata.kmPackage
+            else -> return
+        }
+        indexExtensions(
+            kmPackage.functions,
+            kmPackage.properties,
+            className,
+            // the facade class name for the default package, which has no name
+            source = className.substringBeforeLast('.'),
+            isObjectMember = false,
+            funcIndex,
+            propIndex
+        )
+    }
+
+    private fun indexExtensions(
+        functions: List<KmFunction>,
+        properties: List<KmProperty>,
+        className: String,
+        source: String,
+        isObjectMember: Boolean,
+        funcIndex: MutableMap<String, MutableList<IndexedExtension>>,
+        propIndex: MutableMap<String, MutableList<IndexedExtensionProperty>>
+    ) {
         // Only public extensions are indexed, as only they can be called from the user code.
         // This also excludes `@PublishedApi internal` ones, callable only from public inline functions.
         for (function in functions) {
@@ -1461,7 +1611,7 @@ internal class DefaultKotlinIntrospector(
             val receiverName = getReceiverTypeName(receiverType)
 
             funcIndex.getOrPut(receiverName) { mutableListOf() }
-                .add(IndexedExtension(function, className))
+                .add(IndexedExtension(function, className, source, isObjectMember))
         }
 
         for (property in properties) {
@@ -1470,9 +1620,20 @@ internal class DefaultKotlinIntrospector(
             val receiverName = getReceiverTypeName(receiverType)
 
             propIndex.getOrPut(receiverName) { mutableListOf() }
-                .add(IndexedExtensionProperty(property, className))
+                .add(IndexedExtensionProperty(property, className, source, isObjectMember))
         }
     }
+
+    /**
+     * Whether the nested class is listed in its outer class, and found by the [search],
+     * provided that all its enclosing classes are part of the API.
+     * Companion objects are not, as they are already rendered within their outer class,
+     * neither are the synthetic classes, like the `$serializer` generated by kotlinx.serialization.
+     */
+    private fun isListedNestedClass(kmClass: KmClass): Boolean =
+        kmClass.kind != ClassKind.COMPANION_OBJECT &&
+            !kmClass.name.substringAfterLast('/').contains('$') &&
+            kmClass.visibility.isApi()
 
     /**
      * Reads the `@Metadata` annotation from the class bytes, without loading the class.

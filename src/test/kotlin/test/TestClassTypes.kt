@@ -117,3 +117,29 @@ class PaginatedCompanionClass {
         fun create(): PaginatedCompanionClass = PaginatedCompanionClass()
     }
 }
+
+// Class with nested classes of all kinds, including the hidden and synthetic ones,
+// not named *TestClass, so that it does not shift the search results of the other tests
+class NestedClassesHolder {
+    class NestedClass
+    inner class NestedInnerClass
+    interface NestedInterface
+    object NestedObject
+    enum class NestedEnum { A, B }
+    data class NestedData(val value: String) : NestedInterface
+    protected class NestedProtectedClass
+    private class NestedPrivateClass
+    internal class NestedInternalClass
+    // named like the synthetic nested classes, e.g. the $serializer of kotlinx.serialization
+    class `Synthetic$Nested`
+    companion object {
+        fun create(): NestedClassesHolder = NestedClassesHolder()
+    }
+    // compiled into an anonymous NestedClassesHolder$anonymous$1 class
+    fun anonymous(): Any = object {}
+    // compiled with the synthetic NestedClassesHolder$WhenMappings class
+    fun whenMapping(nestedEnum: NestedEnum): Int = when (nestedEnum) {
+        NestedEnum.A -> 1
+        NestedEnum.B -> 2
+    }
+}

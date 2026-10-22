@@ -1036,6 +1036,111 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should list nested classes in the outer class`() {
+        // an LLM cannot discover a nested class otherwise, the companion object is rendered with its members,
+        // while private, internal, and synthetic nested classes are not part of the API
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.NestedClassesHolder",
+            pageSize = 20
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NestedClassesHolder [page 1/1]
+            class NestedClassesHolder {
+                class NestedClass
+                inner class NestedInnerClass
+                interface NestedInterface
+                object NestedObject
+                enum class NestedEnum
+                data class NestedData : NestedClassesHolder.NestedInterface
+                protected class NestedProtectedClass
+                fun anonymous(): Any
+                fun whenMapping(nestedEnum: NestedClassesHolder.NestedEnum): Int
+                companion object {
+                    fun create(): NestedClassesHolder
+                }
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve inner class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.NestedClassesHolder.NestedInnerClass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NestedClassesHolder.NestedInnerClass [page 1/1]
+            inner class NestedInnerClass
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should list only importable extensions of the receiver type`() {
+        // the member extensions of classes, private nested and local classes can only be called
+        // within the scope of their dispatch receiver, while the ones of public objects can be imported
+        // from the object named in the header
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ExtensionTarget"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ExtensionTarget [page 1/1]
+            class ExtensionTarget
+            // from com.xemantic.kotlin.introspection.test
+            fun ExtensionTarget.topLevelExtension(): String
+            // from com.xemantic.kotlin.introspection.test.ExtensionTargetUtils
+            fun ExtensionTarget.fromObject(): String
+            // from com.xemantic.kotlin.introspection.test.MemberExtensionHolder.Companion
+            fun ExtensionTarget.fromCompanion(): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should list extensions of built-in type from object outside of the class body`() {
+        // Int.seconds is not a member of Int, it has to be imported from Duration.Companion
+        resolver.resolve("kotlin.Int", pageSize = 10000) should {
+            have("    val seconds: Duration" !in lines())
+            have("// from kotlin.time.Duration.Companion" in lines())
+            have("val Int.seconds: Duration" in lines())
+        }
+    }
+
+    @Test
+    fun `should list nested classes with type parameters of the outer class and where clause`() {
+        // an inner class can refer to the type parameters of its outer class
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.TypeParametersNestedHolder"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.TypeParametersNestedHolder [page 1/1]
+            class TypeParametersNestedHolder<K> {
+                inner class Cursor : Iterator<K>
+                class Sorted<T> where T : Comparable<T>, T : CharSequence
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should separate enum entries from nested classes`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.NestedClassEnum"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NestedClassEnum [page 1/1]
+            enum class NestedClassEnum {
+                RED,
+                GREEN;
+                class Palette
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should list generic nested class with its type parameters`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.GenericNestedHolder"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GenericNestedHolder [page 1/1]
+            class GenericNestedHolder {
+                class Entry<K, V> : Map.Entry<K, V>
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve annotation class with default values`() {
         // an LLM needs the actual defaults to know which parameters can be omitted
         resolver.resolve(
@@ -1093,6 +1198,19 @@ class KotlinIntrospectorTest {
             fun ExtensionOrderSubject.alpha(): Int
             fun ExtensionOrderSubject.mike(): Int
             fun ExtensionOrderSubject.zulu(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extensions from the default package under the facade class name`() {
+        // the default package has no name, so the header names the file facade class instead
+        resolver.resolve(
+            "DefaultPackageSubject"
+        ) sameAsKotlin """
+            // DefaultPackageSubject [page 1/1]
+            class DefaultPackageSubject
+            // from DefaultPackageExtensionsKt
+            fun DefaultPackageSubject.greet(): String
         """.trimIndent()
     }
 
@@ -1329,6 +1447,62 @@ class KotlinIntrospectorTest {
             com.xemantic.kotlin.introspection.test.DataTestClass
             com.xemantic.kotlin.introspection.test.EnumTestClass
         """.trimIndent()
+    }
+
+    @Test
+    fun `search should find sealed subclass by its Kotlin name`() {
+        resolver.search("SubClass1") sameAsKotlin """
+            // search results for "SubClass1" [page 1/1]
+            com.xemantic.kotlin.introspection.test.SealedTestClass.SubClass1
+        """.trimIndent()
+    }
+
+    @Test
+    fun `search should find nested class`() {
+        resolver.search("NestedInnerClass") sameAsKotlin """
+            // search results for "NestedInnerClass" [page 1/1]
+            com.xemantic.kotlin.introspection.test.NestedClassesHolder.NestedInnerClass
+        """.trimIndent()
+    }
+
+    @Test
+    fun `search should find nested class by a common name`() {
+        resolver.search("Inner", pageSize = 1000) should {
+            have("com.xemantic.kotlin.introspection.test.NestedCompanionTestClass.Inner" in lines())
+        }
+    }
+
+    @Test
+    fun `search should not find private nested class`() {
+        assert(resolver.search("NestedPrivateClass") == null)
+    }
+
+    @Test
+    fun `search should not find internal nested class`() {
+        assert(resolver.search("NestedInternalClass") == null)
+    }
+
+    @Test
+    fun `search should not find synthetic nested classes`() {
+        assert(resolver.search("WhenMappings") == null)
+    }
+
+    @Test
+    fun `search should not find companion objects`() {
+        // they are already rendered within their outer class
+        resolver.search("Companion", pageSize = 1000) should {
+            have(!contains("CompanionTestClass.Companion"))
+        }
+    }
+
+    @Test
+    fun `search should not find synthetic nested class`() {
+        assert(resolver.search("Synthetic\$Nested") == null)
+    }
+
+    @Test
+    fun `search should not find nested class of internal class`() {
+        assert(resolver.search("NestedInInternalClass") == null)
     }
 
     @Test
