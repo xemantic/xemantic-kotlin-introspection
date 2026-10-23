@@ -235,29 +235,67 @@ internal class OverrideResolver(
     fun override(owner: KmClass, function: KmFunction): FunctionOverride? {
         val overridables = overridables(owner)
         val candidates = overridables.functions[function.name] ?: return null
-        val typeParameters = memberTypeParameters(function.typeParameters)
-        val contexts = function.contextParameters.map {
-            kotlinType(it.type, overridables.substitution, typeParameters)
-        }
-        val receiver = function.receiverParameterType?.let {
-            kotlinType(it, overridables.substitution, typeParameters)
-        }
-        val parameters = function.valueParameters.map {
-            kotlinType(it.type, overridables.substitution, typeParameters)
-        }
-        val overridden = candidates.filter {
-            it.matches(contexts, receiver, parameters, function.typeParameters.size, function.isSuspend) &&
-                overridables.isVisible(it)
-        }
+        val signature = overridables.signature(function)
+        val overridden = candidates.filter { overridables.overrides(signature, it) }
         return when {
-            overridden.isNotEmpty() -> FunctionOverride(
-                overridden.fold(emptySet()) { defaults, it ->
-                    if (it.declaresDefaultValues.isEmpty()) defaults else defaults + it.declaresDefaultValues
-                }
-            )
+            overridden.isNotEmpty() -> FunctionOverride(inheritedDefaultValues(overridden, signature))
             overridables.isShrunk(function.signature) -> FunctionOverride(emptySet())
             else -> null
         }
+    }
+
+    /**
+     * Whether the [function] overrides a supertype function, like [override], without matching all of them.
+     */
+    fun isOverride(owner: KmClass, function: KmFunction): Boolean {
+        val overridables = overridables(owner)
+        val candidates = overridables.functions[function.name] ?: return false
+        val signature = overridables.signature(function)
+        return candidates.any { overridables.overrides(signature, it) } || overridables.isShrunk(function.signature)
+    }
+
+    /**
+     * The types of a function checked for overriding, resolved in the context of its class.
+     */
+    private class FunctionSignature(
+        val contexts: List<MemberType>,
+        val receiver: MemberType?,
+        val parameters: List<MemberType>,
+        val typeParameterCount: Int,
+        val isSuspend: Boolean
+    )
+
+    private fun Overridables.signature(function: KmFunction): FunctionSignature {
+        val typeParameters = memberTypeParameters(function.typeParameters)
+        return FunctionSignature(
+            contexts = function.contextParameters.map { kotlinType(it.type, substitution, typeParameters) },
+            receiver = function.receiverParameterType?.let { kotlinType(it, substitution, typeParameters) },
+            parameters = function.valueParameters.map { kotlinType(it.type, substitution, typeParameters) },
+            typeParameterCount = function.typeParameters.size,
+            isSuspend = function.isSuspend
+        )
+    }
+
+    private fun Overridables.overrides(signature: FunctionSignature, overridable: Overridable): Boolean =
+        overridable.matches(signature) && isVisible(overridable)
+
+    private fun Overridable.matches(signature: FunctionSignature, onlyKnownTypes: Boolean = false): Boolean = matches(
+        signature.contexts, signature.receiver, signature.parameters, signature.typeParameterCount, signature.isSuspend,
+        onlyKnownTypes
+    )
+
+    /**
+     * The indices of the value parameters declaring a default value in the [overridden] functions.
+     * As an unknown type, like a type parameter of a supertype whose type argument cannot be reflected, matches any type,
+     * a sibling overload, which is not overridden, like `f(x: T, y: Int = 0)` of `f(x: String, y: Int)`, might be matched too,
+     * so the default values are taken only from the functions matching on the known types, if there are any.
+     */
+    private fun inheritedDefaultValues(overridden: List<Overridable>, signature: FunctionSignature): Set<Int> {
+        if (overridden.all { it.declaresDefaultValues.isEmpty() }) return emptySet()
+        val matchingKnownTypes = if (overridden.size == 1) overridden else overridden.filter {
+            !it.isJava && it.matches(signature, onlyKnownTypes = true)
+        }
+        return matchingKnownTypes.ifEmpty { overridden }.flatMapTo(HashSet()) { it.declaresDefaultValues }
     }
 
     fun isOverride(owner: KmClass, property: KmProperty): Boolean {
@@ -300,12 +338,17 @@ internal class OverrideResolver(
     private fun Overridables.isShrunk(signature: JvmMethodSignature?): Boolean =
         signature != null && ownerJvmMethods?.let { signature.toString() !in it } == true
 
+    /**
+     * @param onlyKnownTypes whether an unknown type matches no type, except for a star projection,
+     *   only applying to a Kotlin member, as a Java one is matched by the erasures.
+     */
     private fun Overridable.matches(
         contexts: List<MemberType>,
         receiver: MemberType?,
         parameters: List<MemberType>,
         typeParameterCount: Int,
-        isSuspend: Boolean
+        isSuspend: Boolean,
+        onlyKnownTypes: Boolean = false
     ): Boolean {
         if (this.typeParameterCount != typeParameterCount) return false
         if (isJava) {
@@ -322,6 +365,7 @@ internal class OverrideResolver(
         if ((this.receiver == null) != (receiver == null)) return false
         if (this.parameters.size != parameters.size) return false
         if (this.contexts.size != contexts.size) return false
+        fun typesMatch(overridden: MemberType, overriding: MemberType) = typesMatch(overridden, overriding, onlyKnownTypes)
         return this.contexts.zip(contexts).all { (overridden, overriding) -> typesMatch(overridden, overriding) } &&
             (this.receiver == null || typesMatch(this.receiver, receiver!!)) &&
             this.parameters.zip(parameters).all { (overridden, overriding) -> typesMatch(overridden, overriding) }
@@ -392,11 +436,9 @@ internal class OverrideResolver(
                         typeParameterCount = function.typeParameters.size,
                         isJava = false,
                         friendJvmMethod = friendJvmMethod(function.visibility, function.signature),
-                        declaresDefaultValues = if (function.valueParameters.none { it.declaresDefaultValue }) {
-                            emptySet()
-                        } else function.valueParameters.indices.filterTo(HashSet()) {
+                        declaresDefaultValues = function.valueParameters.indices.filter {
                             function.valueParameters[it].declaresDefaultValue
-                        }
+                        }.toSet()
                     )
                 }
                 kmClass.properties.filter { it.visibility.isOverridable }.forEach { property ->
@@ -669,9 +711,11 @@ internal class OverrideResolver(
     /**
      * Whether the types are the same, an unknown type matching any other one.
      * The nullability, the variance and the mutability of a collection type is not known for a type coming from Java.
+     *
+     * @param onlyKnownTypes whether an unknown type matches no type, except for a star projection, which is known.
      */
-    private fun typesMatch(a: MemberType, b: MemberType): Boolean = when {
-        a == UnknownType || b == UnknownType -> true
+    private fun typesMatch(a: MemberType, b: MemberType, onlyKnownTypes: Boolean = false): Boolean = when {
+        a == UnknownType || b == UnknownType -> !onlyKnownTypes
         a is ClassType && b is ClassType -> {
             val flexible = a.isFlexible || b.isFlexible
             val namesMatch = if (flexible) normalizedName(a.name) == normalizedName(b.name) else a.name == b.name
@@ -680,8 +724,12 @@ internal class OverrideResolver(
                 a.arguments.size == b.arguments.size &&
                 a.arguments.zip(b.arguments).withIndex().all { (index, arguments) ->
                     val (x, y) = arguments
-                    (x.type == UnknownType || y.type == UnknownType) ||
-                        ((flexible || variancesMatch(a.name, index, x.variance, y.variance)) && typesMatch(x.type, y.type))
+                    if (x.type == UnknownType || y.type == UnknownType) {
+                        !onlyKnownTypes || x.variance == null || y.variance == null
+                    } else {
+                        (flexible || variancesMatch(a.name, index, x.variance, y.variance)) &&
+                            typesMatch(x.type, y.type, onlyKnownTypes)
+                    }
                 }
         }
         a is TypeParameterType && b is TypeParameterType -> a.key == b.key && a.nullable == b.nullable

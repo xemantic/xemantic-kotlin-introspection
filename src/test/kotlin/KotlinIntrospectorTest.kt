@@ -1110,7 +1110,7 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should mark parameter of delegated override inheriting default value`() {
+    fun `should mark parameter of member implemented by delegation inheriting default value`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.DelegatingRepo"
         ) sameAsKotlin """
@@ -1129,6 +1129,19 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.test.FinderRepo [page 1/1]
             class FinderRepo : Repo, Finder {
                 override fun find(limit: Int = …)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not mark parameter inheriting default value of overload not overridden through raw Java superclass`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.RawDefaultsLeaf"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.RawDefaultsLeaf [page 1/1]
+            class RawDefaultsLeaf : com.xemantic.kotlin.introspection.test.other.JavaRawDefaultsMid {
+                override fun f(x: String, y: Int)
+                override fun f(x: Any?, y: Int = …)
             }
         """.trimIndent()
     }

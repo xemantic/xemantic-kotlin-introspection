@@ -18,6 +18,8 @@
 
 package com.xemantic.kotlin.introspection.test
 
+import com.xemantic.kotlin.introspection.test.other.JavaRawDefaultsMid
+
 // constructor and function value parameters which are vararg or declare a default value
 class ValueParametersSample(vararg val names: String, val count: Int = 0, label: String = "") {
     fun join(vararg parts: Int, separator: String = ", "): String = parts.joinToString(separator)
@@ -74,7 +76,7 @@ class MemoryRepo : AbstractRepo() {
     override fun count(from: Int, to: Int): Int = 0
 }
 
-// members implemented by delegation
+// members implemented by delegation, DELEGATION members in the metadata, matched against the supertypes like declared ones
 class DelegatingRepo(repo: Repo) : Repo by repo
 
 // only one of the overridden functions declares the default value
@@ -84,4 +86,16 @@ interface Finder {
 
 class FinderRepo : Repo, Finder {
     override fun find(limit: Int) {}
+}
+
+// the type parameter of the raw Java superclass is erased to its bound, so that only the generic overload
+// is overridden by the function taking Any?, inheriting its default value, and the other one taking String
+open class RawDefaultsBase<T> {
+    open fun f(x: T, y: Int = 0) {}
+    open fun f(x: String, y: Int) {}
+}
+
+class RawDefaultsLeaf : JavaRawDefaultsMid() {
+    override fun f(x: String, y: Int) {}
+    override fun f(x: Any?, y: Int) {}
 }

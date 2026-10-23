@@ -258,6 +258,25 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should not mark parameter inheriting default value of overload matching only on type parameter unknown through class missing from the classpath`() {
+        // given
+        val introspector = introspectorWithoutAbsentClass()
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.AbsentArgumentDefaultsLeaf"
+        )
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.AbsentArgumentDefaultsLeaf [page 1/1]
+            class AbsentArgumentDefaultsLeaf : AbsentArgumentJavaMid {
+                override fun f(x: String, y: Int)
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should not bind Java method type variable shadowing type variable of its class when another method refers to class missing from the classpath`() {
         // given
         val introspector = introspectorWithoutAbsentClass()

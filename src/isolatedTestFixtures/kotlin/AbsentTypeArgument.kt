@@ -109,6 +109,18 @@ class AbsentRawJavaSubclass : AbsentRawJavaMid() {
     fun <S : Number> bounded(x: S) {}
 }
 
+// the type parameter is unknown through the Java superclass, whose generic superclass refers to Absent,
+// so that both overloads match the function taking String, but it inherits no default value from the generic one,
+// as the other one matches on the known types
+open class AbsentArgumentDefaultsBase<T> {
+    open fun f(x: T, y: Int = 0) {}
+    open fun f(x: String, y: Int) {}
+}
+
+class AbsentArgumentDefaultsLeaf : AbsentArgumentJavaMid() {
+    override fun f(x: String, y: Int) {}
+}
+
 // the nested classes extending Absent cannot be loaded, only their class files can be read
 class AbsentNestedHolder {
     class Present
