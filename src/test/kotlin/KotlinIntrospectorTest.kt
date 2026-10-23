@@ -4457,7 +4457,8 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `resolve should coerce page past the end to the only page when pageSize is half of Int MAX_VALUE`() {
-        // the start index of the 3rd page, 2 * pageSize, would overflow an Int
+        // a large page size which is not Int.MAX_VALUE, for which 2 * pageSize overflows an Int,
+        // pins that a page past the end is coerced to the only one, however the start index is computed
         resolver.resolve(
             "kotlin.String",
             page = 3,

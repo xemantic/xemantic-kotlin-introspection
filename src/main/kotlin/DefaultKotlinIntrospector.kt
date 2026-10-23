@@ -322,7 +322,7 @@ internal class DefaultKotlinIntrospector(
         logger.info { "Classpath scan completed in $scanTime, found $extensionsFound extensions" }
     }
 
-    private fun resolve(name: String): Resolved? {
+    private fun resolve(name: String): Resolved<*>? {
         val parts = unescapeQualifiedName(name).split(".")
 
         // Try to find where the class name ends and member name begins
@@ -651,12 +651,13 @@ internal class DefaultKotlinIntrospector(
         }
 
         val companionMembers = apiCompanionOf(kmClass, scopes, foundClass)?.let { companion ->
-            val header = formatCompanionHeader(kmClass, companion, contextPackage)
             val signatures = companion.propertiesNamed(memberName).map {
                 formatCompanionProperty(it, companion, contextPackage)
             } + companion.functionsNamed(memberName).map {
                 formatCompanionFunction(it, companion, contextPackage)
             }
+            // the header is formatted only when there are signatures to render within it
+            val header by lazy { formatCompanionHeader(kmClass, companion, contextPackage) }
             signatures.map { ListingItem.CompanionMember(header, it) }
         }.orEmpty()
 
@@ -1243,7 +1244,7 @@ internal class DefaultKotlinIntrospector(
         val sealedSubclasses = if (isSealed) listedSealedSubclasses(kmClass) else emptyList()
         val nestedClasses = listedNestedClasses(kmClass, scopes, foundClass.binaryName)
 
-        val members = buildList<ListingItem> {
+        val members = buildList<ListingItem.ClassBodyItem> {
             // The sealed subclasses first, then the other nested classes, only referenced,
             // as they can be resolved by their own name
             (sealedSubclasses + nestedClasses).forEach { (name, listedKmClass) ->
@@ -2485,10 +2486,7 @@ internal class DefaultKotlinIntrospector(
         pageSize: Int
     ): String? {
         requirePositivePageSize(pageSize)
-        val resolved = resolve(name) ?: return null
-        val resolvedPage = paginate(resolved.items, page, pageSize)
-        return (listOf("// $name [page ${resolvedPage.number}/${resolvedPage.count}]") + resolved.renderPage(resolvedPage))
-            .joinToString("\n")
+        return resolve(name)?.render(name, page, pageSize)
     }
 
     override fun search(query: String, page: Int, pageSize: Int): String? {
@@ -2512,9 +2510,9 @@ internal class DefaultKotlinIntrospector(
 }
 
 /**
- * A page of [items], the [number]th, 1-based, of [count] pages of at most [size] items each.
+ * A page of [items], the [number]th, 1-based, of [count] pages of at most [pageSize] items each.
  */
-private class Page<T>(val items: List<T>, val number: Int, val count: Int, val size: Int)
+private class Page<T>(val items: List<T>, val number: Int, val count: Int, val pageSize: Int)
 
 /**
  * The [page] of the [items], coerced into the range of the pages, of which there is at least one, even without items.
@@ -2533,35 +2531,60 @@ private fun <T> paginate(items: List<T>, page: Int, pageSize: Int): Page<T> {
  * A resolved declaration, paginated by its [items] by the [DefaultKotlinIntrospector.resolve],
  * where each page renders on its own, as the headers the items are listed under are repeated on every page.
  */
-private sealed interface Resolved {
+private sealed interface Resolved<T : ListingItem> {
 
     /**
      * The units of pagination, never split across pages.
      */
-    val items: List<ListingItem>
+    val items: List<T>
 
     /**
      * The lines of the [page] of the [items].
      */
-    fun renderPage(page: Page<ListingItem>): List<String>
+    fun renderPage(page: Page<T>): List<String>
+
+    /**
+     * The [page] of the declaration resolved by the [name], under the header telling the page number.
+     */
+    fun render(name: String, page: Int, pageSize: Int): String {
+        val resolvedPage = paginate(items, page, pageSize)
+        return (listOf("// $name [page ${resolvedPage.number}/${resolvedPage.count}]") + renderPage(resolvedPage))
+            .joinToString("\n")
+    }
 
 }
 
 /**
- * An item of a [Resolved] declaration, the unit of pagination, never split across pages.
+ * An item of a [Resolved] declaration, the unit of pagination, never split across pages,
+ * either a [ClassItem], or a [MemberItem], or both.
  */
 private sealed interface ListingItem {
 
     /**
+     * An item of a [ClassListing], either a [ClassBodyItem], or an [Extension].
+     */
+    sealed interface ClassItem : ListingItem
+
+    /**
+     * An item of the body of a [ClassListing].
+     */
+    sealed interface ClassBodyItem : ClassItem
+
+    /**
+     * An item of a [MemberListing].
+     */
+    sealed interface MemberItem : ListingItem
+
+    /**
      * An enum entry of a [ClassListing], rendered on the [line], together with the separator following it.
      */
-    class EnumEntry(val line: String) : ListingItem
+    class EnumEntry(val line: String) : ClassBodyItem
 
     /**
      * A single-line declaration, like a function, of the body of a [ClassListing],
      * or found by a [MemberListing], rendered there as is.
      */
-    class Declaration(val signature: String) : ListingItem
+    class Declaration(val signature: String) : ClassBodyItem, MemberItem
 
     /**
      * The companion object of a [ClassListing], declared with the [header], with its [members],
@@ -2569,18 +2592,18 @@ private sealed interface ListingItem {
      *
      * @param name the fully qualified name of the companion object to resolve, like `com.example.Outer.Companion`.
      */
-    class CompanionObject(val header: String, val members: List<String>, val name: String) : ListingItem
+    class CompanionObject(val header: String, val members: List<String>, val name: String) : ClassBodyItem
 
     /**
      * A member of a companion object found by a [MemberListing],
      * rendered within the declaration of the companion object, the [header], repeated on every page.
      */
-    class CompanionMember(val header: String, val signature: String) : ListingItem
+    class CompanionMember(val header: String, val signature: String) : MemberItem
 
     /**
      * An extension, listed under the `// from` header of its [source], repeated on every page.
      */
-    class Extension(val source: String, val signature: String) : ListingItem
+    class Extension(val source: String, val signature: String) : ClassItem, MemberItem
 
 }
 
@@ -2600,24 +2623,24 @@ private fun List<ListingItem.Extension>.renderLines(): List<String> = buildList 
 
 /**
  * A class listed with its [header], the declaration line without the body, followed by the [items]:
- * the enum entries, and the members of the class body, see [ListingItem.EnumEntry], [ListingItem.Declaration],
- * and [ListingItem.CompanionObject], then the extensions, see [ListingItem.Extension].
+ * the enum entries, and the members of the class body, see [ListingItem.ClassBodyItem],
+ * then the extensions, see [ListingItem.Extension].
  *
  * @param isEnum whether the class is an enum class, whose members are separated from its entries with a semicolon.
  */
 private class ClassListing(
     val header: String,
     val isEnum: Boolean,
-    override val items: List<ListingItem>
-) : Resolved {
+    override val items: List<ListingItem.ClassItem>
+) : Resolved<ListingItem.ClassItem> {
 
     /**
      * The class body is shown only on a page with entries or members, and the semicolon separating the members
      * of an enum class from its entries on every such page without entries, as the last entry carries it.
      * A class without a body still has its header shown on the first page, e.g. to show the constructor.
      */
-    override fun renderPage(page: Page<ListingItem>): List<String> = buildList {
-        val body = page.items.filter { it !is ListingItem.Extension }
+    override fun renderPage(page: Page<ListingItem.ClassItem>): List<String> = buildList {
+        val body = page.items.filterIsInstance<ListingItem.ClassBodyItem>()
         if (body.isNotEmpty()) {
             add("$header {")
             if (isEnum && body.none { it is ListingItem.EnumEntry }) add("    ;")
@@ -2625,12 +2648,11 @@ private class ClassListing(
                 when (item) {
                     is ListingItem.EnumEntry -> add("    ${item.line}")
                     is ListingItem.Declaration -> add("    ${item.signature}")
-                    is ListingItem.CompanionObject -> renderCompanionObject(item, page.size).forEach { add("    $it") }
-                    else -> error("Not an item of a class body: $item")
+                    is ListingItem.CompanionObject -> renderCompanionObject(item, page.pageSize).forEach { add("    $it") }
                 }
             }
             add("}")
-        } else if (page.number == 1 && items.all { it is ListingItem.Extension }) {
+        } else if (page.number == 1 && items.none { it is ListingItem.ClassBodyItem }) {
             add(header)
         }
         addAll(page.items.filterIsInstance<ListingItem.Extension>().renderLines())
@@ -2660,7 +2682,7 @@ private class ClassListing(
             header: String,
             isEnum: Boolean = false,
             enumEntryNames: List<String> = emptyList(),
-            members: List<ListingItem> = emptyList(),
+            members: List<ListingItem.ClassBodyItem> = emptyList(),
             extensions: List<ListingItem.Extension> = emptyList()
         ): ClassListing = ClassListing(
             header,
@@ -2685,9 +2707,9 @@ private class ClassListing(
  * the members, see [ListingItem.Declaration], then the members of the companion object,
  * see [ListingItem.CompanionMember], and then the extensions, see [ListingItem.Extension].
  */
-private class MemberListing(override val items: List<ListingItem>) : Resolved {
+private class MemberListing(override val items: List<ListingItem.MemberItem>) : Resolved<ListingItem.MemberItem> {
 
-    override fun renderPage(page: Page<ListingItem>): List<String> = buildList {
+    override fun renderPage(page: Page<ListingItem.MemberItem>): List<String> = buildList {
         page.items.filterIsInstance<ListingItem.Declaration>().forEach { add(it.signature) }
         page.items.filterIsInstance<ListingItem.CompanionMember>().groupBy { it.header }.forEach { (header, members) ->
             add("$header {")
@@ -2702,7 +2724,7 @@ private class MemberListing(override val items: List<ListingItem>) : Resolved {
         /**
          * The listing of the [items], or `null` if nothing is found.
          */
-        fun of(items: List<ListingItem>): MemberListing? = if (items.isEmpty()) null else MemberListing(items)
+        fun of(items: List<ListingItem.MemberItem>): MemberListing? = if (items.isEmpty()) null else MemberListing(items)
 
     }
 
