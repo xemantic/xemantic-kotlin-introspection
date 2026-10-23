@@ -2021,8 +2021,99 @@ class KotlinIntrospectorTest {
         """.trimIndent()
     }
 
-    // the context parameters are not rendered yet, the subclass declares fun run(), context(c: Ctx) fun run(),
-    // and context(c: Ctx) val label, while the superclass declares context(log: Logger) members
+    // the anonymous context parameter stays _, while a keyword name is escaped,
+    // and an extension listed in the body of its receiver class keeps its context parameters
+    @Test
+    fun `should render context parameters of functions and properties`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ContextParametersSample"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ContextParametersSample [page 1/1]
+            class ContextParametersSample {
+                context(log: Logger) val label: String
+                context(log: Logger) val String.decorated: String
+                context(log: Logger) fun run()
+                fun run()
+                context(log: Logger, c: Ctx) fun <T> process(item: T): List<T>
+                context(_: Logger) fun anonymous()
+                context(`in`: Logger) fun keyword()
+                context(log: Logger) fun String.decorate(): String
+            }
+            // from com.xemantic.kotlin.introspection.test
+            context(log: Logger) val ContextParametersSample.contextExtensionLabel: String
+            context(log: Logger) fun ContextParametersSample.contextExtension()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render context parameters of overloads otherwise rendered the same`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ContextParametersSample.run"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ContextParametersSample.run [page 1/1]
+            context(log: Logger) fun run()
+            fun run()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render context parameters of top-level function`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.TestContextParametersKt.contextRun"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.TestContextParametersKt.contextRun [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            context(log: Logger) fun contextRun()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render context parameters of top-level property`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.TestContextParametersKt.contextLabel"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.TestContextParametersKt.contextLabel [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            context(log: Logger) val contextLabel: String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render context parameters of companion object function found by outer class member lookup`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ContextCompanionSample.create"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ContextCompanionSample.create [page 1/1]
+            companion object {
+                context(log: Logger) fun create(): ContextCompanionSample
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render context parameters of companion object property found by outer class member lookup`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ContextCompanionSample.created"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ContextCompanionSample.created [page 1/1]
+            companion object {
+                context(log: Logger) val created: String
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render context parameters of supertype extension found by subtype member lookup`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ContextSubtype.describeInContext"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ContextSubtype.describeInContext [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            context(log: Logger) fun ContextSupertype.describeInContext()
+        """.trimIndent()
+    }
+
+    // the superclass declares context(log: Logger) members
     @Test
     fun `should not mark overloads with other context parameters as override`() {
         resolver.resolve(
@@ -2030,9 +2121,9 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.ContextOverloadingSubclass [page 1/1]
             class ContextOverloadingSubclass : ContextBase {
-                val label: String
+                context(c: Ctx) val label: String
                 fun run()
-                fun run()
+                context(c: Ctx) fun run()
             }
         """.trimIndent()
     }
@@ -2044,13 +2135,12 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.ContextOverridingSubclass [page 1/1]
             class ContextOverridingSubclass : ContextBase {
-                override val label: String
-                override fun run()
+                context(log: Logger) override val label: String
+                context(log: Logger) override fun run()
             }
         """.trimIndent()
     }
 
-    // context(c: Ctx) override fun process(item: UInt), next to fun process(item: Int)
     @Test
     fun `should mark override with context parameter and value class type argument`() {
         resolver.resolve(
@@ -2058,7 +2148,7 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.UIntContextProcessor [page 1/1]
             class UIntContextProcessor : ContextProcessor<UInt> {
-                override fun process(item: UInt)
+                context(c: Ctx) override fun process(item: UInt)
                 fun process(item: Int)
             }
         """.trimIndent()
@@ -2070,11 +2160,10 @@ class KotlinIntrospectorTest {
             "com.xemantic.kotlin.introspection.test.ValueContextProcessor.process"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.ValueContextProcessor.process [page 1/1]
-            override fun process(item: UInt)
+            context(c: Ctx) override fun process(item: UInt)
         """.trimIndent()
     }
 
-    // context(c: Ctx) override fun act(), next to context(log: Logger) fun act()
     @Test
     fun `should match context parameter of type argument of supertype`() {
         resolver.resolve(
@@ -2082,13 +2171,12 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.CtxContextual [page 1/1]
             class CtxContextual : Contextual<Ctx> {
-                override fun act()
-                fun act()
+                context(c: Ctx) override fun act()
+                context(log: Logger) fun act()
             }
         """.trimIndent()
     }
 
-    // override fun run(), next to context(c: Ctx) fun run()
     @Test
     fun `should not mark function with context parameter named like Java method as override`() {
         resolver.resolve(
@@ -2097,7 +2185,7 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.test.ContextRunnable [page 1/1]
             class ContextRunnable : java.lang.Runnable {
                 override fun run()
-                fun run()
+                context(c: Ctx) fun run()
             }
         """.trimIndent()
     }
@@ -2110,7 +2198,7 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.ContextConsumer [page 1/1]
             abstract class ContextConsumer : java.util.function.Consumer<Ctx> {
-                fun accept()
+                context(c: Ctx) fun accept()
             }
         """.trimIndent()
     }
@@ -2123,7 +2211,7 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.ContextLabel [page 1/1]
             abstract class ContextLabel : com.xemantic.kotlin.introspection.test.other.JavaLabelBase<Ctx> {
-                val label: String
+                context(c: Ctx) val label: String
             }
         """.trimIndent()
     }

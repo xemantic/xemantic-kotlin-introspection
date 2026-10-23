@@ -71,6 +71,39 @@ class IdentifiersTest {
     }
 
     @Test
+    fun `should render anonymous context parameter as underscore and escape other context parameter names`() {
+        // given - the name of a declared _, of a legacy context receiver, another special name, no name at all
+        val names = listOf("<unused var>", "_", "<anonymous>", null, "log", "in")
+
+        // when
+        val escaped = names.map { escapeContextParameterName(it) }
+
+        // then
+        assert(escaped == listOf("_", "_", "_", "_", "log", "`in`"))
+    }
+
+    @Test
+    fun `should render context parameters before the declaration`() {
+        // given
+        val parameters = listOf("log" to "Logger", "<unused var>" to "Raise<E>", "in" to "Ctx")
+
+        // when
+        val rendered = formatContextParameters(parameters)
+
+        // then
+        assert(rendered == "context(log: Logger, _: Raise<E>, `in`: Ctx) ")
+    }
+
+    @Test
+    fun `should render no context parameters as empty string`() {
+        // when
+        val rendered = formatContextParameters(emptyList())
+
+        // then
+        assert(rendered == "")
+    }
+
+    @Test
     fun `should escape names made of underscores only, which are reserved`() {
         // given
         val names = listOf("_", "__")

@@ -39,6 +39,26 @@ internal fun escapeIdentifier(name: String): String =
     if (name.isEmpty() || '`' in name || (name.isIdentifier() && name !in hardKeywords)) name else "`$name`"
 
 /**
+ * Escapes the [name] of a context parameter like [escapeIdentifier],
+ * except for the anonymous one, rendered as `_`, as it is declared:
+ * the one declared as `_`, written to the metadata as the special name `<unused var>`,
+ * the legacy context receiver, which kotlin-metadata-jvm reads as a context parameter named `_`,
+ * and the one with no name, as kotlin-reflect gives it.
+ */
+internal fun escapeContextParameterName(name: String?): String =
+    if (name == null || name == "_" || (name.startsWith('<') && name.endsWith('>'))) "_" else escapeIdentifier(name)
+
+/**
+ * Formats the context parameters of a function or property, given as their names and rendered types,
+ * like `context(log: Logger, _: Ctx) `, preceding all the other modifiers, or an empty string if there are none.
+ * Their names are a part of the signature, as a function body can refer to them.
+ */
+internal fun formatContextParameters(parameters: List<Pair<String?, String>>): String =
+    if (parameters.isEmpty()) "" else parameters.joinToString(", ", prefix = "context(", postfix = ") ") { (name, type) ->
+        "${escapeContextParameterName(name)}: $type"
+    }
+
+/**
  * Escapes each segment of a [name] qualified with `.`, like `pkg.Outer.Nested`, with [escapeIdentifier],
  * as no segment can contain a `.`, which is not allowed in a JVM name.
  */

@@ -1028,9 +1028,7 @@ internal class DefaultKotlinIntrospector(
                 it.name == memberName && isBuiltinApi(it)
             }.map { formatKProperty(it, isOverride(builtinKmClass, it)) } + kClass.memberFunctions.filter {
                 it.name == memberName && isBuiltinApi(it)
-            }.map { formatKFunction(it, isOverride(builtinKmClass, it)) }.sortedBy {
-                it.removePrefix("override ")
-            }
+            }.sortedBy { formatKFunctionDeclaration(it) }.map { formatKFunction(it, isOverride(builtinKmClass, it)) }
         }
 
         // The same extensions as the listing of the built-in type shows, the ones of the public kotlin.* packages
@@ -1541,6 +1539,7 @@ internal class DefaultKotlinIntrospector(
      * @param withReceiver whether to render the receiver of an extension function,
      *   which is omitted when the extension is listed in the body of its receiver class.
      */
+    @OptIn(ExperimentalContextParameters::class)
     private fun formatFunction(
         function: KmFunction,
         inInterface: Boolean = false,
@@ -1551,6 +1550,7 @@ internal class DefaultKotlinIntrospector(
     ): String = buildString {
         val typeParameters = classTypeParameters + function.typeParameters.namesById()
 
+        +formatContextParameters(function.contextParameters, contextPackage, typeParameters)
         +formatVisibility(function.visibility)
 
         val override = override(owner, function)
@@ -1630,12 +1630,22 @@ internal class DefaultKotlinIntrospector(
     }
 
     /**
+     * Format the context parameters of a function or property with [com.xemantic.kotlin.introspection.formatContextParameters].
+     */
+    private fun formatContextParameters(
+        parameters: List<KmValueParameter>,
+        contextPackage: String?,
+        typeParameters: Map<Int, String>
+    ): String = formatContextParameters(parameters.map { it.name to formatType(it.type, contextPackage, typeParameters) })
+
+    /**
      * Format a member, top-level or extension property.
      *
      * @param owner the class declaring the [property], to tell whether it is an override.
      * @param withReceiver whether to render the receiver of an extension property,
      *   which is omitted when the extension is listed in the body of its receiver class.
      */
+    @OptIn(ExperimentalContextParameters::class)
     private fun formatProperty(
         property: KmProperty,
         inInterface: Boolean = false,
@@ -1646,6 +1656,7 @@ internal class DefaultKotlinIntrospector(
     ): String = buildString {
         val typeParameters = classTypeParameters + property.typeParameters.namesById()
 
+        +formatContextParameters(property.contextParameters, contextPackage, typeParameters)
         +formatVisibility(property.visibility)
 
         +formatModalityModifiers(property.modality, isOverride(owner, property), inInterface, owner)

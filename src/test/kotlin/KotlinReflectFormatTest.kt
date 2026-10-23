@@ -18,6 +18,7 @@
 
 package com.xemantic.kotlin.introspection
 
+import com.xemantic.kotlin.introspection.test.ContextParametersSample
 import com.xemantic.kotlin.introspection.test.KeywordMembersSample
 import com.xemantic.kotlin.introspection.test.ReflectedValueParametersSample
 import com.xemantic.kotlin.test.assert
@@ -129,6 +130,62 @@ class KotlinReflectFormatTest {
 
         // then
         assert(rendered == "fun nested(): com.xemantic.kotlin.introspection.test.KeywordMembersSample.`interface`")
+    }
+
+    @Test
+    fun `should render context parameters of function before the declaration`() {
+        // given
+        val run = ContextParametersSample::class.memberFunctions.filter { it.name == "run" }
+
+        // when
+        val rendered = run.map { formatKFunction(it) }.sorted()
+
+        // then
+        assert(rendered == listOf("context(log: com.xemantic.kotlin.introspection.test.Logger) fun run()", "fun run()"))
+    }
+
+    // the key to sort the overloads of a built-in member by, which a context prefix must not precede
+    @Test
+    fun `should render function declaration without context parameters and override modifier`() {
+        // given
+        val process = ContextParametersSample::class.memberFunctions.single { it.name == "process" }
+
+        // when
+        val declaration = formatKFunctionDeclaration(process)
+
+        // then
+        assert(declaration == "fun <T> process(item: T): List<T>")
+    }
+
+    @Test
+    fun `should render all context parameters of function`() {
+        // when
+        val rendered = formatKFunction(ContextParametersSample::class.memberFunctions.single { it.name == "process" })
+
+        // then
+        assert(
+            rendered == "context(log: com.xemantic.kotlin.introspection.test.Logger, c: com.xemantic.kotlin.introspection.test.Ctx) " +
+                "fun <T> process(item: T): List<T>"
+        )
+    }
+
+    @Test
+    fun `should render anonymous context parameter as underscore and escape keyword context parameter name`() {
+        // given
+        val functions = listOf("anonymous", "keyword").map { name ->
+            ContextParametersSample::class.memberFunctions.single { it.name == name }
+        }
+
+        // when
+        val rendered = functions.map { formatKFunction(it) }
+
+        // then
+        assert(
+            rendered == listOf(
+                "context(_: com.xemantic.kotlin.introspection.test.Logger) fun anonymous()",
+                "context(`in`: com.xemantic.kotlin.introspection.test.Logger) fun keyword()"
+            )
+        )
     }
 
 }
