@@ -1315,10 +1315,12 @@ internal class DefaultKotlinIntrospector(
         // while its parameters are the idiomatic way of declaring the properties of the entries.
         // A data class, or a value class, cannot be declared without its primary constructor and its parameters,
         // which is therefore rendered as private, like a class without any constructor which can be called.
+        // never a data object, which cannot have a constructor
+        val isDataOrValueClass = kmClass.kind == ClassKind.CLASS && (kmClass.isData || kmClass.isValue)
         val isPrimaryConstructorCallable = primaryConstructor != null &&
             primaryConstructor.visibility.isApiIn(scopes) && !foundClass.isHidden(primaryConstructor)
         val renderedConstructor = primaryConstructor?.takeIf {
-            isEnum || isPrimaryConstructorCallable || kmClass.isData || kmClass.isValue
+            isEnum || isPrimaryConstructorCallable || isDataOrValueClass
         }
         // The other ways of creating the class, never of an enum class, as they are private,
         // nor of an annotation class, which cannot have any
@@ -1342,7 +1344,7 @@ internal class DefaultKotlinIntrospector(
         // The properties declared by the parameters of the rendered constructor, by the parameter name,
         // also the ones which are not part of the API of a data class, or a value class,
         // whose parameters must all declare properties, like `private val rawValue: Long`
-        val propertiesOfParameters = if (kmClass.isData || kmClass.isValue) kmClass.properties else properties
+        val propertiesOfParameters = if (isDataOrValueClass) kmClass.properties else properties
         val constructorProperties = renderedConstructor?.valueParameters.orEmpty().mapNotNull { param ->
             propertiesOfParameters.firstOrNull { it.isDeclaredBy(param) }?.let { param.name to it }
         }.toMap()

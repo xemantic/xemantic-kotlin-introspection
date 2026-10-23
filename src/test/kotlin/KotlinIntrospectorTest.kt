@@ -3959,6 +3959,16 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should not render constructor of data object`() {
+        // an object cannot have a constructor, unlike a data class
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.SealedTestClass.SubDataObject", pageSize = 1
+        ) should {
+            have(lines()[1].startsWith("data object SubDataObject : SealedTestClass"))
+        }
+    }
+
+    @Test
     fun `should mark stdlib class with private constructor as not constructible`() {
         resolver.resolve("kotlin.io.encoding.Base64") should {
             have(lines()[1] == "open class Base64 private constructor() {")
