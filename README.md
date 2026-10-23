@@ -105,8 +105,11 @@ com.example.AnnotationTestClass
   like `String.() -> Unit` and `context(String) () -> Unit` are both `kotlin.Function1`.
 * The extensions on a type parameter bounded by a type,
   like `fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T): T`,
-  are listed among the extensions of the bound, and so of its subtypes,
+  are listed among the extensions of the bound,
   and with multiple bounds, like `where T : A, T : B`, only for the types satisfying all of them.
+  Like any extension of a supertype, they are listed for the subtypes of the bound among the built-in types,
+  but not for the other classes when the bound is a `kotlin.*` or `java.*` type,
+  so that, e.g., a class implementing `Comparable` is not flooded with the generic extensions of the standard library.
   The extensions on an unbounded type parameter, like `let` or `also`, are not listed for any type,
   as they would be listed for every one.
 * The types of the `kotlin.*` packages are rendered with simple names, as LLMs know them well,

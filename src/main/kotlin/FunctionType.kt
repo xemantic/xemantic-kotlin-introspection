@@ -164,13 +164,17 @@ internal val KType.isSuspendFunctionType: Boolean?
 /**
  * The arity of a function type class, like `2` of `kotlin/Function2`, given its name and the expected [prefix],
  * or `null` if the [name] is not the one of a function type class.
+ * The arity is written without leading zeros, like in the name of any class the compiler synthesizes,
+ * or compiles a function type to, like `kotlin.jvm.functions.Function2`.
  * The prefix is checked before anything else, as most of the types are not function types.
  */
-private fun functionArity(name: String, prefix: String): Int? {
+internal fun functionArity(name: String, prefix: String): Int? {
     if (!name.startsWith(prefix) || name.length == prefix.length) return null
     for (index in prefix.length until name.length) {
         if (name[index] !in '0'..'9') return null
     }
+    // a leading zero only of the arity 0 itself
+    if (name[prefix.length] == '0' && name.length > prefix.length + 1) return null
     return name.substring(prefix.length).toIntOrNull()
 }
 
@@ -186,8 +190,9 @@ internal const val FUNCTION_TYPE_PREFIX = "kotlin.Function"
 internal const val SUSPEND_FUNCTION_PREFIX = "kotlin.coroutines.SuspendFunction"
 
 /**
- * The highest arity of a function type class resolved by its name, as a JVM method takes at most 255 parameters,
- * of which a suspend function type takes one more, the continuation.
+ * The highest arity of a function type class resolved by its name, as an instance JVM method,
+ * like the `invoke` of a function type, takes at most 254 parameters, besides `this` (JVMS §4.3.3).
+ * The one of a suspend function type is one lower, as it takes the continuation as well.
  */
 private const val MAX_FUNCTION_TYPE_CLASS_ARITY = 254
 
@@ -233,21 +238,17 @@ internal class FunctionTypeClass private constructor(val isSuspend: Boolean, val
     companion object {
 
         /**
-         * The function type class of the given Kotlin [name], like `kotlin.Function1`, or `null` if it is not one.
-         * The arity is written without leading zeros, like in the name of any class the compiler synthesizes.
+         * The function type class of the given Kotlin [name], like `kotlin.Function1`, or `null` if it is not one,
+         * see [functionArity].
          */
         fun of(name: String): FunctionTypeClass? = when {
-            name.startsWith(SUSPEND_FUNCTION_PREFIX) -> arityOf(name, SUSPEND_FUNCTION_PREFIX)
+            name.startsWith(SUSPEND_FUNCTION_PREFIX) -> functionArity(name, SUSPEND_FUNCTION_PREFIX)
+                ?.takeIf { it < MAX_FUNCTION_TYPE_CLASS_ARITY }
                 ?.let { FunctionTypeClass(isSuspend = true, arity = it) }
-            name.startsWith(FUNCTION_TYPE_PREFIX) -> arityOf(name, FUNCTION_TYPE_PREFIX)
+            name.startsWith(FUNCTION_TYPE_PREFIX) -> functionArity(name, FUNCTION_TYPE_PREFIX)
+                ?.takeIf { it <= MAX_FUNCTION_TYPE_CLASS_ARITY }
                 ?.let { FunctionTypeClass(isSuspend = false, arity = it) }
             else -> null
-        }
-
-        private fun arityOf(name: String, prefix: String): Int? {
-            val digits = name.substring(prefix.length)
-            val arity = digits.toIntOrNull() ?: return null
-            return arity.takeIf { it in 0..MAX_FUNCTION_TYPE_CLASS_ARITY && it.toString() == digits }
         }
 
     }

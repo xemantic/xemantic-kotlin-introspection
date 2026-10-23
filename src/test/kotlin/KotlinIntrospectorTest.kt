@@ -1471,6 +1471,16 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve function types up to the arity of a JVM method`() {
+        // the invoke of a function type takes at most 254 parameters, besides this,
+        // of which one is the continuation of a suspend function type
+        assert(resolver.resolve("kotlin.Function254") != null)
+        assert(resolver.resolve("kotlin.Function255") == null)
+        assert(resolver.resolve("kotlin.coroutines.SuspendFunction253") != null)
+        assert(resolver.resolve("kotlin.coroutines.SuspendFunction254") == null)
+    }
+
+    @Test
     fun `should not resolve function type name with leading zero in arity`() {
         assert(resolver.resolve("kotlin.Function01") == null)
     }
@@ -1526,6 +1536,18 @@ class KotlinIntrospectorTest {
             fun (() -> Unit).repeat()
             // from kotlinx.coroutines.flow
             fun <T> (() -> T).asFlow(): kotlinx.coroutines.flow.Flow<T>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension of function type as member of JVM function interface`() {
+        // like in the listing of kotlin.jvm.functions.Function0
+        resolver.resolve(
+            "kotlin.jvm.functions.Function0.repeat"
+        ) sameAsKotlin """
+            // kotlin.jvm.functions.Function0.repeat [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            fun (() -> Unit).repeat()
         """.trimIndent()
     }
 
@@ -3726,6 +3748,23 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.BoundedReceiverB [page 1/1]
             interface BoundedReceiverB
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve extension on type parameter with multiple bounds as member of interface satisfying only one of them`() {
+        // like in the listing of BoundedReceiverB
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.BoundedReceiverB.boundedByBoth") == null)
+    }
+
+    @Test
+    fun `should resolve extension on type parameter bounded by interface as its member`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverA.boundedByA"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverA.boundedByA [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            fun <T : BoundedReceiverA> T.boundedByA(): T
         """.trimIndent()
     }
 
