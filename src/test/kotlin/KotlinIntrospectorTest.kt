@@ -36,7 +36,7 @@ class KotlinIntrospectorTest {
         resolver.resolve(
             "kotlin.String"
         ) sameAsKotlin """
-            // kotlin.String [page 1/41]
+            // kotlin.String [page 1/42]
             class String : Comparable<String>, CharSequence {
                 inline fun byteInputStream(charset: java.nio.charset.Charset = …): java.io.ByteArrayInputStream
                 @Deprecated("Use replaceFirstChar instead.", ReplaceWith("replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }")) fun capitalize(): String
@@ -59,7 +59,7 @@ class KotlinIntrospectorTest {
             "kotlin.String",
             page = 2
         ) sameAsKotlin """
-            // kotlin.String [page 2/41]
+            // kotlin.String [page 2/42]
             class String : Comparable<String>, CharSequence {
                 inline fun contentEquals(charSequence: CharSequence): Boolean
                 inline fun contentEquals(stringBuilder: java.lang.StringBuffer): Boolean
@@ -82,7 +82,7 @@ class KotlinIntrospectorTest {
             "kotlin.String",
             page = 3
         ) sameAsKotlin """
-            // kotlin.String [page 3/41]
+            // kotlin.String [page 3/42]
             class String : Comparable<String>, CharSequence {
                 fun encodeToByteArray(startIndex: Int = …, endIndex: Int = …, throwOnInvalidSequence: Boolean = …): ByteArray
                 fun endsWith(suffix: String, ignoreCase: Boolean = …): Boolean
@@ -105,33 +105,35 @@ class KotlinIntrospectorTest {
             "kotlin.String",
             page = 19
         ) sameAsKotlin """
-            // kotlin.String [page 19/41]
+            // kotlin.String [page 19/42]
             class String : Comparable<String>, CharSequence {
                 inline fun uppercase(locale: java.util.Locale): String
             }
             // from kotlin
             inline infix fun <T> Comparable<T>.compareTo(other: T): Int
+            // from kotlin.ranges
+            fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T): T
+            fun <T : Comparable<T>> T.coerceAtMost(maximumValue: T): T
+            fun <T : Comparable<T>> T.coerceIn(minimumValue: T?, maximumValue: T?): T
+            fun <T : Comparable<T>> T.coerceIn(range: ClosedFloatingPointRange<T>): T
+            fun <T : Comparable<T>> T.coerceIn(range: ClosedRange<T>): T
+            operator fun <T : Comparable<T>> T.rangeTo(that: T): ClosedRange<T>
+            operator fun <T : Comparable<T>> T.rangeUntil(that: T): OpenEndRange<T>
             // from kotlin.text
             val CharSequence.indices: IntRange
-            val CharSequence.lastIndex: Int
-            inline fun CharSequence.all(predicate: (Char) -> Boolean): Boolean
-            fun CharSequence.any(): Boolean
-            inline fun CharSequence.any(predicate: (Char) -> Boolean): Boolean
-            fun CharSequence.asIterable(): Iterable<Char>
-            fun CharSequence.asSequence(): Sequence<Char>
-            inline fun <K, V> CharSequence.associate(transform: (Char) -> Pair<K, V>): Map<K, V>
         """.trimIndent()
     }
 
     @Test
-    fun `should resolve String as known stdlib class - page 41 (the last)`() {
+    fun `should resolve String as known stdlib class - page 42 (the last)`() {
         // extension-only pages omit the empty class body
         resolver.resolve(
             "kotlin.String",
-            page = 41
+            page = 42
         ) sameAsKotlin """
-            // kotlin.String [page 41/41]
+            // kotlin.String [page 42/42]
             // from kotlin.text
+            fun CharSequence.windowedSequence(size: Int, step: Int = …, partialWindows: Boolean = …): Sequence<String>
             fun <R> CharSequence.windowedSequence(size: Int, step: Int = …, partialWindows: Boolean = …, transform: (CharSequence) -> R): Sequence<R>
             fun CharSequence.withIndex(): Iterable<IndexedValue<Char>>
             infix fun CharSequence.zip(other: CharSequence): List<Pair<Char, Char>>
@@ -333,6 +335,14 @@ class KotlinIntrospectorTest {
             }
             // from kotlin
             inline infix fun <T> Comparable<T>.compareTo(other: T): Int
+            // from kotlin.ranges
+            fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T): T
+            fun <T : Comparable<T>> T.coerceAtMost(maximumValue: T): T
+            fun <T : Comparable<T>> T.coerceIn(minimumValue: T?, maximumValue: T?): T
+            fun <T : Comparable<T>> T.coerceIn(range: ClosedFloatingPointRange<T>): T
+            fun <T : Comparable<T>> T.coerceIn(range: ClosedRange<T>): T
+            operator fun <T : Comparable<T>> T.rangeTo(that: T): ClosedRange<T>
+            operator fun <T : Comparable<T>> T.rangeUntil(that: T): OpenEndRange<T>
             // from kotlin.text
             val CharSequence.indices: IntRange
             val CharSequence.lastIndex: Int
@@ -405,6 +415,8 @@ class KotlinIntrospectorTest {
             inline fun <K, V, M : MutableMap<in K, MutableList<V>>> CharSequence.groupByTo(destination: M, keySelector: (Char) -> K, valueTransform: (Char) -> V): M
             inline fun <K> CharSequence.groupingBy(keySelector: (Char) -> K): Grouping<Char, K>
             fun CharSequence.hasSurrogatePairAt(index: Int): Boolean
+            inline fun <C, R> C.ifBlank(defaultValue: () -> R): R where C : CharSequence, C : R
+            inline fun <C, R> C.ifEmpty(defaultValue: () -> R): R where C : CharSequence, C : R
             fun CharSequence.indexOf(char: Char, startIndex: Int = …, ignoreCase: Boolean = …): Int
             fun CharSequence.indexOf(string: String, startIndex: Int = …, ignoreCase: Boolean = …): Int
             fun CharSequence.indexOfAny(chars: CharArray, startIndex: Int = …, ignoreCase: Boolean = …): Int
@@ -467,6 +479,8 @@ class KotlinIntrospectorTest {
             fun CharSequence.minWithOrNull(comparator: java.util.Comparator<in Char>): Char?
             fun CharSequence.none(): Boolean
             inline fun CharSequence.none(predicate: (Char) -> Boolean): Boolean
+            inline fun <S : CharSequence> S.onEach(action: (Char) -> Unit): S
+            inline fun <S : CharSequence> S.onEachIndexed(action: (index: Int, Char) -> Unit): S
             fun CharSequence.padEnd(length: Int, padChar: Char = …): CharSequence
             fun CharSequence.padStart(length: Int, padChar: Char = …): CharSequence
             inline fun CharSequence.partition(predicate: (Char) -> Boolean): Pair<CharSequence, CharSequence>
@@ -1368,6 +1382,160 @@ class KotlinIntrospectorTest {
             // from com.xemantic.kotlin.introspection.test
             fun (context(String) () -> Unit).runInContext()
         """.trimIndent()
+    }
+
+    // function types, resolved by their Kotlin names
+
+    @Test
+    fun `should resolve function type by its Kotlin name with its extensions`() {
+        // the extensions of the supertype kotlin.Function are listed as well
+        resolver.resolve(
+            "kotlin.Function0"
+        ) sameAsKotlin """
+            // kotlin.Function0 [page 1/1]
+            interface Function0<out R> : Function<R> {
+                operator fun invoke(): R
+            }
+            // from com.xemantic.kotlin.introspection.test
+            val (() -> Unit).repeatCount: Int
+            fun (() -> Unit).repeat()
+            // from kotlin.reflect.jvm
+            fun <R> Function<R>.reflect(): KFunction<R>?
+            // from kotlinx.coroutines.flow
+            fun <T> (() -> T).asFlow(): kotlinx.coroutines.flow.Flow<T>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve function type with the extensions of function types with receiver and context parameters`() {
+        // String.() -> Unit and context(String) () -> Unit are both Function1<String, Unit>
+        resolver.resolve(
+            "kotlin.Function1",
+            pageSize = 1000
+        ) should {
+            have(lines()[1] == "interface Function1<in P1, out R> : Function<R> {")
+            have("    operator fun invoke(p1: P1): R" in lines())
+            have("fun (context(String) () -> Unit).runInContext()" in lines())
+        }
+    }
+
+    @Test
+    fun `should not list the extensions of suspend function types of the same runtime arity among the ones of function type`() {
+        // suspend () -> T is stored in the metadata as Function1<Continuation<T>, Any?>
+        resolver.resolve(
+            "kotlin.Function1",
+            pageSize = 1000
+        ) should {
+            have("startCoroutine" !in this)
+            have("retry" !in this)
+        }
+    }
+
+    @Test
+    fun `should resolve suspend function type by its Kotlin name with its extensions`() {
+        resolver.resolve(
+            "kotlin.coroutines.SuspendFunction0",
+            pageSize = 1000
+        ) should {
+            have(lines()[1] == "interface SuspendFunction0<out R> : Function<R> {")
+            have("    suspend operator fun invoke(): R" in lines())
+            have("fun (suspend () -> Unit).retry()" in lines())
+            have("val (suspend () -> Unit).retryCount: Int" in lines())
+            have("fun <T> (suspend () -> T).startCoroutine(completion: Continuation<T>)" in lines())
+            have("fun <T> (suspend () -> T).createCoroutine(completion: Continuation<T>): Continuation<Unit>" in lines())
+            have("fun <R> Function<R>.reflect(): KFunction<R>?" in lines())
+            have("repeat()" !in this)
+        }
+    }
+
+    @Test
+    fun `should resolve suspend function type with receiver with its extensions`() {
+        resolver.resolve(
+            "kotlin.coroutines.SuspendFunction1",
+            pageSize = 1000
+        ) should {
+            have(lines()[1] == "interface SuspendFunction1<in P1, out R> : Function<R> {")
+            have("    suspend operator fun invoke(p1: P1): R" in lines())
+            have("fun <R, T> (suspend R.() -> T).startCoroutine(receiver: R, completion: Continuation<T>)" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve function type above arity 22`() {
+        resolver.resolve(
+            "kotlin.Function23"
+        ) should {
+            have(lines()[1] == "interface Function23<${(1..23).joinToString(", ") { "in P$it" }}, out R> : Function<R> {")
+            have(lines()[2] == "    operator fun invoke(${(1..23).joinToString(", ") { "p$it: P$it" }}): R")
+        }
+    }
+
+    @Test
+    fun `should not resolve function type name with leading zero in arity`() {
+        assert(resolver.resolve("kotlin.Function01") == null)
+    }
+
+    @Test
+    fun `should not resolve suspend function type name without arity`() {
+        assert(resolver.resolve("kotlin.coroutines.SuspendFunction") == null)
+    }
+
+    @Test
+    fun `should resolve invoke of function type`() {
+        resolver.resolve(
+            "kotlin.Function1.invoke"
+        ) sameAsKotlin """
+            // kotlin.Function1.invoke [page 1/1]
+            operator fun invoke(p1: P1): R
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension of function type as its member`() {
+        resolver.resolve(
+            "kotlin.Function0.repeat"
+        ) sameAsKotlin """
+            // kotlin.Function0.repeat [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            fun (() -> Unit).repeat()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension of suspend function type as its member`() {
+        resolver.resolve(
+            "kotlin.coroutines.SuspendFunction0.startCoroutine"
+        ) sameAsKotlin """
+            // kotlin.coroutines.SuspendFunction0.startCoroutine [page 1/1]
+            // from kotlin.coroutines
+            fun <T> (suspend () -> T).startCoroutine(completion: Continuation<T>)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve JVM function interface with the extensions of its function type`() {
+        resolver.resolve(
+            "kotlin.jvm.functions.Function0"
+        ) sameAsKotlin """
+            // kotlin.jvm.functions.Function0 [page 1/1]
+            interface Function0<out R> : Function<R> {
+                operator fun invoke(): R
+            }
+            // from com.xemantic.kotlin.introspection.test
+            val (() -> Unit).repeatCount: Int
+            fun (() -> Unit).repeat()
+            // from kotlinx.coroutines.flow
+            fun <T> (() -> T).asFlow(): kotlinx.coroutines.flow.Flow<T>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should find function types by their Kotlin names`() {
+        resolver.search("Function1", pageSize = 1000) should {
+            have("kotlin.Function1" in lines())
+            have("kotlin.Function10" in lines())
+            have("kotlin.coroutines.SuspendFunction1" in lines())
+        }
     }
 
     @Test
@@ -3502,6 +3670,101 @@ class KotlinIntrospectorTest {
         """.trimIndent()
     }
 
+    // TestBoundedReceiverExtensions tests
+
+    @Test
+    fun `should resolve class with extensions on type parameters bounded by its supertype`() {
+        // the extensions on an unbounded type parameter, like unboundedReceiver(), are not listed for any class
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverOnlyA"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverOnlyA [page 1/1]
+            class BoundedReceiverOnlyA : BoundedReceiverA
+            // from com.xemantic.kotlin.introspection.test
+            val <T : BoundedReceiverA> T.boundedPropertyOfA: Int
+            fun <T : BoundedReceiverA> T.boundedByA(): T
+            fun <U : BoundedReceiverA, T : U> T.boundedByTypeParameter()
+            fun <T : BoundedReceiverA?> T.nullableBoundedByA()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve interface with extensions on type parameters bounded by it`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverA"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverA [page 1/1]
+            interface BoundedReceiverA
+            // from com.xemantic.kotlin.introspection.test
+            val <T : BoundedReceiverA> T.boundedPropertyOfA: Int
+            fun <T : BoundedReceiverA> T.boundedByA(): T
+            fun <U : BoundedReceiverA, T : U> T.boundedByTypeParameter()
+            fun <T : BoundedReceiverA?> T.nullableBoundedByA()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extension on type parameter with multiple bounds satisfied by its supertypes once`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverBoth"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverBoth [page 1/1]
+            class BoundedReceiverBoth : BoundedReceiverA, BoundedReceiverB
+            // from com.xemantic.kotlin.introspection.test
+            val <T : BoundedReceiverA> T.boundedPropertyOfA: Int
+            fun <T : BoundedReceiverA> T.boundedByA(): T
+            fun <T> T.boundedByBoth() where T : BoundedReceiverA, T : BoundedReceiverB
+            fun <U : BoundedReceiverA, T : U> T.boundedByTypeParameter()
+            fun <T : BoundedReceiverA?> T.nullableBoundedByA()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not list extension on type parameter with multiple bounds for interface satisfying only one of them`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverB"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverB [page 1/1]
+            interface BoundedReceiverB
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve built-in type with stdlib extensions on type parameters bounded by its supertype`() {
+        // coerceAtLeast is declared both for Int, shown in the class body, and for any Comparable
+        resolver.resolve(
+            "kotlin.Int",
+            pageSize = 10000
+        ) should {
+            have("    fun coerceAtLeast(minimumValue: Int): Int" in lines())
+            have("fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T): T" in lines())
+            have(lines().none { "T.also(" in it || "T.let(" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve built-in type with stdlib extensions on type parameters bounded by it outside of its body`() {
+        // the receiver type parameter cannot be omitted, as the class body would make of it
+        resolver.resolve(
+            "kotlin.Comparable",
+            pageSize = 10000
+        ) should {
+            have("fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T): T" in lines())
+            have(lines().none { "coerceAtLeast" in it && it.startsWith("    ") })
+        }
+    }
+
+    @Test
+    fun `should resolve String with stdlib extensions on type parameters with multiple bounds`() {
+        // C : R is a bound on an unbounded type parameter, satisfied by any type
+        resolver.resolve(
+            "kotlin.String",
+            pageSize = 10000
+        ) should {
+            have("inline fun <C, R> C.ifEmpty(defaultValue: () -> R): R where C : CharSequence, C : R" in lines())
+        }
+    }
+
     @Test
     fun `should resolve extension of supertype as class member`() {
         // listed with the class, so it can be called on it
@@ -5195,7 +5458,7 @@ class KotlinIntrospectorTest {
         resolver.resolve(
             "kotlin.collections.MutableList"
         ) sameAsKotlin """
-            // kotlin.collections.MutableList [page 1/34]
+            // kotlin.collections.MutableList [page 1/35]
             interface MutableList<E> : List<E>, MutableCollection<E> {
                 override fun add(element: E): Boolean
                 fun add(index: Int, element: E)

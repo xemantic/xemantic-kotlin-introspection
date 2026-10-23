@@ -63,7 +63,8 @@ internal data class IndexedExtension(
     val sourceClass: String,  // fully qualified class name where it's defined
     val source: String,  // the package, or the object, to import it from
     val isObjectMember: Boolean,  // whether the source is an object
-    val deprecation: Deprecation? = null  // never a hidden one, as the hidden extensions are not indexed
+    val deprecation: Deprecation? = null,  // never a hidden one, as the hidden extensions are not indexed
+    val receiverBounds: Set<String> = emptySet()  // see receiverBoundsOf
 )
 
 /**
@@ -75,7 +76,8 @@ internal data class IndexedExtensionProperty(
     val source: String,  // the package, or the object, to import it from
     val isObjectMember: Boolean,  // whether the source is an object
     val isAssignable: Boolean,  // whether its setter can be called, see apiSetterVisibility
-    val deprecation: Deprecation? = null  // never a hidden one, as the hidden extensions are not indexed
+    val deprecation: Deprecation? = null,  // never a hidden one, as the hidden extensions are not indexed
+    val receiverBounds: Set<String> = emptySet()  // see receiverBoundsOf
 ) {
     // the setter of an extension is public, as only the public extensions are indexed
     val setterVisibility: Visibility? get() = if (isAssignable) Visibility.PUBLIC else null
@@ -366,7 +368,7 @@ internal class DefaultKotlinIntrospector(
                 // sorted once, so that the output does not depend on the classpath scan order
                 extensionIndex = scan.extensionIndex.sortedByNameAndSourceClass()
                 extensionPropertyIndex = scan.extensionPropertyIndex.sortedByNameAndSourceClass()
-                classIndex = scan.classIndex
+                classIndex = scan.classIndex.withFunctionTypeClasses()
                 logger.debug {
                     "Classpath scan read ${scan.readClassFileCount} class files, " +
                         "skipped ${scan.skippedClassFileCount} nested ones"
@@ -390,6 +392,15 @@ internal class DefaultKotlinIntrospector(
         for (i in parts.size downTo 1) {
             val className = parts.take(i).joinToString(".")
             val memberName = if (i < parts.size) parts.drop(i).joinToString(".") else null
+
+            // a function type class, synthesized by the compiler, like kotlin.Function1
+            FunctionTypeClass.of(className)?.let { functionTypeClass ->
+                return if (memberName != null) {
+                    resolveFunctionTypeMember(functionTypeClass, className, memberName)
+                } else {
+                    formatFunctionTypeClass(functionTypeClass, className)
+                }
+            }
 
             // Check if this className is a built-in type
             builtinTypes[className]?.let { kClass ->
@@ -865,7 +876,7 @@ internal class DefaultKotlinIntrospector(
      * and its supertypes, see [userSupertypes].
      */
     private fun extensionReceiverNames(kmClass: KmClass, className: String): List<String> =
-        listOf(className) + userSupertypes(kmClass)
+        listOfNotNull(className, jvmFunctionTypeName(className)) + userSupertypes(kmClass)
 
     /**
      * Resolves the top-level declarations named [memberName] of a file facade like the members of a class,
@@ -1002,23 +1013,29 @@ internal class DefaultKotlinIntrospector(
         }
         val supertypeNames = builtinSupertypeNames(kClass, mutableKmClass)
 
+        // the class and its supertypes, satisfying the multiple bounds of a type parameter receiver, see receiverBoundsOf
+        val satisfiedBounds = lazy { supertypeNames.toSet() + kotlinName }
+
         // Extension functions on this exact type (shown inside class body)
         // Only include extensions from kotlin.* packages for built-in types
-        // The ones to import from an object, like Int.seconds of Duration.Companion, are shown outside class body
-        val (objectExtensions, packageExtensions) = getExtensionsFor(kotlinName)
+        // The ones to import from an object, like Int.seconds of Duration.Companion, are shown outside class body,
+        // and so are the ones on a type parameter bounded by this type, like coerceAtLeast of Comparable,
+        // whose receiver type parameter would be lost in the class body
+        val (outsideExtensions, bodyExtensions) = extensionsFor(listOf(kotlinName), satisfiedBounds)
             .filter { isPublicKotlinPackageSource(it.sourceClass) }
-            .partition { it.isObjectMember }
-        packageExtensions.forEach { ext ->
+            .partition { it.isObjectMember || it.function.receiverParameterType.isTypeParameter() }
+        bodyExtensions.forEach { ext ->
             allMembers.add(
                 Member(ext.function.name, listOf(formatFunction(ext.function, withReceiver = false, deprecation = ext.deprecation)))
             )
         }
 
         // Extension properties on this exact type (shown inside class body)
-        val (objectExtensionProperties, packageExtensionProperties) = getExtensionPropertiesFor(kotlinName)
-            .filter { isPublicKotlinPackageSource(it.sourceClass) }
-            .partition { it.isObjectMember }
-        packageExtensionProperties.forEach { extProp ->
+        val (outsideExtensionProperties, bodyExtensionProperties) =
+            extensionPropertiesFor(listOf(kotlinName), satisfiedBounds)
+                .filter { isPublicKotlinPackageSource(it.sourceClass) }
+                .partition { it.isObjectMember || it.property.receiverParameterType.isTypeParameter() }
+        bodyExtensionProperties.forEach { extProp ->
             allMembers.add(
                 Member(
                     extProp.property.name,
@@ -1029,14 +1046,14 @@ internal class DefaultKotlinIntrospector(
 
         // Extension functions and properties on all the supertypes (shown outside class body)
         // Only include extensions from kotlin.* packages for built-in types
-        val supertypeExtensions = objectExtensions + supertypeNames.flatMap { supertypeName ->
-            getExtensionsFor(supertypeName)
+        val supertypeExtensions = (
+            outsideExtensions + extensionsFor(supertypeNames, satisfiedBounds)
                 .filter { isPublicKotlinPackageSource(it.sourceClass) }
-        }
-        val supertypeExtensionProperties = objectExtensionProperties + supertypeNames.flatMap { supertypeName ->
-            getExtensionPropertiesFor(supertypeName)
+            ).distinct()
+        val supertypeExtensionProperties = (
+            outsideExtensionProperties + extensionPropertiesFor(supertypeNames, satisfiedBounds)
                 .filter { isPublicKotlinPackageSource(it.sourceClass) }
-        }
+            ).distinct()
 
         return ClassListing.of(
             header = declaration,
@@ -1142,6 +1159,61 @@ internal class DefaultKotlinIntrospector(
             }
         }
         return supertypeNames
+    }
+
+    /**
+     * All the supertypes of a class, by their names, also the ones from `kotlin.*` and `java.*` packages,
+     * unlike the [userSupertypes], telling whether the class satisfies the multiple bounds of a type parameter receiver,
+     * see [receiverBoundsOf].
+     * The supertypes of a Java supertype are not known, as it has no Kotlin metadata.
+     */
+    private fun allSupertypeNames(kmClass: KmClass): Set<String> {
+        val supertypeNames = linkedSetOf<String>()
+        val pending = ArrayDeque(listOf(kmClass))
+        while (pending.isNotEmpty()) {
+            for (supertype in pending.removeFirst().supertypes) {
+                val metadataName = (supertype.classifier as? KmClassifier.Class)?.name ?: continue
+                val name = metadataName.replace('/', '.')
+                if (!supertypeNames.add(name)) continue
+                (builtinKotlinClasses[name] ?: loadKmClass(metadataName))?.let { pending.add(it) }
+            }
+        }
+        return supertypeNames
+    }
+
+    /**
+     * Lists a function type class, see [FunctionTypeClass], with its `invoke` operator,
+     * and the extensions on its function types and on their supertype `kotlin.Function`.
+     */
+    private fun formatFunctionTypeClass(functionTypeClass: FunctionTypeClass, className: String): ClassListing {
+        val receiverNames = listOf(className, FUNCTION_CLASS_NAME)
+        val supertypeNames = lazyOf(receiverNames.toSet())
+        return ClassListing.of(
+            header = functionTypeClass.header,
+            members = listOf(ListingItem.Declaration(listOf(functionTypeClass.invoke))),
+            extensions = extensionSignatures(
+                extensionsFor(receiverNames, supertypeNames),
+                extensionPropertiesFor(receiverNames, supertypeNames),
+                contextPackage = null
+            )
+        )
+    }
+
+    /**
+     * Resolves the `invoke` operator, and the extensions, of a function type class named [memberName].
+     */
+    private fun resolveFunctionTypeMember(
+        functionTypeClass: FunctionTypeClass,
+        className: String,
+        memberName: String
+    ): MemberListing? {
+        val members = if (memberName == "invoke") listOf(functionTypeClass.invoke) else emptyList()
+        val extensions = extensionSignatures(
+            getExtensionsFor(className).filter { it.function.name == memberName },
+            getExtensionPropertiesFor(className).filter { it.property.name == memberName },
+            contextPackage = null
+        )
+        return MemberListing.of(members.map { ListingItem.Declaration(listOf(it)) } + extensions)
     }
 
     /**
@@ -1376,10 +1448,12 @@ internal class DefaultKotlinIntrospector(
         }.toMap()
         val declaredInConstructor = constructorProperties.values.toSet()
 
-        // Extensions from the index on this type and its supertypes (shown after class body with source)
+        // Extensions from the index on this type and its supertypes (shown after class body with source),
+        // a JVM function interface, like kotlin.jvm.functions.Function1, has the ones of its function type
         val receiverNames = extensionReceiverNames(kmClass, className)
-        val extensions = receiverNames.flatMap { getExtensionsFor(it) }
-        val extensionProperties = receiverNames.flatMap { getExtensionPropertiesFor(it) }
+        val supertypeNames = lazy { setOf(className) + allSupertypeNames(kmClass) }
+        val extensions = extensionsFor(receiverNames, supertypeNames)
+        val extensionProperties = extensionPropertiesFor(receiverNames, supertypeNames)
 
         // For annotation classes, the parameters are shown inline, without body
         val annotationParameters = primaryConstructor?.valueParameters
@@ -2705,13 +2779,18 @@ internal class DefaultKotlinIntrospector(
         funcIndex: MutableMap<String, MutableList<IndexedExtension>>,
         propIndex: MutableMap<String, MutableList<IndexedExtensionProperty>>
     ) {
+        // an extension on a type parameter with multiple bounds is indexed under each of them, see receiverIndexKeys
         for (extension in functions) {
             val receiverType = extension.function.receiverParameterType ?: continue
-            funcIndex.getOrPut(receiverIndexKey(receiverType)) { mutableListOf() }.add(extension)
+            val receiverNames = receiverIndexKeys(receiverType, extension.function.typeParameters)
+            val bounded = extension.copy(receiverBounds = receiverBoundsOf(receiverNames))
+            receiverNames.forEach { funcIndex.getOrPut(it) { mutableListOf() }.add(bounded) }
         }
         for (extension in properties) {
             val receiverType = extension.property.receiverParameterType ?: continue
-            propIndex.getOrPut(receiverIndexKey(receiverType)) { mutableListOf() }.add(extension)
+            val receiverNames = receiverIndexKeys(receiverType, extension.property.typeParameters)
+            val bounded = extension.copy(receiverBounds = receiverBoundsOf(receiverNames))
+            receiverNames.forEach { propIndex.getOrPut(it) { mutableListOf() }.add(bounded) }
         }
     }
 
@@ -3061,6 +3140,27 @@ internal class DefaultKotlinIntrospector(
     }
 
     /**
+     * The extensions listed for a class, the ones on any of the [receiverNames], like the class and its supertypes,
+     * each one once, skipping the ones on a type parameter with multiple bounds, like `where T : A, T : B`,
+     * unless the class is a subtype of all of them, among the [supertypeNames], computed only when needed.
+     */
+    private fun extensionsFor(receiverNames: Collection<String>, supertypeNames: Lazy<Set<String>>): List<IndexedExtension> =
+        receiverNames.flatMap { getExtensionsFor(it) }
+            .filter { extension -> extension.receiverBounds.all { it in supertypeNames.value } }
+            .distinct()
+
+    /**
+     * The extension properties listed for a class, like the [extensionsFor].
+     */
+    private fun extensionPropertiesFor(
+        receiverNames: Collection<String>,
+        supertypeNames: Lazy<Set<String>>
+    ): List<IndexedExtensionProperty> =
+        receiverNames.flatMap { getExtensionPropertiesFor(it) }
+            .filter { extension -> extension.receiverBounds.all { it in supertypeNames.value } }
+            .distinct()
+
+    /**
      * Get extension functions for a given fully qualified type name.
      */
     private fun getExtensionsFor(typeName: String): List<IndexedExtension> =
@@ -3341,19 +3441,69 @@ private class MemberListing(
 }
 
 /**
- * The key of the extension index under which an extension with the given receiver [type] is listed.
- * Extensions on a type parameter, like `fun <T> T.let()`, are not listed for any class,
- * so their key contains `[`, which cannot appear in a class name, nor in a segment of its package (JVMS §4.2.2).
+ * The keys of the extension index under which an extension with the given receiver [type] is listed,
+ * a single one, unless the receiver is a type parameter with multiple bounds.
+ *
+ * Extensions on a type parameter bounded by a class, like `fun <T : Comparable<T>> T.coerceAtLeast(…)`,
+ * are keyed by the bound, like `kotlin.Comparable`, and with multiple bounds, like `where T : A, T : B`, by each of them,
+ * to be listed only for the classes satisfying all of them, see [receiverBoundsOf].
+ * Extensions on an unbounded type parameter, like `fun <T> T.let()`, are not listed for any class, as they would
+ * flood every listing, so their key contains `[`, which cannot appear in a class name,
+ * nor in a segment of its package (JVMS §4.2.2).
  * A suspend function type, like `suspend () -> Unit`, is stored in the metadata as `Function1<Continuation<Unit>, Any?>`,
  * so it is keyed as `kotlin.coroutines.SuspendFunction0` instead, not to be listed as an extension of `kotlin.Function1`.
+ *
+ * @param typeParameters the type parameters of the extension, declaring the bounds of a type parameter receiver.
  */
-internal fun receiverIndexKey(type: KmType): String = when (val classifier = type.classifier) {
+internal fun receiverIndexKeys(type: KmType, typeParameters: List<KmTypeParameter> = emptyList()): List<String> =
+    when (type.classifier) {
+        is KmClassifier.TypeParameter -> typeParameterReceiverKeys(type, typeParameters)
+        else -> listOf(classReceiverIndexKey(type))
+    }
+
+/**
+ * The key of a receiver [type] which is not a type parameter, see [receiverIndexKeys].
+ */
+private fun classReceiverIndexKey(type: KmType): String = when (val classifier = type.classifier) {
     is KmClassifier.Class -> type.takeIf { it.isSuspend }
         ?.decodeRuntimeFunctionType()
-        ?.let { "kotlin.coroutines.SuspendFunction${it.parameters.size}" }
+        ?.let { "$SUSPEND_FUNCTION_PREFIX${it.parameters.size}" }
         ?: classifier.name.replace('/', '.')
     is KmClassifier.TypeAlias -> classifier.name.replace('/', '.')
     is KmClassifier.TypeParameter -> TYPE_PARAMETER_RECEIVER_KEY
+}
+
+/**
+ * The keys of a type parameter receiver [type], the upper bounds of the type parameter, see [receiverIndexKeys].
+ * A bound which is a type parameter itself, like `U` of `fun <U : CharSequence, T : U> T.foo()`,
+ * stands for its own bounds, and, if it is unbounded, like `R` of `C : R`, constrains nothing.
+ * `Any` constrains nothing either, unless it is the only bound, like of `val <T : Any> T.javaClass`,
+ * listed then for `Any` itself.
+ * The nullability of a bound does not matter, like of the receiver type of any other extension.
+ */
+private fun typeParameterReceiverKeys(type: KmType, typeParameters: List<KmTypeParameter>): List<String> {
+    val typeParametersById = typeParameters.associateBy { it.id }
+    val bounds = linkedSetOf<String>()
+    val visited = mutableSetOf<Int>()
+    fun collectBounds(id: Int) {
+        if (!visited.add(id)) return
+        for (bound in typeParametersById[id]?.upperBounds.orEmpty()) {
+            val classifier = bound.classifier
+            when {
+                classifier is KmClassifier.TypeParameter -> collectBounds(classifier.id)
+                // the implicit bound of any type parameter
+                classifier is KmClassifier.Class && classifier.name == "kotlin/Any" && bound.isNullable -> Unit
+                else -> bounds += classReceiverIndexKey(bound)
+            }
+        }
+    }
+    collectBounds((type.classifier as KmClassifier.TypeParameter).id)
+    val constrainingBounds = bounds - ANY_RECEIVER_KEY
+    return when {
+        constrainingBounds.isNotEmpty() -> constrainingBounds.toList()
+        bounds.isNotEmpty() -> listOf(ANY_RECEIVER_KEY)
+        else -> listOf(TYPE_PARAMETER_RECEIVER_KEY)
+    }
 }
 
 /**
@@ -3392,3 +3542,58 @@ private const val TYPE_PARAMETER_RECEIVER_KEY = "[type parameter]"
  * or the facade class name for the default package, which has no name.
  */
 private fun packageSourceOf(binaryName: String): String = binaryName.substringBeforeLast('.')
+
+private const val ANY_RECEIVER_KEY = "kotlin.Any"
+
+/**
+ * The supertype of all the function types, see [FunctionTypeClass].
+ */
+private const val FUNCTION_CLASS_NAME = "kotlin.Function"
+
+private const val JVM_FUNCTION_PREFIX = "kotlin.jvm.functions.Function"
+
+/**
+ * The highest arity of a function type compiled to its own JVM interface, like `kotlin.jvm.functions.Function22`.
+ */
+private const val MAX_JVM_FUNCTION_ARITY = 22
+
+/**
+ * The Kotlin name of the function type class compiled to the JVM interface named [className],
+ * like `kotlin.Function1` of `kotlin.jvm.functions.Function1`, or `null` if it is not one.
+ */
+private fun jvmFunctionTypeName(className: String): String? {
+    if (!className.startsWith(JVM_FUNCTION_PREFIX)) return null
+    val digits = className.substring(JVM_FUNCTION_PREFIX.length)
+    val arity = digits.toIntOrNull()?.takeIf { it in 0..MAX_JVM_FUNCTION_ARITY && it.toString() == digits }
+    return arity?.let { "$FUNCTION_TYPE_PREFIX$it" }
+}
+
+/**
+ * The names of the function type classes found by the [KotlinIntrospector.search], the ones up to the arity
+ * of the JVM interfaces they are compiled to, like `kotlin.Function22`, while the higher ones can still be resolved.
+ */
+internal val searchableFunctionTypeNames: List<String> = (0..MAX_JVM_FUNCTION_ARITY).flatMap {
+    listOf("$FUNCTION_TYPE_PREFIX$it", "$SUSPEND_FUNCTION_PREFIX$it")
+}
+
+/**
+ * This class index, by the lowercase simple names, with the [searchableFunctionTypeNames] as well,
+ * as the compiler synthesizes the function type classes, there are no class files of them to scan.
+ */
+private fun Map<String, List<String>>.withFunctionTypeClasses(): Map<String, List<String>> {
+    val index = mapValuesTo(mutableMapOf()) { it.value.toMutableList() }
+    searchableFunctionTypeNames.forEach { kotlinName ->
+        index.getOrPut(kotlinName.substringAfterLast('.').lowercase()) { mutableListOf() }.add(kotlinName)
+    }
+    return index
+}
+
+private fun KmType?.isTypeParameter(): Boolean = this?.classifier is KmClassifier.TypeParameter
+
+/**
+ * The bounds a class has to be a subtype of, all of them, for an extension under the given [receiverIndexKeys]
+ * to be listed for it, the multiple bounds of a type parameter receiver, like `where T : A, T : B`.
+ * An extension under a single key is listed for any class looking it up.
+ */
+internal fun receiverBoundsOf(receiverIndexKeys: List<String>): Set<String> =
+    if (receiverIndexKeys.size > 1) receiverIndexKeys.toSet() else emptySet()
