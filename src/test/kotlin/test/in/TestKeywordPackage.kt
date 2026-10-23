@@ -36,3 +36,11 @@ fun KeywordPackageSample.extension(): KeywordPackageSample = this
 fun KeywordPackageClient.keywordPackageExtension(): KeywordPackageSample = sample()
 
 fun keywordPackageFunction(sample: KeywordPackageSample): Int = sample.value
+
+// top-level properties, whose names cannot be told from the methods of the file facade
+const val KEYWORD_PACKAGE_CONSTANT: Int = 42
+
+@JvmField
+val keywordPackageField: String = ""
+
+val URL: String get() = ""

@@ -548,6 +548,43 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should escape sealed subclass named like hard keyword without class file`() {
+        // given
+        val introspector = introspectorWithoutAbsentClass("KeywordSubclassSealed\$in.class")
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.KeywordSubclassSealed")
+
+        // then
+        // escaped like the name of a when branch covering it
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.KeywordSubclassSealed [page 1/1]
+            sealed interface KeywordSubclassSealed {
+                class Kept : KeywordSubclassSealed
+                // sealed subclass not found: com.xemantic.kotlin.introspection.isolated.KeywordSubclassSealed.`in`
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should escape sealed subclass named like hard keyword without metadata`() {
+        // given
+        val introspector = introspectorWithoutMetadata("KeywordSubclassSealed\$in.class")
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.KeywordSubclassSealed")
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.KeywordSubclassSealed [page 1/1]
+            sealed interface KeywordSubclassSealed {
+                class Kept : KeywordSubclassSealed
+                // sealed subclass could not be read: com.xemantic.kotlin.introspection.isolated.KeywordSubclassSealed.`in`
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve nested class of outer class without class file`() {
         // given
         val introspector = introspectorWithoutAbsentClass("MissingOuter.class")

@@ -162,6 +162,8 @@ testing {
                 implementation(libs.kotlin.test.junit5)
                 implementation(libs.xemantic.kotlin.test)
                 implementation(libs.kotlin.compiler.embeddable)
+                // reading the names of the top-level declarations of the file facades
+                implementation(libs.kotlin.metadata.jvm)
                 runtimeOnly(libs.logback.classic)
             }
             targets.configureEach {
