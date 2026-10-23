@@ -22,12 +22,22 @@ package com.xemantic.kotlin.introspection
 import com.xemantic.kotlin.test.assert
 import com.xemantic.kotlin.test.have
 import com.xemantic.kotlin.test.should
+import org.junit.jupiter.api.Assumptions.assumeFalse
+import java.lang.reflect.Method
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
 
 // we keep this dependency statically initialized, so that classpath scanning happens only once
 // given
 val resolver = KotlinIntrospector()
+
+/**
+ * Skips a test assuming that the Java [method] has no parameter names,
+ * like the methods of the JDK, unless it is built with the `-parameters` option.
+ */
+internal fun assumeNoParameterNames(method: Method) {
+    assumeFalse(method.parameters.any { it.isNamePresent }, "$method has parameter names")
+}
 
 class KotlinIntrospectorTest {
 
@@ -4153,13 +4163,15 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should not resolve Java-only member of built-in type which its listing leaves out`() {
-        // the JDK is compiled without parameter names, so String.indent(arg0: Int) of JDK 12+ tells nothing about its parameter
+        // the JDK is compiled without parameter names, so String.indent(arg0: Int) tells nothing about its parameter
+        assumeNoParameterNames(String::class.java.getMethod("indent", Int::class.java))
         assert(resolver.resolve("kotlin.String.indent") == null)
     }
 
     @Test
     fun `should resolve extension of built-in type without Java-only member of the same name`() {
         // not with the addSuppressed(arg0: Throwable) of java.lang.Throwable, which the listing leaves out
+        assumeNoParameterNames(Throwable::class.java.getMethod("addSuppressed", Throwable::class.java))
         resolver.resolve("kotlin.Throwable.addSuppressed") sameAsKotlin """
             // kotlin.Throwable.addSuppressed [page 1/1]
             // from kotlin
