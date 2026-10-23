@@ -35,6 +35,7 @@ import java.nio.file.Path
 import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 import java.util.jar.Attributes
+import java.util.jar.JarEntry
 import java.util.jar.JarOutputStream
 import java.util.jar.Manifest
 import kotlin.io.path.createDirectories
@@ -879,6 +880,36 @@ class ClassLoaderIntrospectionTest {
             val TestClass.uppercaseName: String
             fun TestClass.describe(): String
         """.trimIndent()
+    }
+
+    @Test
+    fun `should list same-named extensions of built-in type from different files sorted by declaring file regardless of scan order`() {
+        // given
+        // the standard library files declaring Char.titlecase(), in the reverse order of their names,
+        // which the standard library jar itself keeps sorted
+        val stdlibFiles = listOf("kotlin/text/CharsKt__CharKt.class", "kotlin/text/CharsKt__CharJVMKt.class")
+        val reversedJar = tempDir.resolve("reversed.jar")
+        JarOutputStream(reversedJar.outputStream()).use { jar ->
+            stdlibFiles.forEach { file ->
+                jar.putNextEntry(JarEntry(file))
+                Unit::class.java.classLoader.getResourceAsStream(file)!!.use { it.copyTo(jar) }
+                jar.closeEntry()
+            }
+        }
+        // without the standard library jar, which would shadow the reversed one
+        val classLoader = URLClassLoader(arrayOf(reversedJar.toUri().toURL()), ClassLoader.getPlatformClassLoader())
+        val introspector = KotlinIntrospector(classLoader)
+
+        // when
+        val signature = introspector.resolve("kotlin.Char", pageSize = 10000)
+
+        // then
+        assert(
+            signature!!.lines().filter { "fun titlecase(" in it } == listOf(
+                "    fun titlecase(locale: java.util.Locale): String",
+                "    fun titlecase(): String"
+            )
+        )
     }
 
     @Test

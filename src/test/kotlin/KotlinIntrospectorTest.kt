@@ -909,6 +909,61 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve companion object function as class member`() {
+        // called as CompanionTestClass.create(), so looked up by the name of the outer class,
+        // rendered within the companion object, like in the listing, not to be taken for an instance member
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.CompanionTestClass.create"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.CompanionTestClass.create [page 1/1]
+            companion object {
+                fun create(): CompanionTestClass
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve companion object property as class member`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.CompanionTestClass.CONSTANT"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.CompanionTestClass.CONSTANT [page 1/1]
+            companion object {
+                const val CONSTANT: String
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve private companion object property as class member`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.CompanionTestClass.PRIVATE_CONSTANT") == null)
+    }
+
+    @Test
+    fun `should resolve named companion object function as class member`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.NamedCompanionHolder.of"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NamedCompanionHolder.of [page 1/1]
+            companion object Factory {
+                fun of(): NamedCompanionHolder
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve companion object function of nested class as its member`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.NestedCompanionTestClass.Inner.create"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NestedCompanionTestClass.Inner.create [page 1/1]
+            companion object {
+                fun create(): NestedCompanionTestClass.Inner
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should paginate companion object as a single member`() {
         // 9 members and the companion object block make 10 items, fitting the default page size
         resolver.resolve(
@@ -1043,6 +1098,7 @@ class KotlinIntrospectorTest {
             "com.xemantic.kotlin.introspection.test.TestValueParametersKt.valueParametersSample"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.TestValueParametersKt.valueParametersSample [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
             fun <T> valueParametersSample(vararg elements: T, limit: Int = …): List<T>
         """.trimIndent()
     }
@@ -1203,6 +1259,7 @@ class KotlinIntrospectorTest {
             "com.xemantic.kotlin.introspection.test.TestFunctionModifiersKt.retry"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.TestFunctionModifiersKt.retry [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
             fun (suspend () -> Unit).retry()
         """.trimIndent()
     }
@@ -1213,6 +1270,7 @@ class KotlinIntrospectorTest {
             "com.xemantic.kotlin.introspection.test.TestFunctionModifiersKt.retryCount"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.TestFunctionModifiersKt.retryCount [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
             val (suspend () -> Unit).retryCount: Int
         """.trimIndent()
     }
@@ -1259,6 +1317,7 @@ class KotlinIntrospectorTest {
             "com.xemantic.kotlin.introspection.test.TestFunctionModifiersKt.repeat"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.TestFunctionModifiersKt.repeat [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
             fun (() -> Unit).repeat()
         """.trimIndent()
     }
@@ -1269,6 +1328,7 @@ class KotlinIntrospectorTest {
             "com.xemantic.kotlin.introspection.test.TestFunctionModifiersKt.repeatCount"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.TestFunctionModifiersKt.repeatCount [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
             val (() -> Unit).repeatCount: Int
         """.trimIndent()
     }
@@ -1279,6 +1339,7 @@ class KotlinIntrospectorTest {
             "com.xemantic.kotlin.introspection.test.TestFunctionModifiersKt.runInContext"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.TestFunctionModifiersKt.runInContext [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
             fun (context(String) () -> Unit).runInContext()
         """.trimIndent()
     }
@@ -3176,6 +3237,34 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve extension of supertype as class member`() {
+        // listed with the class, so it can be called on it
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.TestSubtype.describeSupertype"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.TestSubtype.describeSupertype [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            fun TestSupertype.describeSupertype(): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension of intermediate supertype as class member`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.TestSubtype.describeIntermediate"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.TestSubtype.describeIntermediate [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            fun TestIntermediateType.describeIntermediate(): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve extension of subtype as member of its supertype`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.TestIntermediateType.describeSubtype") == null)
+    }
+
+    @Test
     fun `should resolve class with extensions sorted by name regardless of declaration and scan order`() {
         // the extensions are spread over 2 files, in each declared in reverse order,
         // and the order in which files are scanned depends on the file system;
@@ -3219,6 +3308,18 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // DefaultPackageSubject [page 1/1]
             class DefaultPackageSubject
+            // from DefaultPackageExtensionsKt
+            fun DefaultPackageSubject.greet(): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve function of file facade in the default package under the facade class name`() {
+        // like in the listing of the receiver, see above
+        resolver.resolve(
+            "DefaultPackageExtensionsKt.greet"
+        ) sameAsKotlin """
+            // DefaultPackageExtensionsKt.greet [page 1/1]
             // from DefaultPackageExtensionsKt
             fun DefaultPackageSubject.greet(): String
         """.trimIndent()
@@ -3368,7 +3469,8 @@ class KotlinIntrospectorTest {
             "com.xemantic.kotlin.introspection.test.TestExtensionVisibilityKt.helper"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.TestExtensionVisibilityKt.helper [page 1/1]
-            fun com.xemantic.kotlin.introspection.test.ExtensionVisibilityTarget.helper(): Int
+            // from com.xemantic.kotlin.introspection.test
+            fun ExtensionVisibilityTarget.helper(): Int
         """.trimIndent()
     }
 
@@ -3782,6 +3884,24 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should not resolve member of private companion object as class member`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.PrivateCompanionHolder.helper") == null)
+    }
+
+    @Test
+    fun `should resolve protected companion object member of open class as class member`() {
+        // a subclass of the outer class can call it, like in the listing
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ProtectedCompanionMembersHolder.protectedFactory"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ProtectedCompanionMembersHolder.protectedFactory [page 1/1]
+            companion object {
+                protected fun protectedFactory(): Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should not resolve private nested class`() {
         assert(resolver.resolve("com.xemantic.kotlin.introspection.test.OpenVisibilityHolder.NestedPrivate") == null)
     }
@@ -4015,17 +4135,60 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should resolve same-named extensions as class member grouped by the package to import them from`() {
-        // both kotlin-reflect and the standard library declare KClass.cast
+    fun `should resolve extension of built-in type only from the standard library, not from kotlin-reflect`() {
+        // both kotlin-reflect and the standard library declare KClass.cast,
+        // the kotlin.reflect.full one is not listed with KClass, depending on kotlin-reflect being on the classpath
         resolver.resolve(
             "kotlin.reflect.KClass.cast"
         ) sameAsKotlin """
             // kotlin.reflect.KClass.cast [page 1/1]
             // from kotlin.reflect
             fun <T : Any> KClass<T>.cast(value: Any?): T
-            // from kotlin.reflect.full
-            fun <T : Any> KClass<T>.cast(value: Any?): T
         """.trimIndent()
+    }
+
+    @Test
+    fun `should not list extensions of built-in type from kotlin-reflect`() {
+        resolver.resolve("kotlin.reflect.KClass", pageSize = 10000) should {
+            have(!contains("// from kotlin.reflect.full"))
+            have(!contains("// from kotlin.reflect.jvm"))
+        }
+    }
+
+    @Test
+    fun `should resolve extension of supertype of built-in type as its member`() {
+        // listed with String, as declared on CharSequence
+        resolver.resolve(
+            "kotlin.String.isBlank"
+        ) sameAsKotlin """
+            // kotlin.String.isBlank [page 1/1]
+            // from kotlin.text
+            fun CharSequence.isBlank(): Boolean
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension of supertype of built-in type returning a collection as its member`() {
+        resolver.resolve(
+            "kotlin.String.lines"
+        ) sameAsKotlin """
+            // kotlin.String.lines [page 1/1]
+            // from kotlin.text
+            fun CharSequence.lines(): List<String>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension of supertype of mutable built-in collection as its member`() {
+        resolver.resolve("kotlin.collections.MutableList.map") should {
+            have("inline fun <T, R> Iterable<T>.map(transform: (T) -> R): List<R>" in lines())
+        }
+    }
+
+    @Test
+    fun `should not resolve extension of built-in type from outside of the standard library declared on its supertype`() {
+        // CharSequence.charCount() of the test package is not listed with kotlin.String either
+        assert(resolver.resolve("kotlin.String.charCount") == null)
     }
 
     // TestOverloads tests
@@ -4042,11 +4205,24 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve property and function of the same name as class member in the order of the listing`() {
+        // the listing renders the properties before the functions
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.SameNamedPropertyAndFunction.size"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SameNamedPropertyAndFunction.size [page 1/1]
+            val size: Int
+            fun size(x: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve all overloads of top-level function`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.TestOverloadsKt.topLevelOverloaded"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.TestOverloadsKt.topLevelOverloaded [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
             fun topLevelOverloaded(): Int
             fun topLevelOverloaded(x: Int): Int
         """.trimIndent()
@@ -4054,6 +4230,7 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve all overloads of built-in type member`() {
+        // also the ones declared on CharSequence, listed with String too
         resolver.resolve(
             "kotlin.String.substring"
         ) sameAsKotlin """
@@ -4062,6 +4239,8 @@ class KotlinIntrospectorTest {
             inline fun String.substring(startIndex: Int): String
             inline fun String.substring(startIndex: Int, endIndex: Int): String
             fun String.substring(range: IntRange): String
+            inline fun CharSequence.substring(startIndex: Int, endIndex: Int = …): String
+            fun CharSequence.substring(range: IntRange): String
         """.trimIndent()
     }
 
@@ -4071,6 +4250,7 @@ class KotlinIntrospectorTest {
             "kotlin.collections.CollectionsKt.listOf"
         ) sameAsKotlin """
             // kotlin.collections.CollectionsKt.listOf [page 1/1]
+            // from kotlin.collections
             fun <T> listOf(element: T): List<T>
             fun <T> listOf(vararg elements: T): List<T>
             inline fun <T> listOf(): List<T>
@@ -4183,6 +4363,8 @@ class KotlinIntrospectorTest {
             override operator fun compareTo(other: Int): Int
             operator fun compareTo(other: Long): Int
             operator fun compareTo(other: Short): Int
+            // from kotlin
+            inline infix fun <T> Comparable<T>.compareTo(other: T): Int
         """.trimIndent()
     }
 
@@ -4520,6 +4702,28 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve only companion object overloads not deprecated with hidden level as class member`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenDeprecationTarget.create"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenDeprecationTarget.create [page 1/1]
+            companion object {
+                fun create(): HiddenDeprecationTarget
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve companion object constant deprecated with hidden level as class member`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenDeprecationTarget.HIDDEN_CONSTANT") == null)
+    }
+
+    @Test
+    fun `should not resolve companion object field deprecated with hidden level as class member`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenDeprecationTarget.hiddenField") == null)
+    }
+
+    @Test
     fun `should not resolve extension property deprecated with hidden level`() {
         assert(
             resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenDeprecationTarget.hiddenExtensionProperty") == null
@@ -4543,6 +4747,7 @@ class KotlinIntrospectorTest {
             "com.xemantic.kotlin.introspection.test.TestHiddenDeprecationKt.hiddenDeprecationTopLevel"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.TestHiddenDeprecationKt.hiddenDeprecationTopLevel [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
             fun hiddenDeprecationTopLevel(value: Int): Int
         """.trimIndent()
     }

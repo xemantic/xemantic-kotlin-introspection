@@ -618,8 +618,10 @@ internal class DefaultKotlinIntrospector(
             ?: kmClass.name.substringBeforeLast('/', "").replace('/', '.')
 
     /**
-     * Resolves the members and the extensions of a class named [memberName],
-     * rendered like in the listing of the class, the extensions under the `// from …` header
+     * Resolves the members named [memberName] which the listing of the class shows, in the same order:
+     * the properties, the functions, the members of the companion object, within its declaration,
+     * as they are called on the class name, like `Foo.create()`,
+     * and the extensions of the class and of its supertypes, under the `// from …` header
      * of the package, or the object, to import them from.
      *
      * @param scopes the scopes of the [kmClass] and its enclosing classes, from the outermost one.
@@ -635,19 +637,88 @@ internal class DefaultKotlinIntrospector(
         val typeParameters = typeParametersInScope(kmClass)
         val contextPackage = contextPackageOf(foundClass, kmClass)
 
-        val members = kmClass.functions.filter { it.name == memberName }.inApi(scopes, foundClass).map { function ->
-            formatFunction(function, inInterface = isInterface, owner = kmClass, contextPackage = contextPackage, classTypeParameters = typeParameters)
-        } + kmClass.properties.filter { it.name == memberName }.inApi(scopes, foundClass).map { property ->
+        val members = kmClass.properties.filter { it.name == memberName }.inApi(scopes, foundClass).map { property ->
             formatProperty(property, inInterface = isInterface, owner = kmClass, contextPackage = contextPackage, classTypeParameters = typeParameters)
+        } + kmClass.functions.filter { it.name == memberName }.inApi(scopes, foundClass).map { function ->
+            formatFunction(function, inInterface = isInterface, owner = kmClass, contextPackage = contextPackage, classTypeParameters = typeParameters)
         }
+
+        val companionMembers = apiCompanionOf(kmClass, scopes, foundClass)?.let { companion ->
+            val signatures = companion.properties.filter { it.name == memberName }.map {
+                formatCompanionProperty(it, companion, contextPackage)
+            } + companion.functions.filter { it.name == memberName }.map {
+                formatCompanionFunction(it, companion, contextPackage)
+            }
+            if (signatures.isEmpty()) null else buildList {
+                add("${formatCompanionHeader(kmClass, companion, contextPackage)} {")
+                signatures.forEach { add("    $it") }
+                add("}")
+            }.joinToString("\n")
+        }
+
+        val receiverNames = extensionReceiverNames(kmClass, className)
         val extensions = renderExtensions(
-            getExtensionsFor(className).filter { it.function.name == memberName },
-            getExtensionPropertiesFor(className).filter { it.property.name == memberName },
+            receiverNames.flatMap { getExtensionsFor(it) }.filter { it.function.name == memberName },
+            receiverNames.flatMap { getExtensionPropertiesFor(it) }.filter { it.property.name == memberName },
             contextPackage
         )
 
-        return memberSignatures(members, extensions)
+        return memberSignatures(members + listOfNotNull(companionMembers), extensions)
     }
+
+    /**
+     * The companion object of a class, unless it is not part of the API,
+     * with its [properties] and [functions] which are, see [inApi].
+     *
+     * @param outerScopes the scopes of the outer class and its enclosing classes, from the outermost one.
+     */
+    private inner class ApiCompanion(val kmClass: KmClass, val foundClass: FoundClass, outerScopes: List<ClassScope>) {
+
+        /**
+         * The scopes of the companion object and its enclosing classes, from the outermost one.
+         */
+        val scopes: List<ClassScope> = outerScopes + kmClass.scope
+
+        val properties: List<KmProperty> = kmClass.properties.inApi(scopes, foundClass)
+
+        val functions: List<KmFunction> = kmClass.functions.inApi(scopes, foundClass)
+
+    }
+
+    /**
+     * The companion object of the [kmClass], see [ApiCompanion], or `null` if it has none which is part of the API.
+     *
+     * @param scopes the scopes of the [kmClass] and its enclosing classes, from the outermost one.
+     */
+    private fun apiCompanionOf(kmClass: KmClass, scopes: List<ClassScope>, foundClass: FoundClass): ApiCompanion? {
+        val name = kmClass.companionObject ?: return null
+        // the binary name, as the class might be nested
+        val companionClass = findClassByBinaryName("${foundClass.binaryName}\$$name") ?: return null
+        val companion = companionClass.kmClass?.takeIf { it.visibility.isApiIn(scopes) } ?: return null
+        return ApiCompanion(companion, companionClass, scopes)
+    }
+
+    /**
+     * The declaration of the [companion] object of the [kmClass], like `companion object`,
+     * named only when custom, as the name is then needed to qualify the members, like `Outer.Factory.create()`.
+     */
+    private fun formatCompanionHeader(kmClass: KmClass, companion: ApiCompanion, contextPackage: String): String {
+        val companionName = kmClass.companionObject.takeIf { it != DEFAULT_COMPANION_NAME } ?: ""
+        return formatClassHeader(companion.kmClass, companionName, contextPackage)
+    }
+
+    private fun formatCompanionProperty(property: KmProperty, companion: ApiCompanion, contextPackage: String): String =
+        formatProperty(property, owner = companion.kmClass, contextPackage = contextPackage)
+
+    private fun formatCompanionFunction(function: KmFunction, companion: ApiCompanion, contextPackage: String): String =
+        formatFunction(function, inInterface = false, owner = companion.kmClass, contextPackage = contextPackage)
+
+    /**
+     * The receiver types whose extensions are shown with a class, the class named [className] itself,
+     * and its supertypes, see [userSupertypes].
+     */
+    private fun extensionReceiverNames(kmClass: KmClass, className: String): List<String> =
+        listOf(className) + userSupertypes(kmClass)
 
     /**
      * The [members] followed by the [extensions] rendered by [renderExtensions], or `null` if there are none.
@@ -656,14 +727,32 @@ internal class DefaultKotlinIntrospector(
         (members.joinToString("\n") + extensions).removePrefix("\n").ifEmpty { null }
 
     /**
+     * Resolves the top-level declarations named [memberName] of a file facade like the members of a class,
+     * see [resolveMember]: under the `// from …` header of the package to import them from,
+     * referring to the types of the package by their simple names, the properties first, then the functions.
+     *
      * @param kmPackages the package declarations, with the class declaring them, like a file facade.
      */
     private fun resolvePackageMember(kmPackages: List<Pair<KmPackage, FoundClass>>, memberName: String): String? {
-        val signatures = kmPackages.flatMap { (kmPackage, foundClass) ->
-            kmPackage.functions.filter { it.name == memberName }.inApi(emptyList(), foundClass).map { formatFunction(it) } +
-                kmPackage.properties.filter { it.name == memberName }.inApi(emptyList(), foundClass).map { formatProperty(it) }
+        fun signatures(
+            format: (KmPackage, FoundClass, contextPackage: String) -> List<String>
+        ): List<ListingItem.Extension> = kmPackages.flatMap { (kmPackage, foundClass) ->
+            val binaryName = foundClass.binaryName
+            // the facade class name for the default package, which has no name, like in the extension index
+            val source = binaryName.substringBeforeLast('.')
+            format(kmPackage, foundClass, binaryName.substringBeforeLast('.', "")).map { ListingItem.Extension(source, it) }
         }
-        return signatures.joinToString("\n").ifEmpty { null }
+        val properties = signatures { kmPackage, foundClass, contextPackage ->
+            kmPackage.properties.filter { it.name == memberName }.inApi(emptyList(), foundClass).map {
+                formatProperty(it, contextPackage = contextPackage)
+            }
+        }
+        val functions = signatures { kmPackage, foundClass, contextPackage ->
+            kmPackage.functions.filter { it.name == memberName }.inApi(emptyList(), foundClass).map {
+                formatFunction(it, contextPackage = contextPackage)
+            }
+        }
+        return (properties + functions).renderLines().joinToString("\n").ifEmpty { null }
     }
 
     /**
@@ -682,7 +771,6 @@ internal class DefaultKotlinIntrospector(
         val allMembers = mutableListOf<Member>()
 
         val declaration: String
-        val supertypeNames: Collection<String>
 
         if (mutableKmClass != null) {
             // kotlin-reflect would describe the read-only counterpart, sharing the same JVM type
@@ -713,7 +801,6 @@ internal class DefaultKotlinIntrospector(
                     )
                 )
             }
-            supertypeNames = builtinCollectionSupertypes(mutableKmClass)
         } else {
             // Supertypes (excluding Any and Java-specific interfaces)
             val javaOnlyInterfaces = setOf(
@@ -758,10 +845,8 @@ internal class DefaultKotlinIntrospector(
                     allMembers.add(Member(func.name, formatKFunction(func, isOverride(builtinKmClass, func))))
                 }
 
-            supertypeNames = kClass.allSuperclasses
-                .filter { it != Any::class }
-                .mapNotNull { it.qualifiedName }
         }
+        val supertypeNames = builtinSupertypeNames(kClass, mutableKmClass)
 
         // Extension functions on this exact type (shown inside class body)
         // Only include extensions from kotlin.* packages for built-in types
@@ -832,6 +917,19 @@ internal class DefaultKotlinIntrospector(
     }
 
     /**
+     * All the supertypes of a built-in type, excluding `Any`, taken from the [mutableKmClass],
+     * if it is a mutable built-in collection type, which kotlin-reflect would describe as its read-only counterpart.
+     */
+    private fun builtinSupertypeNames(kClass: KClass<*>, mutableKmClass: KmClass?): Collection<String> =
+        if (mutableKmClass != null) {
+            builtinCollectionSupertypes(mutableKmClass)
+        } else {
+            kClass.allSuperclasses
+                .filter { it != Any::class }
+                .mapNotNull { it.qualifiedName }
+        }
+
+    /**
      * All the supertypes of a built-in collection type, excluding `Any`.
      */
     private fun builtinCollectionSupertypes(kmClass: KmClass): Set<String> {
@@ -868,10 +966,13 @@ internal class DefaultKotlinIntrospector(
 
     /**
      * Only public packages of the standard library are relevant for the built-in types,
-     * other libraries, like kotlin-reflect, also ship `kotlin.*` packages for internal use.
+     * other libraries, like kotlin-reflect, also ship `kotlin.*` packages, for internal use,
+     * and public ones, see [kotlinReflectPackages], whose extensions would be listed with the built-in types
+     * only when kotlin-reflect is on the classpath, duplicating the ones of the standard library, like `KClass.cast()`.
      */
     private fun isPublicStdlibSource(sourceClass: String): Boolean =
-        sourceClass.startsWith("kotlin.") && !sourceClass.split('.').contains("internal")
+        sourceClass.startsWith("kotlin.") && !sourceClass.split('.').contains("internal") &&
+            kotlinReflectPackages.none { sourceClass.startsWith("$it.") }
 
     /**
      * Resolve a member of a built-in type.
@@ -885,30 +986,35 @@ internal class DefaultKotlinIntrospector(
         val mutableKmClass = if (className in mutableBuiltinTypes) builtinKmClass else null
         val mutableMembers = mutableKmClass?.let { kmClass ->
             val typeParameters = kmClass.typeParameters.namesById()
-            kmClass.functions.filter { it.name == memberName }.inMutableBuiltinApi().map {
-                formatFunction(it, inInterface = true, owner = kmClass, classTypeParameters = typeParameters)
-            } + kmClass.properties.filter { it.name == memberName }.inMutableBuiltinApi().map {
+            kmClass.properties.filter { it.name == memberName }.inMutableBuiltinApi().map {
                 formatProperty(it, inInterface = true, owner = kmClass, classTypeParameters = typeParameters)
+            } + kmClass.functions.filter { it.name == memberName }.inMutableBuiltinApi().map {
+                formatFunction(it, inInterface = true, owner = kmClass, classTypeParameters = typeParameters)
             }
         } ?: emptyList()
 
-        // Members are sorted, as kotlin-reflect does not guarantee their order
+        // Members are sorted, as kotlin-reflect does not guarantee their order,
+        // the properties first, like in the listing, where a property precedes a function of the same name
         val members = mutableMembers.ifEmpty {
-            kClass.memberFunctions.filter {
+            kClass.memberProperties.filter {
+                it.name == memberName && isBuiltinApi(it)
+            }.map { formatKProperty(it, isOverride(builtinKmClass, it)) } + kClass.memberFunctions.filter {
                 it.name == memberName && isBuiltinApi(it)
             }.map { formatKFunction(it, isOverride(builtinKmClass, it)) }.sortedBy {
                 it.removePrefix("override ")
-            } + kClass.memberProperties.filter {
-                it.name == memberName && isBuiltinApi(it)
-            }.map { formatKProperty(it, isOverride(builtinKmClass, it)) }
+            }
         }
 
-        // Only the extensions from the standard library, like in the listing of the built-in type
+        // The same extensions as the listing of the built-in type shows, the ones of the standard library
+        // on the type and on its supertypes, but all with their receivers, under the `// from …` header,
+        // while the listing renders the ones on the type itself, imported from a package, like `kotlin.text`,
+        // within the class body, without the receiver
+        val receiverNames = listOf(className) + builtinSupertypeNames(kClass, mutableKmClass)
         val extensions = renderExtensions(
-            getExtensionsFor(className).filter {
+            receiverNames.flatMap { getExtensionsFor(it) }.filter {
                 it.function.name == memberName && isPublicStdlibSource(it.sourceClass)
             },
-            getExtensionPropertiesFor(className).filter {
+            receiverNames.flatMap { getExtensionPropertiesFor(it) }.filter {
                 it.property.name == memberName && isPublicStdlibSource(it.sourceClass)
             },
             contextPackage = null
@@ -992,23 +1098,19 @@ internal class DefaultKotlinIntrospector(
             properties.firstOrNull { it.isDeclaredBy(param) }?.let { param.name to it }
         }.toMap()
 
-        // the binary name, as the class might be nested
-        val companionBinaryName = kmClass.companionObject?.let { "${foundClass.binaryName}\$$it" }
         // The companion object, unless it is not part of the API, with its members which are
-        val companionClass = companionBinaryName?.let { findClassByBinaryName(it) }
-        val companion = companionClass?.kmClass?.takeIf { it.visibility.isApiIn(scopes) }
-        val companionScopes = scopes + listOfNotNull(companion?.scope)
-        val companionProperties = companion?.properties.orEmpty().inApi(companionScopes, companionClass)
-        val companionFunctions = companion?.functions.orEmpty().inApi(companionScopes, companionClass)
+        val companion = apiCompanionOf(kmClass, scopes, foundClass)
         // the ones which are also sealed subclasses of this class are listed as such
         val companionNestedClasses = if (companion != null) {
-            listedNestedClasses(companion, companionScopes, companionClass.binaryName, kmClass.sealedSubclasses.toSet())
+            listedNestedClasses(
+                companion.kmClass, companion.scopes, companion.foundClass.binaryName, kmClass.sealedSubclasses.toSet()
+            )
         } else {
             emptyList()
         }
 
         // Extensions from the index on this type and its supertypes (shown after class body with source)
-        val receiverNames = listOf(className) + userSupertypes(kmClass)
+        val receiverNames = extensionReceiverNames(kmClass, className)
         val extensions = receiverNames.flatMap { getExtensionsFor(it) }
         val extensionProperties = receiverNames.flatMap { getExtensionPropertiesFor(it) }
 
@@ -1096,12 +1198,10 @@ internal class DefaultKotlinIntrospector(
 
             // even without members of the API, the companion object is a value, like a CoroutineContext.Key
             if (companion != null) {
-                // a custom name is needed to qualify the members, like Outer.Factory.create()
-                val companionName = kmClass.companionObject.takeIf { it != DEFAULT_COMPANION_NAME } ?: ""
-                val companionHeader = formatClassHeader(companion, companionName, contextPackage)
+                val companionHeader = formatCompanionHeader(kmClass, companion, contextPackage)
 
                 // a companion object without members of the API is rendered without a body
-                if (companionNestedClasses.isEmpty() && companionProperties.isEmpty() && companionFunctions.isEmpty()) {
+                if (companionNestedClasses.isEmpty() && companion.properties.isEmpty() && companion.functions.isEmpty()) {
                     add(listOf(companionHeader))
                 } else {
                     // a single member of the outer class, never split across pages
@@ -1114,13 +1214,13 @@ internal class DefaultKotlinIntrospector(
                         }
 
                         // Companion properties
-                        companionProperties.forEach { property ->
-                            add("    " + formatProperty(property, owner = companion, contextPackage = contextPackage))
+                        companion.properties.forEach { property ->
+                            add("    " + formatCompanionProperty(property, companion, contextPackage))
                         }
 
                         // Companion functions
-                        companionFunctions.forEach { function ->
-                            add("    " + formatFunction(function, inInterface = false, owner = companion, contextPackage = contextPackage))
+                        companion.functions.forEach { function ->
+                            add("    " + formatCompanionFunction(function, companion, contextPackage))
                         }
 
                         add("}")
@@ -2513,6 +2613,11 @@ internal fun Map<String, List<IndexedExtensionProperty>>.sortedByNameAndSourceCl
     mapValues { (_, properties) -> properties.sortedWith(extensionPropertyOrder) }
 
 private const val TYPE_PARAMETER_RECEIVER_KEY = "<type parameter>"
+
+/**
+ * The public packages of kotlin-reflect, which are not part of the standard library.
+ */
+private val kotlinReflectPackages = listOf("kotlin.reflect.full", "kotlin.reflect.jvm")
 
 private val runtimeFunctionTypeRegex = Regex("kotlin/(reflect/K)?Function\\d+")
 

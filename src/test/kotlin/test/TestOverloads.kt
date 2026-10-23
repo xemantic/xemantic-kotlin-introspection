@@ -27,3 +27,10 @@ class OverloadTestClass {
 // Overloaded top-level functions
 fun topLevelOverloaded(): Int = 0
 fun topLevelOverloaded(x: Int): Int = x
+
+// Class with a property and a function of the same name,
+// not named *TestClass, so that it does not shift the search results of the other tests
+class SameNamedPropertyAndFunction {
+    fun size(x: Int): Int = x
+    val size: Int = 0
+}
