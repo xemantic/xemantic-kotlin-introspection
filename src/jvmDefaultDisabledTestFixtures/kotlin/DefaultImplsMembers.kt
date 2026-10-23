@@ -31,3 +31,12 @@ interface DefaultImplsGreeter : DefaultImplsBase {
     override fun greet(name: String): String = greet(1)
     private fun greet(times: Int): String = "hello".repeat(times)
 }
+
+// the synthetic methods for the annotations of the interface properties are in its DefaultImpls class
+interface DefaultImplsHiddenProperties {
+    val visible: Int
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    val hiddenAbstract: Int
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    val hiddenWithGetter: Int get() = 1
+}

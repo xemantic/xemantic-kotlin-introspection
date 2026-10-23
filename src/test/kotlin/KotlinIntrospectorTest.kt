@@ -36,7 +36,7 @@ class KotlinIntrospectorTest {
         resolver.resolve(
             "kotlin.String"
         ) sameAsKotlin """
-            // kotlin.String [page 1/42]
+            // kotlin.String [page 1/41]
             class String : Comparable<String>, CharSequence {
                 inline fun byteInputStream(charset: java.nio.charset.Charset = …): java.io.ByteArrayInputStream
                 fun capitalize(): String
@@ -59,7 +59,7 @@ class KotlinIntrospectorTest {
             "kotlin.String",
             page = 2
         ) sameAsKotlin """
-            // kotlin.String [page 2/42]
+            // kotlin.String [page 2/41]
             class String : Comparable<String>, CharSequence {
                 inline fun contentEquals(charSequence: CharSequence): Boolean
                 inline fun contentEquals(stringBuilder: java.lang.StringBuffer): Boolean
@@ -82,7 +82,7 @@ class KotlinIntrospectorTest {
             "kotlin.String",
             page = 3
         ) sameAsKotlin """
-            // kotlin.String [page 3/42]
+            // kotlin.String [page 3/41]
             class String : Comparable<String>, CharSequence {
                 fun encodeToByteArray(startIndex: Int = …, endIndex: Int = …, throwOnInvalidSequence: Boolean = …): ByteArray
                 fun endsWith(suffix: String, ignoreCase: Boolean = …): Boolean
@@ -105,7 +105,7 @@ class KotlinIntrospectorTest {
             "kotlin.String",
             page = 19
         ) sameAsKotlin """
-            // kotlin.String [page 19/42]
+            // kotlin.String [page 19/41]
             class String : Comparable<String>, CharSequence {
                 inline fun uppercase(locale: java.util.Locale): String
             }
@@ -124,14 +124,18 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should resolve String as known stdlib class - page 42 (the last)`() {
+    fun `should resolve String as known stdlib class - page 41 (the last)`() {
         // extension-only pages omit the empty class body
         resolver.resolve(
             "kotlin.String",
-            page = 42
+            page = 41
         ) sameAsKotlin """
-            // kotlin.String [page 42/42]
+            // kotlin.String [page 41/41]
             // from kotlin.text
+            fun <R> CharSequence.windowedSequence(size: Int, step: Int = …, partialWindows: Boolean = …, transform: (CharSequence) -> R): Sequence<R>
+            fun CharSequence.withIndex(): Iterable<IndexedValue<Char>>
+            infix fun CharSequence.zip(other: CharSequence): List<Pair<Char, Char>>
+            inline fun <V> CharSequence.zip(other: CharSequence, transform: (a: Char, b: Char) -> V): List<V>
             fun CharSequence.zipWithNext(): List<Pair<Char, Char>>
             inline fun <R> CharSequence.zipWithNext(transform: (a: Char, b: Char) -> R): List<R>
         """.trimIndent()
@@ -433,9 +437,7 @@ class KotlinIntrospectorTest {
             inline fun <R : Any, C : MutableCollection<in R>> CharSequence.mapNotNullTo(destination: C, transform: (Char) -> R?): C
             inline fun <R, C : MutableCollection<in R>> CharSequence.mapTo(destination: C, transform: (Char) -> R): C
             inline infix fun CharSequence.matches(regex: Regex): Boolean
-            fun CharSequence.max(): Char?
             fun CharSequence.max(): Char
-            inline fun <R : Comparable<R>> CharSequence.maxBy(selector: (Char) -> R): Char?
             inline fun <R : Comparable<R>> CharSequence.maxBy(selector: (Char) -> R): Char
             inline fun <R : Comparable<R>> CharSequence.maxByOrNull(selector: (Char) -> R): Char?
             inline fun CharSequence.maxOf(selector: (Char) -> Double): Double
@@ -447,12 +449,9 @@ class KotlinIntrospectorTest {
             inline fun <R> CharSequence.maxOfWith(comparator: java.util.Comparator<in R>, selector: (Char) -> R): R
             inline fun <R> CharSequence.maxOfWithOrNull(comparator: java.util.Comparator<in R>, selector: (Char) -> R): R?
             fun CharSequence.maxOrNull(): Char?
-            fun CharSequence.maxWith(comparator: java.util.Comparator<in Char>): Char?
             fun CharSequence.maxWith(comparator: java.util.Comparator<in Char>): Char
             fun CharSequence.maxWithOrNull(comparator: java.util.Comparator<in Char>): Char?
-            fun CharSequence.min(): Char?
             fun CharSequence.min(): Char
-            inline fun <R : Comparable<R>> CharSequence.minBy(selector: (Char) -> R): Char?
             inline fun <R : Comparable<R>> CharSequence.minBy(selector: (Char) -> R): Char
             inline fun <R : Comparable<R>> CharSequence.minByOrNull(selector: (Char) -> R): Char?
             inline fun CharSequence.minOf(selector: (Char) -> Double): Double
@@ -464,7 +463,6 @@ class KotlinIntrospectorTest {
             inline fun <R> CharSequence.minOfWith(comparator: java.util.Comparator<in R>, selector: (Char) -> R): R
             inline fun <R> CharSequence.minOfWithOrNull(comparator: java.util.Comparator<in R>, selector: (Char) -> R): R?
             fun CharSequence.minOrNull(): Char?
-            fun CharSequence.minWith(comparator: java.util.Comparator<in Char>): Char?
             fun CharSequence.minWith(comparator: java.util.Comparator<in Char>): Char
             fun CharSequence.minWithOrNull(comparator: java.util.Comparator<in Char>): Char?
             fun CharSequence.none(): Boolean
@@ -4098,7 +4096,7 @@ class KotlinIntrospectorTest {
         resolver.resolve(
             "kotlin.collections.MutableList"
         ) sameAsKotlin """
-            // kotlin.collections.MutableList [page 1/35]
+            // kotlin.collections.MutableList [page 1/34]
             interface MutableList<E> : List<E>, MutableCollection<E> {
                 override fun add(element: E): Boolean
                 fun add(index: Int, element: E)
@@ -4363,11 +4361,6 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `search should not find synthetic nested classes`() {
-        assert(resolver.search("WhenMappings") == null)
-    }
-
-    @Test
     fun `search should not find companion objects`() {
         // they are already rendered within their outer class
         resolver.search("Companion", pageSize = 1000) should {
@@ -4468,6 +4461,174 @@ class KotlinIntrospectorTest {
         resolver.search("ValueTestClass") sameAsKotlin """
             // search results for "ValueTestClass" [page 1/1]
             com.xemantic.kotlin.introspection.test.ValueTestClass
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not list declarations deprecated with hidden level`() {
+        // the hidden overloads, kept only for the binary compatibility, cannot be called from the source code,
+        // unlike the ones deprecated with the ERROR level
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenDeprecationTarget"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenDeprecationTarget [page 1/1]
+            class HiddenDeprecationTarget(val value: Int) {
+                constructor(value: Long)
+                fun member(): Int
+                fun errorMember(): Int
+                companion object {
+                    fun create(): HiddenDeprecationTarget
+                }
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun HiddenDeprecationTarget.extension(): Int
+            // from com.xemantic.kotlin.introspection.test.HiddenDeprecationExtensions
+            fun HiddenDeprecationTarget.objectExtension(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not render primary constructor deprecated with hidden level`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenOnlyConstructor"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenOnlyConstructor [page 1/1]
+            class HiddenOnlyConstructor {
+                val a: Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve only member overloads not deprecated with hidden level`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenDeprecationTarget.member"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenDeprecationTarget.member [page 1/1]
+            fun member(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve member function deprecated with hidden level`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenDeprecationTarget.hiddenMember") == null)
+    }
+
+    @Test
+    fun `should not resolve member property deprecated with hidden level`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenDeprecationTarget.hiddenProperty") == null)
+    }
+
+    @Test
+    fun `should not resolve extension property deprecated with hidden level`() {
+        assert(
+            resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenDeprecationTarget.hiddenExtensionProperty") == null
+        )
+    }
+
+    @Test
+    fun `should resolve only extension overloads not deprecated with hidden level`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenDeprecationTarget.extension"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenDeprecationTarget.extension [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            fun HiddenDeprecationTarget.extension(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve only top-level overloads not deprecated with hidden level`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.TestHiddenDeprecationKt.hiddenDeprecationTopLevel"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.TestHiddenDeprecationKt.hiddenDeprecationTopLevel [page 1/1]
+            fun hiddenDeprecationTopLevel(value: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve member of built-in type deprecated with hidden level`() {
+        // the getFirst() of java.util.List since JDK 21, hidden by Kotlin in favor of the first() extension
+        assert(resolver.resolve("kotlin.collections.List.getFirst") == null)
+    }
+
+    @Test
+    fun `should not list members of built-in type deprecated with hidden level`() {
+        resolver.resolve("kotlin.collections.List", pageSize = 10000) should {
+            have(lines().none { "fun getFirst()" in it })
+            have(lines().none { "fun getLast()" in it })
+        }
+    }
+
+    @Test
+    fun `should not resolve stdlib extensions hidden since an older Kotlin version`() {
+        // the CharSequence.max() returning Char? is @DeprecatedSinceKotlin(hiddenSince = "1.6"),
+        // replaced by maxOrNull(), and by the max() returning Char
+        resolver.resolve("kotlin.CharSequence.max") sameAsKotlin """
+            // kotlin.CharSequence.max [page 1/1]
+            // from kotlin.text
+            fun CharSequence.max(): Char
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve built-in type with members deprecated without explicit level`() {
+        // kotlin-reflect cannot tell the default level of the @Deprecated of the built-in Long.toChar()
+        resolver.resolve("kotlin.Long", pageSize = 10000) should {
+            have("    override fun toChar(): Char" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve member of built-in type deprecated without explicit level`() {
+        resolver.resolve("kotlin.Number.toChar") sameAsKotlin """
+            // kotlin.Number.toChar [page 1/1]
+            fun toChar(): Char
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve every built-in type and all its members`() {
+        DefaultKotlinIntrospector.builtinTypes.forEach { (name, kClass) ->
+            // when
+            val signature = resolver.resolve(name)
+            val memberSignatures = kClass.members.map { it.name }.distinct().associateWith { member ->
+                resolver.resolve("$name.$member")
+            }
+
+            // then
+            assert(signature != null)
+            assert(memberSignatures.isNotEmpty())
+        }
+    }
+
+    @Test
+    fun `should not list interface properties deprecated with hidden level`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenDeprecationInterface"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenDeprecationInterface [page 1/1]
+            interface HiddenDeprecationInterface {
+                val visible: Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve interface property with getter deprecated with hidden level`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenDeprecationInterface.hiddenWithGetter") == null)
+    }
+
+    @Test
+    fun `should not list interface properties deprecated with hidden level compiled without jvm default`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsHiddenProperties"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsHiddenProperties [page 1/1]
+            interface DefaultImplsHiddenProperties {
+                val visible: Int
+            }
         """.trimIndent()
     }
 

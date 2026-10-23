@@ -42,6 +42,21 @@ class KotlinBuiltinsTest {
     )
 
     @Test
+    fun `should find no deprecated built-in collection declarations`() {
+        // the introspector cannot tell whether a member of a mutable collection type is deprecated as hidden,
+        // see inMutableBuiltinApi, as the annotations of the built-ins are not read into their metadata,
+        // so a standard library deprecating one has to be supported first;
+        // the names of the annotations would be in the string table of the resource
+
+        // when
+        val resource = KotlinVersion::class.java.getResourceAsStream("/kotlin/collections/collections.kotlin_builtins")
+            ?.use { String(it.readBytes(), Charsets.ISO_8859_1) }
+
+        // then
+        assert(resource != null && "Deprecated" !in resource)
+    }
+
+    @Test
     fun `should find all the kotlin_builtins resources of the standard library`() {
         // when
         val found = kotlinBuiltinsResources()
