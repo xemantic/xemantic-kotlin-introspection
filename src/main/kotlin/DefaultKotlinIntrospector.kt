@@ -479,10 +479,24 @@ internal class DefaultKotlinIntrospector(
 
     /**
      * Whether the found class is listed in its outer class, see [isListedClass],
-     * where a class file which cannot be read is judged by the metadata only.
+     * where a class file which cannot be read is judged by the metadata and the reflection of the class.
      */
     private fun FoundClass.isListed(kmClass: KmClass): Boolean =
-        isListedClass(kmClass, classFile ?: ClassFile(null, isSynthetic = false, isHiddenDeprecated = false))
+        isListedClass(kmClass, classFile ?: reflectedClassFile(clazz))
+
+    /**
+     * The flags of a class whose class file cannot be read, like one an in-memory class loader does not serve,
+     * reflected from the [clazz], if loaded: [Class.isSynthetic], reporting the flags of the `InnerClasses` attribute
+     * for a nested class, and the annotations hiding it, see [hiddenDeprecationVisitor], never failing the resolve.
+     */
+    private fun reflectedClassFile(clazz: Class<*>?): ClassFile = ClassFile(
+        metadata = null,
+        isSynthetic = clazz?.isSynthetic == true,
+        isHiddenDeprecated = clazz != null && reflectedAnnotationValue(default = false) {
+            clazz.getAnnotation(Deprecated::class.java)?.level == DeprecationLevel.HIDDEN ||
+                clazz.getAnnotation(DeprecatedSinceKotlin::class.java)?.let { isHiddenSince(it.hiddenSince) } == true
+        }
+    )
 
     /**
      * The classes found so far by their binary names, also the ones not found, as [Optional.empty],
@@ -571,11 +585,7 @@ internal class DefaultKotlinIntrospector(
         )
     }
 
-    private fun readClassBytes(binaryName: String): ByteArray? = try {
-        classLoader.getResourceAsStream(binaryName.replace('.', '/') + ".class")?.use { it.readBytes() }
-    } catch (_: Exception) {
-        null
-    }
+    private fun readClassBytes(binaryName: String): ByteArray? = classLoader.readClassBytes(binaryName)
 
     /**
      * Reads the class file of a class by its JVM [binaryName], whether it can be loaded or not, to tell the flags,

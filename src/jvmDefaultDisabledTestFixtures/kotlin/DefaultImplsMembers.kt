@@ -32,6 +32,11 @@ interface DefaultImplsGreeter : DefaultImplsBase {
     private fun greet(times: Int): String = "hello".repeat(times)
 }
 
+// an overload of a supertype member, whose JVM method a test removes from the class file of the interface, like R8 might
+interface DefaultImplsOverloader : DefaultImplsBase {
+    fun greet(times: Int): String = "hello".repeat(times)
+}
+
 // the synthetic methods for the annotations of the interface properties are in its DefaultImpls class
 interface DefaultImplsHiddenProperties {
     val visible: Int

@@ -44,6 +44,12 @@ abstract class StringAbsentArrayProcessor : AbsentArrayProcessor<String, Absent>
 
 class DollarHolder {
     class `Dollar$Nested`
+    class `$Named`
+}
+
+// the Java superclass declares a method taking Absent, and one taking a class nested in DollarHolder
+class AbsentDollarJavaSubclass : AbsentDollarJavaBase() {
+    override fun take(named: DollarHolder.`$Named`) {}
 }
 
 // the Java superclass declares a method taking Absent

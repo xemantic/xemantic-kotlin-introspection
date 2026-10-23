@@ -539,8 +539,8 @@ internal class OverrideResolver(
     /**
      * The JVM methods of a Kotlin class, as names followed by descriptors, see [declaredMethods],
      * including the members of an interface relocated to its `DefaultImpls` class,
-     * like with `-jvm-default=disable`, as if they were declared in the interface,
-     * or `null` if they can be neither read nor reflected.
+     * like with `-jvm-default=disable`, as if they were declared in the interface, unless they are unknown,
+     * or `null` if the methods of the class itself can be neither read nor reflected.
      */
     private fun jvmMethods(className: String, isInterface: Boolean): Set<String>? {
         // the package is separated with '/', and nested classes with '.'
@@ -559,11 +559,12 @@ internal class OverrideResolver(
             if (defaultImplsFile != null || defaultImplsClass != null) {
                 // the static method of DefaultImpls takes the interface instance as the first parameter
                 val instanceParameter = "(L$internalName;"
+                // the methods of the interface itself are still known when the ones of DefaultImpls are not
                 declaredMethods(defaultImplsName, defaultImplsFile, defaultImplsClass)?.forEach { method ->
                     if (method.access and Opcodes.ACC_STATIC != 0 && method.descriptor.startsWith(instanceParameter)) {
                         methods += method.name + "(" + method.descriptor.removePrefix(instanceParameter)
                     }
-                } ?: return null
+                }
             }
         }
         return methods
@@ -573,8 +574,14 @@ internal class OverrideResolver(
      * A method of a class.
      *
      * @param access the access flags, whose `ACC_STATIC` is the [Modifier.STATIC] of a reflected method.
+     * @param signature the generic signature, if read from a class file declaring it.
      */
-    private class DeclaredMethod(val access: Int, val name: String, val descriptor: String)
+    private class DeclaredMethod(
+        val access: Int,
+        val name: String,
+        val descriptor: String,
+        val signature: String? = null
+    )
 
     /**
      * The methods declared by a class, read from its [classFile], whether the class can be loaded or not,
@@ -589,13 +596,7 @@ internal class OverrideResolver(
         classFile: ByteArray?,
         loadedClass: Class<*>? = null
     ): List<DeclaredMethod>? {
-        if (classFile != null) {
-            val methods = mutableListOf<DeclaredMethod>()
-            val isRead = readMethods(classFile) { access, name, descriptor, _ ->
-                methods += DeclaredMethod(access, name, descriptor)
-            }
-            if (isRead) return methods
-        }
+        classFile?.let { readMethods(it) }?.let { return it }
         val clazz = loadedClass ?: loadClassByMetadataName(className) ?: return null
         return reflectOrNull {
             clazz.declaredMethods.map { DeclaredMethod(it.modifiers, it.name, AsmType.getMethodDescriptor(it)) }
@@ -603,30 +604,29 @@ internal class OverrideResolver(
     }
 
     /**
-     * Reads the methods of a class file, passing their access flags, names, descriptors and generic signatures
-     * to the [visit] function.
-     *
-     * @return `false` if the class file cannot be parsed, like when it is malformed, or too new for ASM.
+     * Reads the methods of a class file, with their generic signatures,
+     * or `null` if it cannot be parsed, like when it is malformed, or too new for ASM.
+     * Only the parsing is guarded, so that a failure of the code processing the methods is not mistaken for it.
      */
-    private fun readMethods(
-        bytes: ByteArray,
-        visit: (access: Int, name: String, descriptor: String, signature: String?) -> Unit
-    ): Boolean = try {
-        ClassReader(bytes).accept(object : ClassVisitor(Opcodes.ASM9) {
-            override fun visitMethod(
-                access: Int,
-                name: String,
-                descriptor: String,
-                signature: String?,
-                exceptions: Array<out String>?
-            ): MethodVisitor? {
-                visit(access, name, descriptor, signature)
-                return null
-            }
-        }, ClassReader.SKIP_CODE or ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES)
-        true
-    } catch (_: Exception) {
-        false
+    private fun readMethods(bytes: ByteArray): List<DeclaredMethod>? {
+        val methods = mutableListOf<DeclaredMethod>()
+        try {
+            ClassReader(bytes).accept(object : ClassVisitor(Opcodes.ASM9) {
+                override fun visitMethod(
+                    access: Int,
+                    name: String,
+                    descriptor: String,
+                    signature: String?,
+                    exceptions: Array<out String>?
+                ): MethodVisitor? {
+                    methods += DeclaredMethod(access, name, descriptor, signature)
+                    return null
+                }
+            }, ClassReader.SKIP_CODE or ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES)
+        } catch (_: Exception) {
+            return null
+        }
+        return methods
     }
 
     private val Visibility.isOverridable: Boolean
@@ -1141,29 +1141,41 @@ internal class OverrideResolver(
         substitution: JavaSubstitution
     ): List<Pair<String, Overridable>> {
         val bytes = readClassBytesByMetadataName(kotlinClassName(javaClass)) ?: return emptyList()
-        val methods = mutableListOf<Pair<String, Overridable>>()
-        val isRead = readMethods(bytes) { access, name, descriptor, signature ->
+        // the methods of a class file which cannot be parsed are unknown
+        val methods = readMethods(bytes) ?: return emptyList()
+        return methods.mapNotNull { method ->
+            val access = method.access
             val isOverridable = access and (Opcodes.ACC_STATIC or Opcodes.ACC_FINAL or Opcodes.ACC_PRIVATE or
                 Opcodes.ACC_SYNTHETIC or Opcodes.ACC_BRIDGE) == 0 &&
                 (access and (Opcodes.ACC_PUBLIC or Opcodes.ACC_PROTECTED) != 0 || javaClass.packageName == ownerPackage) &&
-                !name.startsWith("<")
-            if (!isOverridable) return@readMethods
-            val generic = signature?.let { GenericMethodSignature(it) }
-            val parameters = AsmType.getArgumentTypes(descriptor).mapIndexed { index, parameterType ->
+                !method.name.startsWith("<")
+            if (!isOverridable) return@mapNotNull null
+            val generic = method.signature?.let { genericMethodSignature(it) }
+            val parameters = AsmType.getArgumentTypes(method.descriptor).mapIndexed { index, parameterType ->
                 val parameterSignature = generic?.parameterTypes?.getOrNull(index)
                 if (parameterSignature == null) asmType(parameterType) else {
                     asmType(parameterType, parameterSignature, generic, substitution)
                 }
             }
-            methods += name to Overridable(
+            method.name to Overridable(
                 receiver = null,
                 parameters = parameters,
                 typeParameterCount = generic?.typeParameters?.size ?: 0,
                 isJava = true
             )
         }
-        // the methods of a class file which cannot be parsed are unknown
-        return if (isRead) methods else emptyList()
+    }
+
+    /**
+     * Parses the generic [signature] of a method, or returns `null` if it is malformed,
+     * so that the method is matched by its descriptor only, like a method without a generic signature.
+     */
+    private fun genericMethodSignature(signature: String): GenericMethodSignature? = try {
+        GenericMethodSignature(signature)
+    } catch (_: IllegalArgumentException) {
+        null
+    } catch (_: IndexOutOfBoundsException) {
+        null
     }
 
     /**
@@ -1218,16 +1230,19 @@ internal class OverrideResolver(
         }
         AsmType.OBJECT -> {
             val binaryName = type.className
+            val simpleBinaryName = binaryName.substringAfterLast('.')
             // a class missing from the classpath is assumed to be named without `$`,
             // which is also the metadata name the class of this binary name is loaded by
             val assumedName = kotlinClassName(
                 binaryName.substringBeforeLast('.', ""),
-                binaryName.substringAfterLast('.').replace('$', '.')
+                simpleBinaryName.replace('$', '.')
             )
             ClassType(
                 javaToKotlinNames[binaryName]
-                    // the nesting is known from the class, as `$` can be part of a class name
-                    ?: loadClassByMetadataName(assumedName)?.let { kotlinClassName(it) }
+                    // the nesting is known from the class, as `$` can be part of a class name,
+                    // so only a class whose binary name has one is loaded to tell
+                    ?: (if ('$' in simpleBinaryName) loadClassByMetadataName(assumedName) else null)
+                        ?.let { kotlinClassName(it) }
                     ?: assumedName,
                 nullable = null
             )
@@ -1415,27 +1430,45 @@ internal fun Class<*>.nestedClassName(): String {
 /**
  * The [nestedClassName] of a class whose declaring class cannot be loaded, neither its simple name reflected,
  * read from the `InnerClasses` attribute of its class file, which lists the enclosing classes as well,
- * or, if it cannot be read, assuming that every `$` separates the nested classes.
+ * or, if it cannot be read, assuming that every `$` following another character of the name separates the nested classes,
+ * while the one starting a name, like of `Outer$$serializer`, is a part of it.
  */
 private fun Class<*>.nestedClassNameWithoutDeclaringClass(): String {
     val internalName = name.replace('.', '/')
     // the internal names of the nested classes mapped to their outer class and simple name
     val innerClasses = mutableMapOf<String, Pair<String, String>>()
-    try {
-        (classLoader ?: ClassLoader.getSystemClassLoader())
-            .getResourceAsStream("$internalName.class")
-            ?.use { ClassReader(it) }
-            ?.accept(object : ClassVisitor(Opcodes.ASM9) {
+    (classLoader ?: ClassLoader.getSystemClassLoader()).readClassBytes(name)?.let { bytes ->
+        try {
+            ClassReader(bytes).accept(object : ClassVisitor(Opcodes.ASM9) {
                 override fun visitInnerClass(name: String, outerName: String?, innerName: String?, access: Int) {
                     if (outerName != null && innerName != null) innerClasses[name] = outerName to innerName
                 }
             }, ClassReader.SKIP_CODE or ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES)
-    } catch (_: Exception) {
-        // judged by the name only
+        } catch (_: Exception) {
+            // judged by the name only
+        }
     }
-    if (internalName !in innerClasses) return name.substringAfterLast('.').replace('$', '.')
+    if (internalName !in innerClasses) return name.substringAfterLast('.').replace(nestedClassSeparator, ".")
     fun nestedName(name: String): String = innerClasses[name]
         ?.let { (outerName, innerName) -> "${nestedName(outerName)}.$innerName" }
         ?: name.substringAfterLast('/')
     return nestedName(internalName)
+}
+
+/**
+ * A `$` of a binary name assumed to separate nested classes: one following another character than `$`,
+ * and followed by any character.
+ */
+private val nestedClassSeparator = Regex("(?<=[^$])\\$(?=.)")
+
+/**
+ * Reads the class file of a class by its JVM [binaryName], like `com.example.Outer${'$'}Nested`,
+ * through this class loader, without loading the class, or `null` if it is not served as a resource,
+ * or cannot be read, like when the class loader throws, even a runtime exception, like a closed or a restricted one.
+ * A class file resource is never encapsulated, also when it is in a named module.
+ */
+internal fun ClassLoader.readClassBytes(binaryName: String): ByteArray? = try {
+    getResourceAsStream(binaryName.replace('.', '/') + ".class")?.use { it.readBytes() }
+} catch (_: Exception) {
+    null
 }

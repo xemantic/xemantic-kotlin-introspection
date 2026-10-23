@@ -1200,4 +1200,163 @@ class ClassLoaderIntrospectionTest {
         assert(requestedClasses.none { it.endsWith("\$DefaultImpls") })
     }
 
+    /**
+     * Copies the isolated test fixtures, without the class files of the [absentClassFiles],
+     * to the [name] directory, transforming the class bytes by their file names.
+     */
+    private fun isolatedTestFixturesCopy(
+        name: String,
+        vararg absentClassFiles: String,
+        transform: (fileName: String, bytes: ByteArray) -> ByteArray = { _, bytes -> bytes }
+    ): Path {
+        val root = tempDir.resolve(name)
+        isolatedTestFixtures.filter { it.exists() }.forEach { dir ->
+            dir.walkTopDown().filter { it.isFile && it.name !in absentClassFiles }.forEach { file ->
+                val target = root.resolve(file.relativeTo(dir).path).toFile()
+                target.parentFile.mkdirs()
+                target.writeBytes(transform(file.name, file.readBytes()))
+            }
+        }
+        return root
+    }
+
+    /**
+     * Removes the JVM method of the [name] and the [descriptor] from the class bytes, like R8 might.
+     */
+    private fun withoutMethod(bytes: ByteArray, name: String, descriptor: String): ByteArray {
+        val writer = ClassWriter(0)
+        ClassReader(bytes).accept(object : ClassVisitor(Opcodes.ASM9, writer) {
+            override fun visitMethod(
+                access: Int,
+                methodName: String,
+                methodDescriptor: String,
+                signature: String?,
+                exceptions: Array<out String>?
+            ): MethodVisitor? = if (methodName == name && methodDescriptor == descriptor) {
+                null
+            } else {
+                super.visitMethod(access, methodName, methodDescriptor, signature, exceptions)
+            }
+        }, 0)
+        return writer.toByteArray()
+    }
+
+    @Test
+    fun `should mark shrunk overload of interface member as override when its DefaultImpls can be neither read nor loaded`() {
+        // given
+        val interfaceResource = "com/xemantic/kotlin/introspection/defaultimpls/DefaultImplsOverloader.class"
+        val defaultImplsName = "com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsOverloader\$DefaultImpls"
+        val classLoader = object : ClassLoader(javaClass.classLoader) {
+            override fun loadClass(name: String, resolve: Boolean): Class<*> =
+                if (name == defaultImplsName) throw ClassNotFoundException(name) else super.loadClass(name, resolve)
+
+            override fun getResourceAsStream(name: String): InputStream? {
+                val stream = super.getResourceAsStream(name) ?: return null
+                val bytes = stream.use { it.readBytes() }
+                return when (name) {
+                    // the JVM method of the overload is removed, like by R8
+                    interfaceResource -> withoutMethod(bytes, "greet", "(I)Ljava/lang/String;")
+                    // the major version, following the magic number and the minor version, unsupported
+                    defaultImplsName.replace('.', '/') + ".class" -> bytes.also {
+                        it[6] = 0x7F
+                        it[7] = 0x7F
+                    }
+                    else -> bytes
+                }.inputStream()
+            }
+        }
+        val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsOverloader")
+
+        // then
+        // the JVM methods of the interface itself still tell the overload as shrunk
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsOverloader [page 1/1]
+            interface DefaultImplsOverloader : DefaultImplsBase {
+                override fun greet(times: Int): String
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark overrides of other Java methods when generic signature of one method is malformed`() {
+        // given
+        val root = isolatedTestFixturesCopy("malformedSignature", "Absent.class") { fileName, bytes ->
+            if (fileName == "AbsentJavaBase.class") {
+                withMethodSignature(bytes, "process", "(Ljava/lang/Object;)V", "(!)V")
+            } else bytes
+        }
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.AbsentJavaSubclass")
+
+        // then
+        // only the method of the malformed signature is matched by its descriptor, erasing T to Object,
+        // so its override, implicitly open, is not told
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.AbsentJavaSubclass [page 1/1]
+            class AbsentJavaSubclass : AbsentJavaBase<String> {
+                open fun process(item: String)
+                fun process(item: Int)
+                override fun run()
+                fun run(times: Int)
+                fun prim(x: Int?)
+                override fun <S : String> bounded(x: S)
+                fun <S : Number> bounded(x: S)
+                override fun take(nested: DollarHolder.`Dollar${'$'}Nested`)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not list hidden nested class whose class file is not served as a resource`() {
+        // given
+        val root = isolatedTestFixturesCopy("unservedNested")
+        // like an in-memory class loader, defining the class without serving its class file
+        val classLoader = object : URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader) {
+            override fun getResourceAsStream(name: String): InputStream? =
+                if (name.endsWith("HiddenNestedHolder\$Hidden.class")) null else super.getResourceAsStream(name)
+        }
+        val introspector = KotlinIntrospector(classLoader)
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.HiddenNestedHolder")
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.HiddenNestedHolder [page 1/1]
+            class HiddenNestedHolder {
+                class Visible
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark override of Java method taking dollar-named nested class without outer class and class file`() {
+        // given
+        // like in a shaded or shrunk jar, the nested class is present, while its outer class is not
+        val root = isolatedTestFixturesCopy("dollarNamed", "Absent.class", "DollarHolder.class")
+        // like an in-memory class loader, defining the nested class without serving its class file
+        val classLoader = object : URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader) {
+            override fun getResourceAsStream(name: String): InputStream? =
+                if (name.endsWith("DollarHolder\$\$Named.class")) null else super.getResourceAsStream(name)
+        }
+        val introspector = KotlinIntrospector(classLoader)
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.AbsentDollarJavaSubclass")
+
+        // then
+        // the `$` starting the simple name is told from the one separating it from the name of the outer class
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.AbsentDollarJavaSubclass [page 1/1]
+            class AbsentDollarJavaSubclass : AbsentDollarJavaBase {
+                override fun take(named: DollarHolder.`${'$'}Named`)
+            }
+        """.trimIndent()
+    }
+
 }
