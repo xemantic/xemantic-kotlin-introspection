@@ -910,6 +910,48 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should mark shrunk overrides of internal members of superclass of the same module named by default`() {
+        // given
+        val shrunkResource = "com/xemantic/kotlin/introspection/defaultmodule/DefaultModuleSubclass.class"
+        // like R8 removing both the override of clear and its bridge clear$main, keeping the metadata
+        val classLoader = object : ClassLoader(javaClass.classLoader) {
+            override fun getResourceAsStream(name: String): InputStream? {
+                val stream = super.getResourceAsStream(name)
+                return if (stream != null && name == shrunkResource) {
+                    val writer = ClassWriter(0)
+                    ClassReader(stream.use { it.readBytes() }).accept(object : ClassVisitor(Opcodes.ASM9, writer) {
+                        override fun visitMethod(
+                            access: Int,
+                            name: String,
+                            descriptor: String,
+                            signature: String?,
+                            exceptions: Array<out String>?
+                        ): MethodVisitor? = if (name == "clear" || name == "clear\$main") {
+                            null
+                        } else {
+                            super.visitMethod(access, name, descriptor, signature, exceptions)
+                        }
+                    }, 0)
+                    writer.toByteArray().inputStream()
+                } else stream
+            }
+        }
+        val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.defaultmodule.DefaultModuleSubclass")
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.defaultmodule.DefaultModuleSubclass [page 1/1]
+            class DefaultModuleSubclass : DefaultModuleBase {
+                override val state: Int
+                override fun clear()
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should mark overrides of class whose class file cannot be parsed`() {
         // given
         val introspector = introspectorWithUnreadableClassFiles(

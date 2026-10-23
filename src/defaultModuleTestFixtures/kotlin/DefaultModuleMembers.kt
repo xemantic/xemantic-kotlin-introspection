@@ -22,9 +22,21 @@ package com.xemantic.kotlin.introspection.defaultmodule
 open class DefaultModuleBase {
     internal open fun reset() {}
     internal open val state: Int get() = 0
+    internal open fun clear() {}
 }
 
 class DefaultModuleSubclass : DefaultModuleBase() {
     override fun reset() {}
     public override val state: Int get() = 1
+    public override fun clear() {}
+}
+
+// A @PublishedApi internal member is not mangled, so it is told to be overridden within the same module only by its name
+open class DefaultModulePublishedApiBase {
+    @PublishedApi
+    internal open fun publish(x: Int = 0) {}
+}
+
+class DefaultModulePublishedApiSubclass : DefaultModulePublishedApiBase() {
+    public override fun publish(x: Int) {}
 }

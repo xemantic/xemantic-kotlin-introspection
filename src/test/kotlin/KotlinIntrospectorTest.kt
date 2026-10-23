@@ -2191,6 +2191,19 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.defaultmodule.DefaultModuleSubclass [page 1/1]
             class DefaultModuleSubclass : DefaultModuleBase {
                 override val state: Int
+                override fun clear()
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark overrides of PublishedApi internal members of superclass of the same module named by default`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.defaultmodule.DefaultModulePublishedApiSubclass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.defaultmodule.DefaultModulePublishedApiSubclass [page 1/1]
+            class DefaultModulePublishedApiSubclass : DefaultModulePublishedApiBase {
+                override fun publish(x: Int = …)
             }
         """.trimIndent()
     }
