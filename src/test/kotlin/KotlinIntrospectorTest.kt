@@ -1474,10 +1474,16 @@ class KotlinIntrospectorTest {
     fun `should resolve function types up to the arity of a JVM method`() {
         // the invoke of a function type takes at most 254 parameters, besides this,
         // of which one is the continuation of a suspend function type
-        assert(resolver.resolve("kotlin.Function254") != null)
-        assert(resolver.resolve("kotlin.Function255") == null)
-        assert(resolver.resolve("kotlin.coroutines.SuspendFunction253") != null)
-        assert(resolver.resolve("kotlin.coroutines.SuspendFunction254") == null)
+
+        // when
+        val function254 = resolver.resolve("kotlin.Function254")
+        val function255 = resolver.resolve("kotlin.Function255")
+        val suspendFunction253 = resolver.resolve("kotlin.coroutines.SuspendFunction253")
+        val suspendFunction254 = resolver.resolve("kotlin.coroutines.SuspendFunction254")
+
+        // then
+        assert(function254 != null && function255 == null)
+        assert(suspendFunction253 != null && suspendFunction254 == null)
     }
 
     @Test
@@ -1534,8 +1540,22 @@ class KotlinIntrospectorTest {
             // from com.xemantic.kotlin.introspection.test
             val (() -> Unit).repeatCount: Int
             fun (() -> Unit).repeat()
+            // from kotlin.reflect.jvm
+            fun <R> Function<R>.reflect(): KFunction<R>?
             // from kotlinx.coroutines.flow
             fun <T> (() -> T).asFlow(): kotlinx.coroutines.flow.Flow<T>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension of Function as member of function type`() {
+        // like in the listing of kotlin.Function0
+        resolver.resolve(
+            "kotlin.Function0.reflect"
+        ) sameAsKotlin """
+            // kotlin.Function0.reflect [page 1/1]
+            // from kotlin.reflect.jvm
+            fun <R> Function<R>.reflect(): KFunction<R>?
         """.trimIndent()
     }
 

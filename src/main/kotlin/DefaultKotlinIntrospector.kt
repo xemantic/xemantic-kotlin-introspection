@@ -1173,7 +1173,8 @@ internal class DefaultKotlinIntrospector(
      * The supertypes of a Java supertype are not known, as it has no Kotlin metadata.
      */
     private fun satisfiedBoundsOf(kmClass: KmClass, className: String): Lazy<Set<String>> = lazy {
-        setOf(className) + supertypeNames(kmClass, kmClassOf = { builtinClasses[it] ?: loadKmClass(it) })
+        ownExtensionReceiverNames(className).toSet() +
+            supertypeNames(kmClass, kmClassOf = { builtinClasses[it] ?: loadKmClass(it) })
     }
 
     /**
@@ -1187,14 +1188,21 @@ internal class DefaultKotlinIntrospector(
      * and of a JVM function interface, like `kotlin.jvm.functions.Function1`, also its function type `kotlin.Function1`.
      */
     private fun ownExtensionReceiverNames(className: String): List<String> =
-        listOfNotNull(className, jvmFunctionTypeName(className))
+        listOf(className) + jvmFunctionTypeName(className)?.let(::functionTypeReceiverNames).orEmpty()
+
+    /**
+     * The receiver names of the extensions listed for a function type class named [functionTypeName],
+     * like `kotlin.Function1`, the ones on its function types, and on their supertype `kotlin.Function`.
+     */
+    private fun functionTypeReceiverNames(functionTypeName: String): List<String> =
+        listOf(functionTypeName, FUNCTION_CLASS_NAME)
 
     /**
      * Lists a function type class, see [FunctionTypeClass], with its `invoke` operator,
      * and the extensions on its function types and on their supertype `kotlin.Function`.
      */
     private fun formatFunctionTypeClass(functionTypeClass: FunctionTypeClass, className: String): ClassListing {
-        val receiverNames = listOf(className, FUNCTION_CLASS_NAME)
+        val receiverNames = functionTypeReceiverNames(className)
         val supertypeNames = lazyOf(receiverNames.toSet())
         return ClassListing.of(
             header = functionTypeClass.header,
@@ -1216,8 +1224,9 @@ internal class DefaultKotlinIntrospector(
         memberName: String
     ): MemberListing? {
         val members = if (memberName == "invoke") listOf(functionTypeClass.invoke) else emptyList()
-        val receiverNames = listOf(className)
-        val supertypeNames = lazyOf(setOf(className, FUNCTION_CLASS_NAME))
+        // like in the listing of the function type class
+        val receiverNames = functionTypeReceiverNames(className)
+        val supertypeNames = lazyOf(receiverNames.toSet())
         val extensions = extensionSignatures(
             extensionIndex.listedFor(receiverNames, supertypeNames).filter { it.function.name == memberName },
             extensionPropertyIndex.listedFor(receiverNames, supertypeNames).filter { it.property.name == memberName },
@@ -3547,31 +3556,17 @@ private fun packageSourceOf(binaryName: String): String = binaryName.substringBe
 private const val ANY_RECEIVER_KEY = "kotlin.Any"
 
 /**
- * The supertype of all the function types, see [FunctionTypeClass].
- */
-private const val FUNCTION_CLASS_NAME = "kotlin.Function"
-
-private const val JVM_FUNCTION_PREFIX = "kotlin.jvm.functions.Function"
-
-/**
- * The highest arity of a function type compiled to its own JVM interface, like `kotlin.jvm.functions.Function22`.
- */
-private const val MAX_JVM_FUNCTION_ARITY = 22
-
-/**
  * The Kotlin name of the function type class compiled to the JVM interface named [className],
  * like `kotlin.Function1` of `kotlin.jvm.functions.Function1`, or `null` if it is not one.
  */
-private fun jvmFunctionTypeName(className: String): String? {
-    val arity = functionArity(className, JVM_FUNCTION_PREFIX)?.takeIf { it <= MAX_JVM_FUNCTION_ARITY }
-    return arity?.let { "$FUNCTION_TYPE_PREFIX$it" }
-}
+private fun jvmFunctionTypeName(className: String): String? =
+    functionTypeOfJvmInterface(className.replace('.', '/'))?.replace('/', '.')
 
 /**
  * The names of the function type classes found by the [KotlinIntrospector.search], the ones up to the arity
  * of the JVM interfaces they are compiled to, like `kotlin.Function22`, while the higher ones can still be resolved.
  */
-internal val searchableFunctionTypeNames: List<String> = (0..MAX_JVM_FUNCTION_ARITY).flatMap {
+internal val searchableFunctionTypeNames: List<String> = (0..MAX_JVM_FUNCTION_INTERFACE_ARITY).flatMap {
     listOf("$FUNCTION_TYPE_PREFIX$it", "$SUSPEND_FUNCTION_PREFIX$it")
 }
 

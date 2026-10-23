@@ -153,7 +153,7 @@ internal val KType.isSuspendFunctionType: Boolean?
             arguments.size < 23 -> null
             else -> arguments.size == 23
         }
-        val arity = functionArity(kClass.qualifiedName ?: return null, prefix = "kotlin.Function") ?: return null
+        val arity = functionArity(kClass.qualifiedName ?: return null, prefix = FUNCTION_TYPE_PREFIX) ?: return null
         return when (arguments.size) {
             arity + 1 -> false
             arity -> true
@@ -179,9 +179,33 @@ internal fun functionArity(name: String, prefix: String): Int? {
 }
 
 /**
+ * The supertype of all the function types, see [FunctionTypeClass].
+ */
+internal const val FUNCTION_CLASS_NAME = "kotlin.Function"
+
+/**
  * The prefix of the Kotlin name of a function type class, like `kotlin.Function1`.
  */
-internal const val FUNCTION_TYPE_PREFIX = "kotlin.Function"
+internal const val FUNCTION_TYPE_PREFIX = FUNCTION_CLASS_NAME
+
+/**
+ * The prefix of the metadata name of a JVM interface of a function type, like `kotlin/jvm/functions/Function1`.
+ */
+private const val JVM_FUNCTION_INTERFACE_PREFIX = "kotlin/jvm/functions/Function"
+
+/**
+ * The highest arity of a function type compiled to its own JVM interface, like `kotlin/jvm/functions/Function22`.
+ */
+internal const val MAX_JVM_FUNCTION_INTERFACE_ARITY = 22
+
+/**
+ * The metadata name of the function type class compiled to the JVM interface of the given metadata [name],
+ * like `kotlin/Function1` of `kotlin/jvm/functions/Function1`, or `null` if it is not one.
+ */
+internal fun functionTypeOfJvmInterface(name: String): String? =
+    functionArity(name, JVM_FUNCTION_INTERFACE_PREFIX)
+        ?.takeIf { it <= MAX_JVM_FUNCTION_INTERFACE_ARITY }
+        ?.let { "kotlin/Function$it" }
 
 /**
  * The prefix of the Kotlin name of a suspend function type class, like `kotlin.coroutines.SuspendFunction0`,
@@ -241,15 +265,13 @@ internal class FunctionTypeClass private constructor(val isSuspend: Boolean, val
          * The function type class of the given Kotlin [name], like `kotlin.Function1`, or `null` if it is not one,
          * see [functionArity].
          */
-        fun of(name: String): FunctionTypeClass? = when {
-            name.startsWith(SUSPEND_FUNCTION_PREFIX) -> functionArity(name, SUSPEND_FUNCTION_PREFIX)
+        fun of(name: String): FunctionTypeClass? =
+            functionArity(name, SUSPEND_FUNCTION_PREFIX)
                 ?.takeIf { it < MAX_FUNCTION_TYPE_CLASS_ARITY }
                 ?.let { FunctionTypeClass(isSuspend = true, arity = it) }
-            name.startsWith(FUNCTION_TYPE_PREFIX) -> functionArity(name, FUNCTION_TYPE_PREFIX)
-                ?.takeIf { it <= MAX_FUNCTION_TYPE_CLASS_ARITY }
-                ?.let { FunctionTypeClass(isSuspend = false, arity = it) }
-            else -> null
-        }
+                ?: functionArity(name, FUNCTION_TYPE_PREFIX)
+                    ?.takeIf { it <= MAX_FUNCTION_TYPE_CLASS_ARITY }
+                    ?.let { FunctionTypeClass(isSuspend = false, arity = it) }
 
     }
 

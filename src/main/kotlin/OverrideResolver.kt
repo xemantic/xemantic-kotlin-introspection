@@ -876,8 +876,7 @@ internal class OverrideResolver(
      */
     private fun normalizedName(name: String): String = when {
         name.startsWith("kotlin/collections/") -> name.replace("/Mutable", "/").replace(".Mutable", ".")
-        name.startsWith("kotlin/jvm/functions/Function") -> "kotlin/" + name.removePrefix("kotlin/jvm/functions/")
-        else -> name
+        else -> functionTypeOfJvmInterface(name) ?: name
     }
 
     private fun declaration(name: String): Declaration =
