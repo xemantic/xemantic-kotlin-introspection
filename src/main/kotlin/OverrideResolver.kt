@@ -164,34 +164,24 @@ internal class OverrideResolver(
          * or an internal one without a mangled JVM method, like a `@PublishedApi` one,
          * of a module of the same name, assumed to be the same module,
          * as two unrelated modules of the same name cannot be told apart then.
+         * Such a member of a module of another name, whose override from a friend module cannot be told,
+         * as a class of any module, not only of a friend one, declares its JVM method,
+         * when it has a member of the same signature, is not overridable at all.
          */
         data object Visible : MemberVisibility
 
         /**
-         * An internal member, with a mangled [jvmMethod], of a module of the same name,
-         * visible if the overriding class declares the [jvmMethod],
-         * or if its JVM methods can be neither read nor reflected, as it is likely the same module.
-         *
-         * @param jvmMethod the JVM name followed by the descriptor of the member.
-         */
-        data class SameModuleName(val jvmMethod: String) : MemberVisibility
-
-        /**
-         * An internal member, with a mangled [jvmMethod], of a module of another name,
-         * visible only from a friend module, whose overriding class declares the [jvmMethod] as the bridge
-         * to its own override, which is the only trace of a friend module,
+         * An internal member with a mangled [jvmMethod], visible if the overriding class declares the [jvmMethod]:
+         * as its own override in the same module, or as the bridge to its own override in a friend module,
+         * which is the only trace of a friend module,
          * so a friend-module override whose bridge is removed, like by a shrinker, is not told.
          *
          * @param jvmMethod the JVM name followed by the descriptor of the member.
+         * @param isVisibleWhenUnknown whether the member is visible when the JVM methods of the overriding class
+         *   can be neither read nor reflected: for a module of the same name, likely the same module,
+         *   but not for a module of another name, as an override is then claimed only on evidence.
          */
-        data class Friend(val jvmMethod: String) : MemberVisibility
-
-        /**
-         * An internal member of a module of another name, whose override from a friend module cannot be told,
-         * as it has no mangled JVM method, like a `@PublishedApi` one,
-         * which a class of any module, not only of a friend one, declares, when it has a member of the same signature.
-         */
-        data object Invisible : MemberVisibility
+        data class Mangled(val jvmMethod: String, val isVisibleWhenUnknown: Boolean) : MemberVisibility
     }
 
     /**
@@ -290,7 +280,7 @@ internal class OverrideResolver(
      */
     private fun override(owner: KmClass, function: KmFunction, withDefaultValues: Boolean): FunctionOverride? {
         val overridables = overridables(owner)
-        val candidates = overridables.functionCandidates(function.name).ifEmpty { return null }
+        val candidates = overridables.functions[function.name] ?: return null
         val signature = overridables.signature(function)
         val overridden = candidates.asSequence().filter { it.matches(signature) && overridables.isVisible(it) }
         return when {
@@ -356,7 +346,7 @@ internal class OverrideResolver(
         val receiver = property.receiverParameterType?.let {
             kotlinType(it, overridables.substitution, typeParameters)
         }
-        val candidates = overridables.propertyCandidates(property.name)
+        val candidates = overridables.properties[property.name].orEmpty()
         val overridesProperty = candidates.any {
             it.matches(contexts, receiver, emptyList(), property.typeParameters.size, isSuspend = false) &&
                 overridables.isVisible(it)
@@ -372,37 +362,21 @@ internal class OverrideResolver(
     }
 
     /**
-     * The functions of the supertypes named [name], which might be visible to the owner,
-     * as told by [isVisible] only after matching the signature, as it might read the class file of the owner.
-     */
-    private fun Overridables.functionCandidates(name: String): List<Overridable> =
-        functions[name].orEmpty().filter { it.visibility != MemberVisibility.Invisible }
-
-    /**
-     * The properties of the supertypes named [name], which might be visible to the owner, see [functionCandidates].
-     */
-    private fun Overridables.propertyCandidates(name: String): List<Overridable> =
-        properties[name].orEmpty().filter { it.visibility != MemberVisibility.Invisible }
-
-    /**
-     * Whether the [overridable] member is visible to the owner, see [MemberVisibility].
-     * When the JVM methods of the owner can be neither read nor reflected, no friend module is told,
-     * as an override is claimed only on evidence, just like no shrunk member is, see [isShrunk],
-     * while a member of a module of the same name is assumed to be of the same module.
+     * Whether the [overridable] member is visible to the owner, see [MemberVisibility],
+     * checked only after matching the signature, as it might read the class file of the owner.
      */
     private fun Overridables.isVisible(overridable: Overridable): Boolean =
         when (val visibility = overridable.visibility) {
             MemberVisibility.Visible -> true
-            MemberVisibility.Invisible -> false
-            is MemberVisibility.SameModuleName -> ownerJvmMethods?.contains(visibility.jvmMethod) ?: true
-            is MemberVisibility.Friend -> ownerJvmMethods?.contains(visibility.jvmMethod) == true
+            is MemberVisibility.Mangled ->
+                ownerJvmMethods?.contains(visibility.jvmMethod) ?: visibility.isVisibleWhenUnknown
         }
 
     /**
      * Whether the JVM method of a member, declared in the metadata, has been removed from the class file of its owner,
      * like by R8, so that it cannot be told from an overload of a supertype member,
      * which is then assumed to be overridden, as one with the same name is known.
-     * The caller checks that a supertype member of the same name exists, which might be visible.
+     * The caller checks that a supertype member of the same name exists.
      * A member whose owner JVM methods can be neither read nor reflected is not considered shrunk.
      */
     private fun Overridables.isShrunk(signature: JvmMethodSignature?): Boolean =
@@ -486,19 +460,22 @@ internal class OverrideResolver(
                 val substitution = supertypeSubstitution(kmClass, supertype)
                 val isSameModuleName = kmClass.moduleName == owner.moduleName
                 // the JVM name of an internal member is mangled with the module name, sanitized like by the compiler,
-                // unless it is a @PublishedApi one
-                val mangledSuffix = kmClass.moduleName?.let { "$" + it.replace(nonIdentifierCharacters, "_") }
-                fun visibility(visibility: Visibility, signature: JvmMethodSignature?): MemberVisibility {
+                // unless it is a @PublishedApi one; the module name is absent only from the built-in declarations,
+                // read from .kotlin_builtins, which have no internal members
+                val mangledSuffix by lazy { kmClass.moduleName?.let { "$" + it.replace(nonIdentifierCharacters, "_") } }
+                // null for a member which cannot be overridden by the owner, see MemberVisibility.Visible
+                fun visibility(visibility: Visibility, signature: JvmMethodSignature?): MemberVisibility? {
                     if (visibility != Visibility.INTERNAL) return MemberVisibility.Visible
-                    val isMangled = signature != null && mangledSuffix != null && signature.name.endsWith(mangledSuffix)
+                    val suffix = mangledSuffix
                     return when {
-                        isMangled && isSameModuleName -> MemberVisibility.SameModuleName(signature.toString())
-                        isMangled -> MemberVisibility.Friend(signature.toString())
+                        signature != null && suffix != null && signature.name.endsWith(suffix) ->
+                            MemberVisibility.Mangled(signature.toString(), isVisibleWhenUnknown = isSameModuleName)
                         isSameModuleName -> MemberVisibility.Visible
-                        else -> MemberVisibility.Invisible
+                        else -> null
                     }
                 }
                 kmClass.functions.filter { it.visibility.isOverridable }.forEach { function ->
+                    val memberVisibility = visibility(function.visibility, function.signature) ?: return@forEach
                     val typeParameters = memberTypeParameters(function.typeParameters)
                     functions.getOrPut(function.name) { mutableListOf() } += Overridable(
                         contexts = function.contextParameters.map {
@@ -512,13 +489,14 @@ internal class OverrideResolver(
                         },
                         typeParameterCount = function.typeParameters.size,
                         isJava = false,
-                        visibility = visibility(function.visibility, function.signature),
+                        visibility = memberVisibility,
                         declaresDefaultValues = function.valueParameters.indices.filter {
                             function.valueParameters[it].declaresDefaultValue
                         }.toSet()
                     )
                 }
                 kmClass.properties.filter { it.visibility.isOverridable }.forEach { property ->
+                    val memberVisibility = visibility(property.visibility, property.getterSignature) ?: return@forEach
                     val typeParameters = memberTypeParameters(property.typeParameters)
                     properties.getOrPut(property.name) { mutableListOf() } += Overridable(
                         contexts = property.contextParameters.map {
@@ -530,7 +508,7 @@ internal class OverrideResolver(
                         parameters = emptyList(),
                         typeParameterCount = property.typeParameters.size,
                         isJava = false,
-                        visibility = visibility(property.visibility, property.getterSignature)
+                        visibility = memberVisibility
                     )
                 }
                 kmClass.supertypes.forEach { type ->

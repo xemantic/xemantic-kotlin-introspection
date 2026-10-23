@@ -35,3 +35,11 @@ open class PublishedApiBase {
     @PublishedApi
     internal open fun publish() {}
 }
+
+// Left out of the class loader of a test, so that the classes referring to it cannot be reflected
+class OtherModuleMarker
+
+class UnreflectableSameModuleSubclass : InternalBase() {
+    public override val state: Int get() = 1
+    fun take(marker: OtherModuleMarker) {}
+}

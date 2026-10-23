@@ -60,7 +60,8 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 - The Gradle configuration cache is enabled (`gradle.properties`), so a task action (`doLast { … }`) must not call a function declared in the build script — the script object is not serializable.
   Inline the logic or move the helper into `buildSrc` / an included build, and register tasks with `tasks.register(...)` rather than the `by tasks.registering` delegate.
 
-- kotlin-metadata-jvm reads the module name the compiler omits from the metadata (the default `main`) back as `KmClass.moduleName == "main"`, not `null`.
+- kotlin-metadata-jvm reads the module name the compiler omits from the metadata (the default `main`) back as `KmClass.moduleName == "main"`, not `null` —
+  so unrelated default-named modules both report `"main"`, and a `null` check cannot detect the default module name.
 
 - In a function type the `suspend` modifier precedes the context parameters: `suspend context(Ctx) () -> Unit` —
   the `context(Ctx) suspend () -> Unit` order, which the GitHub issues used, does not compile.

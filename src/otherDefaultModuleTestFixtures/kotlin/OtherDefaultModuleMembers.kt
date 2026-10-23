@@ -25,3 +25,9 @@ class OtherDefaultModuleSubclass : DefaultModuleBase() {
     fun reset() {}
     val state: Int get() = 1
 }
+
+// A @PublishedApi internal member is not mangled, so a class of an unrelated module of the same name declaring
+// a member of the same signature cannot be told from a class of the same module overriding it
+class OtherDefaultModulePublishedApiSubclass : com.xemantic.kotlin.introspection.defaultmodule.DefaultModulePublishedApiBase() {
+    fun publish(x: Int) {}
+}

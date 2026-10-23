@@ -2208,6 +2208,20 @@ class KotlinIntrospectorTest {
         """.trimIndent()
     }
 
+    // a @PublishedApi internal member is not mangled, so it is assumed to be overridden by a class of a module
+    // of the same name, as an unrelated module cannot be told from the same one then
+    @Test
+    fun `should mark members named like PublishedApi internal members of superclass of another module of the same name as override`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.otherdefaultmodule.OtherDefaultModulePublishedApiSubclass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.otherdefaultmodule.OtherDefaultModulePublishedApiSubclass [page 1/1]
+            class OtherDefaultModulePublishedApiSubclass : com.xemantic.kotlin.introspection.defaultmodule.DefaultModulePublishedApiBase {
+                override fun publish(x: Int = …)
+            }
+        """.trimIndent()
+    }
+
     // a @PublishedApi internal member is not mangled, so its JVM method is declared by the subclass as well
     @Test
     fun `should not mark members named like PublishedApi internal members of superclass of another module as override`() {

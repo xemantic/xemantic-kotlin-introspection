@@ -25,3 +25,8 @@ class FriendModuleSubclass : InternalBase() {
     override fun reset() {}
     public override val state: Int get() = 1
 }
+
+class UnreflectableFriendModuleSubclass : InternalBase() {
+    public override val state: Int get() = 1
+    fun take(marker: com.xemantic.kotlin.introspection.othermodule.OtherModuleMarker) {}
+}
