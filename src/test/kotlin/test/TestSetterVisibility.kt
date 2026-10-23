@@ -46,6 +46,13 @@ open class OpenNarrowedSetterHolder {
     }
 }
 
+// a property and a function of the same name, found by a member lookup paged by declarations
+open class PagedSetterHolder {
+    var value: Int = 0
+        protected set
+    fun value(@Suppress("unused") next: Int) {}
+}
+
 var NarrowedSetterHolder.extensionPrivateSetter: Int
     get() = privateSetter
     private set(@Suppress("unused") value) {}

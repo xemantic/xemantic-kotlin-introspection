@@ -4535,6 +4535,46 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve companion object member with protected setter through outer class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.OpenNarrowedSetterHolder.companionProtectedSetter"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OpenNarrowedSetterHolder.companionProtectedSetter [page 1/1]
+            companion object {
+                var companionProtectedSetter: Int
+                    protected set
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should keep setter line with its property on a page of member lookup`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.PagedSetterHolder.value",
+            pageSize = 1
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PagedSetterHolder.value [page 1/2]
+            var value: Int
+                protected set
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should keep setter line with its property on a page of class listing`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.OpenNarrowedSetterHolder",
+            page = 2,
+            pageSize = 1
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OpenNarrowedSetterHolder [page 2/5]
+            open class OpenNarrowedSetterHolder {
+                var protectedSetter: Int
+                    protected set
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve member var with private setter as val`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.NarrowedSetterHolder.privateSetter"
