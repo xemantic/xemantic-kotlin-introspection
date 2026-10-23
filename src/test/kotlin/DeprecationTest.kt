@@ -128,4 +128,22 @@ class DeprecationTest {
         assert(deprecation == null)
     }
 
+    @Test
+    fun `should not deprecate declaration before Kotlin version despite explicit default level`() {
+        // given
+        val annotations = DeprecationAnnotations().apply {
+            isDeprecated = true
+            // like the default level kotlin-reflect tells for a built-in declaration
+            level = "WARNING"
+            isDeprecatedSinceKotlin = true
+            hiddenSince = "2.2"
+        }
+
+        // when
+        val deprecation = annotations.deprecationOf(isSince)
+
+        // then
+        assert(deprecation == null)
+    }
+
 }

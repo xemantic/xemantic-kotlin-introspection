@@ -3363,7 +3363,7 @@ class KotlinIntrospectorTest {
     @Test
     fun `should resolve standard library value class`() {
         resolver.resolve("kotlin.time.Duration", pageSize = 1) should {
-            have(lines()[1] == "@JvmInline value class Duration private constructor() : Comparable<Duration> {")
+            have(lines()[1] == "@JvmInline value class Duration private constructor(rawValue: Long) : Comparable<Duration> {")
         }
     }
 
@@ -3927,6 +3927,26 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.test.ProtectedEmptyConstructorAbstractClass [page 1/1]
             abstract class ProtectedEmptyConstructorAbstractClass protected constructor()
         """.trimIndent()
+    }
+
+    @Test
+    fun `should render parameters of value class constructor which cannot be called`() {
+        // a value class cannot be declared without its single parameter
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InternalConstructorValueClass", pageSize = 1
+        ) should {
+            have(lines()[1] == "@JvmInline value class InternalConstructorValueClass private constructor(val raw: Long) {")
+        }
+    }
+
+    @Test
+    fun `should render parameters of data class constructor which cannot be called`() {
+        // a data class cannot be declared without parameters, the one of a private property is still rendered
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.PrivateConstructorDataClass", pageSize = 1
+        ) should {
+            have(lines()[1] == "data class PrivateConstructorDataClass private constructor(val a: Int, b: Int) {")
+        }
     }
 
     @Test
@@ -5445,6 +5465,63 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.MultilineDeprecationTarget.f [page 1/1]
             @Deprecated("First line. …") fun f()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render first non-blank line of deprecation message`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.MultilineDeprecationTarget.g"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.MultilineDeprecationTarget.g [page 1/1]
+            @Deprecated("Use f() instead.") fun g()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not list property with getter deprecated with hidden level`() {
+        // even though the property itself is deprecated with the WARNING level
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenGetterHolder"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenGetterHolder [page 1/1]
+            class HiddenGetterHolder {
+                val visible: Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not list companion object deprecated with hidden level`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenCompanionHolder"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenCompanionHolder [page 1/1]
+            class HiddenCompanionHolder {
+                fun f()
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not render hidden deprecation of class resolved directly`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenTopLevelHolder"
+        ) should {
+            have(lines()[1] == "class HiddenTopLevelHolder {")
+        }
+    }
+
+    @Test
+    fun `should not render deprecation of enum class constructor`() {
+        // it is always private, called only by the entries
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.DeprecatedConstructorEnum"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DeprecatedConstructorEnum [page 1/1]
+            enum class DeprecatedConstructorEnum(val v: Int) {
+                A
+            }
         """.trimIndent()
     }
 

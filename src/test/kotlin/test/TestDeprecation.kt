@@ -58,6 +58,8 @@ class DeprecationTarget @Deprecated("Use create()") constructor(val value: Int) 
 class MultilineDeprecationTarget {
     @Deprecated("First line.\nSecond line.")
     fun f() {}
+    @Deprecated("\nUse f() instead.")
+    fun g() {}
 }
 
 @Deprecated("Use newMember()", ReplaceWith("newMember()"))
@@ -76,4 +78,26 @@ interface DeprecationInterface {
     val abstractProperty: Int
     @Deprecated("With getter")
     val propertyWithGetter: Int get() = 1
+}
+
+// a hidden getter hides the property, whatever the deprecation of the property itself
+class HiddenGetterHolder {
+    @Deprecated("Old")
+    val hiddenGetter: Int
+        @Deprecated("Replaced", level = DeprecationLevel.HIDDEN) get() = 1
+    val visible: Int = 0
+}
+
+// a hidden companion object cannot be referred to, neither its members
+class HiddenCompanionHolder {
+    fun f() {}
+    @Deprecated("Replaced", level = DeprecationLevel.HIDDEN)
+    companion object {
+        fun create(): HiddenCompanionHolder = HiddenCompanionHolder()
+    }
+}
+
+// the constructor of an enum class is always private, called only by its entries
+enum class DeprecatedConstructorEnum @Deprecated("Old") constructor(val v: Int) {
+    A(1)
 }

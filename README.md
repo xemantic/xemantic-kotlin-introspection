@@ -141,8 +141,13 @@ com.example.AnnotationTestClass
   is marked with `private constructor()`, like `open class Base64 private constructor()`,
   whatever the actual visibility and parameters of its constructors,
   while the properties declared by its primary constructor are rendered in the class body.
+  A data class, or a value class, cannot be declared without the parameters of its primary constructor,
+  so they are rendered after its `private constructor`,
+  like `@JvmInline value class Duration private constructor(rawValue: Long)`.
   An object, an enum class, a sealed class, an interface, or an annotation class is not marked,
   as its kind already tells how it can be created, if at all.
+  The built-in types rendered through `kotlin-reflect`, like `kotlin.Int`, do not follow this rule yet,
+  and are rendered without constructors.
 * The whole classpath visible to the given class loader is scanned on creation, which takes a while,
   so the instance should be created once and reused.
   The scan can be disabled with `KotlinIntrospector(scanEntireClasspath = false)`,

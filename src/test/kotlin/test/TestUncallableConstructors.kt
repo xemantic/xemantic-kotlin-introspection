@@ -48,3 +48,14 @@ class InnerPrivateConstructorOuter {
 open class ProtectedEmptyConstructorOpenClass protected constructor()
 
 abstract class ProtectedEmptyConstructorAbstractClass protected constructor()
+
+// a value class, or a data class, cannot be declared without its primary constructor and its parameters
+@JvmInline
+value class InternalConstructorValueClass internal constructor(val raw: Long)
+
+@ConsistentCopyVisibility
+data class PrivateConstructorDataClass private constructor(val a: Int, private val b: Int) {
+    companion object {
+        fun of(a: Int): PrivateConstructorDataClass = PrivateConstructorDataClass(a, a)
+    }
+}

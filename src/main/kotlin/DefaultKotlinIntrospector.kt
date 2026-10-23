@@ -349,7 +349,9 @@ internal class DefaultKotlinIntrospector(
          * Follows the name of a class without any constructor callable from the user code,
          * which therefore can neither be instantiated, nor subclassed there,
          * rendered regardless of the actual visibility and parameters of its constructors,
-         * like the internal or protected ones, which cannot be called either.
+         * like the internal or protected ones, which cannot be called either,
+         * except for a data class, or a value class, rendered with the parameters of its primary constructor.
+         * Not applied to the built-in types rendered through kotlin-reflect, see [formatBuiltinClass].
          */
         private const val NOT_CONSTRUCTIBLE_MARKER = " private constructor()"
 
@@ -505,13 +507,13 @@ internal class DefaultKotlinIntrospector(
 
         override fun deprecation(property: KmProperty): Deprecation? {
             val classFile = classFile ?: return null
-            classFile.deprecation(property)?.let { return it }
+            val deprecation = classFile.deprecation(property)
             // the synthetic method for the annotations of an interface property is rather in its DefaultImpls
-            val annotationsMethod = property.syntheticMethodForAnnotations ?: return null
+            val annotationsMethod = property.syntheticMethodForAnnotations ?: return deprecation
             val kind = kmClass?.kind
             return if (
                 (kind == ClassKind.INTERFACE || kind == ClassKind.ANNOTATION_CLASS) && !classFile.declares(annotationsMethod)
-            ) defaultImplsFile?.deprecation(property) else null
+            ) highestOf(deprecation, defaultImplsFile?.deprecation(property)) else deprecation
         }
 
         override fun isSetterHidden(property: KmProperty): Boolean = classFile?.isSetterHidden(property) == true
@@ -537,11 +539,13 @@ internal class DefaultKotlinIntrospector(
     private fun List<KmProperty>.inMutableBuiltinApi(): List<KmProperty> = inApi(emptyList(), deprecations = null)
 
     /**
-     * Whether a member of a built-in type, described by kotlin-reflect, is part of the API:
-     * public, and not hidden, see [builtinDeprecation].
+     * The members of a built-in type, described by kotlin-reflect, which are part of the API:
+     * public, and not hidden, each with its deprecation, see [builtinDeprecation].
      */
-    private fun isBuiltinApi(member: KCallable<*>): Boolean =
-        member.visibility == KVisibility.PUBLIC && builtinDeprecation(member)?.isHidden != true
+    private fun <T : KCallable<*>> Sequence<T>.inBuiltinApi(): Sequence<Pair<T, Deprecation?>> =
+        filter { it.visibility == KVisibility.PUBLIC }
+            .map { it to builtinDeprecation(it) }
+            .filter { (_, deprecation) -> deprecation?.isHidden != true }
 
     /**
      * Whether the found class is listed in its outer class, see [isListedClass],
@@ -723,17 +727,20 @@ internal class DefaultKotlinIntrospector(
         val typeParameters = typeParametersInScope(kmClass)
         val contextPackage = contextPackageOf(foundClass, kmClass)
 
+        val isOpenForOverrides = mightBeSubclassed(kmClass, foundClass)
+
         val members = kmClass.properties.filter { it.name == memberName }.inApi(scopes, foundClass).map { property ->
             formatProperty(
                 property, property.apiSetterVisibility(scopes, foundClass),
                 inInterface = isInterface, owner = kmClass, contextPackage = contextPackage, classTypeParameters = typeParameters,
-                deprecation = foundClass.deprecation(property)
+                deprecation = foundClass.deprecation(property), isOwnerOpenForOverrides = isOpenForOverrides
             )
         } + kmClass.functions.filter { it.name == memberName }.inApi(scopes, foundClass).map { function ->
             listOf(
                 formatFunction(
                     function, inInterface = isInterface, owner = kmClass, contextPackage = contextPackage,
-                    classTypeParameters = typeParameters, deprecation = foundClass.deprecation(function)
+                    classTypeParameters = typeParameters, deprecation = foundClass.deprecation(function),
+                    isOwnerOpenForOverrides = isOpenForOverrides
                 )
             )
         }
@@ -800,7 +807,10 @@ internal class DefaultKotlinIntrospector(
         val name = kmClass.companionObject ?: return null
         // the binary name, as the class might be nested
         val companionClass = findClassByBinaryName("${foundClass.binaryName}\$$name") ?: return null
-        val companion = companionClass.kmClass?.takeIf { it.visibility.isApiIn(scopes) } ?: return null
+        // a hidden companion object cannot be referred to, neither can its members
+        val companion = companionClass.kmClass?.takeIf {
+            it.visibility.isApiIn(scopes) && companionClass.classFile?.isHiddenDeprecated != true
+        } ?: return null
         return ApiCompanion(companion, companionClass, scopes)
     }
 
@@ -871,7 +881,9 @@ internal class DefaultKotlinIntrospector(
     }
 
     /**
-     * Format a Kotlin built-in type using kotlin-reflect.
+     * Format a Kotlin built-in type using kotlin-reflect,
+     * without its modality and constructors, so that a header like `class Int` does not follow
+     * the convention of the not constructible classes, see [NOT_CONSTRUCTIBLE_MARKER], yet.
      */
     private fun formatBuiltinClass(
         kClass: KClass<*>,
@@ -945,26 +957,26 @@ internal class DefaultKotlinIntrospector(
 
             // Properties (only public, non-extension)
             kClass.memberProperties
-                .filter { isBuiltinApi(it) }
-                .forEach { prop ->
+                .asSequence()
+                .inBuiltinApi()
+                .forEach { (prop, deprecation) ->
                     allMembers.add(
-                        Member(prop.name, listOf(formatDeprecation(builtinDeprecation(prop)) + formatKProperty(prop, isOverride(builtinKmClass, prop))))
+                        Member(prop.name, listOf(formatDeprecation(deprecation) + formatKProperty(prop, isOverride(builtinKmClass, prop))))
                     )
                 }
 
             // Functions (only public, non-extension, excluding synthetic, internal, and Java-only methods taking parameters)
             kClass.memberFunctions
                 .asSequence()
-                .filter { isBuiltinApi(it) }
                 .filter { !it.name.startsWith("component") }  // Exclude componentN
                 .filter { it.name != "copy" }  // Exclude copy for data classes
                 .filter { !it.name.contains("$") }  // Exclude synthetic
                 .filter { !it.toString().contains("internal ") }  // Exclude internal
                 .filter { !hasSyntheticParameterNames(it) }
-                .toList()
-                .forEach { func ->
+                .inBuiltinApi()
+                .forEach { (func, deprecation) ->
                     allMembers.add(
-                        Member(func.name, listOf(formatDeprecation(builtinDeprecation(func)) + formatKFunction(func, isOverride(builtinKmClass, func))))
+                        Member(func.name, listOf(formatDeprecation(deprecation) + formatKFunction(func, isOverride(builtinKmClass, func))))
                     )
                 }
 
@@ -1150,14 +1162,15 @@ internal class DefaultKotlinIntrospector(
         // Members are sorted, as kotlin-reflect does not guarantee their order,
         // the properties first, like in the listing, where a property precedes a function of the same name
         val members = mutableMembers.ifEmpty {
-            kClass.memberProperties.filter {
-                it.name == memberName && isBuiltinApi(it)
-            }.map { listOf(formatDeprecation(builtinDeprecation(it)) + formatKProperty(it, isOverride(builtinKmClass, it))) } +
-                kClass.memberFunctions.filter {
-                    it.name == memberName && isBuiltinApi(it)
-                }.sortedBy { formatKFunctionDeclaration(it) }.map {
-                    listOf(formatDeprecation(builtinDeprecation(it)) + formatKFunction(it, isOverride(builtinKmClass, it)))
-                }
+            kClass.memberProperties.asSequence().filter { it.name == memberName }.inBuiltinApi()
+                .map { (property, deprecation) ->
+                    listOf(formatDeprecation(deprecation) + formatKProperty(property, isOverride(builtinKmClass, property)))
+                }.toList() +
+                kClass.memberFunctions.asSequence().filter { it.name == memberName }.inBuiltinApi()
+                    .sortedBy { (function, _) -> formatKFunctionDeclaration(function) }
+                    .map { (function, deprecation) ->
+                        listOf(formatDeprecation(deprecation) + formatKFunction(function, isOverride(builtinKmClass, function)))
+                    }.toList()
         }
 
         // The same extensions as the listing of the built-in type shows, the ones of the public kotlin.* packages
@@ -1300,8 +1313,12 @@ internal class DefaultKotlinIntrospector(
         // The parameters of a constructor which cannot be called are not rendered, while the properties
         // they declare still are, in the class body. Except for an enum class, whose constructor is always private,
         // while its parameters are the idiomatic way of declaring the properties of the entries.
+        // A data class, or a value class, cannot be declared without its primary constructor and its parameters,
+        // which is therefore rendered as private, like a class without any constructor which can be called.
+        val isPrimaryConstructorCallable = primaryConstructor != null &&
+            primaryConstructor.visibility.isApiIn(scopes) && !foundClass.isHidden(primaryConstructor)
         val renderedConstructor = primaryConstructor?.takeIf {
-            isEnum || (it.visibility.isApiIn(scopes) && !foundClass.isHidden(it))
+            isEnum || isPrimaryConstructorCallable || kmClass.isData || kmClass.isValue
         }
         // The other ways of creating the class, never of an enum class, as they are private,
         // nor of an annotation class, which cannot have any
@@ -1309,8 +1326,15 @@ internal class DefaultKotlinIntrospector(
             it.isSecondary && it.visibility.isApiIn(scopes) && !foundClass.isHidden(it)
         }
         // the always private constructor of an enum class is rendered only for its parameters
-        val primaryConstructorVisibility = renderedConstructor?.visibility?.takeUnless { isEnum } ?: Visibility.PUBLIC
-        val primaryConstructorDeprecation = renderedConstructor?.let { foundClass.deprecation(it) }
+        val primaryConstructorVisibility = when {
+            isEnum || renderedConstructor == null -> Visibility.PUBLIC
+            isPrimaryConstructorCallable -> renderedConstructor.visibility
+            else -> Visibility.PRIVATE
+        }
+        val primaryConstructorDeprecation = renderedConstructor?.takeIf { !isEnum && isPrimaryConstructorCallable }
+            ?.let { foundClass.deprecation(it) }
+        // whether the final modality of an override is not redundant, see mightBeSubclassed
+        val isOpenForOverrides = mightBeSubclassed(kmClass, foundClass)
         // the kinds of classes which would read as having the implicit public constructor without parameters,
         // unlike an object, an enum class, an interface, an annotation class,
         // or a sealed class, whose constructors are never callable from the user code
@@ -1383,7 +1407,7 @@ internal class DefaultKotlinIntrospector(
                     },
                     // a constructor property is never abstract, but it can be open or final
                     modifiers = if (prop == null) "" else formatVisibility(prop.visibility) + formatModalityModifiers(
-                        prop.modality, isOverride, inInterface = false, kmClass
+                        prop.modality, isOverride, inInterface = false, isOpenForOverrides
                     )
                 )
             }
@@ -1407,8 +1431,8 @@ internal class DefaultKotlinIntrospector(
         val members = buildList<ListingItem.ClassBodyItem> {
             // The sealed subclasses first, then the other nested classes, only referenced,
             // as they can be resolved by their own name
-            (sealedSubclasses + nestedClasses).forEach { (name, listedKmClass) ->
-                add(ListingItem.Declaration(listOf(formatListedClassHeader(listedKmClass, name, contextPackage))))
+            (sealedSubclasses + nestedClasses).forEach { listed ->
+                add(ListingItem.Declaration(listOf(formatListedClassHeader(listed, contextPackage))))
             }
 
             // Properties (excluding constructor properties)
@@ -1420,7 +1444,7 @@ internal class DefaultKotlinIntrospector(
                             formatProperty(
                                 property, property.apiSetterVisibility(scopes, foundClass),
                                 inInterface = isInterface, owner = kmClass, contextPackage = contextPackage, classTypeParameters = typeParameters,
-                                deprecation = foundClass.deprecation(property)
+                                deprecation = foundClass.deprecation(property), isOwnerOpenForOverrides = isOpenForOverrides
                             )
                         )
                     )
@@ -1447,7 +1471,8 @@ internal class DefaultKotlinIntrospector(
                         listOf(
                             formatFunction(
                                 function, inInterface = isInterface, owner = kmClass, contextPackage = contextPackage,
-                                classTypeParameters = typeParameters, deprecation = foundClass.deprecation(function)
+                                classTypeParameters = typeParameters, deprecation = foundClass.deprecation(function),
+                                isOwnerOpenForOverrides = isOpenForOverrides
                             )
                         )
                     )
@@ -1462,8 +1487,8 @@ internal class DefaultKotlinIntrospector(
                     header = formatCompanionHeader(kmClass, companion, contextPackage),
                     members = buildList {
                         // Companion nested classes, only referenced, like the ones of the outer class
-                        companionNestedClasses.forEach { (name, listedKmClass) ->
-                            add(listOf(formatListedClassHeader(listedKmClass, name, contextPackage)))
+                        companionNestedClasses.forEach { listed ->
+                            add(listOf(formatListedClassHeader(listed, contextPackage)))
                         }
 
                         // Companion properties
@@ -1549,13 +1574,18 @@ internal class DefaultKotlinIntrospector(
     }
 
     /**
-     * The header of a class listed in another one, like a nested class, see [formatClassHeader], without its constructor.
+     * The header of a [listed] class, like a nested class, see [formatClassHeader], without its constructor.
      */
-    private fun formatListedClassHeader(kmClass: KmClass, name: String, contextPackage: String): String =
+    private fun formatListedClassHeader(listed: ListedClass, contextPackage: String): String =
         formatClassHeader(
-            kmClass, name, contextPackage, typeParametersInScope(kmClass),
-            deprecation = findClassByMetadataName(kmClass.name)?.classFile?.classDeprecation
+            listed.kmClass, listed.name, contextPackage, typeParametersInScope(listed.kmClass),
+            deprecation = listed.foundClass.classFile?.classDeprecation
         )
+
+    /**
+     * A class listed in another one, like a nested class, by its [name] relative to the listing class.
+     */
+    private class ListedClass(val name: String, val kmClass: KmClass, val foundClass: FoundClass)
 
     /**
      * The `@Deprecated` annotation of a declaration which is deprecated, but can still be used, like
@@ -1563,11 +1593,12 @@ internal class DefaultKotlinIntrospector(
      * rendered inline, so that the declaration stays on a single line, or an empty string otherwise.
      * The level is rendered unless it is the default `WARNING`, like `ERROR`, telling that the declaration
      * can still be referred to, but not called, also when it comes from `@DeprecatedSinceKotlin`, see [deprecationOf].
-     * Only the first line of a multiline message is rendered, followed by `…`, to keep it compact,
+     * A hidden deprecation, of a declaration which is not listed, but might still be resolved, like a class, is not rendered.
+     * Only the first non-blank line of a multiline message is rendered, followed by `…`, to keep it compact,
      * and the expression of `ReplaceWith` without its imports.
      */
-    private fun formatDeprecation(deprecation: Deprecation?): String = if (deprecation == null) "" else buildString {
-        val message = deprecation.message.trimEnd()
+    private fun formatDeprecation(deprecation: Deprecation?): String = if (deprecation == null || deprecation.isHidden) "" else buildString {
+        val message = deprecation.message.trim()
         val firstLine = message.lineSequence().first().trimEnd()
         +"@Deprecated(\""
         +firstLine.escapeKotlin('"')
@@ -1646,7 +1677,7 @@ internal class DefaultKotlinIntrospector(
      * Neither is the own companion object, already rendered as such,
      * while the companion object of another class is, as a branch of a `when` expression.
      */
-    private fun listedSealedSubclasses(kmClass: KmClass): List<Pair<String, KmClass>> =
+    private fun listedSealedSubclasses(kmClass: KmClass): List<ListedClass> =
         kmClass.sealedSubclasses.mapNotNull { subclassName ->
             if (subclassName == "${kmClass.name}.${kmClass.companionObject}") return@mapNotNull null
             val subclassClass = findClassByMetadataName(subclassName) ?: return@mapNotNull null
@@ -1654,7 +1685,7 @@ internal class DefaultKotlinIntrospector(
             val enclosing = enclosingScopes(subclass) ?: return@mapNotNull null
             val isListed = subclass.kind == ClassKind.COMPANION_OBJECT || subclassClass.isListed(subclass)
             if (!isListed || !subclass.visibility.isApiIn(enclosing)) return@mapNotNull null
-            subclassName.removePrefix("${kmClass.name}.").substringAfterLast('/') to subclass
+            ListedClass(subclassName.removePrefix("${kmClass.name}.").substringAfterLast('/'), subclass, subclassClass)
         }
 
     /**
@@ -1673,16 +1704,16 @@ internal class DefaultKotlinIntrospector(
         scopes: List<ClassScope>,
         binaryName: String,
         sealedSubclasses: Set<String> = kmClass.sealedSubclasses.toSet()
-    ): List<Pair<String, KmClass>> {
+    ): List<ListedClass> {
         return kmClass.nestedClasses
             .filter { "${kmClass.name}.$it" !in sealedSubclasses }
             .mapNotNull { name ->
                 // the binary name, as the class might be nested
                 findClassByBinaryName("$binaryName\$$name")?.let { nestedClass ->
-                    nestedClass.kmClass?.takeIf { nestedClass.isListed(it) }
-                }?.let { name to it }
+                    nestedClass.kmClass?.takeIf { nestedClass.isListed(it) }?.let { ListedClass(name, it, nestedClass) }
+                }
             }
-            .filter { (_, nestedKmClass) -> nestedKmClass.visibility.isApiIn(scopes) }
+            .filter { it.kmClass.visibility.isApiIn(scopes) }
     }
 
     private fun formatAnnotationDefaultValue(
@@ -1770,6 +1801,8 @@ internal class DefaultKotlinIntrospector(
      * @param withReceiver whether to render the receiver of an extension function,
      *   which is omitted when the extension is listed in the body of its receiver class.
      * @param deprecation the deprecation of the [function], see [formatDeprecation].
+     * @param isOwnerOpenForOverrides whether the [owner] might be subclassed, see [mightBeSubclassed],
+     *   by default unless final, which an enum class is in the metadata, even when its entries subclass it.
      */
     @OptIn(ExperimentalContextParameters::class)
     private fun formatFunction(
@@ -1779,7 +1812,8 @@ internal class DefaultKotlinIntrospector(
         contextPackage: String? = null,
         classTypeParameters: Map<Int, String> = emptyMap(),
         withReceiver: Boolean = true,
-        deprecation: Deprecation? = null
+        deprecation: Deprecation? = null,
+        isOwnerOpenForOverrides: Boolean = owner != null && owner.modality != Modality.FINAL
     ): String = buildString {
         val typeParameters = classTypeParameters + function.typeParameters.namesById()
 
@@ -1788,7 +1822,7 @@ internal class DefaultKotlinIntrospector(
         +formatVisibility(function.visibility)
 
         val override = override(owner, function)
-        +formatModalityModifiers(function.modality, override != null, inInterface, owner)
+        +formatModalityModifiers(function.modality, override != null, inInterface, isOwnerOpenForOverrides)
 
         // Function-specific modifiers
         if (function.isTailrec) +"tailrec "
@@ -1883,6 +1917,7 @@ internal class DefaultKotlinIntrospector(
      * @param withReceiver whether to render the receiver of an extension property,
      *   which is omitted when the extension is listed in the body of its receiver class.
      * @param deprecation the deprecation of the [property], see [formatDeprecation].
+     * @param isOwnerOpenForOverrides whether the [owner] might be subclassed, like for [formatFunction].
      */
     @OptIn(ExperimentalContextParameters::class)
     private fun formatProperty(
@@ -1893,7 +1928,8 @@ internal class DefaultKotlinIntrospector(
         contextPackage: String? = null,
         classTypeParameters: Map<Int, String> = emptyMap(),
         withReceiver: Boolean = true,
-        deprecation: Deprecation? = null
+        deprecation: Deprecation? = null,
+        isOwnerOpenForOverrides: Boolean = owner != null && owner.modality != Modality.FINAL
     ): List<String> = buildList {
         val typeParameters = classTypeParameters + property.typeParameters.namesById()
         val isOverride = isOverride(owner, property)
@@ -1903,7 +1939,7 @@ internal class DefaultKotlinIntrospector(
             +formatContextParameters(property.contextParameters, contextPackage, typeParameters)
             +formatVisibility(property.visibility)
 
-            +formatModalityModifiers(property.modality, isOverride, inInterface, owner)
+            +formatModalityModifiers(property.modality, isOverride, inInterface, isOwnerOpenForOverrides)
             if (property.isConst) +"const "
 
             +(if (renderedSetterVisibility != null) "var " else "val ")
@@ -2105,9 +2141,7 @@ internal class DefaultKotlinIntrospector(
      * in the order of the Kotlin coding conventions.
      *
      * An override is implicitly open, therefore its `final` is rendered,
-     * unless the [owner] class is final itself, which makes all its members final.
-     * An enum class is final in the metadata, even when its entries have bodies subclassing it,
-     * which only its JVM class tells, see [mightHaveEntryBodies].
+     * unless the owner class cannot be subclassed, see [mightBeSubclassed], which makes all its members final.
      * The members of an interface are implicitly abstract, so the ones with a default body are rendered as open,
      * also when overriding, like `open override fun f()`, telling it apart from an abstract `override fun f()`,
      * which might make abstract again the `f()` with a default body of a superinterface.
@@ -2116,27 +2150,24 @@ internal class DefaultKotlinIntrospector(
         modality: Modality,
         isOverride: Boolean,
         inInterface: Boolean,
-        owner: KmClass?
+        isOwnerOpenForOverrides: Boolean
     ): String = buildString {
         when (modality) {
             Modality.ABSTRACT -> if (!inInterface) +"abstract "
             Modality.OPEN -> if (!isOverride || inInterface) +"open "
-            Modality.FINAL -> if (
-                isOverride && owner != null && (
-                    owner.modality != Modality.FINAL || (owner.kind == ClassKind.ENUM_CLASS && mightHaveEntryBodies(owner))
-                )
-            ) +"final "
+            Modality.FINAL -> if (isOverride && isOwnerOpenForOverrides) +"final "
             Modality.SEALED -> {}
         }
         if (isOverride) +"override "
     }
 
     /**
-     * Whether the entries of the [enumClass] might have bodies, subclassing it, which the metadata does not tell,
-     * unlike its JVM class, which is final without them, assumed when its class file cannot be read.
+     * Whether the [kmClass] might be subclassed, unless final, except for an enum class, final in the metadata
+     * even when its entries have bodies subclassing it, which only its JVM class tells, final without them,
+     * which they are assumed to have when its class file cannot be read.
      */
-    private fun mightHaveEntryBodies(enumClass: KmClass): Boolean =
-        findClassByMetadataName(enumClass.name)?.classFile?.isFinal != true
+    private fun mightBeSubclassed(kmClass: KmClass, foundClass: FoundClass): Boolean =
+        kmClass.modality != Modality.FINAL || (kmClass.kind == ClassKind.ENUM_CLASS && foundClass.classFile?.isFinal != true)
 
     /**
      * Whether this property might be declared by the constructor [parameter], like `class Foo(val x: Int)`.
@@ -2801,7 +2832,7 @@ internal class DefaultKotlinIntrospector(
         override fun deprecation(constructor: KmConstructor): Deprecation? = deprecation(constructor.signature)
 
         override fun deprecation(property: KmProperty): Deprecation? =
-            deprecation(property.syntheticMethodForAnnotations) ?: deprecation(property.getterSignature)
+            highestOf(deprecation(property.syntheticMethodForAnnotations), deprecation(property.getterSignature))
 
         override fun isSetterHidden(property: KmProperty): Boolean = deprecation(property.setterSignature)?.isHidden == true
 

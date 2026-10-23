@@ -67,23 +67,30 @@ internal class DeprecationAnnotations {
  */
 internal fun DeprecationAnnotations.deprecationOf(isSince: (version: String) -> Boolean): Deprecation? {
     val explicitLevel = level?.let { name -> DeprecationLevel.entries.firstOrNull { it.name == name } }
-    val sinceKotlinLevel = if (isDeprecatedSinceKotlin) {
-        when {
+    val effectiveLevel = if (isDeprecatedSinceKotlin) {
+        val sinceKotlinLevel = when {
             hiddenSince?.let(isSince) == true -> DeprecationLevel.HIDDEN
             errorSince?.let(isSince) == true -> DeprecationLevel.ERROR
             warningSince?.let(isSince) == true -> DeprecationLevel.WARNING
-            else -> null
+            else -> return null
         }
+        // an explicit level is not expected next to @DeprecatedSinceKotlin, which the compiler reports,
+        // while kotlin-reflect tells the default WARNING one of a built-in declaration
+        if (explicitLevel != null) maxOf(sinceKotlinLevel, explicitLevel) else sinceKotlinLevel
     } else {
-        null
-    }
-    val effectiveLevel = when {
-        sinceKotlinLevel != null && explicitLevel != null -> maxOf(sinceKotlinLevel, explicitLevel)
-        sinceKotlinLevel != null -> sinceKotlinLevel
-        // the explicit level is not expected next to @DeprecatedSinceKotlin, which the compiler reports
-        explicitLevel != null -> explicitLevel
-        isDeprecated && !isDeprecatedSinceKotlin -> DeprecationLevel.WARNING
-        else -> return null
+        if (!isDeprecated) return null
+        explicitLevel ?: DeprecationLevel.WARNING
     }
     return Deprecation(message.orEmpty(), replaceWith?.takeIf { it.isNotEmpty() }, effectiveLevel)
+}
+
+/**
+ * The higher of the deprecations of one declaration told by several sources, like its getter and its annotations,
+ * so that a hidden one is never overridden by a lower one.
+ */
+internal fun highestOf(first: Deprecation?, second: Deprecation?): Deprecation? = when {
+    first == null -> second
+    second == null -> first
+    second.level > first.level -> second
+    else -> first
 }
