@@ -18,6 +18,8 @@
 
 package com.xemantic.kotlin.introspection
 
+import com.xemantic.kotlin.introspection.friendmodule.FriendModuleSubclass
+import com.xemantic.kotlin.introspection.othermodule.InternalBase
 import com.xemantic.kotlin.introspection.test.TestClass
 import com.xemantic.kotlin.test.assert
 import com.xemantic.kotlin.test.sameAs
@@ -876,6 +878,144 @@ class ClassLoaderIntrospectionTest {
             }
         }
         return KotlinIntrospector(classLoader)
+    }
+
+    @Test
+    fun `should mark overrides of internal members of friend module by class whose class file cannot be parsed`() {
+        // given
+        val unreadableResource = "com/xemantic/kotlin/introspection/friendmodule/FriendModuleSubclass.class"
+        // the class is still loaded by the parent class loader, only its class file is served unparsable
+        val classLoader = object : ClassLoader(javaClass.classLoader) {
+            override fun getResourceAsStream(name: String): InputStream? {
+                val stream = super.getResourceAsStream(name)
+                return if (stream != null && name == unreadableResource) {
+                    val bytes = stream.use { it.readBytes() }
+                    // the major version, following the magic number and the minor version
+                    bytes[6] = 0x7F
+                    bytes[7] = 0x7F
+                    bytes.inputStream()
+                } else stream
+            }
+        }
+        val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.friendmodule.FriendModuleSubclass")
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.friendmodule.FriendModuleSubclass [page 1/1]
+            class FriendModuleSubclass : com.xemantic.kotlin.introspection.othermodule.InternalBase {
+                override val state: Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should tell overrides of internal members only of the same module name by classes which can be neither read nor reflected`() {
+        // given
+        val root = tempDir.resolve("unreflectable")
+        listOf(InternalBase::class.java, FriendModuleSubclass::class.java).forEach { fixture ->
+            val dir = File(fixture.protectionDomain.codeSource.location.toURI())
+            dir.walkTopDown()
+                .filter { it.isFile && it.name != "OtherModuleMarker.class" }
+                .forEach { it.copyTo(root.resolve(it.relativeTo(dir).path).toFile(), overwrite = true) }
+        }
+        val unreadableResources = setOf(
+            "com/xemantic/kotlin/introspection/othermodule/UnreflectableSameModuleSubclass.class",
+            "com/xemantic/kotlin/introspection/friendmodule/UnreflectableFriendModuleSubclass.class"
+        )
+        // loading the fixtures of both modules itself, without the marker class, which their methods refer to
+        val classLoader = object : URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader) {
+            override fun loadClass(name: String, resolve: Boolean): Class<*> =
+                if (name.startsWith("com.xemantic.kotlin.introspection.othermodule.") ||
+                    name.startsWith("com.xemantic.kotlin.introspection.friendmodule.")
+                ) {
+                    synchronized(getClassLoadingLock(name)) { findLoadedClass(name) ?: findClass(name) }
+                } else {
+                    super.loadClass(name, resolve)
+                }
+
+            override fun getResourceAsStream(name: String): InputStream? {
+                val stream = super.getResourceAsStream(name)
+                return if (stream != null && name in unreadableResources) {
+                    val bytes = stream.use { it.readBytes() }
+                    // the major version, following the magic number and the minor version
+                    bytes[6] = 0x7F
+                    bytes[7] = 0x7F
+                    bytes.inputStream()
+                } else stream
+            }
+        }
+        val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
+
+        // when
+        val sameModule = introspector.resolve(
+            "com.xemantic.kotlin.introspection.othermodule.UnreflectableSameModuleSubclass"
+        )
+        val friendModule = introspector.resolve(
+            "com.xemantic.kotlin.introspection.friendmodule.UnreflectableFriendModuleSubclass"
+        )
+
+        // then
+        // a module of the same name is assumed to be the same module
+        sameModule sameAsKotlin """
+            // com.xemantic.kotlin.introspection.othermodule.UnreflectableSameModuleSubclass [page 1/1]
+            class UnreflectableSameModuleSubclass : InternalBase {
+                override val state: Int
+                fun take(marker: OtherModuleMarker)
+            }
+        """.trimIndent()
+        // while a friend module is told only by the bridge, which cannot be seen
+        friendModule sameAsKotlin """
+            // com.xemantic.kotlin.introspection.friendmodule.UnreflectableFriendModuleSubclass [page 1/1]
+            class UnreflectableFriendModuleSubclass : com.xemantic.kotlin.introspection.othermodule.InternalBase {
+                open val state: Int
+                fun take(marker: com.xemantic.kotlin.introspection.othermodule.OtherModuleMarker)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark shrunk overrides of internal members of superclass of the same module named by default`() {
+        // given
+        val shrunkResource = "com/xemantic/kotlin/introspection/defaultmodule/DefaultModuleSubclass.class"
+        // like R8 removing both the override of clear and its bridge clear$main, keeping the metadata
+        val classLoader = object : ClassLoader(javaClass.classLoader) {
+            override fun getResourceAsStream(name: String): InputStream? {
+                val stream = super.getResourceAsStream(name)
+                return if (stream != null && name == shrunkResource) {
+                    val writer = ClassWriter(0)
+                    ClassReader(stream.use { it.readBytes() }).accept(object : ClassVisitor(Opcodes.ASM9, writer) {
+                        override fun visitMethod(
+                            access: Int,
+                            name: String,
+                            descriptor: String,
+                            signature: String?,
+                            exceptions: Array<out String>?
+                        ): MethodVisitor? = if (name == "clear" || name == "clear\$main") {
+                            null
+                        } else {
+                            super.visitMethod(access, name, descriptor, signature, exceptions)
+                        }
+                    }, 0)
+                    writer.toByteArray().inputStream()
+                } else stream
+            }
+        }
+        val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.defaultmodule.DefaultModuleSubclass")
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.defaultmodule.DefaultModuleSubclass [page 1/1]
+            class DefaultModuleSubclass : DefaultModuleBase {
+                override val state: Int
+                override fun clear()
+            }
+        """.trimIndent()
     }
 
     @Test
