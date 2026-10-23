@@ -1308,11 +1308,12 @@ class ClassLoaderIntrospectionTest {
         val signature = introspector.resolve("com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsOverloader")
 
         // then
-        // the JVM methods of the interface itself still tell the overload as shrunk
+        // the JVM methods of the interface itself still tell the overload as shrunk,
+        // an override with a default body, which a subinterface can still override
         signature sameAsKotlin """
             // com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsOverloader [page 1/1]
             interface DefaultImplsOverloader : DefaultImplsBase {
-                override fun greet(times: Int): String
+                open override fun greet(times: Int): String
             }
         """.trimIndent()
     }
