@@ -1419,7 +1419,8 @@ internal class DefaultKotlinIntrospector(
                         else -> "val "
                     },
                     // a constructor property is never abstract, but it can be open or final
-                    modifiers = if (prop == null) "" else formatDeprecation(foundClass.deprecation(prop)) +
+                    // the hidden property of a data class, or a value class, is still declared, see formatDeprecation
+                    modifiers = if (prop == null) "" else formatDeprecation(foundClass.deprecation(prop), withHidden = prop !in properties) +
                         formatVisibility(prop.visibility) +
                         formatModalityModifiers(prop.modality, isOverride, inInterface = false, isOpenForOverrides)
                 )
@@ -1606,11 +1607,17 @@ internal class DefaultKotlinIntrospector(
      * rendered inline, so that the declaration stays on a single line, or an empty string otherwise.
      * The level is rendered unless it is the default `WARNING`, like `ERROR`, telling that the declaration
      * can still be referred to, but not called, also when it comes from `@DeprecatedSinceKotlin`, see [deprecationOf].
-     * A hidden deprecation, of a declaration which is not listed, but might still be resolved, like a class, is not rendered.
+     * A hidden deprecation, of a declaration which is not listed, but might still be resolved, like a class, is not rendered,
+     * except [withHidden], the only place being the property declared by a primary constructor parameter
+     * of a data class, or a value class, which must declare a property, like
+     * `data class Foo(@Deprecated("Replaced", level = DeprecationLevel.HIDDEN) val a: Int)`, telling it cannot be used.
      * Only the first non-blank line of a multiline message is rendered, followed by `…`, to keep it compact,
      * and the expression of `ReplaceWith` without its imports.
      */
-    private fun formatDeprecation(deprecation: Deprecation?): String = if (deprecation == null || deprecation.isHidden) "" else buildString {
+    private fun formatDeprecation(
+        deprecation: Deprecation?,
+        withHidden: Boolean = false
+    ): String = if (deprecation == null || (deprecation.isHidden && !withHidden)) "" else buildString {
         val message = deprecation.message.trim()
         val firstLine = message.lineSequence().first().trimEnd()
         +"@Deprecated(\""

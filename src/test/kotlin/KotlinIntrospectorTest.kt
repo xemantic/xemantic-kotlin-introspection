@@ -5608,6 +5608,31 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should render hidden property of data class constructor with its deprecation`() {
+        // the parameter must declare a property, which cannot be used
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenPropertyDataClass", pageSize = 1
+        ) should {
+            have(
+                lines()[1] == "data class HiddenPropertyDataClass(" +
+                    "@Deprecated(\"Replaced\", level = DeprecationLevel.HIDDEN) val a: Int, val b: Int) {"
+            )
+        }
+    }
+
+    @Test
+    fun `should render hidden property of value class constructor with its deprecation`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenPropertyValueClass", pageSize = 1
+        ) should {
+            have(
+                lines()[1] == "@JvmInline value class HiddenPropertyValueClass(" +
+                    "@Deprecated(\"Replaced\", level = DeprecationLevel.HIDDEN) val raw: Int) {"
+            )
+        }
+    }
+
+    @Test
     fun `should resolve deprecated member`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.DeprecationTarget.errorMember"

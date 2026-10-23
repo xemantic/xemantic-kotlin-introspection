@@ -103,6 +103,10 @@ com.example.AnnotationTestClass
   the protected ones only of an open or abstract class, or of the companion object of one,
   and never the ones deprecated with the `HIDDEN` level,
   or with `@DeprecatedSinceKotlin(hiddenSince = …)` not newer than the standard library of the class loader.
+  The exception is a property declared by a primary constructor parameter of a data class, or a value class,
+  which cannot be declared without it,
+  so it is rendered with its visibility, like `private val b: Int`,
+  or its deprecation, like `@Deprecated("Replaced", level = DeprecationLevel.HIDDEN) val a: Int`.
   The same rule applies to the setter of a `var`:
   when it cannot be called, like with `private set`, or `@set:Deprecated(level = HIDDEN)`,
   the property is rendered as a `val`,

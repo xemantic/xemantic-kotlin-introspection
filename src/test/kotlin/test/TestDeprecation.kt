@@ -113,3 +113,9 @@ enum class DeprecatedConstructorEnum @Deprecated("Old") constructor(val v: Int) 
 class DeprecatedConstructorProperty(@Deprecated("Use baz", level = DeprecationLevel.ERROR) val bar: Int) {
     val baz: Int get() = bar
 }
+
+// a data class, or a value class, cannot be declared without a property for each parameter, also a hidden one
+data class HiddenPropertyDataClass(@property:Deprecated("Replaced", level = DeprecationLevel.HIDDEN) val a: Int, val b: Int)
+
+@JvmInline
+value class HiddenPropertyValueClass(@property:Deprecated("Replaced", level = DeprecationLevel.HIDDEN) val raw: Int)
