@@ -52,8 +52,9 @@ class BoundedCacheTest {
                 "second"
             }
         }
-        // the second request either waits for the first computation, or, if it is not shared, completes on its own
-        while (second.isAlive && second.state != Thread.State.BLOCKED && second.state != Thread.State.WAITING) {
+        // the second request either waits for the first computation, or, if it is not shared, completes on its own,
+        // told by the stack of the second thread, as it might also wait momentarily for anything else
+        while (second.isAlive && !second.isWaitingForComputation()) {
             Thread.onSpinWait()
         }
         release.countDown()
@@ -63,6 +64,15 @@ class BoundedCacheTest {
         // then
         assert(computations.get() == 1 && secondValue == "first")
     }
+
+    /**
+     * Whether this thread is blocked within the cache, like on the lock of the value computed by another thread,
+     * and not momentarily on anything else, like on loading a class.
+     */
+    private fun Thread.isWaitingForComputation(): Boolean =
+        state == Thread.State.BLOCKED && stackTrace.firstOrNull().let { frame ->
+            frame != null && (frame.className == BoundedCache::class.java.name || frame.methodName == "getValue")
+        }
 
     @Test
     fun `should evict least recently used value beyond capacity`() {
@@ -94,6 +104,54 @@ class BoundedCacheTest {
 
         // then
         assert(value == "computed")
+    }
+
+    @Test
+    fun `should fail computation requesting its own key`() {
+        // given
+        val cache = BoundedCache<String, String>(capacity = 10)
+
+        // when
+        val failure = assertFailsWith<IllegalStateException> {
+            cache.getOrPut("key") {
+                cache.getOrPut("other") {
+                    cache.getOrPut("key") { "recursive" }
+                }
+            }
+        }
+
+        // then
+        assert(failure.message == "The computation of key requests its own value")
+        assert(cache.getOrPut("key") { "computed" } == "computed")
+    }
+
+    @Test
+    fun `should compute value again after computation telling it is not cacheable`() {
+        // given
+        val cache = BoundedCache<String, String>(capacity = 10)
+        val transient = cache.getOrCompute("key") { BoundedCache.Computed("transient", isCacheable = false) }.value
+
+        // when
+        val value = cache.getOrPut("key") { "computed" }
+
+        // then
+        assert(transient == "transient" && value == "computed")
+    }
+
+    @Test
+    fun `should tell only cached values, without computing them`() {
+        // given
+        val cache = BoundedCache<String, String>(capacity = 1)
+        cache.getOrCompute("transient") { BoundedCache.Computed("transient", isCacheable = false) }
+
+        // when
+        val missing = cache.getIfCached("transient")
+        cache.put("key", "put")
+        val put = cache.getIfCached("key")
+        cache.put("other", "evicting")
+
+        // then
+        assert(missing == null && put == "put" && cache.getIfCached("key") == null)
     }
 
 }

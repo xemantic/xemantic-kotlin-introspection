@@ -20,6 +20,7 @@ package com.xemantic.kotlin.introspection
 
 import io.github.oshai.kotlinlogging.KotlinLogging
 import java.io.File
+import java.io.IOException
 import java.net.JarURLConnection
 import java.net.URISyntaxException
 import java.net.URL
@@ -57,13 +58,29 @@ private val knownBuiltinsResources = listOf(
 
 /**
  * Reads the declarations of the built-in types from the `.kotlin_builtins` resources of the standard library,
- * by their Kotlin class names, like `kotlin/collections/List`.
+ * by their Kotlin class names, like `kotlin/collections/List`,
+ * each read from the root containing the [anchor] resource, where they are listed, see [kotlinBuiltinsResources],
+ * and not from the first root of the class path having it, which might be of another version of the standard library,
+ * like an older or a shaded one, mixing the declarations of two versions.
+ *
+ * @param anchor the URL of the `kotlin/kotlin.kotlin_builtins` resource, found relative to a class of the standard library,
+ *   through its class loader when it is an unnamed module; when it is a named module, the resources are encapsulated,
+ *   as its packages are open only to kotlin.reflect, so that they cannot be found from here.
  */
-internal fun readKotlinBuiltinClasses(): Map<String, KmClass> = kotlinBuiltinsResources().flatMap { resource ->
-    // read relative to a class of the standard library, through its class loader when it is an unnamed module;
-    // when it is a named module, the resources are read through the module, and are encapsulated,
-    // as its packages are open only to kotlin.reflect, so that they cannot be read from here
-    val stream = KotlinVersion::class.java.getResourceAsStream("/$resource")
+internal fun readKotlinBuiltinClasses(
+    anchor: URL? = KotlinVersion::class.java.getResource("/$ANCHOR_BUILTINS_RESOURCE")
+): Map<String, KmClass> = kotlinBuiltinsResources(anchor).flatMap { resource ->
+    val stream = try {
+        if (anchor != null) {
+            // all the resources are in the kotlin package, or its subpackages, like the anchor itself
+            @Suppress("DEPRECATION") // the URL handler of the anchor, like of a nested jar, is kept only this way
+            URL(anchor, resource.removePrefix("kotlin/")).openStream()
+        } else {
+            KotlinVersion::class.java.getResourceAsStream("/$resource")
+        }
+    } catch (_: IOException) {
+        null
+    }
     if (stream == null) {
         // the known resources, read when they cannot be listed, might be missing from an older standard library
         if (resource == ANCHOR_BUILTINS_RESOURCE) {

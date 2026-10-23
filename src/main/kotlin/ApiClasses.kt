@@ -18,7 +18,6 @@
 
 package com.xemantic.kotlin.introspection
 
-import java.util.concurrent.ConcurrentHashMap
 import kotlin.metadata.Visibility
 
 /**
@@ -139,14 +138,17 @@ internal class ApiClass(val scopes: List<ApiScope>) : DeclarationScope {
  * @param scopeOf the scope of a class by its metadata name, like `com/example/Outer.Nested`,
  *   or `null` if it is not found, or cannot be read.
  * @param isAbsent whether the class file of a class, by its metadata name, is absent from the classpath.
+ * @param transientFailures the failures which might be transient, of [scopeOf] and [isAbsent],
+ *   so that the openness of a sealed class decided meanwhile is not kept, see [isOpen].
  */
 internal class ApiClasses(
     private val scopeOf: (String) -> ClassScope?,
-    private val isAbsent: (String) -> Boolean
+    private val isAbsent: (String) -> Boolean,
+    private val transientFailures: TransientFailures? = null
 ) {
 
     // whether a sealed class is open, by its metadata name, see ApiScope.isOpen
-    private val sealedOpenness = ConcurrentHashMap<String, Boolean>()
+    private val sealedOpenness = BoundedCache<String, Boolean>(capacity = 1024)
 
     /**
      * The class named like `com/example/Outer.Nested`, if it is part of the API, or else `null`.
@@ -180,15 +182,17 @@ internal class ApiClasses(
      * Whether the class is open, see [ApiScope.isOpen], where a sealed class is, when any of its subclasses
      * is part of the API, and open.
      * Only the openness decided without assuming any sealed class not to be open is kept,
-     * which is exact, as such an assumption matters only when the sealed class is not open otherwise.
+     * which is exact, as such an assumption matters only when the sealed class is not open otherwise,
+     * and not after a transient failure meanwhile, see [transientFailures].
      */
     private fun isOpen(name: String, scope: ClassScope, inProgress: Set<String>): Boolean {
         if (scope.isSubclassable) return true
         if (scope.sealedSubclasses.isEmpty()) return false
-        sealedOpenness[name]?.let { return it }
+        sealedOpenness.getIfCached(name)?.let { return it }
         if (name in inProgress) return false
+        val failureCount = transientFailures?.count()
         val isOpen = scope.sealedSubclasses.any { subclass -> apiClass(subclass, inProgress + name)?.isOpen == true }
-        if (inProgress.isEmpty()) sealedOpenness[name] = isOpen
+        if (inProgress.isEmpty() && transientFailures?.count() == failureCount) sealedOpenness.put(name, isOpen)
         return isOpen
     }
 

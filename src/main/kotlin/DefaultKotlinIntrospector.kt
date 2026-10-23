@@ -26,11 +26,10 @@ import org.objectweb.asm.ClassVisitor
 import org.objectweb.asm.MethodVisitor
 import org.objectweb.asm.Opcodes
 import java.io.File
+import java.io.IOException
 import java.net.URI
 import java.net.URL
 import java.net.URLClassLoader
-import java.util.Optional
-import java.util.concurrent.ConcurrentHashMap
 import java.util.jar.Attributes
 import java.util.jar.JarFile
 import kotlin.metadata.*
@@ -230,12 +229,20 @@ internal class DefaultKotlinIntrospector(
         builtinClasses.mapKeys { it.key.replace('/', '.') }
     }
 
+    /**
+     * The failures of the class lookups, and of the class file reads of the [overrideResolver], which might be transient,
+     * retried once per resolve, so that the [overrideResolver] does not cache what it computes from them meanwhile.
+     */
+    private val transientFailures = TransientFailures()
+
     private val overrideResolver = OverrideResolver(
         classLoader = classLoader,
         loadClassByMetadataName = { name -> findClassByMetadataName(name)?.clazz },
         loadKmClassByMetadataName = ::loadKmClass,
         // read directly, without loading the class, like a DefaultImpls class probed for every interface
-        readClassBytesByMetadataName = { name -> classLoader.readClassBytes(binaryNameOf(name)) },
+        readClassBytesByMetadataName = { name -> readClassBytes(binaryNameOf(name)) },
+        unloadableClassBytesByMetadataName = { name -> lookUpClassByBinaryName(binaryNameOf(name)).unloadableClassBytes },
+        transientFailures = transientFailures,
         builtinClasses = { builtinClasses },
         builtinTypes = builtinTypes
     )
@@ -489,9 +496,14 @@ internal class DefaultKotlinIntrospector(
         /**
          * The class file, read once, and only when needed: already when the class cannot be loaded,
          * otherwise for the flags telling whether a listed class is usable, see [isUsableClass],
-         * and for the deprecations of the declarations, see [deprecation].
+         * and for the deprecations of the declarations, see [deprecation],
+         * read again after a failure which might be transient, see [FinalOnce].
          */
-        val classFile: ClassFile? by lazy { readFile ?: readClassFile(binaryName) }
+        val classFile: ClassFile? get() = classFileRead.value
+
+        private val classFileRead = FinalOnce {
+            if (readFile != null) TransientFailures.Outcome(readFile, isFinal = true) else readClassFile(binaryName)
+        }
 
         // the flags reflected once, and only when the class file cannot be read, see reflectedClassFile
         val reflectedClassFile: ClassFile by lazy { reflectedClassFile(clazz) }
@@ -511,9 +523,11 @@ internal class DefaultKotlinIntrospector(
         /**
          * The `DefaultImpls` class file of an interface, or of an annotation class, holding the synthetic methods
          * for the annotations of its properties, unless compiled with `-jvm-default=no-compatibility`,
-         * read only when needed.
+         * read only when needed, and again after a failure which might be transient, see [FinalOnce].
          */
-        private val defaultImplsFile: ClassFile? by lazy { readClassFile("$binaryName\$$DEFAULT_IMPLS") }
+        private val defaultImplsFile: ClassFile? get() = defaultImplsFileRead.value
+
+        private val defaultImplsFileRead = FinalOnce { readClassFile("$binaryName\$$DEFAULT_IMPLS") }
 
         // the deprecation of a declaration of this class, see ClassFile, never when the class file cannot be read
 
@@ -536,10 +550,17 @@ internal class DefaultKotlinIntrospector(
 
         /**
          * The scope of the class, see [ApiClasses], where the usability of a class whose class file cannot be read
-         * is told by the metadata and the reflection of the class, see [isUsableClass] and [reflectedClassFile].
+         * is told by the metadata and the reflection of the class, see [isUsableClass] and [reflectedClassFile],
+         * told again after a failure to read the class file which might be transient, see [FinalOnce].
          */
-        val scope: ClassScope? by lazy {
-            kmClass?.let { classScope(it, isUsableClass(it, classFile ?: reflectedClassFile), this) }
+        val scope: ClassScope? get() = scopeRead.value
+
+        private val scopeRead = FinalOnce {
+            val classFile = classFileRead.outcome
+            TransientFailures.Outcome(
+                kmClass?.let { classScope(it, isUsableClass(it, classFile.value ?: reflectedClassFile), this) },
+                classFile.isFinal
+            )
         }
 
     }
@@ -552,16 +573,26 @@ internal class DefaultKotlinIntrospector(
      */
     private val apiClasses = ApiClasses(
         scopeOf = { name -> findClassByMetadataName(name)?.scope },
-        isAbsent = { name -> isAbsent(name) }
+        isAbsent = { name -> isAbsent(name) },
+        transientFailures = transientFailures
     )
 
     /**
      * Whether the class named like `com/example/Outer.Nested` is absent from the classpath:
      * neither found, see [findClassByMetadataName], nor its class file served, like when it is missing,
-     * unlike a class found without readable metadata, or one which cannot be loaded, without readable metadata either.
+     * unlike a class found without readable metadata, or one which cannot be loaded, without readable metadata either,
+     * or one whose class file cannot be read, maybe only for now, kept with the lookup, see [ClassLookup.isAbsent].
      */
-    private fun isAbsent(name: String): Boolean =
-        findClassByMetadataName(name) == null && classLoader.readClassBytes(binaryNameOf(name)) == null
+    private fun isAbsent(name: String): Boolean = lookUpClassByBinaryName(binaryNameOf(name)).isAbsent
+
+    /**
+     * Whether the class file of the class of this JVM [binaryName], which is not found, is absent from the classpath,
+     * not when it cannot be read, maybe only for now, see [readClassBytesOutcome].
+     */
+    private fun classFileAbsence(binaryName: String): FinalOnce<Boolean> = FinalOnce {
+        val bytes = readClassBytesOutcome(binaryName)
+        TransientFailures.Outcome(bytes.value == null && bytes.isFinal, bytes.isFinal)
+    }
 
     /**
      * The functions of a mutable built-in collection type which are part of the API.
@@ -607,43 +638,41 @@ internal class DefaultKotlinIntrospector(
     )
 
     /**
-     * The classes found so far by their binary names, also the ones not found, as [Optional.empty],
+     * The lookups of the recently found classes by their binary names, also of the ones not found,
      * so that neither a class is loaded, nor its metadata parsed, nor a missing class looked up, more than once,
      * like for every nested class listed on every page of a paged resolve.
-     * It is not bounded, just like the indexes built from the whole classpath on creation:
-     * the classes found are only the ones of the classpath, and the ones not found are only the ones
-     * referred to by the metadata of the classes found, like a supertype missing from the classpath,
-     * never the names of the resolve queries, which are not cached when not found, see [findClassByName].
-     * It is concurrent, so that the introspector can still be used by many threads at once,
-     * at worst finding a class twice, and then keeping the one found first.
+     * It is bounded, as a found class keeps its parsed metadata, so that a long-lived introspector
+     * does not keep the metadata of every class ever looked up,
+     * while the [overrideResolver] keeps the declarations it needs in its own bounded caches.
+     * The outcome of a lookup which might be transient is not cached, see [lookUpClass].
      */
-    private val foundClasses = ConcurrentHashMap<String, Optional<FoundClass>>()
+    private val foundClasses = BoundedCache<String, ClassLookup>(capacity = 1024)
 
     /**
-     * Finds a class by its binary name, like `com.example.Outer${'$'}Nested`, known to be exact, like the one derived
-     * from the metadata of another class, and therefore cached also when the class is not found.
+     * Finds a class by its binary name, like `com.example.Outer${'$'}Nested`, cached also when it is not found,
+     * unless [isMissCached] is `false`, like for a name which is not known to be exact.
      */
-    private fun findClassByBinaryName(binaryName: String): FoundClass? {
-        foundClasses[binaryName]?.let { return it.getOrNull() }
-        val lookup = lookUpClass(binaryName)
-        if (!lookup.isCacheable) return lookup.foundClass
-        return foundClasses.putIfAbsent(binaryName, Optional.ofNullable(lookup.foundClass))?.getOrNull()
-            ?: lookup.foundClass
+    private fun findClassByBinaryName(binaryName: String, isMissCached: Boolean = true): FoundClass? =
+        lookUpClassByBinaryName(binaryName, isMissCached).foundClass
+
+    private fun lookUpClassByBinaryName(binaryName: String, isMissCached: Boolean = true): ClassLookup {
+        val computed = foundClasses.getOrCompute(binaryName) {
+            val outcome = transientFailures.attempt("class $binaryName") {
+                val lookup = lookUpClass(binaryName, isMissCached)
+                TransientFailures.Outcome(lookup, lookup.isFinal)
+            }
+            val lookup = if (outcome.isFinal) outcome.value.asFinal() else outcome.value
+            BoundedCache.Computed(lookup, isCacheable = lookup.isFinal && (isMissCached || lookup.foundClass != null))
+        }
+        // also when computed by another thread
+        if (!computed.value.isFinal) transientFailures.mark()
+        return computed.value
     }
 
     /**
      * Finds a class by its metadata name, like `com/example/Outer.Nested`.
      */
     private fun findClassByMetadataName(name: String): FoundClass? = findClassByBinaryName(binaryNameOf(name))
-
-    /**
-     * The JVM binary name, like `com.example.Outer${'$'}Nested`, of a metadata name, like `com/example/Outer.Nested`.
-     */
-    private fun binaryNameOf(metadataName: String): String {
-        val packageName = metadataName.substringBeforeLast('/', "")
-        val simpleName = metadataName.substringAfterLast('/').replace('.', '$')
-        return if (packageName.isEmpty()) simpleName else "${packageName.replace('/', '.')}.$simpleName"
-    }
 
     /**
      * Finds a class by its fully qualified name as given to [resolve], where nested classes are separated
@@ -653,17 +682,7 @@ internal class DefaultKotlinIntrospector(
     private fun findClassByName(name: String): FoundClass? {
         var binaryName = name
         while (true) {
-            val cached = foundClasses[binaryName]
-            if (cached != null) {
-                if (cached.isPresent) return cached.get()
-            } else {
-                val lookup = lookUpClass(binaryName)
-                if (lookup.foundClass != null) {
-                    if (!lookup.isCacheable) return lookup.foundClass
-                    return foundClasses.putIfAbsent(binaryName, Optional.of(lookup.foundClass))?.getOrNull()
-                        ?: lookup.foundClass
-                }
-            }
+            findClassByBinaryName(binaryName, isMissCached = false)?.let { return it }
             val lastDot = binaryName.lastIndexOf('.')
             if (lastDot < 0) return null
             binaryName = binaryName.substring(0, lastDot) + "$" + binaryName.substring(lastDot + 1)
@@ -671,26 +690,69 @@ internal class DefaultKotlinIntrospector(
     }
 
     /**
-     * @param isCacheable whether the outcome is final, unlike after a linkage error which might be transient.
+     * @param isFinal whether the outcome is final, unlike after a failure which might be transient.
+     * @param unloadableClassBytes the class file of a Java class which cannot be loaded, if read,
+     *   kept for the [overrideResolver], see [OverrideResolver.Declaration].
+     * @param classFileAbsence whether the class file of a class which is not found is absent, see [isAbsent],
+     *   told only when needed, `null` when its class file is known to be there.
      */
-    private class ClassLookup(val foundClass: FoundClass?, val isCacheable: Boolean)
+    private class ClassLookup(
+        val foundClass: FoundClass?,
+        val isFinal: Boolean,
+        val unloadableClassBytes: ByteArray? = null,
+        private val classFileAbsence: FinalOnce<Boolean>? = null
+    ) {
+        val isAbsent: Boolean get() = foundClass == null && classFileAbsence?.value == true
 
-    private fun lookUpClass(binaryName: String): ClassLookup = try {
+        fun asFinal(): ClassLookup =
+            if (isFinal) this else ClassLookup(foundClass, isFinal = true, unloadableClassBytes, classFileAbsence)
+    }
+
+    /**
+     * @param isMissProbed whether a class which is not found is told apart from one whose class file is there,
+     *   but cannot be loaded, maybe only for now, like after an `IOException`,
+     *   which is worth a resource lookup only if the miss is cached.
+     */
+    private fun lookUpClass(binaryName: String, isMissProbed: Boolean): ClassLookup = try {
         val clazz = classLoader.loadClass(binaryName)
-        ClassLookup(FoundClass(binaryName, clazz), isCacheable = true)
+        ClassLookup(FoundClass(binaryName, clazz), isFinal = true)
     } catch (_: ClassNotFoundException) {
-        ClassLookup(null, isCacheable = true)
+        // also thrown when the class file is there, but cannot be read, like by a URLClassLoader after an IOException
+        ClassLookup(
+            null,
+            isFinal = !isMissProbed || !classLoader.hasClassFile(binaryName),
+            classFileAbsence = classFileAbsence(binaryName)
+        )
     } catch (e: LinkageError) {
         // the class file is there, but refers to a class which is not, like its supertype,
-        // or is of a newer JVM version, while its declarations can still be read from its metadata;
-        // the class file is read also after any other linkage error, but then the class is to be loaded again
-        val isFinal = e is NoClassDefFoundError || e is UnsupportedClassVersionError
+        // or is of a newer JVM version, or is malformed, while its declarations can still be read from its metadata;
+        // the class is to be loaded again only after a plain linkage error, like of two threads defining it at once,
+        // or when its class file is there, but cannot be read, maybe only for now,
+        // unlike one which is not served at all, like by an in-memory class loader
+        val bytes = classLoader.readClassBytes(binaryName)
+        val classFile = bytes?.let { readClassFile(binaryName, it) }
         ClassLookup(
-            readClassFile(binaryName)
-                ?.takeIf { it.metadata != null }
-                ?.let { classFile -> FoundClass(binaryName, clazz = null, classFile) },
-            isCacheable = isFinal
+            classFile?.takeIf { it.metadata != null }?.let { FoundClass(binaryName, clazz = null, it) },
+            isFinal = e.javaClass != LinkageError::class.java && (bytes != null || !classLoader.hasClassFile(binaryName)),
+            unloadableClassBytes = bytes?.takeIf { classFile?.metadata == null },
+            classFileAbsence = if (bytes == null) classFileAbsence(binaryName) else null
         )
+    }
+
+    /**
+     * Reads the class file of a class by its JVM [binaryName] for the [overrideResolver],
+     * telling a failure which might be transient, an `IOException`, retried once per resolve, see [transientFailures].
+     */
+    private fun readClassBytes(binaryName: String): ByteArray? = readClassBytesOutcome(binaryName).value
+
+    private fun readClassBytesOutcome(binaryName: String): TransientFailures.Outcome<ByteArray?> {
+        val outcome = transientFailures.attempt("class file $binaryName") {
+            var failure: Exception? = null
+            val bytes = classLoader.readClassBytes(binaryName) { failure = it }
+            TransientFailures.Outcome(bytes, isFinal = failure !is IOException)
+        }
+        if (!outcome.isFinal) transientFailures.mark()
+        return outcome
     }
 
     /**
@@ -700,14 +762,25 @@ internal class DefaultKotlinIntrospector(
      * and the metadata of a class which cannot be loaded,
      * unless the file is of another class, like the one found for the name `com/example/Outer`,
      * or for a name differing only in case.
+     *
+     * @param bytes the class file, if read.
      */
-    private fun readClassFile(binaryName: String): ClassFile? = try {
-        classLoader.readClassBytes(binaryName)
+    private fun readClassFile(binaryName: String, bytes: ByteArray?): ClassFile? = try {
+        bytes
             ?.let { ClassReader(it) }
             ?.takeIf { it.className.replace('/', '.') == binaryName }
             ?.let { readClassFile(it) }
     } catch (_: Exception) {
         null
+    }
+
+    /**
+     * Reads the class file of a class by its JVM [binaryName], see [readClassFile],
+     * telling a failure to read it which might be transient, see [readClassBytes].
+     */
+    private fun readClassFile(binaryName: String): TransientFailures.Outcome<ClassFile?> {
+        val bytes = readClassBytesOutcome(binaryName)
+        return TransientFailures.Outcome(readClassFile(binaryName, bytes.value), bytes.isFinal)
     }
 
     private fun parseMetadata(metadataAnnotation: Metadata): KotlinClassMetadata? = try {
@@ -3187,7 +3260,8 @@ internal class DefaultKotlinIntrospector(
         pageSize: Int
     ): String? {
         requirePositivePageSize(pageSize)
-        return resolve(name)?.render(name, page, pageSize)
+        // a class lookup failing maybe only for now is retried once per resolve
+        return transientFailures.operation { resolve(name) }?.render(name, page, pageSize)
     }
 
     override fun search(query: String, page: Int, pageSize: Int): String? {
