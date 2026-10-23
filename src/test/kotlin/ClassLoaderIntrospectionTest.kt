@@ -740,7 +740,7 @@ class ClassLoaderIntrospectionTest {
         signature sameAsKotlin """
             // com.xemantic.kotlin.introspection.isolated.HiddenSinceHolder [page 1/1]
             class HiddenSinceHolder {
-                val hiddenSinceProperty: Int
+                @Deprecated("replaced") val hiddenSinceProperty: Int
                 fun hiddenSinceFuture(): Int
             }
         """.trimIndent()

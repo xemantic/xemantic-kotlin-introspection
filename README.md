@@ -117,6 +117,20 @@ com.example.AnnotationTestClass
   An override of a `var` is the exception, as a `val` cannot override a `var`:
   it stays a `var`, with its setter rendered with its actual visibility,
   like `protected set` in a final class, even though the setter cannot be called there.
+* A class, a constructor, a function, or a property deprecated with the `WARNING` or the `ERROR` level,
+  which can still be referred to,
+  is rendered with its `@Deprecated` annotation inline, telling what to use instead, like:
+
+  ```kotlin
+  @Deprecated("Use uppercase() instead.", ReplaceWith("uppercase(Locale.getDefault())"), level = DeprecationLevel.ERROR) inline fun String.toUpperCase(): String
+  ```
+
+  The level is the one in effect for the standard library of the class loader,
+  also when told by `@DeprecatedSinceKotlin`, as for the declarations of the standard library,
+  and it is rendered unless it is the default `WARNING`.
+  To keep the signature compact,
+  only the first line of the message is rendered, followed by `…` if there are more,
+  and only the expression of `ReplaceWith`, without its imports.
 * A class header without a constructor, like `class Foo`, means the implicit public constructor without parameters,
   as in Kotlin,
   so an explicit one is rendered whenever it differs,

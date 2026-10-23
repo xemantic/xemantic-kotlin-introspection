@@ -39,8 +39,8 @@ class KotlinIntrospectorTest {
             // kotlin.String [page 1/41]
             class String : Comparable<String>, CharSequence {
                 inline fun byteInputStream(charset: java.nio.charset.Charset = …): java.io.ByteArrayInputStream
-                fun capitalize(): String
-                fun capitalize(locale: java.util.Locale): String
+                @Deprecated("Use replaceFirstChar instead.", ReplaceWith("replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }")) fun capitalize(): String
+                @Deprecated("Use replaceFirstChar instead.", ReplaceWith("replaceFirstChar { if (it.isLowerCase()) it.titlecase(locale) else it.toString() }")) fun capitalize(locale: java.util.Locale): String
                 fun chars(): java.util.stream.IntStream
                 inline fun codePointAt(index: Int): Int
                 inline fun codePointBefore(index: Int): Int
@@ -63,9 +63,9 @@ class KotlinIntrospectorTest {
             class String : Comparable<String>, CharSequence {
                 inline fun contentEquals(charSequence: CharSequence): Boolean
                 inline fun contentEquals(stringBuilder: java.lang.StringBuffer): Boolean
-                fun decapitalize(): String
-                fun decapitalize(locale: java.util.Locale): String
-                fun describeConstable(): java.util.Optional<String>
+                @Deprecated("Use replaceFirstChar instead.", ReplaceWith("replaceFirstChar { it.lowercase(Locale.getDefault()) }")) fun decapitalize(): String
+                @Deprecated("Use replaceFirstChar instead.", ReplaceWith("replaceFirstChar { it.lowercase(locale) }")) fun decapitalize(locale: java.util.Locale): String
+                @Deprecated("This member is not fully supported by Kotlin compiler, so it may be absent or have different signature in next major version") fun describeConstable(): java.util.Optional<String>
                 fun drop(n: Int): String
                 fun dropLast(n: Int): String
                 inline fun dropLastWhile(predicate: (Char) -> Boolean): String
@@ -150,8 +150,8 @@ class KotlinIntrospectorTest {
             // kotlin.String [page 1/1]
             class String : Comparable<String>, CharSequence {
                 inline fun byteInputStream(charset: java.nio.charset.Charset = …): java.io.ByteArrayInputStream
-                fun capitalize(): String
-                fun capitalize(locale: java.util.Locale): String
+                @Deprecated("Use replaceFirstChar instead.", ReplaceWith("replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }")) fun capitalize(): String
+                @Deprecated("Use replaceFirstChar instead.", ReplaceWith("replaceFirstChar { if (it.isLowerCase()) it.titlecase(locale) else it.toString() }")) fun capitalize(locale: java.util.Locale): String
                 fun chars(): java.util.stream.IntStream
                 inline fun codePointAt(index: Int): Int
                 inline fun codePointBefore(index: Int): Int
@@ -161,9 +161,9 @@ class KotlinIntrospectorTest {
                 fun compareTo(other: String, ignoreCase: Boolean = …): Int
                 inline fun contentEquals(charSequence: CharSequence): Boolean
                 inline fun contentEquals(stringBuilder: java.lang.StringBuffer): Boolean
-                fun decapitalize(): String
-                fun decapitalize(locale: java.util.Locale): String
-                fun describeConstable(): java.util.Optional<String>
+                @Deprecated("Use replaceFirstChar instead.", ReplaceWith("replaceFirstChar { it.lowercase(Locale.getDefault()) }")) fun decapitalize(): String
+                @Deprecated("Use replaceFirstChar instead.", ReplaceWith("replaceFirstChar { it.lowercase(locale) }")) fun decapitalize(locale: java.util.Locale): String
+                @Deprecated("This member is not fully supported by Kotlin compiler, so it may be absent or have different signature in next major version") fun describeConstable(): java.util.Optional<String>
                 fun drop(n: Int): String
                 fun dropLast(n: Int): String
                 inline fun dropLastWhile(predicate: (Char) -> Boolean): String
@@ -234,12 +234,12 @@ class KotlinIntrospectorTest {
                 inline fun slice(indices: Iterable<Int>): String
                 fun startsWith(prefix: String, ignoreCase: Boolean = …): Boolean
                 fun startsWith(prefix: String, startIndex: Int, ignoreCase: Boolean = …): Boolean
-                fun strip(): String
-                fun stripIndent(): String
-                fun stripLeading(): String
-                fun stripTrailing(): String
+                @Deprecated("This member is not fully supported by Kotlin compiler, so it may be absent or have different signature in next major version") fun strip(): String
+                @Deprecated("This member is not fully supported by Kotlin compiler, so it may be absent or have different signature in next major version") fun stripIndent(): String
+                @Deprecated("This member is not fully supported by Kotlin compiler, so it may be absent or have different signature in next major version") fun stripLeading(): String
+                @Deprecated("This member is not fully supported by Kotlin compiler, so it may be absent or have different signature in next major version") fun stripTrailing(): String
                 override fun subSequence(startIndex: Int, endIndex: Int): CharSequence
-                inline fun subSequence(start: Int, end: Int): CharSequence
+                @Deprecated("Use parameters named startIndex and endIndex.", ReplaceWith("subSequence(startIndex = start, endIndex = end)"), level = DeprecationLevel.ERROR) inline fun subSequence(start: Int, end: Int): CharSequence
                 inline fun substring(startIndex: Int): String
                 inline fun substring(startIndex: Int, endIndex: Int): String
                 fun substring(range: IntRange): String
@@ -287,8 +287,8 @@ class KotlinIntrospectorTest {
                 inline fun toLong(radix: Int): Long
                 fun toLongOrNull(): Long?
                 fun toLongOrNull(radix: Int): Long?
-                inline fun toLowerCase(): String
-                inline fun toLowerCase(locale: java.util.Locale): String
+                @Deprecated("Use lowercase() instead.", ReplaceWith("lowercase(Locale.getDefault())"), level = DeprecationLevel.ERROR) inline fun toLowerCase(): String
+                @Deprecated("Use lowercase() instead.", ReplaceWith("lowercase(locale)"), level = DeprecationLevel.ERROR) inline fun toLowerCase(locale: java.util.Locale): String
                 inline fun toPattern(flags: Int = …): java.util.regex.Pattern
                 inline fun toRegex(): Regex
                 inline fun toRegex(option: RegexOption): Regex
@@ -314,9 +314,9 @@ class KotlinIntrospectorTest {
                 fun toUShort(radix: Int): UShort
                 fun toUShortOrNull(): UShort?
                 fun toUShortOrNull(radix: Int): UShort?
-                inline fun toUpperCase(): String
-                inline fun toUpperCase(locale: java.util.Locale): String
-                fun translateEscapes(): String
+                @Deprecated("Use uppercase() instead.", ReplaceWith("uppercase(Locale.getDefault())"), level = DeprecationLevel.ERROR) inline fun toUpperCase(): String
+                @Deprecated("Use uppercase() instead.", ReplaceWith("uppercase(locale)"), level = DeprecationLevel.ERROR) inline fun toUpperCase(locale: java.util.Locale): String
+                @Deprecated("This member is not fully supported by Kotlin compiler, so it may be absent or have different signature in next major version") fun translateEscapes(): String
                 inline fun trim(predicate: (Char) -> Boolean): String
                 fun trim(vararg chars: Char): String
                 inline fun trim(): String
@@ -521,8 +521,8 @@ class KotlinIntrospectorTest {
             fun CharSequence.subSequence(range: IntRange): CharSequence
             inline fun CharSequence.substring(startIndex: Int, endIndex: Int = …): String
             fun CharSequence.substring(range: IntRange): String
-            inline fun CharSequence.sumBy(selector: (Char) -> Int): Int
-            inline fun CharSequence.sumByDouble(selector: (Char) -> Double): Double
+            @Deprecated("Use sumOf instead.", ReplaceWith("this.sumOf(selector)")) inline fun CharSequence.sumBy(selector: (Char) -> Int): Int
+            @Deprecated("Use sumOf instead.", ReplaceWith("this.sumOf(selector)")) inline fun CharSequence.sumByDouble(selector: (Char) -> Double): Double
             inline fun CharSequence.sumOf(selector: (Char) -> java.math.BigDecimal): java.math.BigDecimal
             inline fun CharSequence.sumOf(selector: (Char) -> java.math.BigInteger): java.math.BigInteger
             inline fun CharSequence.sumOf(selector: (Char) -> Double): Double
@@ -5390,7 +5390,7 @@ class KotlinIntrospectorTest {
             class HiddenDeprecationTarget(val value: Int) {
                 constructor(value: Long)
                 fun member(): Int
-                fun errorMember(): Int
+                @Deprecated("replaced", level = DeprecationLevel.ERROR) fun errorMember(): Int
                 companion object {
                     fun create(): HiddenDeprecationTarget
                 }
@@ -5399,6 +5399,119 @@ class KotlinIntrospectorTest {
             fun HiddenDeprecationTarget.extension(): Int
             // from com.xemantic.kotlin.introspection.test.HiddenDeprecationExtensions
             fun HiddenDeprecationTarget.objectExtension(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render deprecation of class members, constructors and extensions`() {
+        // the declarations deprecated with the ERROR level can still be referred to, but not called
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.DeprecationTarget"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DeprecationTarget [page 1/1]
+            class DeprecationTarget @Deprecated("Use create()") constructor(val value: Int) {
+                @Deprecated("No \"replacement\" for \${'$'}value") val deprecatedProperty: Int
+                @Deprecated("Getter") val deprecatedGetter: Int
+                @Deprecated("Use the Int constructor", level = DeprecationLevel.ERROR) constructor(value: String)
+                @Deprecated("Use newMember()", ReplaceWith("newMember()")) fun warningMember(): Int
+                @Deprecated("Use newMember()", ReplaceWith("newMember()"), level = DeprecationLevel.ERROR) fun errorMember(): Int
+                fun newMember(): Int
+                companion object {
+                    @Deprecated("Use the constructor") fun create(): DeprecationTarget
+                }
+            }
+            // from com.xemantic.kotlin.introspection.test
+            @Deprecated("Gone", level = DeprecationLevel.ERROR) val DeprecationTarget.deprecatedExtensionProperty: Int
+            @Deprecated("Use newMember()", ReplaceWith("newMember()")) fun DeprecationTarget.deprecatedExtension(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render deprecation of class and nested class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.DeprecatedClass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DeprecatedClass [page 1/1]
+            @Deprecated("Use DeprecationTarget instead", ReplaceWith("DeprecationTarget")) class DeprecatedClass {
+                @Deprecated("Nested in deprecated") class Nested
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render only first line of deprecation message`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.MultilineDeprecationTarget.f"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.MultilineDeprecationTarget.f [page 1/1]
+            @Deprecated("First line. …") fun f()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve deprecated member`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.DeprecationTarget.errorMember"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DeprecationTarget.errorMember [page 1/1]
+            @Deprecated("Use newMember()", ReplaceWith("newMember()"), level = DeprecationLevel.ERROR) fun errorMember(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve deprecated top-level function`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.TestDeprecationKt.deprecationTopLevel"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.TestDeprecationKt.deprecationTopLevel [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            @Deprecated("Use deprecationTopLevel(value)", ReplaceWith("deprecationTopLevel(0)")) fun deprecationTopLevel(): Int
+            fun deprecationTopLevel(value: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render deprecation of interface properties`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.DeprecationInterface"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DeprecationInterface [page 1/1]
+            interface DeprecationInterface {
+                @Deprecated("Abstract") val abstractProperty: Int
+                @Deprecated("With getter") open val propertyWithGetter: Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render deprecation of interface properties compiled without jvm default`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsDeprecatedProperties"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsDeprecatedProperties [page 1/1]
+            interface DefaultImplsDeprecatedProperties {
+                @Deprecated("Abstract") val abstractProperty: Int
+                @Deprecated("With getter") open val propertyWithGetter: Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render deprecation level of stdlib extension deprecated since Kotlin version`() {
+        // @DeprecatedSinceKotlin(warningSince = "1.5", errorSince = "2.1") tells the level for the stdlib of the classpath
+        resolver.resolve("kotlin.String.toUpperCase") sameAsKotlin """
+            // kotlin.String.toUpperCase [page 1/1]
+            // from kotlin.text
+            @Deprecated("Use uppercase() instead.", ReplaceWith("uppercase(Locale.getDefault())"), level = DeprecationLevel.ERROR) inline fun String.toUpperCase(): String
+            @Deprecated("Use uppercase() instead.", ReplaceWith("uppercase(locale)"), level = DeprecationLevel.ERROR) inline fun String.toUpperCase(locale: java.util.Locale): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render deprecation of built-in member`() {
+        resolver.resolve("kotlin.Long.toChar") sameAsKotlin """
+            // kotlin.Long.toChar [page 1/1]
+            @Deprecated("Direct conversion to Char is deprecated. Use toInt().toChar() or Char constructor instead.", ReplaceWith("this.toInt().toChar()"), level = DeprecationLevel.ERROR) override fun toChar(): Char
         """.trimIndent()
     }
 
@@ -5514,7 +5627,7 @@ class KotlinIntrospectorTest {
     fun `should resolve built-in type with members deprecated without explicit level`() {
         // kotlin-reflect cannot tell the default level of the @Deprecated of the built-in Long.toChar()
         resolver.resolve("kotlin.Long", pageSize = 10000) should {
-            have("    override fun toChar(): Char" in lines())
+            have(lines().any { it.endsWith(" override fun toChar(): Char") })
         }
     }
 
@@ -5522,7 +5635,7 @@ class KotlinIntrospectorTest {
     fun `should resolve member of built-in type deprecated without explicit level`() {
         resolver.resolve("kotlin.Number.toChar") sameAsKotlin """
             // kotlin.Number.toChar [page 1/1]
-            fun toChar(): Char
+            @Deprecated("Direct conversion to Char is deprecated. Use toInt().toChar() or Char constructor instead. …", ReplaceWith("this.toInt().toChar()"), level = DeprecationLevel.ERROR) fun toChar(): Char
         """.trimIndent()
     }
 
