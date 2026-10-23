@@ -22,6 +22,7 @@ import org.objectweb.asm.ClassReader
 import org.objectweb.asm.ClassVisitor
 import org.objectweb.asm.MethodVisitor
 import org.objectweb.asm.Opcodes
+import org.objectweb.asm.Type
 import org.objectweb.asm.signature.SignatureReader
 import org.objectweb.asm.signature.SignatureVisitor
 import java.lang.reflect.GenericArrayType
@@ -147,31 +148,59 @@ internal class OverrideResolver(
     private data class TypeArgument(val variance: KmVariance?, val type: MemberType)
 
     /**
+     * Whether a member of a supertype is visible to the class whose members are checked, so that it can be overridden.
+     */
+    private sealed interface MemberVisibility {
+
+        /**
+         * A member visible wherever it is inherited, like a public or protected one,
+         * or an internal one of the same module.
+         */
+        data object Visible : MemberVisibility
+
+        /**
+         * An internal member of another module, which can be overridden only from a friend module,
+         * like the test module of the main one, told by the overriding class declaring the [jvmMethod] of the member,
+         * mangled with the module name of the member, either as the bridge to its own override,
+         * or as its own override, when both modules have the same name, like the default `main`.
+         * The bridge is the only trace of a friend module, as the metadata of the overriding member
+         * has its own JVM name, mangled with its own module name, or not mangled at all for a public override,
+         * so a friend-module override whose bridge is removed, like by a shrinker, is not told.
+         *
+         * @param jvmMethod the JVM name followed by the descriptor of the member.
+         */
+        data class Friend(val jvmMethod: String) : MemberVisibility
+
+        /**
+         * An internal member of another module whose override from a friend module cannot be told,
+         * as it has no JVM method, like a `@JvmField` property,
+         * or its JVM method is not mangled, like of a `@PublishedApi` member, or one with a `@JvmName`,
+         * which a class of any module, not only of a friend one, declares, when it has a member of the same signature.
+         */
+        data object Invisible : MemberVisibility
+    }
+
+    /**
      * A member of a supertype, which can be overridden.
      *
      * @param isJava whether the member is a Java method, matched by the erasure of its parameter types.
-     * @param friendJvmMethod for an internal member of another module, which can be overridden only
-     *   from a friend module, like the test module of the main one, whose overriding class declares
-     *   the JVM method of the member, mangled with the module name of the member:
-     *   the JVM name followed by the descriptor of this method,
-     *   or an empty string for a member without a JVM method, which is never visible.
-     *   `null` for any other member, always visible.
      * @param declaresDefaultValues the indices of the value parameters declaring a default value,
      *   which only a Kotlin function can.
      */
     private class Overridable(
-        val contexts: List<MemberType>,
+        val contexts: List<MemberType> = emptyList(),
         val receiver: MemberType?,
         val parameters: List<MemberType>,
         val typeParameterCount: Int,
         val isJava: Boolean,
-        val friendJvmMethod: String? = null,
+        val visibility: MemberVisibility = MemberVisibility.Visible,
         val declaresDefaultValues: Set<Int> = emptySet()
     )
 
     /**
      * @param ownerJvmMethods reads the JVM methods of the owner class, as names followed by descriptors,
-     *   or `null` if its class files cannot be read; only needed to tell a shrunk member, so read lazily.
+     *   or `null` if they can be neither read nor reflected;
+     *   only needed to tell a shrunk member or a friend module, so read lazily.
      */
     private class Overridables(
         val substitution: Map<Int, MemberType>,
@@ -247,9 +276,9 @@ internal class OverrideResolver(
      */
     private fun override(owner: KmClass, function: KmFunction, withDefaultValues: Boolean): FunctionOverride? {
         val overridables = overridables(owner)
-        val candidates = overridables.functions[function.name] ?: return null
+        val candidates = overridables.visibleFunctions(function.name).ifEmpty { return null }
         val signature = overridables.signature(function)
-        val overridden = candidates.asSequence().filter { overridables.overrides(signature, it) }
+        val overridden = candidates.asSequence().filter { it.matches(signature) }
         return when {
             !withDefaultValues -> if (overridden.any()) noDefaultValues else null
             else -> overridden.toList().takeIf { it.isNotEmpty() }
@@ -280,9 +309,6 @@ internal class OverrideResolver(
             isSuspend = function.isSuspend
         )
     }
-
-    private fun Overridables.overrides(signature: FunctionSignature, overridable: Overridable): Boolean =
-        overridable.matches(signature) && isVisible(overridable)
 
     private fun Overridable.matches(signature: FunctionSignature, onlyKnownTypes: Boolean = false): Boolean = matches(
         signature.contexts, signature.receiver, signature.parameters, signature.typeParameterCount, signature.isSuspend,
@@ -316,33 +342,51 @@ internal class OverrideResolver(
         val receiver = property.receiverParameterType?.let {
             kotlinType(it, overridables.substitution, typeParameters)
         }
-        val overridesProperty = overridables.properties[property.name].orEmpty().any {
-            it.matches(contexts, receiver, emptyList(), property.typeParameters.size, isSuspend = false) &&
-                overridables.isVisible(it)
+        val candidates = overridables.visibleProperties(property.name)
+        val overridesProperty = candidates.any {
+            it.matches(contexts, receiver, emptyList(), property.typeParameters.size, isSuspend = false)
         }
         // a property of a Kotlin supertype without metadata is known only by its JVM getter,
         // which a private or a @JvmField property does not have, and which might be renamed or mangled
         val getter = property.getterSignature?.takeIf { property.visibility.isOverridable }
-        val overridesGetter = getter != null && overridables.functions[getter.name].orEmpty().any {
+        val overridesGetter = getter != null && overridables.visibleFunctions(getter.name).any {
             it.isJava && it.matches(contexts, receiver, emptyList(), property.typeParameters.size, isSuspend = false)
         }
         return overridesProperty || overridesGetter ||
-            (property.name in overridables.properties && overridables.isShrunk(property.getterSignature))
+            (candidates.isNotEmpty() && overridables.isShrunk(property.getterSignature))
     }
+
+    /**
+     * The functions of the supertypes named [name], which are visible to the owner, see [isVisible].
+     */
+    private fun Overridables.visibleFunctions(name: String): List<Overridable> =
+        functions[name].orEmpty().filter { isVisible(it) }
+
+    /**
+     * The properties of the supertypes named [name], which are visible to the owner, see [isVisible].
+     */
+    private fun Overridables.visibleProperties(name: String): List<Overridable> =
+        properties[name].orEmpty().filter { isVisible(it) }
 
     /**
      * Whether the [overridable] member is visible to the owner, which is not known for an internal member
      * of another module, until it is told that the owner class is in a friend module.
+     * When the JVM methods of the owner can be neither read nor reflected, no friend module is told,
+     * just like no shrunk member is, see [isShrunk], so that an override is claimed only on evidence.
      */
     private fun Overridables.isVisible(overridable: Overridable): Boolean =
-        overridable.friendJvmMethod == null || ownerJvmMethods?.contains(overridable.friendJvmMethod) == true
+        when (val visibility = overridable.visibility) {
+            MemberVisibility.Visible -> true
+            MemberVisibility.Invisible -> false
+            is MemberVisibility.Friend -> ownerJvmMethods?.contains(visibility.jvmMethod) == true
+        }
 
     /**
      * Whether the JVM method of a member, declared in the metadata, has been removed from the class file of its owner,
      * like by R8, so that it cannot be told from an overload of a supertype member,
      * which is then assumed to be overridden, as one with the same name is known.
-     * The caller checks that a supertype member of the same name exists.
-     * A member whose owner class files cannot be read is not considered shrunk.
+     * The caller checks that a visible supertype member of the same name exists.
+     * A member whose owner JVM methods can be neither read nor reflected is not considered shrunk.
      */
     private fun Overridables.isShrunk(signature: JvmMethodSignature?): Boolean =
         signature != null && ownerJvmMethods?.let { signature.toString() !in it } == true
@@ -363,7 +407,9 @@ internal class OverrideResolver(
         if (isJava) {
             // a Java method has no context parameters, so it is not overridden by a member having them,
             // even if they are its parameters on the JVM, which also applies to a Kotlin supertype without metadata,
-            // as it cannot be told from a Java one
+            // as it cannot be told from a Java one, so that a real override of its member with context parameters
+            // is not told, while matching the context parameters as leading JVM parameters would mark a member
+            // with a context parameter as an override of a real Java method taking it, like Consumer<Ctx>.accept
             if (contexts.isNotEmpty()) return false
             // on the JVM, the receiver is the first parameter, and a suspend function takes a trailing Continuation
             val jvmParameters = listOfNotNull(receiver) + parameters +
@@ -405,7 +451,6 @@ internal class OverrideResolver(
             // the function types have no declarations to read
             functionTypeRegex.matchEntire(supertype.name)?.let { match ->
                 functions.getOrPut("invoke") { mutableListOf() } += Overridable(
-                    contexts = emptyList(),
                     receiver = null,
                     parameters = supertype.arguments.dropLast(1).map { it.type },
                     typeParameterCount = 0,
@@ -423,13 +468,17 @@ internal class OverrideResolver(
             declaration.kotlin?.let { kmClass ->
                 val substitution = supertypeSubstitution(kmClass, supertype)
                 // an internal member is visible only within its module, told by the module name in the metadata,
-                // or within a friend module, told by the JVM method of the overriding class
-                val isSameModule = kmClass.moduleName == owner.moduleName
-                fun friendJvmMethod(visibility: Visibility, signature: JvmMethodSignature?): String? =
-                    if (visibility == Visibility.INTERNAL && !isSameModule) {
-                        // an internal member without a JVM method cannot be told to be overridden
-                        signature?.toString() ?: ""
-                    } else null
+                // or within a friend module, told by the JVM method of the overriding class;
+                // the compiler omits the default module name from the metadata, read as main,
+                // like of plain kotlinc without -module-name, so unrelated modules might share it,
+                // and are then told apart only by the JVM methods, like modules of different names
+                val isSameModule = kmClass.moduleName == owner.moduleName && kmClass.moduleName != DEFAULT_MODULE_NAME
+                fun visibility(visibility: Visibility, signature: JvmMethodSignature?): MemberVisibility = when {
+                    visibility != Visibility.INTERNAL || isSameModule -> MemberVisibility.Visible
+                    // mangled with the module name, like reset$module
+                    signature != null && '$' in signature.name -> MemberVisibility.Friend(signature.toString())
+                    else -> MemberVisibility.Invisible
+                }
                 kmClass.functions.filter { it.visibility.isOverridable }.forEach { function ->
                     val typeParameters = memberTypeParameters(function.typeParameters)
                     functions.getOrPut(function.name) { mutableListOf() } += Overridable(
@@ -444,7 +493,7 @@ internal class OverrideResolver(
                         },
                         typeParameterCount = function.typeParameters.size,
                         isJava = false,
-                        friendJvmMethod = friendJvmMethod(function.visibility, function.signature),
+                        visibility = visibility(function.visibility, function.signature),
                         declaresDefaultValues = function.valueParameters.indices.filter {
                             function.valueParameters[it].declaresDefaultValue
                         }.toSet()
@@ -462,7 +511,7 @@ internal class OverrideResolver(
                         parameters = emptyList(),
                         typeParameterCount = property.typeParameters.size,
                         isJava = false,
-                        friendJvmMethod = friendJvmMethod(property.visibility, property.getterSignature)
+                        visibility = visibility(property.visibility, property.getterSignature)
                     )
                 }
                 kmClass.supertypes.forEach { type ->
@@ -491,34 +540,62 @@ internal class OverrideResolver(
     }
 
     /**
-     * The JVM methods of a Kotlin class, as names followed by descriptors, read from its class file,
-     * whether the class can be loaded or not,
+     * The JVM methods of a Kotlin class, as names followed by descriptors, see [declaredMethods],
      * including the members of an interface relocated to its `DefaultImpls` class,
      * like with `-jvm-default=disable`, as if they were declared in the interface,
-     * or `null` if the class files cannot be read.
+     * or `null` if they can be neither read nor reflected.
      */
     private fun jvmMethods(className: String, isInterface: Boolean): Set<String>? {
         // the package is separated with '/', and nested classes with '.'
         val internalName = className.replace('.', '$')
-        val methods = mutableSetOf<String>()
-        val isRead = readMethods(readClassBytesByMetadataName(className) ?: return null) { _, name, descriptor, _ ->
-            methods += name + descriptor
-        }
-        if (!isRead) return null
+        val classFile = readClassBytesByMetadataName(className)
+        val methods = declaredMethods(className, classFile)
+            ?.mapTo(mutableSetOf()) { it.name + it.descriptor }
+            ?: return null
         if (isInterface) {
-            // the static method of DefaultImpls takes the interface instance as the first parameter
-            val instanceParameter = "(L$internalName;"
-            val defaultImpls = readClassBytesByMetadataName("$className.DefaultImpls")
-            if (defaultImpls != null) {
-                val isDefaultImplsRead = readMethods(defaultImpls) { access, name, descriptor, _ ->
-                    if (access and Opcodes.ACC_STATIC != 0 && descriptor.startsWith(instanceParameter)) {
-                        methods += name + "(" + descriptor.removePrefix(instanceParameter)
+            val defaultImplsName = "$className.DefaultImpls"
+            val defaultImplsFile = readClassBytesByMetadataName(defaultImplsName)
+            // most interfaces have no DefaultImpls, so it is not loaded to tell, unless no class file is served
+            val hasDefaultImpls = defaultImplsFile != null ||
+                (classFile == null && loadClassByMetadataName(defaultImplsName) != null)
+            if (hasDefaultImpls) {
+                // the static method of DefaultImpls takes the interface instance as the first parameter
+                val instanceParameter = "(L$internalName;"
+                declaredMethods(defaultImplsName, defaultImplsFile)?.forEach { method ->
+                    if (method.access and Opcodes.ACC_STATIC != 0 && method.descriptor.startsWith(instanceParameter)) {
+                        methods += method.name + "(" + method.descriptor.removePrefix(instanceParameter)
                     }
-                }
-                if (!isDefaultImplsRead) return null
+                } ?: return null
             }
         }
         return methods
+    }
+
+    /**
+     * A method of a class.
+     *
+     * @param access the access flags, whose `ACC_STATIC` is the [Modifier.STATIC] of a reflected method.
+     */
+    private class DeclaredMethod(val access: Int, val name: String, val descriptor: String)
+
+    /**
+     * The methods declared by a class, read from its [classFile], whether the class can be loaded or not,
+     * or reflected, when there is no class file, like when the class loader does not serve it as a resource,
+     * or it cannot be parsed, like when it is too new for ASM, but the class can be loaded,
+     * or `null` if they can be neither read nor reflected.
+     */
+    private fun declaredMethods(className: String, classFile: ByteArray?): List<DeclaredMethod>? {
+        if (classFile != null) {
+            val methods = mutableListOf<DeclaredMethod>()
+            val isRead = readMethods(classFile) { access, name, descriptor, _ ->
+                methods += DeclaredMethod(access, name, descriptor)
+            }
+            if (isRead) return methods
+        }
+        val clazz = loadClassByMetadataName(className) ?: return null
+        return reflectOrNull {
+            clazz.declaredMethods.map { DeclaredMethod(it.modifiers, it.name, Type.getMethodDescriptor(it)) }
+        }
     }
 
     /**
@@ -945,7 +1022,6 @@ internal class OverrideResolver(
      */
     private fun javaOverridable(method: Method, substitution: JavaSubstitution): Overridable =
         Overridable(
-            contexts = emptyList(),
             receiver = null,
             parameters = method.genericParameterTypes.map { javaType(it, substitution, method) },
             typeParameterCount = method.typeParameters.size,
@@ -1076,7 +1152,6 @@ internal class OverrideResolver(
                 }
             }
             methods += name to Overridable(
-                contexts = emptyList(),
                 receiver = null,
                 parameters = parameters,
                 typeParameterCount = generic?.typeParameters?.size ?: 0,
@@ -1245,6 +1320,11 @@ internal class OverrideResolver(
     }
 
     private companion object {
+
+        /**
+         * The module name of a class compiled without `-module-name`, omitted from the metadata, and read as this one.
+         */
+        const val DEFAULT_MODULE_NAME = "main"
 
         /**
          * Visits a part of a generic signature which is not needed, its default methods doing nothing.

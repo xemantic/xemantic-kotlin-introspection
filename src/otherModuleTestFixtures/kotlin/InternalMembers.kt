@@ -29,3 +29,9 @@ class SameModuleSubclass : InternalBase() {
     override fun reset() {}
     public override val state: Int get() = 1
 }
+
+// A @PublishedApi internal member is not mangled, unlike other internal members
+open class PublishedApiBase {
+    @PublishedApi
+    internal open fun publish() {}
+}

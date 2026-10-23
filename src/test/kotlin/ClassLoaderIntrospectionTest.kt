@@ -879,6 +879,37 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should mark overrides of internal members of friend module by class whose class file cannot be parsed`() {
+        // given
+        val unreadableResource = "com/xemantic/kotlin/introspection/friendmodule/FriendModuleSubclass.class"
+        // the class is still loaded by the parent class loader, only its class file is served unparsable
+        val classLoader = object : ClassLoader(javaClass.classLoader) {
+            override fun getResourceAsStream(name: String): InputStream? {
+                val stream = super.getResourceAsStream(name)
+                return if (stream != null && name == unreadableResource) {
+                    val bytes = stream.use { it.readBytes() }
+                    // the major version, following the magic number and the minor version
+                    bytes[6] = 0x7F
+                    bytes[7] = 0x7F
+                    bytes.inputStream()
+                } else stream
+            }
+        }
+        val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.friendmodule.FriendModuleSubclass")
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.friendmodule.FriendModuleSubclass [page 1/1]
+            class FriendModuleSubclass : com.xemantic.kotlin.introspection.othermodule.InternalBase {
+                override val state: Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should mark overrides of class whose class file cannot be parsed`() {
         // given
         val introspector = introspectorWithUnreadableClassFiles(

@@ -753,3 +753,8 @@ interface HasXs {
 }
 
 class VarargConstructorOverride(vararg override val xs: Int) : HasXs
+
+// The @PublishedApi internal members of a class of another module cannot be overridden either
+class PublishedApiSubclass : com.xemantic.kotlin.introspection.othermodule.PublishedApiBase() {
+    fun publish() {}
+}
