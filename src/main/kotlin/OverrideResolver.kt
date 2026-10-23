@@ -539,8 +539,8 @@ internal class OverrideResolver(
     /**
      * The JVM methods of a Kotlin class, as names followed by descriptors, see [declaredMethods],
      * including the members of an interface relocated to its `DefaultImpls` class,
-     * like with `-jvm-default=disable`, as if they were declared in the interface,
-     * or `null` if they can be neither read nor reflected.
+     * like with `-jvm-default=disable`, as if they were declared in the interface, unless they are unknown,
+     * or `null` if the methods of the class itself can be neither read nor reflected.
      */
     private fun jvmMethods(className: String, isInterface: Boolean): Set<String>? {
         // the package is separated with '/', and nested classes with '.'
@@ -559,11 +559,12 @@ internal class OverrideResolver(
             if (defaultImplsFile != null || defaultImplsClass != null) {
                 // the static method of DefaultImpls takes the interface instance as the first parameter
                 val instanceParameter = "(L$internalName;"
+                // the methods of the interface itself are still known when the ones of DefaultImpls are not
                 declaredMethods(defaultImplsName, defaultImplsFile, defaultImplsClass)?.forEach { method ->
                     if (method.access and Opcodes.ACC_STATIC != 0 && method.descriptor.startsWith(instanceParameter)) {
                         methods += method.name + "(" + method.descriptor.removePrefix(instanceParameter)
                     }
-                } ?: return null
+                }
             }
         }
         return methods
@@ -573,8 +574,14 @@ internal class OverrideResolver(
      * A method of a class.
      *
      * @param access the access flags, whose `ACC_STATIC` is the [Modifier.STATIC] of a reflected method.
+     * @param signature the generic signature, if read from a class file declaring it.
      */
-    private class DeclaredMethod(val access: Int, val name: String, val descriptor: String)
+    private class DeclaredMethod(
+        val access: Int,
+        val name: String,
+        val descriptor: String,
+        val signature: String? = null
+    )
 
     /**
      * The methods declared by a class, read from its [classFile], whether the class can be loaded or not,
@@ -589,13 +596,7 @@ internal class OverrideResolver(
         classFile: ByteArray?,
         loadedClass: Class<*>? = null
     ): List<DeclaredMethod>? {
-        if (classFile != null) {
-            val methods = mutableListOf<DeclaredMethod>()
-            val isRead = readMethods(classFile) { access, name, descriptor, _ ->
-                methods += DeclaredMethod(access, name, descriptor)
-            }
-            if (isRead) return methods
-        }
+        classFile?.let { readMethods(it) }?.let { return it }
         val clazz = loadedClass ?: loadClassByMetadataName(className) ?: return null
         return reflectOrNull {
             clazz.declaredMethods.map { DeclaredMethod(it.modifiers, it.name, AsmType.getMethodDescriptor(it)) }
@@ -603,30 +604,29 @@ internal class OverrideResolver(
     }
 
     /**
-     * Reads the methods of a class file, passing their access flags, names, descriptors and generic signatures
-     * to the [visit] function.
-     *
-     * @return `false` if the class file cannot be parsed, like when it is malformed, or too new for ASM.
+     * Reads the methods of a class file, with their generic signatures,
+     * or `null` if it cannot be parsed, like when it is malformed, or too new for ASM.
+     * Only the parsing is guarded, so that a failure of the code processing the methods is not mistaken for it.
      */
-    private fun readMethods(
-        bytes: ByteArray,
-        visit: (access: Int, name: String, descriptor: String, signature: String?) -> Unit
-    ): Boolean = try {
-        ClassReader(bytes).accept(object : ClassVisitor(Opcodes.ASM9) {
-            override fun visitMethod(
-                access: Int,
-                name: String,
-                descriptor: String,
-                signature: String?,
-                exceptions: Array<out String>?
-            ): MethodVisitor? {
-                visit(access, name, descriptor, signature)
-                return null
-            }
-        }, ClassReader.SKIP_CODE or ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES)
-        true
-    } catch (_: Exception) {
-        false
+    private fun readMethods(bytes: ByteArray): List<DeclaredMethod>? {
+        val methods = mutableListOf<DeclaredMethod>()
+        try {
+            ClassReader(bytes).accept(object : ClassVisitor(Opcodes.ASM9) {
+                override fun visitMethod(
+                    access: Int,
+                    name: String,
+                    descriptor: String,
+                    signature: String?,
+                    exceptions: Array<out String>?
+                ): MethodVisitor? {
+                    methods += DeclaredMethod(access, name, descriptor, signature)
+                    return null
+                }
+            }, ClassReader.SKIP_CODE or ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES)
+        } catch (_: Exception) {
+            return null
+        }
+        return methods
     }
 
     private val Visibility.isOverridable: Boolean
@@ -683,13 +683,6 @@ internal class OverrideResolver(
         val simpleName = name.substringAfterLast('/').replace('.', '$')
         return if (packageName.isEmpty()) simpleName else packageName.replace('/', '.') + "." + simpleName
     }
-
-    /**
-     * Whether the [classLoader] has a class file for the class of this JVM binary name.
-     * A class file resource is never encapsulated, also when it is in a named module.
-     */
-    private fun hasClassFile(binaryName: String): Boolean =
-        classLoader.getResource(binaryName.replace('.', '/') + ".class") != null
 
     private fun erasure(typeParameter: KmTypeParameter, typeParameters: Map<Int, KmTypeParameter>): String? =
         erasedBound(typeParameter, typeParameters)?.let { normalizedName(it.name) }
@@ -894,7 +887,7 @@ internal class OverrideResolver(
         val builtinClass = builtinClasses()[name]
         // a built-in type without its own class file, like List, is not looked up through the class loader,
         // which would only throw a ClassNotFoundException
-        if (builtinClass == null || hasClassFile(binaryName(name))) {
+        if (builtinClass == null || classLoader.hasClassFile(binaryName(name))) {
             // the built-in declaration of a type having its own class file, like KClass, is incomplete
             loadKmClassByMetadataName(name)?.let { return Declaration(it, null) }
         }
@@ -1141,29 +1134,60 @@ internal class OverrideResolver(
         substitution: JavaSubstitution
     ): List<Pair<String, Overridable>> {
         val bytes = readClassBytesByMetadataName(kotlinClassName(javaClass)) ?: return emptyList()
-        val methods = mutableListOf<Pair<String, Overridable>>()
-        val isRead = readMethods(bytes) { access, name, descriptor, signature ->
+        // the methods of a class file which cannot be parsed are unknown
+        val methods = readMethods(bytes) ?: return emptyList()
+        return methods.mapNotNull { method ->
+            val access = method.access
             val isOverridable = access and (Opcodes.ACC_STATIC or Opcodes.ACC_FINAL or Opcodes.ACC_PRIVATE or
                 Opcodes.ACC_SYNTHETIC or Opcodes.ACC_BRIDGE) == 0 &&
                 (access and (Opcodes.ACC_PUBLIC or Opcodes.ACC_PROTECTED) != 0 || javaClass.packageName == ownerPackage) &&
-                !name.startsWith("<")
-            if (!isOverridable) return@readMethods
-            val generic = signature?.let { GenericMethodSignature(it) }
-            val parameters = AsmType.getArgumentTypes(descriptor).mapIndexed { index, parameterType ->
+                !method.name.startsWith("<")
+            if (!isOverridable) return@mapNotNull null
+            // the method of a malformed descriptor is unknown
+            val parameterTypes = argumentTypes(method.descriptor) ?: return@mapNotNull null
+            val generic = method.signature?.let { genericMethodSignature(it) }
+            val parameters = parameterTypes.mapIndexed { index, parameterType ->
                 val parameterSignature = generic?.parameterTypes?.getOrNull(index)
                 if (parameterSignature == null) asmType(parameterType) else {
                     asmType(parameterType, parameterSignature, generic, substitution)
                 }
             }
-            methods += name to Overridable(
+            method.name to Overridable(
                 receiver = null,
                 parameters = parameters,
                 typeParameterCount = generic?.typeParameters?.size ?: 0,
                 isJava = true
             )
         }
-        // the methods of a class file which cannot be parsed are unknown
-        return if (isRead) methods else emptyList()
+    }
+
+    /**
+     * The parameter types of a method [descriptor], or `null` if it is malformed,
+     * as ASM does not validate the descriptors when reading a class file.
+     */
+    private fun argumentTypes(descriptor: String): List<AsmType>? = try {
+        // a `(` within the parameters is read as a method type, also as an array component
+        AsmType.getArgumentTypes(descriptor).toList().takeIf { types ->
+            types.none { type ->
+                type.sort == AsmType.METHOD || (type.sort == AsmType.ARRAY && type.elementType.sort == AsmType.METHOD)
+            }
+        }
+    } catch (_: IllegalArgumentException) {
+        null
+    } catch (_: IndexOutOfBoundsException) {
+        null
+    }
+
+    /**
+     * Parses the generic [signature] of a method, or returns `null` if it is malformed,
+     * so that the method is matched by its descriptor only, like a method without a generic signature.
+     */
+    private fun genericMethodSignature(signature: String): GenericMethodSignature? = try {
+        GenericMethodSignature(signature)
+    } catch (_: IllegalArgumentException) {
+        null
+    } catch (_: IndexOutOfBoundsException) {
+        null
     }
 
     /**
@@ -1218,16 +1242,19 @@ internal class OverrideResolver(
         }
         AsmType.OBJECT -> {
             val binaryName = type.className
-            // a class missing from the classpath is assumed to be named without `$`,
-            // which is also the metadata name the class of this binary name is loaded by
+            val simpleBinaryName = binaryName.substringAfterLast('.')
+            // a class missing from the classpath is assumed to be nested at its `$` separators, see [assumedNestedClassName],
+            // which is also a metadata name the class of this binary name is loaded by
             val assumedName = kotlinClassName(
                 binaryName.substringBeforeLast('.', ""),
-                binaryName.substringAfterLast('.').replace('$', '.')
+                assumedNestedClassName(simpleBinaryName)
             )
             ClassType(
                 javaToKotlinNames[binaryName]
-                    // the nesting is known from the class, as `$` can be part of a class name
-                    ?: loadClassByMetadataName(assumedName)?.let { kotlinClassName(it) }
+                    // the nesting is known from the class, as `$` can be part of a class name,
+                    // so only a class whose binary name has one is loaded to tell
+                    ?: (if ('$' in simpleBinaryName) loadClassByMetadataName(assumedName) else null)
+                        ?.let { kotlinClassName(it) }
                     ?: assumedName,
                 nullable = null
             )
@@ -1415,27 +1442,41 @@ internal fun Class<*>.nestedClassName(): String {
 /**
  * The [nestedClassName] of a class whose declaring class cannot be loaded, neither its simple name reflected,
  * read from the `InnerClasses` attribute of its class file, which lists the enclosing classes as well,
- * or, if it cannot be read, assuming that every `$` separates the nested classes.
+ * or, if it cannot be read, by the [assumedNestedClassName].
  */
 private fun Class<*>.nestedClassNameWithoutDeclaringClass(): String {
     val internalName = name.replace('.', '/')
     // the internal names of the nested classes mapped to their outer class and simple name
     val innerClasses = mutableMapOf<String, Pair<String, String>>()
-    try {
-        (classLoader ?: ClassLoader.getSystemClassLoader())
-            .getResourceAsStream("$internalName.class")
-            ?.use { ClassReader(it) }
-            ?.accept(object : ClassVisitor(Opcodes.ASM9) {
+    (classLoader ?: ClassLoader.getSystemClassLoader()).readClassBytes(name)?.let { bytes ->
+        try {
+            ClassReader(bytes).accept(object : ClassVisitor(Opcodes.ASM9) {
                 override fun visitInnerClass(name: String, outerName: String?, innerName: String?, access: Int) {
                     if (outerName != null && innerName != null) innerClasses[name] = outerName to innerName
                 }
             }, ClassReader.SKIP_CODE or ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES)
-    } catch (_: Exception) {
-        // judged by the name only
+        } catch (_: Exception) {
+            // judged by the name only
+        }
     }
-    if (internalName !in innerClasses) return name.substringAfterLast('.').replace('$', '.')
+    if (internalName !in innerClasses) return assumedNestedClassName(name.substringAfterLast('.'))
     fun nestedName(name: String): String = innerClasses[name]
         ?.let { (outerName, innerName) -> "${nestedName(outerName)}.$innerName" }
         ?: name.substringAfterLast('/')
     return nestedName(internalName)
 }
+
+/**
+ * The name of a class within its package, like `Outer.Nested`, assumed from its [simpleBinaryName],
+ * like `Outer${'$'}Nested`, when the nesting cannot be told from the class or its class file:
+ * every `$` following another character of the name separates the nested classes,
+ * while the one starting a name, like of `Outer${'$'}${'$'}serializer`, is a part of it.
+ */
+private fun assumedNestedClassName(simpleBinaryName: String): String =
+    simpleBinaryName.replace(nestedClassSeparator, ".")
+
+/**
+ * A `$` of a binary name assumed to separate nested classes: one following another character than `$`,
+ * and followed by any character.
+ */
+private val nestedClassSeparator = Regex("(?<=[^$])\\$(?=.)")

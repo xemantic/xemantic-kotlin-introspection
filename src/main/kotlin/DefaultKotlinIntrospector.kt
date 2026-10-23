@@ -190,7 +190,7 @@ internal class DefaultKotlinIntrospector(
         loadClassByMetadataName = { name -> findClassByMetadataName(name)?.clazz },
         loadKmClassByMetadataName = ::loadKmClass,
         // read directly, without loading the class, like a DefaultImpls class probed for every interface
-        readClassBytesByMetadataName = { name -> readClassBytes(binaryNameOf(name)) },
+        readClassBytesByMetadataName = { name -> classLoader.readClassBytes(binaryNameOf(name)) },
         builtinClasses = { builtinClasses },
         builtinTypes = builtinTypes
     )
@@ -407,6 +407,9 @@ internal class DefaultKotlinIntrospector(
          */
         val classFile: ClassFile? by lazy { readFile ?: readClassFile(binaryName) }
 
+        // the flags reflected once, and only when the class file cannot be read, see reflectedClassFile
+        val reflectedClassFile: ClassFile by lazy { reflectedClassFile(clazz) }
+
         // parsed once, and only when needed, as some classes are loaded only for the Java reflection
         val metadata: KotlinClassMetadata? by lazy {
             (if (clazz != null) clazz.getAnnotation(Metadata::class.java) else classFile?.metadata)
@@ -479,10 +482,28 @@ internal class DefaultKotlinIntrospector(
 
     /**
      * Whether the found class is listed in its outer class, see [isListedClass],
-     * where a class file which cannot be read is judged by the metadata only.
+     * where a class file which cannot be read is judged by the metadata and the reflection of the class.
      */
     private fun FoundClass.isListed(kmClass: KmClass): Boolean =
-        isListedClass(kmClass, classFile ?: ClassFile(null, isSynthetic = false, isHiddenDeprecated = false))
+        isListedClass(kmClass, classFile ?: reflectedClassFile)
+
+    /**
+     * The flags of a class whose class file cannot be read, like one an in-memory class loader does not serve,
+     * reflected from the [clazz], if loaded: [Class.isSynthetic], reporting the flags of the `InnerClasses` attribute
+     * for a nested class, and the annotations hiding it, see [hiddenDeprecationVisitor],
+     * each read on its own, never failing the resolve.
+     */
+    private fun reflectedClassFile(clazz: Class<*>?): ClassFile = ClassFile(
+        metadata = null,
+        isSynthetic = clazz?.isSynthetic == true,
+        isHiddenDeprecated = clazz != null && (
+            reflectedAnnotationValue(default = false) {
+                clazz.getAnnotation(Deprecated::class.java)?.level == DeprecationLevel.HIDDEN
+            } || reflectedAnnotationValue(default = false) {
+                clazz.getAnnotation(DeprecatedSinceKotlin::class.java)?.let { isHiddenSince(it.hiddenSince) } == true
+            }
+        )
+    )
 
     /**
      * The classes found so far by their binary names, also the ones not found, as [Optional.empty],
@@ -571,12 +592,6 @@ internal class DefaultKotlinIntrospector(
         )
     }
 
-    private fun readClassBytes(binaryName: String): ByteArray? = try {
-        classLoader.getResourceAsStream(binaryName.replace('.', '/') + ".class")?.use { it.readBytes() }
-    } catch (_: Exception) {
-        null
-    }
-
     /**
      * Reads the class file of a class by its JVM [binaryName], whether it can be loaded or not, to tell the flags,
      * which neither [Class.isSynthetic] tells for a nested class, as it reports the flags of the `InnerClasses` attribute,
@@ -586,7 +601,7 @@ internal class DefaultKotlinIntrospector(
      * or for a name differing only in case.
      */
     private fun readClassFile(binaryName: String): ClassFile? = try {
-        readClassBytes(binaryName)
+        classLoader.readClassBytes(binaryName)
             ?.let { ClassReader(it) }
             ?.takeIf { it.className.replace('/', '.') == binaryName }
             ?.let { readClassFile(it) }
