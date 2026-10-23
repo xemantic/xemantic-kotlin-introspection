@@ -19,6 +19,7 @@
 package com.xemantic.kotlin.introspection
 
 import com.xemantic.kotlin.introspection.test.FunctionTypesSample
+import com.xemantic.kotlin.introspection.test.LargeArityFunctionTypesSample
 import com.xemantic.kotlin.introspection.test.NamedFunctionTypeParametersSample
 import com.xemantic.kotlin.test.assert
 import com.xemantic.kotlin.test.have
@@ -32,6 +33,9 @@ import kotlin.metadata.KmVariance
 import kotlin.metadata.isNullable
 import kotlin.metadata.isSuspend
 import kotlin.metadata.jvm.annotations
+import kotlin.reflect.KClass
+import kotlin.reflect.KType
+import kotlin.reflect.KTypeProjection
 import kotlin.reflect.full.declaredMemberFunctions
 import kotlin.test.Test
 
@@ -40,6 +44,8 @@ import kotlin.test.Test
  * on hand-made types, as some of the shapes cannot be produced by the compiler.
  */
 class FunctionTypeTest {
+
+    private val introspector = DefaultKotlinIntrospector(scanEntireClasspath = false)
 
     private val ctx = classType("test/Ctx")
     private val foo = classType("test/Foo")
@@ -164,6 +170,18 @@ class FunctionTypeTest {
     }
 
     @Test
+    fun `should not decode function type with type arguments not matching its arity`() {
+        // given
+        val type = classType("kotlin/Function2", int, string)
+
+        // when
+        val functionType = type.decodeFunctionType()
+
+        // then
+        assert(functionType == null)
+    }
+
+    @Test
     fun `should not decode non-function type`() {
         // given
         val type = classType("kotlin/collections/List", int)
@@ -183,7 +201,7 @@ class FunctionTypeTest {
         }
 
         // when
-        val formatted = (resolver as DefaultKotlinIntrospector).formatType(type)
+        val formatted = introspector.formatType(type)
 
         // then
         assert(formatted == "suspend Function2<*, Continuation<Unit>, Any?>")
@@ -197,7 +215,7 @@ class FunctionTypeTest {
         }
 
         // when
-        val formatted = (resolver as DefaultKotlinIntrospector).formatType(type)
+        val formatted = introspector.formatType(type)
 
         // then
         assert(formatted == "(suspend Function2<*, Continuation<Unit>, Any?>)?")
@@ -226,7 +244,38 @@ class FunctionTypeTest {
                 "(() -> Unit)?",
                 "(() -> Unit).() -> Unit",
                 "com.xemantic.kotlin.introspection.test.FunctionModifiersTestClass.() -> Unit",
-                "KFunction<Int, String>"
+                "KFunction1<Int, String>"
+            )
+        )
+    }
+
+    @Test
+    fun `should format raw function type with kotlin-reflect without suspend marker`() {
+        // given - a Function0 without type arguments, having as many of them as its arity
+        val type = rawType(Function0::class)
+
+        // when
+        val formatted = formatKTypeProjection(type)
+
+        // then
+        assert(formatted == "Function0")
+    }
+
+    @Test
+    fun `should format function type above arity 22 with kotlin-reflect`() {
+        // given
+        val types = LargeArityFunctionTypesSample::class.declaredMemberFunctions
+            .sortedBy { it.name }
+            .map { it.parameters[1].type }
+
+        // when
+        val formatted = types.map { formatKTypeProjection(it) }
+
+        // then
+        assert(
+            formatted == listOf(
+                "(${List(23) { "Int" }.joinToString(", ")}) -> Unit",
+                "suspend (${List(22) { "Int" }.joinToString(", ")}) -> Unit"
             )
         )
     }
@@ -266,4 +315,14 @@ private fun classType(
         if (argument == null) KmTypeProjection.STAR else KmTypeProjection(KmVariance.INVARIANT, argument)
     }
     this.isNullable = isNullable
+}
+
+/**
+ * Creates a kotlin-reflect type of the [classifier] without type arguments, like a raw type.
+ */
+private fun rawType(classifier: KClass<*>): KType = object : KType {
+    override val classifier = classifier
+    override val arguments = emptyList<KTypeProjection>()
+    override val isMarkedNullable = false
+    override val annotations = emptyList<Annotation>()
 }

@@ -1298,6 +1298,19 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve function types above arity 22 in arrow notation`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.LargeArityFunctionTypesSample"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.LargeArityFunctionTypesSample [page 1/1]
+            class LargeArityFunctionTypesSample {
+                fun function(block: (${List(23) { "Int" }.joinToString(", ")}) -> Unit)
+                fun suspendFunction(block: suspend (${List(22) { "Int" }.joinToString(", ")}) -> Unit)
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve parameter names of function types`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.NamedFunctionTypeParametersSample"

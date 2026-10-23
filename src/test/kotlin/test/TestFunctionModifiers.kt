@@ -98,6 +98,16 @@ class FunctionTypesSample {
     fun reference(function: kotlin.reflect.KFunction1<Int, String>) {}
 }
 
+// Class with function types above the arity of kotlin.Function22, run as kotlin.jvm.functions.FunctionN
+class LargeArityFunctionTypesSample {
+    fun function(
+        block: (Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int) -> Unit
+    ) {}
+    fun suspendFunction(
+        block: suspend (Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int) -> Unit
+    ) {}
+}
+
 // Class with function types declaring parameter names
 class NamedFunctionTypeParametersSample {
     fun launch(block: suspend (id: Int, name: String) -> Unit) {}
