@@ -472,9 +472,14 @@ internal class DefaultKotlinIntrospector(
         /**
          * The class file, read once, and only when needed: already when the class cannot be loaded,
          * otherwise for the flags telling whether a listed class is usable, see [isUsableClass],
-         * and for the deprecations of the declarations, see [deprecation].
+         * and for the deprecations of the declarations, see [deprecation],
+         * read again after a failure which might be transient, see [FinalOnce].
          */
-        val classFile: ClassFile? by lazy { readFile ?: readClassFile(binaryName) }
+        val classFile: ClassFile? get() = classFileRead.value
+
+        private val classFileRead = FinalOnce {
+            if (readFile != null) TransientFailures.Outcome(readFile, isFinal = true) else readClassFile(binaryName)
+        }
 
         // the flags reflected once, and only when the class file cannot be read, see reflectedClassFile
         val reflectedClassFile: ClassFile by lazy { reflectedClassFile(clazz) }
@@ -494,9 +499,11 @@ internal class DefaultKotlinIntrospector(
         /**
          * The `DefaultImpls` class file of an interface, or of an annotation class, holding the synthetic methods
          * for the annotations of its properties, unless compiled with `-jvm-default=no-compatibility`,
-         * read only when needed.
+         * read only when needed, and again after a failure which might be transient, see [FinalOnce].
          */
-        private val defaultImplsFile: ClassFile? by lazy { readClassFile("$binaryName\$$DEFAULT_IMPLS") }
+        private val defaultImplsFile: ClassFile? get() = defaultImplsFileRead.value
+
+        private val defaultImplsFileRead = FinalOnce { readClassFile("$binaryName\$$DEFAULT_IMPLS") }
 
         // the deprecation of a declaration of this class, see ClassFile, never when the class file cannot be read
 
@@ -684,14 +691,16 @@ internal class DefaultKotlinIntrospector(
      * Reads the class file of a class by its JVM [binaryName] for the [overrideResolver],
      * telling a failure which might be transient, an `IOException`, retried once per resolve, see [transientFailures].
      */
-    private fun readClassBytes(binaryName: String): ByteArray? {
+    private fun readClassBytes(binaryName: String): ByteArray? = readClassBytesOutcome(binaryName).value
+
+    private fun readClassBytesOutcome(binaryName: String): TransientFailures.Outcome<ByteArray?> {
         val outcome = transientFailures.attempt("class file $binaryName") {
             var failure: Exception? = null
             val bytes = classLoader.readClassBytes(binaryName) { failure = it }
             TransientFailures.Outcome(bytes, isFinal = failure !is IOException)
         }
         if (!outcome.isFinal) transientFailures.mark()
-        return outcome.value
+        return outcome
     }
 
     /**
@@ -702,18 +711,24 @@ internal class DefaultKotlinIntrospector(
      * unless the file is of another class, like the one found for the name `com/example/Outer`,
      * or for a name differing only in case.
      *
-     * @param bytes the class file, if already read.
+     * @param bytes the class file, if read.
      */
-    private fun readClassFile(
-        binaryName: String,
-        bytes: ByteArray? = classLoader.readClassBytes(binaryName)
-    ): ClassFile? = try {
+    private fun readClassFile(binaryName: String, bytes: ByteArray?): ClassFile? = try {
         bytes
             ?.let { ClassReader(it) }
             ?.takeIf { it.className.replace('/', '.') == binaryName }
             ?.let { readClassFile(it) }
     } catch (_: Exception) {
         null
+    }
+
+    /**
+     * Reads the class file of a class by its JVM [binaryName], see [readClassFile],
+     * telling a failure to read it which might be transient, see [readClassBytes].
+     */
+    private fun readClassFile(binaryName: String): TransientFailures.Outcome<ClassFile?> {
+        val bytes = readClassBytesOutcome(binaryName)
+        return TransientFailures.Outcome(readClassFile(binaryName, bytes.value), bytes.isFinal)
     }
 
     private fun parseMetadata(metadataAnnotation: Metadata): KotlinClassMetadata? = try {

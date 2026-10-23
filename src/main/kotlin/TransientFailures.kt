@@ -110,3 +110,23 @@ internal class TransientFailures(private val maxAttempts: Int = 2, private val c
     }
 
 }
+
+/**
+ * A value computed once its outcome is final, see [TransientFailures.Outcome],
+ * and computed again on every access until then, like a class file which cannot be read, maybe only for now,
+ * by a [compute] which is to retry a failing attempt at most once per operation, see [TransientFailures.attempt].
+ */
+internal class FinalOnce<T>(private val compute: () -> TransientFailures.Outcome<T>) {
+
+    @Volatile
+    private var final: TransientFailures.Outcome<T>? = null
+
+    val value: T
+        get() {
+            final?.let { return it.value }
+            val outcome = compute()
+            if (outcome.isFinal) final = outcome
+            return outcome.value
+        }
+
+}

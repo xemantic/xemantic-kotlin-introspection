@@ -30,6 +30,7 @@ import org.objectweb.asm.ClassWriter
 import org.objectweb.asm.MethodVisitor
 import org.objectweb.asm.Opcodes
 import java.io.File
+import java.io.IOException
 import java.io.InputStream
 import java.net.URLClassLoader
 import java.nio.file.Path
@@ -641,12 +642,14 @@ class ClassLoaderIntrospectionTest {
     /**
      * A class loader counting the classes requested by their names,
      * failing the first request of the classes [failingOnce], and every request of the classes [failing],
-     * with the [failure], and not serving the class files of the classes [unreadable].
+     * with the [failure], not serving the class files of the classes [unreadable],
+     * and failing the first read of the class files of the classes [unreadableOnce] with an `IOException`.
      */
     private class CountingClassLoader(
         parent: ClassLoader,
         private val failingOnce: Set<String> = emptySet(),
         private val unreadable: Set<String> = emptySet(),
+        private val unreadableOnce: Set<String> = emptySet(),
         // like a transient failure, unlike a class missing from the classpath
         private val failure: (String) -> Throwable = { LinkageError("transient failure of $it") }
     ) : ClassLoader(parent) {
@@ -666,7 +669,11 @@ class ClassLoaderIntrospectionTest {
         }
         override fun getResourceAsStream(name: String): InputStream? {
             val className = name.removeSuffix(".class").replace('/', '.')
-            reads.merge(className, 1, Int::plus)
+            val count = reads.merge(className, 1, Int::plus)
+            // like a URLClassLoader whose jar cannot be read for now
+            if (className in unreadableOnce && count == 1) return object : InputStream() {
+                override fun read(): Int = throw IOException("transient failure of $className")
+            }
             return if (className in unreadable) null else super.getResourceAsStream(name)
         }
     }
@@ -768,6 +775,23 @@ class ClassLoaderIntrospectionTest {
         assert(signatures[0] != null && "class Sorted<T>" !in signatures[0]!!)
         assert(signatures[1] != null && "class Sorted<T>" in signatures[1]!!)
         assert(classLoader.loads[nested] == 2)
+    }
+
+    @Test
+    fun `should read class file again after a transient IOException, to hide the members deprecated as HIDDEN`() {
+        // given
+        val target = "com.xemantic.kotlin.introspection.test.HiddenDeprecationTarget"
+        val classLoader = CountingClassLoader(javaClass.classLoader, unreadableOnce = setOf(target))
+        val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
+
+        // when
+        val signatures = List(2) { introspector.resolve(target) }
+
+        // then
+        // the deprecations are not known while the class file cannot be read
+        assert(signatures[0] != null && "fun hiddenMember(): Int" in signatures[0]!!)
+        assert(signatures[1] != null && "hiddenMember" !in signatures[1]!!)
+        assert(classLoader.reads[target] == 2)
     }
 
     @Test

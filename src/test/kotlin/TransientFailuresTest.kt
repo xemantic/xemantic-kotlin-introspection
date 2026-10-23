@@ -57,4 +57,20 @@ class TransientFailuresTest {
         assert(failures.count() == 1L && otherCount == 0L)
     }
 
+    @Test
+    fun `should compute value again until its outcome is final`() {
+        // given
+        var computations = 0
+        val value = FinalOnce {
+            computations++
+            TransientFailures.Outcome(computations, isFinal = computations == 2)
+        }
+
+        // when
+        val values = List(3) { value.value }
+
+        // then
+        assert(values == listOf(1, 2, 2) && computations == 2)
+    }
+
 }
