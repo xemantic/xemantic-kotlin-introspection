@@ -28,11 +28,12 @@ import org.jetbrains.kotlin.com.intellij.psi.PsiErrorElement
 import org.jetbrains.kotlin.com.intellij.psi.util.PsiTreeUtil
 import org.jetbrains.kotlin.config.CompilerConfiguration
 import org.jetbrains.kotlin.psi.KtPsiFactory
+import org.junit.jupiter.api.AfterAll
 import java.io.File
-import java.lang.reflect.Modifier
 import java.net.URLClassLoader
 import java.util.jar.JarFile
-import kotlin.test.AfterTest
+import kotlin.metadata.KmPackage
+import kotlin.metadata.jvm.KotlinClassMetadata
 import kotlin.test.Test
 
 /**
@@ -55,34 +56,19 @@ import kotlin.test.Test
  * The classpath of the tests is introspected through its own class loader,
  * not to introspect the compiler itself, on the classpath of this test.
  */
-@OptIn(CoreEnvironmentDeprecation::class)
 class RenderedDeclarationsParseTest {
-
-    private val disposable = Disposer.newDisposable()
-
-    private val psiFactory = KtPsiFactory(
-        KotlinCoreEnvironment.createForProduction(
-            disposable,
-            CompilerConfiguration.create(),
-            EnvironmentConfigFiles.JVM_CONFIG_FILES
-        ).project,
-        markGenerated = false
-    )
-
-    @AfterTest
-    fun disposeEnvironment() {
-        Disposer.dispose(disposable)
-    }
 
     @Test
     fun `should render every declaration of the classpath as Kotlin`() {
         // given
-        val introspector = KotlinIntrospector(introspectedClassLoader)
+        val (listings, errors) = introspectedClassLoader().use { classLoader ->
+            val introspector = KotlinIntrospector(classLoader)
 
-        // when
-        val listings = renderedListings(introspector)
-        val errors = listings.flatMap { (name, listing) ->
-            parseErrors(toParsableKotlin(listing)).map { "$name: $it" }
+            // when
+            val listings = renderedListings(introspector, classLoader)
+            listings to listings.flatMap { (name, listing) ->
+                parseErrors(toParsableKotlin(listing)).map { "$name: $it" }
+            }
         }
 
         // then
@@ -94,6 +80,10 @@ class RenderedDeclarationsParseTest {
         // the fixtures named like hard keywords, both a class, and a top-level function
         assert("com.xemantic.kotlin.introspection.test.KeywordMembersSample" in listings)
         assert("com.xemantic.kotlin.introspection.test.in.TestKeywordPackageKt.keywordPackageFunction" in listings)
+        // the top-level properties without getters, a const val, and a @JvmField, and one whose getter is getURL
+        assert("com.xemantic.kotlin.introspection.test.in.TestKeywordPackageKt.KEYWORD_PACKAGE_CONSTANT" in listings)
+        assert("com.xemantic.kotlin.introspection.test.in.TestKeywordPackageKt.keywordPackageField" in listings)
+        assert("com.xemantic.kotlin.introspection.test.in.TestKeywordPackageKt.URL" in listings)
         assert(errors.isEmpty())
     }
 
@@ -136,16 +126,41 @@ class RenderedDeclarationsParseTest {
         assert(errors.isNotEmpty())
     }
 
-    /**
-     * The errors of parsing the [kotlin] source, each with the line it is found on.
-     */
-    private fun parseErrors(kotlin: String): List<String> {
-        val file = psiFactory.createFile("Listing.kt", kotlin)
-        return PsiTreeUtil.collectElementsOfType(file, PsiErrorElement::class.java).map { error ->
-            val offset = error.textRange.startOffset
-            val line = kotlin.substring(kotlin.lastIndexOf('\n', offset - 1) + 1).substringBefore('\n')
-            "${error.errorDescription} in: $line"
+    @OptIn(CoreEnvironmentDeprecation::class)
+    companion object {
+
+        /**
+         * The environment of the parser, shared by the tests, as setting it up takes a while.
+         */
+        private val disposable = Disposer.newDisposable()
+
+        private val psiFactory = KtPsiFactory(
+            KotlinCoreEnvironment.createForProduction(
+                disposable,
+                CompilerConfiguration.create(),
+                EnvironmentConfigFiles.JVM_CONFIG_FILES
+            ).project,
+            markGenerated = false
+        )
+
+        @AfterAll
+        @JvmStatic
+        fun disposeEnvironment() {
+            Disposer.dispose(disposable)
         }
+
+        /**
+         * The errors of parsing the [kotlin] source, each with the line it is found on.
+         */
+        private fun parseErrors(kotlin: String): List<String> {
+            val file = psiFactory.createFile("Listing.kt", kotlin)
+            return PsiTreeUtil.collectElementsOfType(file, PsiErrorElement::class.java).map { error ->
+                val offset = error.textRange.startOffset
+                val line = kotlin.substring(kotlin.lastIndexOf('\n', offset - 1) + 1).substringBefore('\n')
+                "${error.errorDescription} in: $line"
+            }
+        }
+
     }
 
 }
@@ -155,72 +170,68 @@ class RenderedDeclarationsParseTest {
  * where the `kotlin.*` classes are the ones of this test, sharing the `kotlin.Metadata` annotation with kotlin-reflect,
  * and nothing else is visible, also not the resources, telling the classpath of the parent class loader.
  */
-private val introspectedClassLoader: URLClassLoader by lazy {
+private fun introspectedClassLoader(): URLClassLoader {
     val kotlinClasses = object : ClassLoader(getPlatformClassLoader()) {
         override fun loadClass(name: String, resolve: Boolean): Class<*> =
             if (name.startsWith("kotlin.")) RenderedDeclarationsParseTest::class.java.classLoader.loadClass(name)
             else super.loadClass(name, resolve)
     }
-    URLClassLoader(introspectedClasspath.map { it.toURI().toURL() }.toTypedArray(), kotlinClasses)
+    return URLClassLoader(introspectedClasspath.map { it.toURI().toURL() }.toTypedArray(), kotlinClasses)
 }
 
-private val introspectedClasspath: List<File> =
-    System.getProperty("introspectedClasspath").split(File.pathSeparator).filter { it.isNotEmpty() }.map(::File)
+private val introspectedClasspath: List<File> by lazy {
+    requireNotNull(System.getProperty("introspectedClasspath")) { "run via ./gradlew parseTest" }
+        .split(File.pathSeparator).filter { it.isNotEmpty() }.map(::File)
+}
 
 /**
  * The listing of every class found by the search, of every built-in type, which has no class file to find,
  * and of every top-level declaration, see [topLevelDeclarationNames], rendered on a single page, by the name it is resolved by.
  */
-private fun renderedListings(introspector: KotlinIntrospector): Map<String, String> {
+private fun renderedListings(introspector: KotlinIntrospector, classLoader: ClassLoader): Map<String, String> {
     val classNames = introspector.search("", pageSize = Int.MAX_VALUE)!!.lines().drop(1)
     val builtinTypeNames = DefaultKotlinIntrospector.builtinTypes.keys
-    return (classNames + builtinTypeNames + topLevelDeclarationNames()).associateWith { name ->
+    return (classNames + builtinTypeNames + topLevelDeclarationNames(classLoader)).associateWith { name ->
         introspector.resolve(name, pageSize = Int.MAX_VALUE)
     }.filterValues { it != null }.mapValues { (_, listing) -> listing!! }
 }
 
 /**
- * The names of the top-level declarations, which are not listed in any class, unlike the extensions,
- * like `kotlin.collections.CollectionsKt.listOf`, guessed from the public static methods of the file facades,
- * a property from the name of its getter, like `foo` of `getFoo`; the names which are not declarations resolve to nothing.
+ * The names of the top-level functions and properties, which are not listed in any class, unlike the extensions,
+ * qualified with their file facade, like `kotlin.collections.CollectionsKt.listOf`, as read from its Kotlin metadata,
+ * or from the one of its parts, for the facade of several files.
+ * The ones which are not part of the API, like the internal ones, resolve to nothing.
+ * A facade which cannot be loaded, or read, is skipped.
  */
-private fun topLevelDeclarationNames(): List<String> = introspectedClasspath
+private fun topLevelDeclarationNames(classLoader: ClassLoader): List<String> = introspectedClasspath
     .flatMap(::classNames)
     .filter { '$' !in it }
-    .mapNotNull { className ->
+    .flatMap { className ->
         try {
-            Class.forName(className, false, introspectedClassLoader).takeIf { isFileFacade(it) }
+            val kmPackages = when (val metadata = kotlinMetadata(className, classLoader)) {
+                is KotlinClassMetadata.FileFacade -> listOf(metadata.kmPackage)
+                is KotlinClassMetadata.MultiFileClassFacade -> metadata.partClassNames.mapNotNull { partName ->
+                    (kotlinMetadata(partName.replace('/', '.'), classLoader) as? KotlinClassMetadata.MultiFileClassPart)?.kmPackage
+                }
+                else -> emptyList()
+            }
+            kmPackages.flatMap(KmPackage::declarationNames).distinct().map { "$className.$it" }
         } catch (_: LinkageError) {
-            null
+            emptyList()
         } catch (_: ClassNotFoundException) {
-            null
+            emptyList()
+        } catch (_: IllegalArgumentException) {
+            // the metadata which cannot be read
+            emptyList()
         }
     }
-    .flatMap { facade ->
-        // the methods of a multi-file facade of the standard library are inherited from its parts
-        facade.methods
-            .filter { Modifier.isStatic(it.modifiers) }
-            .map { it.name }
-            .filter { '$' !in it && '-' !in it }
-            .flatMap { name -> listOfNotNull(name, propertyName(name)) }
-            .distinct()
-            .map { "${facade.name}.$it" }
-    }
-    // the methods are in no particular order
     .sorted()
 
-private fun propertyName(accessorName: String): String? = listOf("get", "set").firstNotNullOfOrNull { prefix ->
-    accessorName.removePrefix(prefix).takeIf { it != accessorName && it.firstOrNull()?.isUpperCase() == true }
-        ?.replaceFirstChar { it.lowercase() }
-}
+private fun kotlinMetadata(className: String, classLoader: ClassLoader): KotlinClassMetadata? =
+    Class.forName(className, false, classLoader).getAnnotation(Metadata::class.java)?.let(KotlinClassMetadata::readLenient)
 
-/**
- * Whether the [clazz] is the file facade of a single file, or of several files, by the kind of its `kotlin.Metadata`.
- */
-private fun isFileFacade(clazz: Class<*>): Boolean {
-    val metadata = clazz.getAnnotation(Metadata::class.java) ?: return false
-    return metadata.kind == 2 || metadata.kind == 4
-}
+private val KmPackage.declarationNames: List<String>
+    get() = functions.map { it.name } + properties.map { it.name }
 
 /**
  * The binary names of the classes of the classpath [root], a jar, or a directory.
@@ -248,6 +259,11 @@ private const val FROM_HEADER = "// from "
 private const val IDENTIFIER = """(?:`[^`]+`|[\p{L}_][\p{L}\p{N}_]*)"""
 
 /**
+ * The last segment of a qualified name, see [listedClassHeader].
+ */
+private val lastIdentifier = Regex("$IDENTIFIER$")
+
+/**
  * The rendered [listing] made parsable, see [RenderedDeclarationsParseTest].
  */
 private fun toParsableKotlin(listing: String): String = listing.lines().joinToString("\n") { line ->
@@ -256,7 +272,7 @@ private fun toParsableKotlin(listing: String): String = listing.lines().joinToSt
     val withDefaultValues = line.replace("= …", "= TODO()")
     listedClassHeader.matchEntire(withDefaultValues)?.let { match ->
         val (prefix, qualifiedName, suffix) = match.destructured
-        val simpleName = Regex("$IDENTIFIER$").find(qualifiedName)!!.value
+        val simpleName = lastIdentifier.find(qualifiedName)!!.value
         "$prefix$simpleName$suffix; val reference: $qualifiedName"
     } ?: withDefaultValues
 }
