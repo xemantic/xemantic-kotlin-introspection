@@ -90,6 +90,8 @@ com.example.AnnotationTestClass
   which finds everything of that name the listing of the class shows:
   its members, the members of its companion object, and the extensions of the class and its supertypes,
   paged by signatures, one item each.
+  The members a class inherits from its supertypes, without redeclaring them, are neither listed, nor resolved by its name,
+  like `kotlin.collections.MutableList.get`, declared by `kotlin.collections.List`.
 * The Kotlin built-in types, like `kotlin.String` or `kotlin.collections.List`,
   which are mapped to the JVM types and have no class files of their own,
   are rendered like any other class from their declarations in the `.kotlin_builtins` metadata of the standard library,
@@ -105,6 +107,10 @@ com.example.AnnotationTestClass
   sorted by name together with its members, while the other ones are listed after it, with their receivers,
   like `fun String?.orEmpty()`, callable also on `null`, or `fun Iterable<Int>.sum()`.
   Only the extensions of the public `kotlin.*` packages are listed for the built-in types.
+  When the `.kotlin_builtins` resources cannot be read, like when the standard library is a named module,
+  whose resources are encapsulated, a warning is logged, and the built-in types are described by `kotlin-reflect` instead,
+  approximately, from their JVM types, without their companion objects, and without the mutable collection types,
+  which `kotlin-reflect` cannot tell apart from their read-only counterparts.
 * The function types are resolved by their Kotlin names, like `kotlin.Function1` of `(P1) -> R`,
   or `kotlin.coroutines.SuspendFunction0` of `suspend () -> R`, listing the extensions on the function types,
   like `(suspend () -> T).startCoroutine(…)`.

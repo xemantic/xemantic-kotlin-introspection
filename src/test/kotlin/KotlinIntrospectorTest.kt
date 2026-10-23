@@ -6601,21 +6601,31 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should resolve abstract built-in classes with their modality`() {
+    fun `should resolve abstract built-in class with its modality`() {
         resolver.resolve("kotlin.Number", pageSize = 1) should {
             have(lines()[1] == "abstract class Number {")
-        }
-        resolver.resolve("kotlin.Enum", pageSize = 1) should {
-            // the properties declared in the class body cannot be told apart from the constructor properties
-            have(lines()[1] == "abstract class Enum<E : Enum<E>>(val name: String, val ordinal: Int) : Comparable<E> {")
         }
     }
 
     @Test
-    fun `should resolve built-in types without constructor callable from user code as not constructible`() {
+    fun `should resolve Enum as not constructible, with its properties in the class body`() {
+        // its constructor is called only by the enum classes, a class cannot extend it directly
+        resolver.resolve("kotlin.Enum", pageSize = 10000) should {
+            have(lines()[1] == "abstract class Enum<E : Enum<E>> private constructor() : Comparable<E> {")
+            have("    val name: String" in lines())
+            have("    val ordinal: Int" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve built-in type without constructor callable from user code as not constructible`() {
         resolver.resolve("kotlin.Int", pageSize = 1) should {
             have(lines()[1] == "class Int private constructor() : Number, Comparable<Int> {")
         }
+    }
+
+    @Test
+    fun `should resolve Nothing as not constructible`() {
         resolver.resolve("kotlin.Nothing") sameAsKotlin """
             // kotlin.Nothing [page 1/1]
             class Nothing private constructor()
@@ -6623,11 +6633,16 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should resolve built-in types with their constructors`() {
+    fun `should resolve built-in array type with its constructors`() {
+        // the property declared in the class body cannot be told apart from a constructor property
         resolver.resolve("kotlin.IntArray", pageSize = 10000) should {
             have(lines()[1] == "class IntArray(val size: Int) {")
             have("    constructor(size: Int, init: (Int) -> Int)" in lines())
         }
+    }
+
+    @Test
+    fun `should resolve built-in open class with its constructors`() {
         resolver.resolve("kotlin.Throwable", pageSize = 10000) should {
             have(lines()[1] == "open class Throwable(open val message: String?, open val cause: Throwable?) {")
             have("    constructor(message: String?)" in lines())
@@ -6710,9 +6725,19 @@ class KotlinIntrospectorTest {
             have("    fun average(): Double" !in lines())
             have("fun Iterable<Int>.average(): Double" in lines())
         }
+    }
+
+    @Test
+    fun `should list extensions of built-in type with star-projected and own type arguments outside of the class body`() {
         resolver.resolve("kotlin.collections.Map", pageSize = 10000) should {
             have("inline fun <K> Map<out K, *>.containsKey(key: K): Boolean" in lines())
         }
+    }
+
+    @Test
+    fun `should not resolve member of built-in type inherited from its supertype`() {
+        // like the members of any class, the inherited ones are neither listed, nor resolved, MutableList.get is List.get
+        assert(resolver.resolve("kotlin.collections.MutableList.get") == null)
     }
 
     @Test

@@ -32,6 +32,8 @@ import kotlin.reflect.KTypeParameter
 import kotlin.reflect.KTypeProjection
 import kotlin.reflect.KVariance
 import kotlin.reflect.KVisibility
+import kotlin.reflect.full.declaredMemberFunctions
+import kotlin.reflect.full.declaredMemberProperties
 
 /*
  * The declarations of the members of the built-in types described by kotlin-reflect, like the JVM-only ones,
@@ -92,6 +94,60 @@ internal class ReflectedTypeParameters(private val ids: Map<String, Int>) {
 }
 
 /**
+ * The declaration of this built-in type in the Kotlin metadata, named like `kotlin/String`, as kotlin-reflect describes it,
+ * when its declaration in the `.kotlin_builtins` resources cannot be read, see [readKotlinBuiltinClasses].
+ *
+ * kotlin-reflect describes the JVM class, like `java.lang.String`, so that the declaration is approximate:
+ * its supertypes are only the Kotlin ones, its members are the ones the JVM class declares,
+ * but the ones whose parameter names are not known, see [hasSyntheticParameterNames],
+ * and its constructors are the ones of the JVM class whose parameter names are known, like `String()`,
+ * as the others, like `Integer(int)`, have no counterpart in Kotlin.
+ * Its companion object is not declared.
+ */
+internal fun KClass<*>.toKmBuiltinClass(name: String): KmClass {
+    val kmClass = KmClass()
+    kmClass.name = name
+    kmClass.kind = if (java.isInterface) ClassKind.INTERFACE else ClassKind.CLASS
+    kmClass.visibility = Visibility.PUBLIC
+    kmClass.modality = when {
+        isAbstract || java.isInterface -> Modality.ABSTRACT
+        isOpen -> Modality.OPEN
+        else -> Modality.FINAL
+    }
+    this.typeParameters.mapIndexedTo(kmClass.typeParameters) { id, typeParameter ->
+        KmTypeParameter(typeParameter.name, id, typeParameter.variance.toKmVariance())
+    }
+    val typeParameters = ReflectedTypeParameters.classTypeParameters(kmClass.typeParameters)
+    this.typeParameters.zip(kmClass.typeParameters) { typeParameter, kmTypeParameter ->
+        typeParameter.upperBounds.mapTo(kmTypeParameter.upperBounds) { it.toKmType(typeParameters) }
+    }
+    supertypes
+        .filter { supertype -> (supertype.classifier as? KClass<*>)?.qualifiedName?.startsWith("kotlin.") == true }
+        .mapTo(kmClass.supertypes) { it.toKmType(typeParameters) }
+    declaredMemberFunctions
+        .filter { '$' !in it.name && !hasSyntheticParameterNames(it) }
+        .mapTo(kmClass.functions) { function ->
+            function.toKmFunction(typeParameters).also { it.modality = it.modality.finalIn(kmClass) }
+        }
+    declaredMemberProperties
+        .filter { '$' !in it.name }
+        .mapTo(kmClass.properties) { property ->
+            property.toKmProperty(typeParameters).also { it.modality = it.modality.finalIn(kmClass) }
+        }
+    constructors
+        .filter { it.visibility == KVisibility.PUBLIC && !hasSyntheticParameterNames(it) }
+        .mapTo(kmClass.constructors) { constructor ->
+            KmConstructor().also { kmConstructor ->
+                kmConstructor.visibility = Visibility.PUBLIC
+                constructor.parameters.withIndex().mapTo(kmConstructor.valueParameters) { (position, parameter) ->
+                    parameter.toKmValueParameter(position, typeParameters)
+                }
+            }
+        }
+    return kmClass
+}
+
+/**
  * The declaration of this function in the Kotlin metadata, as kotlin-reflect describes it,
  * where the type parameters of its class are the [typeParameters], see [ReflectedTypeParameters].
  */
@@ -135,6 +191,14 @@ internal fun KProperty<*>.toKmProperty(typeParameters: ReflectedTypeParameters):
     property.returnType = returnType.toKmType(scope)
     return property
 }
+
+/**
+ * This modality of a member described by kotlin-reflect, declared in the [kmClass], where an open member of a final class
+ * is final, like a method of a final Java class, which Java does not have to declare final,
+ * like `describeConstable()` of `java.lang.String`.
+ */
+internal fun Modality.finalIn(kmClass: KmClass): Modality =
+    if (kmClass.modality == Modality.FINAL && this == Modality.OPEN) Modality.FINAL else this
 
 private fun reflectedVisibility(visibility: KVisibility?): Visibility = when (visibility) {
     KVisibility.PUBLIC -> Visibility.PUBLIC
@@ -211,10 +275,11 @@ internal fun KType.toKmType(scope: ReflectedTypeParameters): KmType {
     val arguments = arguments.map { it.toKmTypeProjection(scope) }
     // kotlin-reflect lists the type arguments of the outer classes of an inner class, like `Outer<String>.Inner<Int>`,
     // after its own ones, while the metadata keeps them in the outer type
-    val ownArgumentCount = (classifier as? KClass<*>)?.takeIf { it.isInner }?.typeParameters?.size
-    if (ownArgumentCount != null && arguments.size > ownArgumentCount) {
+    val innerClass = (classifier as? KClass<*>)?.takeIf { it.isInner }
+    val ownArgumentCount = innerClass?.typeParameters?.size ?: arguments.size
+    if (innerClass != null && arguments.size > ownArgumentCount) {
         type.arguments += arguments.take(ownArgumentCount)
-        type.outerType = outerType(classifier as KClass<*>, arguments.drop(ownArgumentCount))
+        type.outerType = outerType(innerClass, arguments.drop(ownArgumentCount))
     } else {
         type.arguments += arguments
     }

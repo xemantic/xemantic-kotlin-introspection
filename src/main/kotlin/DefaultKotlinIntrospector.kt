@@ -30,6 +30,7 @@ import java.io.IOException
 import java.net.URI
 import java.net.URL
 import java.net.URLClassLoader
+import java.util.concurrent.ConcurrentHashMap
 import java.util.jar.Attributes
 import java.util.jar.JarFile
 import kotlin.metadata.*
@@ -180,7 +181,9 @@ private fun KmProperty.apiSetterVisibility(scope: DeclarationScope, deprecations
 
 internal class DefaultKotlinIntrospector(
     private val classLoader: ClassLoader = Thread.currentThread().contextClassLoader,
-    scanEntireClasspath: Boolean = true
+    scanEntireClasspath: Boolean = true,
+    // the declarations of the built-in types, see readKotlinBuiltinClasses, replaced only by the tests
+    private val readBuiltinClasses: () -> Map<String, KmClass> = { readKotlinBuiltinClasses() }
 ) : KotlinIntrospector {
 
     private val logger = KotlinLogging.logger {}
@@ -217,7 +220,7 @@ internal class DefaultKotlinIntrospector(
     }
 
     // Declarations of the built-in types, by their Kotlin class name, like kotlin/collections/List
-    private val builtinClasses: Map<String, KmClass> by lazy { readKotlinBuiltinClasses() }
+    private val builtinClasses: Map<String, KmClass> by lazy { readBuiltinClasses() }
 
     /**
      * The failures of the class lookups, and of the class file reads of the [overrideResolver], which might be transient,
@@ -348,6 +351,8 @@ internal class DefaultKotlinIntrospector(
         private const val NOT_CONSTRUCTIBLE_MARKER = " private constructor()"
 
         private const val DEFAULT_COMPANION_NAME = "Companion"
+
+        private const val ENUM_CLASS_NAME = "kotlin/Enum"
 
         /**
          * Follows the sealed subclasses listed in a sealed class, when some of them are not part of the API,
@@ -649,7 +654,10 @@ internal class DefaultKotlinIntrospector(
             kClass?.declaredMemberFunctions.orEmpty()
                 // neither a synthetic method, nor an accessor of a JVM field
                 .filter { '$' !in it.name }
-                .map { ReflectedFunction(it, it.toKmFunction(typeParameters).finalIn(kmClass)) }
+                .map { function ->
+                    val kmFunction = function.toKmFunction(typeParameters).also { it.modality = it.modality.finalIn(kmClass) }
+                    ReflectedFunction(function, kmFunction)
+                }
                 .associateBy { signatureOf(it.kmFunction) }
         }
 
@@ -660,7 +668,10 @@ internal class DefaultKotlinIntrospector(
             val typeParameters = ReflectedTypeParameters.classTypeParameters(kmClass.typeParameters)
             kClass?.declaredMemberProperties.orEmpty()
                 .filter { '$' !in it.name }
-                .associate { it.name to ReflectedProperty(it, it.toKmProperty(typeParameters).finalIn(kmClass)) }
+                .associate { property ->
+                    val kmProperty = property.toKmProperty(typeParameters).also { it.modality = it.modality.finalIn(kmClass) }
+                    property.name to ReflectedProperty(property, kmProperty)
+                }
         }
 
         /**
@@ -684,12 +695,15 @@ internal class DefaultKotlinIntrospector(
          * The signature telling apart the overloads of a [function], like `plus(Int)`,
          * the same for its declaration in the [kmClass], and the one reflected from the [kClass].
          */
-        private fun signatureOf(function: KmFunction): String {
+        private fun signatureOf(function: KmFunction): String = signatures.computeIfAbsent(function) {
             val receiver = function.receiverParameterType?.let {
                 formatType(it, typeParameters = typeParameterNames + function.typeParameters.namesById()) + "."
             }
-            return receiver.orEmpty() + overloadSignature(function, typeParameterNames)
+            receiver.orEmpty() + overloadSignature(function, typeParameterNames)
         }
+
+        // the signatures, see signatureOf, computed once per function, like for each deprecation asked
+        private val signatures = ConcurrentHashMap<KmFunction, String>()
 
         override fun deprecation(function: KmFunction): Deprecation? =
             reflectedFunctions[signatureOf(function)]?.let { builtinDeprecation(it.kFunction) }
@@ -701,21 +715,6 @@ internal class DefaultKotlinIntrospector(
 
         override fun isSetterHidden(property: KmProperty): Boolean = false
 
-    }
-
-    /**
-     * This open function of a final [kmClass] as a final one, like a method of a final Java class,
-     * which Java does not have to declare final, like `describeConstable()` of `java.lang.String`.
-     */
-    private fun KmFunction.finalIn(kmClass: KmClass): KmFunction = apply {
-        if (kmClass.modality == Modality.FINAL && modality == Modality.OPEN) modality = Modality.FINAL
-    }
-
-    /**
-     * This open property of a final [kmClass] as a final one, like a function, see [finalIn].
-     */
-    private fun KmProperty.finalIn(kmClass: KmClass): KmProperty = apply {
-        if (kmClass.modality == Modality.FINAL && modality == Modality.OPEN) modality = Modality.FINAL
     }
 
     /**
@@ -732,7 +731,26 @@ internal class DefaultKotlinIntrospector(
      * The built-in types without a class file of their own, by their Kotlin class names, see [BuiltinClass].
      */
     private val builtinClassDeclarations: Map<String, BuiltinClass> by lazy {
+        if (builtinClasses.isEmpty()) {
+            logger.warn {
+                "Cannot read the declarations of the Kotlin built-in types, they are described by kotlin-reflect instead, " +
+                    "approximately, without the mutable collection types"
+            }
+        }
         builtinClasses.mapValues { (name, kmClass) -> BuiltinClass(name, kmClass) }
+    }
+
+    /**
+     * The built-in types without a class file of their own, by their Kotlin class names, see [BuiltinClass],
+     * described by kotlin-reflect when their declarations in the `.kotlin_builtins` resources cannot be read,
+     * see [toKmBuiltinClass], like when the standard library is a named module, whose resources are encapsulated,
+     * except for the mutable collection types, which kotlin-reflect describes as their read-only counterparts.
+     */
+    private val reflectedBuiltinClassDeclarations: Map<String, Lazy<BuiltinClass?>> by lazy {
+        builtinTypes.filterKeys { it !in mutableBuiltinTypes }.entries.associate { (qualifiedName, kClass) ->
+            val name = kotlinClassName(qualifiedName)
+            name to lazy { reflectedValue(default = null) { BuiltinClass(name, kClass.toKmBuiltinClass(name)) } }
+        }
     }
 
     /**
@@ -744,11 +762,8 @@ internal class DefaultKotlinIntrospector(
         val qualifiedName = name.replace('/', '.')
         if (qualifiedName in mutableBuiltinTypes) return null
         builtinTypes[qualifiedName]?.let { return it }
-        val outerName = name.substringBeforeLast('.', "")
-        if (builtinClasses[outerName]?.companionObject != name.substringAfterLast('.')) return null
-        val outerQualifiedName = outerName.replace('/', '.')
-        if (outerQualifiedName in mutableBuiltinTypes) return null
-        return reflectedValue(default = null) { builtinTypes[outerQualifiedName]?.companionObject }
+        if (!isBuiltinCompanion(qualifiedName)) return null
+        return reflectedValue(default = null) { builtinTypes[qualifiedName.substringBeforeLast('.')]?.companionObject }
     }
 
     /**
@@ -766,12 +781,13 @@ internal class DefaultKotlinIntrospector(
      * the class found on the classpath, see [findClassByMetadataName], if it is a Kotlin class,
      * like `kotlin/Unit`, or `kotlin/UInt`, whose metadata tells more than its declaration in the `.kotlin_builtins` resources,
      * or else the built-in type without a class file of its own, see [BuiltinClass],
-     * or else the class found, if any, like a Java class.
+     * declared in the `.kotlin_builtins` resources, or else described by kotlin-reflect,
+     * see [reflectedBuiltinClassDeclarations], or else the class found, if any, like a Java class.
      */
     private fun classDeclarations(name: String): ClassDeclarations? {
         val foundClass = findClassByMetadataName(name)
         if (foundClass?.kmClass != null) return foundClass
-        return builtinClassDeclarations[name] ?: foundClass
+        return builtinClassDeclarations[name] ?: reflectedBuiltinClassDeclarations[name]?.value ?: foundClass
     }
 
     /**
@@ -1443,16 +1459,17 @@ internal class DefaultKotlinIntrospector(
         // which is therefore rendered as private, like a class without any constructor which can be called.
         // never a data object, which cannot have a constructor
         val isDataOrValueClass = kmClass.kind == ClassKind.CLASS && (kmClass.isData || kmClass.isValue)
-        val isPrimaryConstructorCallable = primaryConstructor != null &&
-            apiClass.isConstructorApi(primaryConstructor.visibility) && !foundClass.isHidden(primaryConstructor)
+        // the constructor of kotlin.Enum is called only by the enum classes, which no class can extend directly
+        val isConstructorCallable = { constructor: KmConstructor ->
+            kmClass.name != ENUM_CLASS_NAME && apiClass.isConstructorApi(constructor.visibility) && !foundClass.isHidden(constructor)
+        }
+        val isPrimaryConstructorCallable = primaryConstructor != null && isConstructorCallable(primaryConstructor)
         val renderedConstructor = primaryConstructor?.takeIf {
             isEnum || isPrimaryConstructorCallable || isDataOrValueClass
         }
         // The other ways of creating the class, never of an enum class, as they are private,
         // nor of an annotation class, which cannot have any
-        val secondaryConstructors = kmClass.constructors.filter {
-            it.isSecondary && apiClass.isConstructorApi(it.visibility) && !foundClass.isHidden(it)
-        }
+        val secondaryConstructors = kmClass.constructors.filter { it.isSecondary && isConstructorCallable(it) }
         // the always private constructor of an enum class is rendered only for its parameters
         val primaryConstructorVisibility = when {
             isEnum || renderedConstructor == null -> Visibility.PUBLIC
@@ -1480,7 +1497,9 @@ internal class DefaultKotlinIntrospector(
         // a JVM function interface, like kotlin.jvm.functions.Function1, has the ones of its function type,
         // while a built-in type lists the ones reading like its members in its body
         val listedExtensions = listedExtensions(kmClass, className, isBuiltin)
-        val bodyExtensions = if (className in builtinTypes) {
+        // the extensions of the companion object of a built-in type, like `String.Companion.format()`, are called on
+        // the name of the type, which they are listed with, see listedExtensions, outside the body of the companion object
+        val bodyExtensions = if (isBuiltin && kmClass.kind != ClassKind.COMPANION_OBJECT) {
             bodyExtensionsOf(kmClass, foundClass, typeParameters, listedExtensions)
         } else {
             ListedExtensions(emptyList(), emptyList())
@@ -2405,6 +2424,8 @@ internal class DefaultKotlinIntrospector(
     /**
      * Format a [function] described by kotlin-reflect, see [toKmFunction], like a JVM-only member of a built-in type,
      * see [BuiltinClass], declared in a class without type parameters, which is not told to be an override.
+     * It exposes the conversion, and the rendering through [formatFunction], to `ReflectedDeclarationsTest`,
+     * as no built-in type has members with the parameters it exercises, like the type [formatType] does.
      */
     internal fun formatReflectedFunction(function: KFunction<*>): String =
         formatFunction(function.toKmFunction(ReflectedTypeParameters.classTypeParameters(emptyList())))
