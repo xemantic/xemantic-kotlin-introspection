@@ -97,6 +97,14 @@ class HiddenCompanionHolder {
     }
 }
 
+// a deprecated companion object, declared with each of its members found by a member lookup on the outer class
+class DeprecatedCompanionHolder {
+    @Deprecated("Use the constructor")
+    companion object {
+        fun create(): DeprecatedCompanionHolder = DeprecatedCompanionHolder()
+    }
+}
+
 // the constructor of an enum class is always private, called only by its entries
 enum class DeprecatedConstructorEnum @Deprecated("Old") constructor(val v: Int) {
     A(1)

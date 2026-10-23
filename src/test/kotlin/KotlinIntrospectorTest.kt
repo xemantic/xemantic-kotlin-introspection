@@ -5523,6 +5523,57 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should not resolve member of companion object deprecated with hidden level through outer class`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenCompanionHolder.create") == null)
+    }
+
+    @Test
+    fun `should render deprecation of companion object member found by outer class member lookup`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.DeprecationTarget.create"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DeprecationTarget.create [page 1/1]
+            companion object {
+                @Deprecated("Use the constructor") fun create(): DeprecationTarget
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render deprecation of companion object declaration found by outer class member lookup`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.DeprecatedCompanionHolder.create"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DeprecatedCompanionHolder.create [page 1/1]
+            @Deprecated("Use the constructor") companion object {
+                fun create(): DeprecatedCompanionHolder
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render deprecation of extension property found by file facade member lookup`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.TestDeprecationKt.deprecatedExtensionProperty"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.TestDeprecationKt.deprecatedExtensionProperty [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            @Deprecated("Gone", level = DeprecationLevel.ERROR) val DeprecationTarget.deprecatedExtensionProperty: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render deprecation of extension found by outer class member lookup`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.DeprecationTarget.deprecatedExtension"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DeprecationTarget.deprecatedExtension [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            @Deprecated("Use newMember()", ReplaceWith("newMember()")) fun DeprecationTarget.deprecatedExtension(): Int
+        """.trimIndent()
+    }
+
+    @Test
     fun `should not render hidden deprecation of class resolved directly`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.HiddenTopLevelHolder"
