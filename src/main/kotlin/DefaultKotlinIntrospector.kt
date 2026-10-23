@@ -1867,17 +1867,20 @@ internal class DefaultKotlinIntrospector(
             setter?.isNotDefault != true &&
             returnType == parameter.type
 
-    private fun isOverride(owner: KmClass?, function: KmFunction): Boolean = override(owner, function) != null
+    // kotlinc writes no FAKE_OVERRIDE members to the metadata, neither of a class file, nor of .kotlin_builtins,
+    // and a member implemented by delegation is a DELEGATION one, so each override is told by matching its supertypes
+
+    private fun isOverride(owner: KmClass?, function: KmFunction): Boolean =
+        owner != null && overrideResolver.isOverride(owner, function)
 
     /**
      * The override of a supertype function by the [function], or `null` if it is not an override.
      */
     private fun override(owner: KmClass?, function: KmFunction): OverrideResolver.FunctionOverride? =
         owner?.let { overrideResolver.override(it, function) }
-            ?: if (function.kind == MemberKind.FAKE_OVERRIDE) OverrideResolver.FunctionOverride(emptySet()) else null
 
     private fun isOverride(owner: KmClass?, property: KmProperty): Boolean =
-        property.kind == MemberKind.FAKE_OVERRIDE || (owner != null && overrideResolver.isOverride(owner, property))
+        owner != null && overrideResolver.isOverride(owner, property)
 
     /**
      * Whether the [function] reflected from a built-in type is an override of a member of its supertypes,

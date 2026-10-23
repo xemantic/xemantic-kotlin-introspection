@@ -105,8 +105,13 @@ internal class OverrideResolver(
      * @param nullable `null` for a type coming from Java, which can be seen in Kotlin as both nullable and not.
      * @param isJavaPrimitive whether this is a Java primitive type, seen in Kotlin as not nullable,
      *   unlike a Kotlin type substituted for a Java type variable, also not nullable, but flexible in Kotlin.
-     * @param isRaw whether this is a raw Java supertype, like `Base` in `class Mid extends Base`,
-     *   whose type variables are erased to their bounds, unlike a type with unknown type arguments.
+     * @param isRaw whether this is a raw supertype of a Java class, like `Base` in `class Mid extends Base`,
+     *   whose type variables, or type parameters of a Kotlin `Base`, are erased to their bounds,
+     *   unlike a type with unknown type arguments.
+     *   A class file whose generic signatures are stripped, like by R8 or ProGuard without `-keepattributes Signature`,
+     *   looks raw as well, so that a type variable of its generic supertype is erased to its bound too,
+     *   and a real override of `Base<String>.process(x: String)` through such a shrunk `Mid` is not told,
+     *   while matching it through an unknown type would mark any overload of `process` as an override.
      */
     private data class ClassType(
         val name: String,
@@ -227,32 +232,79 @@ internal class OverrideResolver(
      * The whole supertype hierarchy is matched, so that the declaration of an inherited default value is found
      * also through intermediate overrides.
      */
-    fun override(owner: KmClass, function: KmFunction): FunctionOverride? {
+    fun override(owner: KmClass, function: KmFunction): FunctionOverride? =
+        override(owner, function, withDefaultValues = true)
+
+    /**
+     * Whether the [function] overrides a supertype function, like [override], without matching all of them.
+     */
+    fun isOverride(owner: KmClass, function: KmFunction): Boolean =
+        override(owner, function, withDefaultValues = false) != null
+
+    /**
+     * @param withDefaultValues whether to match all the overridden functions for their inherited default values,
+     *   otherwise the first one tells that the [function] is an override, without default values.
+     */
+    private fun override(owner: KmClass, function: KmFunction, withDefaultValues: Boolean): FunctionOverride? {
         val overridables = overridables(owner)
         val candidates = overridables.functions[function.name] ?: return null
-        val typeParameters = memberTypeParameters(function.typeParameters)
-        val contexts = function.contextParameters.map {
-            kotlinType(it.type, overridables.substitution, typeParameters)
-        }
-        val receiver = function.receiverParameterType?.let {
-            kotlinType(it, overridables.substitution, typeParameters)
-        }
-        val parameters = function.valueParameters.map {
-            kotlinType(it.type, overridables.substitution, typeParameters)
-        }
-        val overridden = candidates.filter {
-            it.matches(contexts, receiver, parameters, function.typeParameters.size, function.isSuspend) &&
-                overridables.isVisible(it)
-        }
+        val signature = overridables.signature(function)
+        val overridden = candidates.asSequence().filter { overridables.overrides(signature, it) }
         return when {
-            overridden.isNotEmpty() -> FunctionOverride(
-                overridden.fold(emptySet()) { defaults, it ->
-                    if (it.declaresDefaultValues.isEmpty()) defaults else defaults + it.declaresDefaultValues
-                }
-            )
-            overridables.isShrunk(function.signature) -> FunctionOverride(emptySet())
-            else -> null
+            !withDefaultValues -> if (overridden.any()) noDefaultValues else null
+            else -> overridden.toList().takeIf { it.isNotEmpty() }
+                ?.let { FunctionOverride(inheritedDefaultValues(it, signature)) }
+        } ?: if (overridables.isShrunk(function.signature)) noDefaultValues else null
+    }
+
+    private val noDefaultValues = FunctionOverride(emptySet())
+
+    /**
+     * The types of a function checked for overriding, resolved in the context of its class.
+     */
+    private class FunctionSignature(
+        val contexts: List<MemberType>,
+        val receiver: MemberType?,
+        val parameters: List<MemberType>,
+        val typeParameterCount: Int,
+        val isSuspend: Boolean
+    )
+
+    private fun Overridables.signature(function: KmFunction): FunctionSignature {
+        val typeParameters = memberTypeParameters(function.typeParameters)
+        return FunctionSignature(
+            contexts = function.contextParameters.map { kotlinType(it.type, substitution, typeParameters) },
+            receiver = function.receiverParameterType?.let { kotlinType(it, substitution, typeParameters) },
+            parameters = function.valueParameters.map { kotlinType(it.type, substitution, typeParameters) },
+            typeParameterCount = function.typeParameters.size,
+            isSuspend = function.isSuspend
+        )
+    }
+
+    private fun Overridables.overrides(signature: FunctionSignature, overridable: Overridable): Boolean =
+        overridable.matches(signature) && isVisible(overridable)
+
+    private fun Overridable.matches(signature: FunctionSignature, onlyKnownTypes: Boolean = false): Boolean = matches(
+        signature.contexts, signature.receiver, signature.parameters, signature.typeParameterCount, signature.isSuspend,
+        onlyKnownTypes
+    )
+
+    /**
+     * The indices of the value parameters declaring a default value in the [overridden] functions.
+     * As an unknown type, like a type parameter of a supertype whose type argument cannot be reflected, matches any type,
+     * a sibling overload, which is not overridden, like `f(x: T, y: Int = 0)` of `f(x: String, y: Int)`, might be matched too,
+     * so the default values are taken only from the functions matching on the known types, if there are any.
+     * This might drop a real default value inherited through a supertype which cannot be told,
+     * like one whose type argument refers to a class missing from the classpath,
+     * when another overridden function, like `f(x: String, y: Int)` of an interface, matches on the known types,
+     * as omitting a default value is preferred over claiming a false one, which would not compile when omitted.
+     */
+    private fun inheritedDefaultValues(overridden: List<Overridable>, signature: FunctionSignature): Set<Int> {
+        if (overridden.all { it.declaresDefaultValues.isEmpty() }) return emptySet()
+        val matchingKnownTypes = if (overridden.size == 1) overridden else overridden.filter {
+            !it.isJava && it.matches(signature, onlyKnownTypes = true)
         }
+        return matchingKnownTypes.ifEmpty { overridden }.flatMapTo(HashSet()) { it.declaresDefaultValues }
     }
 
     fun isOverride(owner: KmClass, property: KmProperty): Boolean {
@@ -295,12 +347,17 @@ internal class OverrideResolver(
     private fun Overridables.isShrunk(signature: JvmMethodSignature?): Boolean =
         signature != null && ownerJvmMethods?.let { signature.toString() !in it } == true
 
+    /**
+     * @param onlyKnownTypes whether an unknown type matches no type, except for a star projection,
+     *   only applying to a Kotlin member, as a Java one is matched by the erasures.
+     */
     private fun Overridable.matches(
         contexts: List<MemberType>,
         receiver: MemberType?,
         parameters: List<MemberType>,
         typeParameterCount: Int,
-        isSuspend: Boolean
+        isSuspend: Boolean,
+        onlyKnownTypes: Boolean = false
     ): Boolean {
         if (this.typeParameterCount != typeParameterCount) return false
         if (isJava) {
@@ -317,6 +374,7 @@ internal class OverrideResolver(
         if ((this.receiver == null) != (receiver == null)) return false
         if (this.parameters.size != parameters.size) return false
         if (this.contexts.size != contexts.size) return false
+        fun typesMatch(overridden: MemberType, overriding: MemberType) = typesMatch(overridden, overriding, onlyKnownTypes)
         return this.contexts.zip(contexts).all { (overridden, overriding) -> typesMatch(overridden, overriding) } &&
             (this.receiver == null || typesMatch(this.receiver, receiver!!)) &&
             this.parameters.zip(parameters).all { (overridden, overriding) -> typesMatch(overridden, overriding) }
@@ -387,11 +445,9 @@ internal class OverrideResolver(
                         typeParameterCount = function.typeParameters.size,
                         isJava = false,
                         friendJvmMethod = friendJvmMethod(function.visibility, function.signature),
-                        declaresDefaultValues = if (function.valueParameters.none { it.declaresDefaultValue }) {
-                            emptySet()
-                        } else function.valueParameters.indices.filterTo(HashSet()) {
+                        declaresDefaultValues = function.valueParameters.indices.filter {
                             function.valueParameters[it].declaresDefaultValue
-                        }
+                        }.toSet()
                     )
                 }
                 kmClass.properties.filter { it.visibility.isOverridable }.forEach { property ->
@@ -511,17 +567,27 @@ internal class OverrideResolver(
 
     /**
      * The type parameters of the [kmClass], and of its outer classes if it is an inner class,
-     * mapped to the type arguments of the [supertype].
+     * mapped to the type arguments of the [supertype], and of its outer types,
+     * or to the erasures of their bounds if the [supertype] is a raw supertype of a Java class,
+     * like `Comparable` in `class C implements Comparable`, as [javaSubstitution] does for a Java class.
      */
     private fun supertypeSubstitution(kmClass: KmClass, supertype: ClassType): Map<Int, MemberType> = buildMap {
-        var declaration: KmClass? = kmClass
+        val declarations = generateSequence(kmClass) { declaration ->
+            if (declaration.isInner) declaration(outerClassName(declaration.name)).kotlin else null
+        }.toList()
+        // the outer type of a raw inner type is raw as well
+        if (supertype.isRaw) {
+            val typeParameters = declarations.flatMap { it.typeParameters }.associateBy { it.id }
+            typeParameters.values.forEach { typeParameter ->
+                put(typeParameter.id, erasedBound(typeParameter, typeParameters)?.copy(nullable = null) ?: UnknownType)
+            }
+            return@buildMap
+        }
         var type: ClassType? = supertype
-        while (declaration != null) {
+        declarations.forEach { declaration ->
             declaration.typeParameters.forEachIndexed { index, typeParameter ->
                 put(typeParameter.id, type?.arguments?.getOrNull(index)?.type ?: UnknownType)
             }
-            if (!declaration.isInner) break
-            declaration = declaration(outerClassName(declaration.name)).kotlin
             type = type?.outer
         }
     }
@@ -544,13 +610,25 @@ internal class OverrideResolver(
     private fun hasClassFile(binaryName: String): Boolean =
         classLoader.getResource(binaryName.replace('.', '/') + ".class") != null
 
-    private fun erasure(typeParameter: KmTypeParameter, typeParameters: Map<Int, KmTypeParameter>): String? {
-        val bound = typeParameter.upperBounds.firstOrNull() ?: return "kotlin/Any"
+    private fun erasure(typeParameter: KmTypeParameter, typeParameters: Map<Int, KmTypeParameter>): String? =
+        erasedBound(typeParameter, typeParameters)?.let { normalizedName(it.name) }
+
+    /**
+     * The raw type a [typeParameter] is erased to: its first bound, or the bound of the type parameter bounding it,
+     * with unknown type arguments, or `null` if unknown, like for an array bound.
+     *
+     * @param typeParameters the type parameters in scope, by their ids, which can bound the [typeParameter].
+     */
+    private fun erasedBound(typeParameter: KmTypeParameter, typeParameters: Map<Int, KmTypeParameter>): ClassType? {
+        val bound = typeParameter.upperBounds.firstOrNull() ?: return ClassType("kotlin/Any")
         return when (val classifier = bound.classifier) {
-            is KmClassifier.Class -> if (classifier.name == "kotlin/Array") null else normalizedName(classifier.name)
+            is KmClassifier.Class -> if (classifier.name == "kotlin/Array") null else ClassType(
+                name = classifier.name,
+                arguments = bound.arguments.map { TypeArgument(null, UnknownType) }
+            )
             is KmClassifier.TypeParameter -> typeParameters[classifier.id]
                 ?.takeIf { it !== typeParameter }
-                ?.let { erasure(it, typeParameters - typeParameter.id) }
+                ?.let { erasedBound(it, typeParameters - typeParameter.id) }
             is KmClassifier.TypeAlias -> null
         }
     }
@@ -638,9 +716,11 @@ internal class OverrideResolver(
     /**
      * Whether the types are the same, an unknown type matching any other one.
      * The nullability, the variance and the mutability of a collection type is not known for a type coming from Java.
+     *
+     * @param onlyKnownTypes whether an unknown type matches no type, except for a star projection, which is known.
      */
-    private fun typesMatch(a: MemberType, b: MemberType): Boolean = when {
-        a == UnknownType || b == UnknownType -> true
+    private fun typesMatch(a: MemberType, b: MemberType, onlyKnownTypes: Boolean = false): Boolean = when {
+        a == UnknownType || b == UnknownType -> !onlyKnownTypes
         a is ClassType && b is ClassType -> {
             val flexible = a.isFlexible || b.isFlexible
             val namesMatch = if (flexible) normalizedName(a.name) == normalizedName(b.name) else a.name == b.name
@@ -649,8 +729,12 @@ internal class OverrideResolver(
                 a.arguments.size == b.arguments.size &&
                 a.arguments.zip(b.arguments).withIndex().all { (index, arguments) ->
                     val (x, y) = arguments
-                    (x.type == UnknownType || y.type == UnknownType) ||
-                        ((flexible || variancesMatch(a.name, index, x.variance, y.variance)) && typesMatch(x.type, y.type))
+                    if (x.type == UnknownType || y.type == UnknownType) {
+                        !onlyKnownTypes || x.variance == null || y.variance == null
+                    } else {
+                        (flexible || variancesMatch(a.name, index, x.variance, y.variance)) &&
+                            typesMatch(x.type, y.type, onlyKnownTypes)
+                    }
                 }
         }
         a is TypeParameterType && b is TypeParameterType -> a.key == b.key && a.nullable == b.nullable
@@ -752,31 +836,31 @@ internal class OverrideResolver(
      *
      * @param scopes the declaring classes with the type arguments of their type variables, by their names.
      */
-    private class JavaSubstitution(private val scopes: List<Pair<Class<*>, Map<String, MemberType>>>) {
+    private class JavaSubstitution(private val scopes: List<Pair<Class<*>, Map<String, Lazy<MemberType>>>>) {
 
         /**
          * The type argument of a reflected type variable of a class, or `null` if it is not declared by one of the scopes.
          */
         operator fun get(typeVariable: TypeVariable<*>): MemberType? =
             scopes.firstOrNull { (declaration, _) -> declaration == typeVariable.genericDeclaration }
-                ?.second?.get(typeVariable.name)
+                ?.second?.get(typeVariable.name)?.value
 
         /**
          * The type argument of a type variable of a class known only by its [name], like in a generic signature,
          * declared by the innermost scope declaring this name, as it shadows the outer ones.
          */
         operator fun get(name: String): MemberType? =
-            scopes.firstNotNullOfOrNull { (_, typeArguments) -> typeArguments[name] }
+            scopes.firstNotNullOfOrNull { (_, typeArguments) -> typeArguments[name] }?.value
 
     }
 
     /**
      * The type variables of the [javaClass], and of its outer classes if it is an inner class,
      * mapped to the type arguments of the [supertype], and of its outer types,
-     * or to the erasures of their bounds if the [supertype] is raw.
+     * or to the erasures of their bounds if the [supertype] is raw, reflected only when a member refers to them.
      */
     private fun javaSubstitution(javaClass: Class<*>, supertype: ClassType): JavaSubstitution {
-        val scopes = mutableListOf<Pair<Class<*>, Map<String, MemberType>>>()
+        val scopes = mutableListOf<Pair<Class<*>, Map<String, Lazy<MemberType>>>>()
         var declaration: Class<*>? = javaClass
         var type: ClassType? = supertype
         // the outer type of a raw inner type is raw as well
@@ -787,9 +871,9 @@ internal class OverrideResolver(
             val typeParameters = reflectOrNull { declaration.typeParameters } ?: break
             scopes += declaration to typeParameters.withIndex().associate { (index, typeVariable) ->
                 typeVariable.name to if (isRaw) {
-                    boundErasure(typeVariable)
+                    lazy(LazyThreadSafetyMode.NONE) { boundErasure(typeVariable) }
                 } else {
-                    typeArguments?.getOrNull(index)?.type ?: UnknownType
+                    lazyOf(typeArguments?.getOrNull(index)?.type ?: UnknownType)
                 }
             }
             // a static nested class cannot refer to the type variables of its outer class
@@ -806,6 +890,7 @@ internal class OverrideResolver(
      */
     private fun boundErasure(typeVariable: TypeVariable<*>): MemberType = reflectOrNull {
         var bound: JavaType? = typeVariable
+        // javac rejects cyclic bounds, but a malformed class file might declare them, which reflection does not check
         val visited = mutableSetOf<TypeVariable<*>>()
         while (bound is TypeVariable<*> && visited.add(bound)) {
             bound = bound.bounds.firstOrNull()
@@ -873,7 +958,7 @@ internal class OverrideResolver(
             (listOfNotNull(javaClass.genericSuperclass) + javaClass.genericInterfaces).map { type ->
                 // a generic supertype given as a class is raw
                 if (type is Class<*>) {
-                    javaClassType(type).let { if (it is ClassType) it.copy(isRaw = true) else it }
+                    javaClassType(type).copy(isRaw = true)
                 } else {
                     javaType(type, substitution, method = null)
                 }
@@ -890,32 +975,23 @@ internal class OverrideResolver(
     private fun javaType(type: JavaType, substitution: JavaSubstitution, method: Method?): MemberType =
         when (type) {
             is Class<*> -> javaClassType(type)
-            is ParameterizedType -> {
-                val raw = javaClassType(type.rawType as Class<*>)
-                if (raw is ClassType) {
-                    raw.copy(
-                        arguments = type.actualTypeArguments.map { argument ->
-                            when (argument) {
-                                is WildcardType -> when {
-                                    argument.lowerBounds.isNotEmpty() ->
-                                        TypeArgument(KmVariance.IN, javaType(argument.lowerBounds[0], substitution, method))
-                                    argument.upperBounds.firstOrNull().let { it == null || it == Any::class.java } ->
-                                        TypeArgument(null, UnknownType)
-                                    else ->
-                                        TypeArgument(KmVariance.OUT, javaType(argument.upperBounds[0], substitution, method))
-                                }
-                                else -> TypeArgument(KmVariance.INVARIANT, javaType(argument, substitution, method))
-                            }
-                        },
-                        outer = (type.ownerType as? ParameterizedType)?.let { javaType(it, substitution, method) as? ClassType }
-                    )
-                } else raw
-            }
-            is GenericArrayType -> ClassType(
-                name = "kotlin/Array",
-                arguments = listOf(TypeArgument(KmVariance.INVARIANT, javaType(type.genericComponentType, substitution, method))),
-                nullable = null
+            is ParameterizedType -> javaClassType(type.rawType as Class<*>).copy(
+                arguments = type.actualTypeArguments.map { argument ->
+                    when (argument) {
+                        is WildcardType -> when {
+                            argument.lowerBounds.isNotEmpty() ->
+                                TypeArgument(KmVariance.IN, javaType(argument.lowerBounds[0], substitution, method))
+                            argument.upperBounds.firstOrNull().let { it == null || it == Any::class.java } ->
+                                TypeArgument(null, UnknownType)
+                            else ->
+                                TypeArgument(KmVariance.OUT, javaType(argument.upperBounds[0], substitution, method))
+                        }
+                        else -> TypeArgument(KmVariance.INVARIANT, javaType(argument, substitution, method))
+                    }
+                },
+                outer = (type.ownerType as? ParameterizedType)?.let { javaType(it, substitution, method) as? ClassType }
             )
+            is GenericArrayType -> arrayType(javaType(type.genericComponentType, substitution, method))
             is TypeVariable<*> -> {
                 val declaration = type.genericDeclaration
                 if (declaration is Class<*>) {
@@ -946,18 +1022,10 @@ internal class OverrideResolver(
         else -> null
     }
 
-    private fun javaClassType(javaClass: Class<*>): MemberType = when {
+    private fun javaClassType(javaClass: Class<*>): ClassType = when {
         javaClass.isArray -> {
             val component = javaClass.componentType
-            if (component.isPrimitive) {
-                ClassType("kotlin/${primitiveNames.getValue(component.name).substringAfter('/')}Array", nullable = null)
-            } else {
-                ClassType(
-                    name = "kotlin/Array",
-                    arguments = listOf(TypeArgument(KmVariance.INVARIANT, javaClassType(component))),
-                    nullable = null
-                )
-            }
+            if (component.isPrimitive) primitiveArrayType(component.name) else arrayType(javaClassType(component))
         }
         else -> ClassType(
             name = javaToKotlinNames[javaClass.name] ?: kotlinClassName(javaClass),
@@ -967,6 +1035,21 @@ internal class OverrideResolver(
             isJavaPrimitive = javaClass.isPrimitive
         )
     }
+
+    /**
+     * A Java array type of the [component] type, like `Array<String>`.
+     */
+    private fun arrayType(component: MemberType): ClassType = ClassType(
+        name = "kotlin/Array",
+        arguments = listOf(TypeArgument(KmVariance.INVARIANT, component)),
+        nullable = null
+    )
+
+    /**
+     * A Java array type of a primitive type, like `IntArray` for the [primitiveName] `int`.
+     */
+    private fun primitiveArrayType(primitiveName: String): ClassType =
+        ClassType("kotlin/${primitiveNames.getValue(primitiveName).substringAfter('/')}Array", nullable = null)
 
     /**
      * The overridable methods of a Java class, which cannot be reflected,
@@ -1038,33 +1121,21 @@ internal class OverrideResolver(
                 substitution[signature.name] ?: UnknownType
             }
         }
-        // an array of primitives or of classes is fully described by the descriptor
+        // an array of primitives or of classes is fully described by the descriptor,
+        // like a type of a malformed class file whose signature is an array, but the descriptor is not
         is SignatureType.ArrayOf -> if (type.sort != AsmType.ARRAY || signature.component == SignatureType.Other) {
             asmType(type)
         } else {
-            ClassType(
-                name = "kotlin/Array",
-                arguments = listOf(
-                    TypeArgument(
-                        KmVariance.INVARIANT,
-                        asmType(AsmType.getType(type.descriptor.substring(1)), signature.component, generic, substitution)
-                    )
-                ),
-                nullable = null
-            )
+            arrayType(asmType(AsmType.getType(type.descriptor.substring(1)), signature.component, generic, substitution))
         }
         SignatureType.Other -> asmType(type)
     }
 
     private fun asmType(type: AsmType): MemberType = when (type.sort) {
         AsmType.ARRAY -> if (type.dimensions == 1 && type.elementType.sort != AsmType.OBJECT) {
-            ClassType("kotlin/${primitiveNames.getValue(type.elementType.className).substringAfter('/')}Array", nullable = null)
+            primitiveArrayType(type.elementType.className)
         } else {
-            ClassType(
-                name = "kotlin/Array",
-                arguments = listOf(TypeArgument(KmVariance.INVARIANT, asmType(AsmType.getType(type.descriptor.substring(1))))),
-                nullable = null
-            )
+            arrayType(asmType(AsmType.getType(type.descriptor.substring(1))))
         }
         AsmType.OBJECT -> {
             val binaryName = type.className

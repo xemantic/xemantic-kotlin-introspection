@@ -30,6 +30,9 @@ import com.xemantic.kotlin.introspection.test.other.JavaPrimitiveBase
 import com.xemantic.kotlin.introspection.test.other.JavaProcessorBase
 import com.xemantic.kotlin.introspection.test.other.JavaRawArrayMid
 import com.xemantic.kotlin.introspection.test.other.JavaRawClassBoundMid
+import com.xemantic.kotlin.introspection.test.other.JavaRawComparable
+import com.xemantic.kotlin.introspection.test.other.JavaRawInnerMid
+import com.xemantic.kotlin.introspection.test.other.JavaRawKotlinMid
 import com.xemantic.kotlin.introspection.test.other.JavaSortBase
 import com.xemantic.kotlin.introspection.test.other.JavaVoidBase
 import com.xemantic.kotlin.introspection.test.other.PackagePrivateBase
@@ -629,6 +632,48 @@ class JavaRawArraySubclass : JavaRawArrayMid() {
 
 class JavaRawClassBoundSubclass : JavaRawClassBoundMid() {
     fun <T : Number> bounded(x: T) {}
+}
+
+// The type parameters of a raw Kotlin supertype of a Java class are erased to their bounds,
+// also when bound by another type parameter, or by a type referring to the type parameter itself
+open class KotlinBoundBase<T : CharSequence, C : Comparable<C>, U : T> {
+    open fun bounded(x: T) {}
+    open fun compared(x: C) {}
+    open fun chained(x: U) {}
+}
+
+class JavaRawKotlinSubclass : JavaRawKotlinMid() {
+    override fun bounded(x: CharSequence) {}
+    fun bounded(x: String) {}
+    override fun compared(x: Comparable<*>) {}
+    fun compared(x: String) {}
+    override fun chained(x: CharSequence) {}
+    fun chained(x: String) {}
+}
+
+// The type parameters of a raw inner Kotlin supertype of a Java class, and of its outer class, are erased to their bounds,
+// also when bound by a type parameter of the outer class
+open class KotlinRawOuter<A : CharSequence> {
+    open inner class Inner<B : Number, C : A> {
+        open fun outer(x: A) {}
+        open fun inner(x: B) {}
+        open fun chained(x: C) {}
+    }
+}
+
+class JavaRawInnerSubclass(outer: KotlinRawOuter<String>) : JavaRawInnerMid(outer) {
+    override fun outer(x: CharSequence) {}
+    fun outer(x: String) {}
+    override fun inner(x: Number) {}
+    fun inner(x: Int) {}
+    override fun chained(x: CharSequence) {}
+    fun chained(x: String) {}
+}
+
+// The type parameter of a raw built-in supertype of a Java class is erased to its bound
+abstract class JavaRawComparableSubclass : JavaRawComparable() {
+    override fun compareTo(other: Any?): Int = 0
+    fun compareTo(other: String): Int = 0
 }
 
 // An override keeps its modality, abstract or final, while an open override is implicitly open

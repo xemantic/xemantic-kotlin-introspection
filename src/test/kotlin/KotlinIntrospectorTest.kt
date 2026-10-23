@@ -1166,7 +1166,7 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should mark parameter of delegated override inheriting default value`() {
+    fun `should mark parameter of member implemented by delegation inheriting default value`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.DelegatingRepo"
         ) sameAsKotlin """
@@ -1185,6 +1185,19 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.test.FinderRepo [page 1/1]
             class FinderRepo : Repo, Finder {
                 override fun find(limit: Int = …)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not mark parameter inheriting default value of overload not overridden through raw Java superclass`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.RawDefaultsLeaf"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.RawDefaultsLeaf [page 1/1]
+            class RawDefaultsLeaf : com.xemantic.kotlin.introspection.test.other.JavaRawDefaultsMid {
+                override fun f(x: String, y: Int)
+                override fun f(x: Any?, y: Int = …)
             }
         """.trimIndent()
     }
@@ -2536,6 +2549,53 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.test.JavaRawClassBoundSubclass [page 1/1]
             class JavaRawClassBoundSubclass : com.xemantic.kotlin.introspection.test.other.JavaRawClassBoundMid {
                 fun <T : Number> bounded(x: T)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should erase type parameters of raw Kotlin superclass of Java class to their bounds`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaRawKotlinSubclass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaRawKotlinSubclass [page 1/1]
+            class JavaRawKotlinSubclass : com.xemantic.kotlin.introspection.test.other.JavaRawKotlinMid {
+                override fun bounded(x: CharSequence)
+                fun bounded(x: String)
+                override fun compared(x: Comparable<*>)
+                fun compared(x: String)
+                override fun chained(x: CharSequence)
+                fun chained(x: String)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should erase type parameters of raw inner Kotlin superclass of Java class and of its outer class to their bounds`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaRawInnerSubclass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaRawInnerSubclass [page 1/1]
+            class JavaRawInnerSubclass(outer: KotlinRawOuter<String>) : com.xemantic.kotlin.introspection.test.other.JavaRawInnerMid {
+                override fun outer(x: CharSequence)
+                fun outer(x: String)
+                override fun inner(x: Number)
+                fun inner(x: Int)
+                override fun chained(x: CharSequence)
+                fun chained(x: String)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should erase type parameter of raw built-in supertype of Java class to its bound`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaRawComparableSubclass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaRawComparableSubclass [page 1/1]
+            abstract class JavaRawComparableSubclass : com.xemantic.kotlin.introspection.test.other.JavaRawComparable {
+                override operator fun compareTo(other: Any?): Int
+                fun compareTo(other: String): Int
             }
         """.trimIndent()
     }

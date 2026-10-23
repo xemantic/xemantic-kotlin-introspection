@@ -259,6 +259,27 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should not mark parameter inheriting default value of overload matching only on type parameter unknown through class missing from the classpath`() {
+        // given
+        val introspector = introspectorWithoutAbsentClass()
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.AbsentArgumentDefaultsLeaf"
+        )
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.AbsentArgumentDefaultsLeaf [page 1/1]
+            class AbsentArgumentDefaultsLeaf : AbsentArgumentJavaMid {
+                override fun f(x: String, y: Int)
+                override fun g(x: Absent, y: Int = …)
+                override fun h(x: String, y: List<*>, z: Int)
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should not bind Java method type variable shadowing type variable of its class when another method refers to class missing from the classpath`() {
         // given
         val introspector = introspectorWithoutAbsentClass()
@@ -749,6 +770,70 @@ class ClassLoaderIntrospectionTest {
             } else {
                 super.visitMethod(access, name, descriptor, signature, exceptions)
             }
+        }, 0)
+        return writer.toByteArray()
+    }
+
+    @Test
+    fun `should mark overrides of other Java methods when generic signature of one method mismatches its descriptor`() {
+        // given
+        val root = tempDir.resolve("mismatchedSignature")
+        isolatedTestFixtures.filter { it.exists() }.forEach { dir ->
+            dir.walkTopDown().filter { it.isFile && it.name != "Absent.class" }.forEach { file ->
+                val target = root.resolve(file.relativeTo(dir).path).toFile()
+                target.parentFile.mkdirs()
+                target.writeBytes(
+                    if (file.name == "AbsentJavaBase.class") {
+                        // a malformed class file, declaring an array of T as the type of the parameter taking T
+                        withMethodSignature(file.readBytes(), "process", "(Ljava/lang/Object;)V", "([TT;)V")
+                    } else file.readBytes()
+                )
+            }
+        }
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.AbsentJavaSubclass"
+        )
+
+        // then
+        // only the method of the mismatched signature is matched by its descriptor, erasing T to Object,
+        // so its override, implicitly open, is not told
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.AbsentJavaSubclass [page 1/1]
+            class AbsentJavaSubclass : AbsentJavaBase<String> {
+                open fun process(item: String)
+                fun process(item: Int)
+                override fun run()
+                fun run(times: Int)
+                fun prim(x: Int?)
+                override fun <S : String> bounded(x: S)
+                fun <S : Number> bounded(x: S)
+                override fun take(nested: DollarHolder.`Dollar${'$'}Nested`)
+            }
+        """.trimIndent()
+    }
+
+    /**
+     * Replaces the generic signature of the method of the [name] and the [descriptor] in the class bytes.
+     */
+    private fun withMethodSignature(bytes: ByteArray, name: String, descriptor: String, signature: String): ByteArray {
+        val writer = ClassWriter(0)
+        ClassReader(bytes).accept(object : ClassVisitor(Opcodes.ASM9, writer) {
+            override fun visitMethod(
+                access: Int,
+                methodName: String,
+                methodDescriptor: String,
+                methodSignature: String?,
+                exceptions: Array<out String>?
+            ): MethodVisitor? = super.visitMethod(
+                access,
+                methodName,
+                methodDescriptor,
+                if (methodName == name && methodDescriptor == descriptor) signature else methodSignature,
+                exceptions
+            )
         }, 0)
         return writer.toByteArray()
     }
