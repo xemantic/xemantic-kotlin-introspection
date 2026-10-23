@@ -3558,12 +3558,14 @@ private fun jvmFunctionTypeName(className: String): String? =
     functionTypeOfJvmInterface(className.replace('.', '/'))?.replace('/', '.')
 
 /**
- * The names of the function type classes found by the [KotlinIntrospector.search], the ones up to the arity
- * of the JVM interfaces they are compiled to, like `kotlin.Function22`, while the higher ones can still be resolved.
+ * The names of the function type classes found by the [KotlinIntrospector.search], the ones compiled to
+ * their own JVM interfaces, like `kotlin.Function22`, and `kotlin.coroutines.SuspendFunction21`,
+ * whose continuation is the last runtime parameter of `kotlin.jvm.functions.Function22`,
+ * while the higher ones, compiled to `kotlin.jvm.functions.FunctionN`, can still be resolved.
  */
-internal val searchableFunctionTypeNames: List<String> = (0..MAX_JVM_FUNCTION_INTERFACE_ARITY).flatMap {
-    listOf("$FUNCTION_TYPE_PREFIX$it", "$SUSPEND_FUNCTION_PREFIX$it")
-}
+internal val searchableFunctionTypeNames: List<String> =
+    (0..MAX_JVM_FUNCTION_INTERFACE_ARITY).map { "$FUNCTION_TYPE_PREFIX$it" } +
+        (0 until MAX_JVM_FUNCTION_INTERFACE_ARITY).map { "$SUSPEND_FUNCTION_PREFIX$it" }
 
 /**
  * This class index, by the lowercase simple names, with the [searchableFunctionTypeNames] as well,

@@ -1581,6 +1581,16 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should find function types up to the ones compiled to their own JVM interfaces`() {
+        // SuspendFunction22 takes the continuation as the 23rd runtime parameter, compiled to FunctionN
+        resolver.search("Function2", pageSize = 1000) should {
+            have("kotlin.Function22" in lines())
+            have("kotlin.coroutines.SuspendFunction21" in lines())
+            have("kotlin.coroutines.SuspendFunction22" !in lines())
+        }
+    }
+
+    @Test
     fun `should resolve class with property modifiers`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.PropertyModifiersTestClass"
@@ -3815,10 +3825,21 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should resolve built-in type member with stdlib extension on type parameter with multiple bounds`() {
+    fun `should resolve built-in type member with stdlib extension on type parameter also bounded by unbounded type parameter`() {
+        // C : R is a bound on an unbounded type parameter, satisfied by any type, so indexed only under CharSequence,
         // like in the listing of String
         resolver.resolve("kotlin.String.ifEmpty") should {
             have("inline fun <C, R> C.ifEmpty(defaultValue: () -> R): R where C : CharSequence, C : R" in lines())
+        }
+    }
+
+    @Test
+    fun `should not resolve stdlib extension on type parameter with multiple bounds as member of built-in type satisfying only one of them`() {
+        // R.contains(element) where R : ClosedRange<T>, R : Iterable<T> is indexed under Iterable, a supertype of List,
+        // but List is not a ClosedRange, so it is not listed, and not resolved either
+        resolver.resolve("kotlin.collections.List.contains") should {
+            have(lines().any { "fun contains(" in it })
+            have(lines().none { "R.contains(" in it })
         }
     }
 
