@@ -109,3 +109,10 @@ sealed interface ClassModifiersHolder {
         fun call(): Int
     }
 }
+
+// The sealed subclasses are listed by their displayed names, not by their fully qualified names
+sealed class SealedOrderHolder {
+    class A : SealedOrderHolder()
+}
+
+class BSealedOrderSub : SealedOrderHolder()

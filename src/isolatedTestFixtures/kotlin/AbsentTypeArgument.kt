@@ -148,6 +148,8 @@ sealed interface AbsentSealed {
     class AbsentSubclass : Absent(), AbsentSealed
     // tests leave this class file out as well
     class Gone : AbsentSealed
+    // listed after the sealed subclasses, also after the ones which cannot be found
+    class NotASubclass
 }
 
 // the overrides are inherited through a class which cannot be loaded, neither can this one
@@ -158,4 +160,29 @@ open class AbsentMid : Absent() {
 class AbsentLeaf : AbsentMid() {
     override fun foo() {}
     fun bar() {}
+}
+
+// the outer class cannot be loaded, only its class file can be read
+open class AbsentOuter : Absent() {
+    class Nested {
+        fun f() {}
+    }
+}
+
+// tests strip the metadata of the outer class, which can still be private
+private class StrippedOuter {
+    class Nested
+}
+
+// tests strip the metadata of a subclass
+sealed interface StrippedSealed {
+    class Kept : StrippedSealed
+    class Stripped : StrippedSealed
+}
+
+// tests leave the class file of the outer class out
+class MissingOuter {
+    class Nested {
+        fun f() {}
+    }
 }
