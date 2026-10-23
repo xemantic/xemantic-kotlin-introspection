@@ -4556,6 +4556,44 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should render override of var with setter not part of API as var with setter visibility`() {
+        // a val cannot override a var, so the override is rendered with the setter it inherits
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ProtectedSetterOverride"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ProtectedSetterOverride [page 1/1]
+            class ProtectedSetterOverride : ProtectedSetterBase {
+                override var overridden: Int
+                    protected set
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve override of var with setter not part of API as var with setter visibility`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ProtectedSetterOverride.overridden"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ProtectedSetterOverride.overridden [page 1/1]
+            override var overridden: Int
+                protected set
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render constructor override of var with setter not part of API as var with setter visibility`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ProtectedSetterConstructorOverride"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ProtectedSetterConstructorOverride [page 1/1]
+            class ProtectedSetterConstructorOverride(overridden: Int) : ProtectedSetterBase {
+                override var overridden: Int
+                    protected set
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve top-level var with private setter as val`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.TestSetterVisibilityKt.topLevelPrivateSetter"

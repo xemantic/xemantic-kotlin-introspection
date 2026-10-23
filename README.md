@@ -100,7 +100,7 @@ com.example.AnnotationTestClass
   while the other types are fully qualified, to avoid ambiguity.
 * Only the declarations which can be used from the user code are rendered:
   never the private or internal ones,
-  the protected ones only of an open or abstract class,
+  the protected ones only of an open or abstract class, or of the companion object of one,
   and never the ones deprecated with the `HIDDEN` level,
   or with `@DeprecatedSinceKotlin(hiddenSince = …)` not newer than the standard library of the class loader.
   The same rule applies to the setter of a `var`:
@@ -113,6 +113,10 @@ com.example.AnnotationTestClass
   var count: Int
       protected set
   ```
+
+  An override of a `var` is the exception, as a `val` cannot override a `var`:
+  it stays a `var`, with its setter rendered with its actual visibility,
+  like `protected set` in a final class, even though the setter cannot be called there.
 * The whole classpath visible to the given class loader is scanned on creation, which takes a while,
   so the instance should be created once and reused.
   The scan can be disabled with `KotlinIntrospector(scanEntireClasspath = false)`,

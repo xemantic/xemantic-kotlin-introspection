@@ -1308,7 +1308,9 @@ internal class DefaultKotlinIntrospector(
                             contextPackage,
                             typeParameters,
                             // never with a setter narrower than the property, which is declared in the class body
-                            prefix = if (prop.apiSetterVisibility(scopes, foundClass) != null) "var " else "val ",
+                            prefix = if (
+                                renderedSetterVisibility(prop, prop.apiSetterVisibility(scopes, foundClass), isOverride(kmClass, prop)) != null
+                            ) "var " else "val ",
                             // a constructor property is never abstract, but it can be open or final
                             modifiers = formatVisibility(prop.visibility) + formatModalityModifiers(
                                 prop.modality, isOverride(kmClass, prop), inInterface = false, kmClass
@@ -1722,7 +1724,8 @@ internal class DefaultKotlinIntrospector(
      * of its setter, like `    protected set`, when its visibility differs from the one of the property.
      *
      * @param setterVisibility the visibility of the setter, when the property can be assigned from the user code,
-     *   see [apiSetterVisibility], otherwise the property is rendered as a `val`.
+     *   see [apiSetterVisibility], otherwise the property is rendered as a `val`,
+     *   unless it overrides a `var`, see [renderedSetterVisibility].
      * @param owner the class declaring the [property], to tell whether it is an override.
      * @param withReceiver whether to render the receiver of an extension property,
      *   which is omitted when the extension is listed in the body of its receiver class.
@@ -1738,14 +1741,16 @@ internal class DefaultKotlinIntrospector(
         withReceiver: Boolean = true
     ): List<String> = buildList {
         val typeParameters = classTypeParameters + property.typeParameters.namesById()
+        val isOverride = isOverride(owner, property)
+        val renderedSetterVisibility = renderedSetterVisibility(property, setterVisibility, isOverride)
         add(buildString {
             +formatContextParameters(property.contextParameters, contextPackage, typeParameters)
             +formatVisibility(property.visibility)
 
-            +formatModalityModifiers(property.modality, isOverride(owner, property), inInterface, owner)
+            +formatModalityModifiers(property.modality, isOverride, inInterface, owner)
             if (property.isConst) +"const "
 
-            +(if (setterVisibility != null) "var " else "val ")
+            +(if (renderedSetterVisibility != null) "var " else "val ")
             formatTypeParameters(property.typeParameters, typeParameters, contextPackage).let {
                 if (it.isNotEmpty()) +"$it "
             }
@@ -1762,10 +1767,20 @@ internal class DefaultKotlinIntrospector(
             +formatWhereClause(property.typeParameters, typeParameters, contextPackage)
         })
         // a setter narrower than the property, like a protected one of a public property of an open class
-        if (setterVisibility != null && setterVisibility != property.visibility) {
-            add("    ${formatVisibility(setterVisibility)}set")
+        if (renderedSetterVisibility != null && renderedSetterVisibility != property.visibility) {
+            add("    ${formatVisibility(renderedSetterVisibility)}set")
         }
     }
+
+    /**
+     * The visibility of the setter rendered for the [property], or `null` when it is rendered as a `val`:
+     * the [setterVisibility] of the API, see [apiSetterVisibility], except for an override of a `var`,
+     * which cannot be a `val`, so that its setter is rendered with its actual visibility, like `protected set`,
+     * even when it cannot be called, like in a final class.
+     * A hidden setter of an override, whose visibility does not tell it, still renders the override as a `var`.
+     */
+    private fun renderedSetterVisibility(property: KmProperty, setterVisibility: Visibility?, isOverride: Boolean): Visibility? =
+        setterVisibility ?: if (property.isVar && isOverride) property.setter?.visibility ?: property.visibility else null
 
     private fun List<KmTypeParameter>.namesById(): Map<Int, String> = associate { it.id to it.name }
 

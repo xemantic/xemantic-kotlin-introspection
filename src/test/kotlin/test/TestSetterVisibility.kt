@@ -58,3 +58,15 @@ object NarrowedSetterExtensions {
         get() = privateSetter
         private set(@Suppress("unused") value) {}
 }
+
+open class ProtectedSetterBase {
+    open var overridden: Int = 0
+        protected set
+}
+
+// a val cannot override a var, so the override stays a var, even when its setter cannot be called
+class ProtectedSetterOverride : ProtectedSetterBase() {
+    override var overridden: Int = 1
+}
+
+class ProtectedSetterConstructorOverride(override var overridden: Int) : ProtectedSetterBase()
