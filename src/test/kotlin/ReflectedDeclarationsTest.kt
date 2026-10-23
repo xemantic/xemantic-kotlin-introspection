@@ -23,7 +23,10 @@ import com.xemantic.kotlin.introspection.test.GenericInnerTypes
 import com.xemantic.kotlin.introspection.test.KeywordMembersSample
 import com.xemantic.kotlin.introspection.test.NonGenericInnerTypes
 import com.xemantic.kotlin.introspection.test.ReflectedValueParametersSample
+import com.xemantic.kotlin.introspection.test.other.JavaUnnamedParameters
 import com.xemantic.kotlin.test.assert
+import kotlin.metadata.KmClassifier
+import kotlin.metadata.KmType
 import kotlin.reflect.KFunction
 import kotlin.reflect.full.memberFunctions
 import kotlin.reflect.full.memberProperties
@@ -54,14 +57,38 @@ class ReflectedDeclarationsTest {
 
     @Test
     fun `should treat the parameter names of a Java method compiled without them as synthetic`() {
-        // given
-        val indent = String::class.memberFunctions.single { it.name == "indent" }
+        // given - a test fixture, not the JDK, which a build could compile with the -parameters option
+        val indent = JavaUnnamedParameters::class.memberFunctions.single { it.name == "indent" }
 
         // when
         val synthetic = hasSyntheticParameterNames(indent)
 
         // then
         assert(synthetic)
+    }
+
+    @Test
+    fun `should render element type of Java vararg as nullable like its platform type`() {
+        // given - Object... is seen in Kotlin as vararg of Any!, accepting null elements
+        val format = JavaUnnamedParameters::class.memberFunctions.single { it.name == "format" }
+
+        // when
+        val rendered = introspector.formatReflectedFunction(format)
+
+        // then
+        assert(rendered == "open fun format(vararg arg0: Any?): String")
+    }
+
+    @Test
+    fun `should degrade vararg of unknown array type to the array type`() {
+        // given - no such vararg type today, but a future standard library could declare one
+        val arrayType = KmType().also { it.classifier = KmClassifier.Class("kotlin/FutureArray") }
+
+        // when
+        val elementType = varargElementType(arrayType)
+
+        // then
+        assert(elementType === arrayType)
     }
 
     @Test
