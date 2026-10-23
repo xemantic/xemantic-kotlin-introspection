@@ -39,6 +39,19 @@ internal fun escapeIdentifier(name: String): String =
     if (name.isEmpty() || '`' in name || (name.isIdentifier() && name !in hardKeywords)) name else "`$name`"
 
 /**
+ * The name the Kotlin compiler writes to the metadata for a parameter declared as `_`,
+ * like the anonymous context parameter of `context(_: Logger)`.
+ */
+private const val UNUSED_VARIABLE_NAME = "<unused var>"
+
+/**
+ * Escapes the [name] of a context parameter like [escapeIdentifier],
+ * except for the anonymous one, rendered as `_`, as it is declared.
+ */
+internal fun escapeContextParameterName(name: String): String =
+    if (name == UNUSED_VARIABLE_NAME) "_" else escapeIdentifier(name)
+
+/**
  * Escapes each segment of a [name] qualified with `.`, like `pkg.Outer.Nested`, with [escapeIdentifier],
  * as no segment can contain a `.`, which is not allowed in a JVM name.
  */

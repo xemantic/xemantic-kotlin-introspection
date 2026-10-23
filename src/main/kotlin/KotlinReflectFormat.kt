@@ -58,7 +58,17 @@ internal fun hasSyntheticParameterNames(function: KFunction<*>): Boolean =
  *
  * @param isOverride whether the [func] overrides a member of its supertypes.
  */
+@OptIn(ExperimentalContextParameters::class)
 internal fun formatKFunction(func: KFunction<*>, isOverride: Boolean = false): String = buildString {
+
+    // kotlin-reflect lists the context parameters among the parameters, while they precede the declaration
+    val contextParameters = func.parameters.filter { it.kind == KParameter.Kind.CONTEXT }
+    if (contextParameters.isNotEmpty()) {
+        +contextParameters.joinToString(", ", prefix = "context(", postfix = ") ") {
+            // the anonymous context parameter, declared as _, has no name
+            "${it.name?.let(::escapeIdentifier) ?: "_"}: ${formatKTypeProjection(it.type)}"
+        }
+    }
 
     if (isOverride) +"override "
     if (func.isOperator) +"operator "
@@ -70,8 +80,8 @@ internal fun formatKFunction(func: KFunction<*>, isOverride: Boolean = false): S
     +escapeIdentifier(func.name)
     +"("
 
-    // Skip first parameter (receiver) for member functions
-    val params = func.parameters.drop(1)  // Drop 'this'
+    // without the instance and the context parameters
+    val params = func.parameters.filter { it.kind == KParameter.Kind.VALUE }
     +(params.joinToString(", ") { formatKParameter(it) })
 
     +")"

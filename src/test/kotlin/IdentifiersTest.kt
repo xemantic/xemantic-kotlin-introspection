@@ -71,6 +71,18 @@ class IdentifiersTest {
     }
 
     @Test
+    fun `should render anonymous context parameter as underscore and escape other context parameter names`() {
+        // given
+        val names = listOf("<unused var>", "log", "in", "_")
+
+        // when
+        val escaped = names.map { escapeContextParameterName(it) }
+
+        // then
+        assert(escaped == listOf("_", "log", "`in`", "`_`"))
+    }
+
+    @Test
     fun `should escape names made of underscores only, which are reserved`() {
         // given
         val names = listOf("_", "__")

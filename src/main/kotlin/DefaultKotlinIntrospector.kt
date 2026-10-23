@@ -1541,6 +1541,7 @@ internal class DefaultKotlinIntrospector(
      * @param withReceiver whether to render the receiver of an extension function,
      *   which is omitted when the extension is listed in the body of its receiver class.
      */
+    @OptIn(ExperimentalContextParameters::class)
     private fun formatFunction(
         function: KmFunction,
         inInterface: Boolean = false,
@@ -1551,6 +1552,7 @@ internal class DefaultKotlinIntrospector(
     ): String = buildString {
         val typeParameters = classTypeParameters + function.typeParameters.namesById()
 
+        +formatContextParameters(function.contextParameters, contextPackage, typeParameters)
         +formatVisibility(function.visibility)
 
         val override = override(owner, function)
@@ -1630,12 +1632,26 @@ internal class DefaultKotlinIntrospector(
     }
 
     /**
+     * Format the context parameters of a function or property, like `context(log: Logger, _: Ctx) `,
+     * preceding all the other modifiers, or an empty string if there are none.
+     * Their names are a part of the signature, as a function body can refer to them.
+     */
+    private fun formatContextParameters(
+        parameters: List<KmValueParameter>,
+        contextPackage: String?,
+        typeParameters: Map<Int, String>
+    ): String = if (parameters.isEmpty()) "" else parameters.joinToString(", ", prefix = "context(", postfix = ") ") {
+        "${escapeContextParameterName(it.name)}: ${formatType(it.type, contextPackage, typeParameters)}"
+    }
+
+    /**
      * Format a member, top-level or extension property.
      *
      * @param owner the class declaring the [property], to tell whether it is an override.
      * @param withReceiver whether to render the receiver of an extension property,
      *   which is omitted when the extension is listed in the body of its receiver class.
      */
+    @OptIn(ExperimentalContextParameters::class)
     private fun formatProperty(
         property: KmProperty,
         inInterface: Boolean = false,
@@ -1646,6 +1662,7 @@ internal class DefaultKotlinIntrospector(
     ): String = buildString {
         val typeParameters = classTypeParameters + property.typeParameters.namesById()
 
+        +formatContextParameters(property.contextParameters, contextPackage, typeParameters)
         +formatVisibility(property.visibility)
 
         +formatModalityModifiers(property.modality, isOverride(owner, property), inInterface, owner)
