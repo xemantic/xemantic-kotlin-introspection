@@ -244,10 +244,14 @@ private fun KParameter.toKmValueParameter(position: Int, scope: ReflectedTypePar
         parameter.type = type
         // a vararg parameter is typed as an array, like Array<out T> or IntArray, of its element type
         if (isVararg) {
-            val elementType = varargElementType(type)
-            // the element type of a Java vararg, like Any! of Object..., accepts null elements
-            if (this.type.arguments.singleOrNull()?.type?.isPlatformNullable == true) elementType.isNullable = true
-            parameter.varargElementType = elementType
+            val platformElementType = this.type.arguments.singleOrNull()?.type?.takeIf { it.isPlatformNullable }
+            parameter.varargElementType = if (platformElementType != null) {
+                // the element type of a Java vararg, like Any! of Object..., accepts null elements,
+                // converted anew, not to change the element type of the array type, telling the signature
+                platformElementType.toKmType(scope).also { it.isNullable = true }
+            } else {
+                varargElementType(type)
+            }
         }
         parameter.declaresDefaultValue = isOptional
     }
