@@ -74,13 +74,23 @@ class NestedClassFilesScanTest {
         )
 
         // when
-        val introspector = DefaultKotlinIntrospector(classLoader)
-        val readingEveryClassFile = DefaultKotlinIntrospector(classLoader, skipNonKotlinNestedClassFiles = false)
+        val scan = scan(classLoader)
+        val readingEveryClassFile = scan(classLoader, skipNestedClassFiles = false)
 
         // then
-        assert(introspector.skippedClassFileCount > 0)
-        assert(readingEveryClassFile.skippedClassFileCount == 0)
-        introspector.indexDump() sameAs readingEveryClassFile.indexDump()
+        assert(readingEveryClassFile.skippedClassFiles.isEmpty())
+        assert(scan.readClassFileCount + scan.skippedClassFiles.size == readingEveryClassFile.readClassFileCount)
+        assert(
+            scan.skippedClassFiles.containsAll(
+                listOf(
+                    "com/xemantic/kotlin/introspection/isolated/JavaOuter\$Nested",
+                    "com/xemantic/kotlin/introspection/isolated/JavaOuter\$Nested\$Deep",
+                    "com/xemantic/kotlin/introspection/isolated/JavaOuter\$Member",
+                    "com/xemantic/kotlin/introspection/isolated/WhenMappingsHolder\$WhenMappings"
+                )
+            )
+        )
+        scan.indexDump() sameAs readingEveryClassFile.indexDump()
     }
 
     @Test
@@ -92,23 +102,27 @@ class NestedClassFilesScanTest {
         }
 
         // when
-        val introspector = DefaultKotlinIntrospector(classLoader(root))
+        val scan = scan(classLoader(root))
 
         // then
-        // JavaOuter$Nested, JavaOuter$Nested$Deep, JavaOuter$Member and WhenMappingsHolder$WhenMappings,
-        // but neither JavaOuter$Impostor, nor EntryWithBody$WITH_BODY
-        assert(introspector.skippedClassFileCount == 4)
-        introspector.search("Impostor") sameAs """
+        // neither JavaOuter$Impostor, nor EntryWithBody$WITH_BODY
+        assert(
+            scan.skippedClassFiles.sorted() == listOf(
+                "com/xemantic/kotlin/introspection/isolated/JavaOuter\$Member",
+                "com/xemantic/kotlin/introspection/isolated/JavaOuter\$Nested",
+                "com/xemantic/kotlin/introspection/isolated/JavaOuter\$Nested\$Deep",
+                "com/xemantic/kotlin/introspection/isolated/WhenMappingsHolder\$WhenMappings"
+            )
+        )
+        DefaultKotlinIntrospector(classLoader(root)).search("Impostor") sameAs """
             // search results for "Impostor" [page 1/1]
             com.xemantic.kotlin.introspection.isolated.JavaOuter${'$'}Impostor
         """.trimIndent()
-        introspector.indexDump() sameAs DefaultKotlinIntrospector(
-            classLoader(root), skipNonKotlinNestedClassFiles = false
-        ).indexDump()
+        scan.indexDump() sameAs scan(classLoader(root), skipNestedClassFiles = false).indexDump()
     }
 
     @Test
-    fun `search should not find synthetic nested class without class metadata even when reading it`() {
+    fun `should not index synthetic nested class without class metadata even when reading it`() {
         // given
         val root = tempDir.resolve("classes")
         nestedClassFiles.forEach { (path, file) ->
@@ -117,14 +131,12 @@ class NestedClassFilesScanTest {
         val whenMappings = nestedClassFiles.map { (path, _) -> path }.filter { it.endsWith("\$WhenMappings.class") }
 
         // when
-        val introspector = DefaultKotlinIntrospector(classLoader(root), skipNonKotlinNestedClassFiles = false)
+        val scan = scan(classLoader(root), skipNestedClassFiles = false)
 
         // then
         assert(whenMappings == listOf("com/xemantic/kotlin/introspection/isolated/WhenMappingsHolder\$WhenMappings.class"))
-        introspector.search("WhenMappings") sameAs """
-            // search results for "WhenMappings" [page 1/1]
-            com.xemantic.kotlin.introspection.isolated.WhenMappingsHolder
-        """.trimIndent()
+        assert("whenmappings" !in scan.classIndex)
+        assert(scan.classIndex["whenmappingsholder"] == listOf("com.xemantic.kotlin.introspection.isolated.WhenMappingsHolder"))
     }
 
     @Test
@@ -140,21 +152,26 @@ class NestedClassFilesScanTest {
         }
 
         // when
-        val introspector = DefaultKotlinIntrospector(classLoader(jar))
+        val scan = scan(classLoader(jar))
 
         // then
-        assert(introspector.skippedClassFileCount == 4)
-        introspector.indexDump() sameAs DefaultKotlinIntrospector(
-            classLoader(jar), skipNonKotlinNestedClassFiles = false
-        ).indexDump()
+        assert(scan.skippedClassFiles.size == 4)
+        scan.indexDump() sameAs scan(classLoader(jar), skipNestedClassFiles = false).indexDump()
     }
 
 }
 
+private fun scan(
+    classLoader: ClassLoader,
+    skipNestedClassFiles: Boolean = true
+): DefaultKotlinIntrospector.ClasspathScan = DefaultKotlinIntrospector(classLoader, scanEntireClasspath = false)
+    .scanClasspath(skipNestedClassFiles)
+
 /**
- * The extensions and classes indexed by the classpath scan, one per line, in a stable order.
+ * The extensions and classes found by the classpath scan, one per line, in the scan order,
+ * with the flags of the classes, which decide what is indexed.
  */
-private fun DefaultKotlinIntrospector.indexDump(): String = buildList {
+private fun DefaultKotlinIntrospector.ClasspathScan.indexDump(): String = buildList {
     extensionIndex.forEach { (receiver, extensions) ->
         extensions.forEach {
             add("fun $receiver.${it.function.name} in ${it.sourceClass} from ${it.source} object=${it.isObjectMember}")
@@ -162,10 +179,21 @@ private fun DefaultKotlinIntrospector.indexDump(): String = buildList {
     }
     extensionPropertyIndex.forEach { (receiver, extensions) ->
         extensions.forEach {
-            add("val $receiver.${it.property.name} in ${it.sourceClass} from ${it.source} object=${it.isObjectMember}")
+            add(
+                "val $receiver.${it.property.name} in ${it.sourceClass} from ${it.source} " +
+                    "object=${it.isObjectMember} assignable=${it.isAssignable}"
+            )
         }
     }
     classIndex.forEach { (simpleName, classes) ->
-        classes.forEach { add("class $simpleName: $it") }
+        classes.forEach { add("indexed $simpleName: $it") }
     }
-}.sorted().joinToString("\n")
+    classes.forEach {
+        add(
+            "class ${it.name} (${it.binaryName}) ${it.scope.visibility} open=${it.scope.isOpen} " +
+                "companion=${it.scope.isCompanion} usable=${it.isUsable} searchable=${it.isSearchable} " +
+                "extensions=${it.extensions.map { e -> e.function.name }} " +
+                "properties=${it.extensionProperties.map { p -> p.property.name }}"
+        )
+    }
+}.joinToString("\n")
