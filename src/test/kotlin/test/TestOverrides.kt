@@ -31,6 +31,7 @@ import com.xemantic.kotlin.introspection.test.other.JavaProcessorBase
 import com.xemantic.kotlin.introspection.test.other.JavaRawArrayMid
 import com.xemantic.kotlin.introspection.test.other.JavaRawClassBoundMid
 import com.xemantic.kotlin.introspection.test.other.JavaRawComparable
+import com.xemantic.kotlin.introspection.test.other.JavaRawInnerMid
 import com.xemantic.kotlin.introspection.test.other.JavaRawKotlinMid
 import com.xemantic.kotlin.introspection.test.other.JavaSortBase
 import com.xemantic.kotlin.introspection.test.other.JavaVoidBase
@@ -646,6 +647,25 @@ class JavaRawKotlinSubclass : JavaRawKotlinMid() {
     fun bounded(x: String) {}
     override fun compared(x: Comparable<*>) {}
     fun compared(x: String) {}
+    override fun chained(x: CharSequence) {}
+    fun chained(x: String) {}
+}
+
+// The type parameters of a raw inner Kotlin supertype of a Java class, and of its outer class, are erased to their bounds,
+// also when bound by a type parameter of the outer class
+open class KotlinRawOuter<A : CharSequence> {
+    open inner class Inner<B : Number, C : A> {
+        open fun outer(x: A) {}
+        open fun inner(x: B) {}
+        open fun chained(x: C) {}
+    }
+}
+
+class JavaRawInnerSubclass(outer: KotlinRawOuter<String>) : JavaRawInnerMid(outer) {
+    override fun outer(x: CharSequence) {}
+    fun outer(x: String) {}
+    override fun inner(x: Number) {}
+    fun inner(x: Int) {}
     override fun chained(x: CharSequence) {}
     fun chained(x: String) {}
 }

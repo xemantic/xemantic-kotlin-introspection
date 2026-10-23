@@ -110,15 +110,22 @@ class AbsentRawJavaSubclass : AbsentRawJavaMid() {
 }
 
 // the type parameter is unknown through the Java superclass, whose generic superclass refers to Absent,
-// so that both overloads match the function taking String, but it inherits no default value from the generic one,
-// as the other one matches on the known types
+// so that both overloads of f match the function taking String, but it inherits no default value from the generic one,
+// as the other one matches on the known types, also on a star projection, like the overloads of h;
+// the overload of g is matched only through the unknown type, and by the Java override of the superclass,
+// which declares no default value, but is matched only by the erasures, so the default value is inherited
 open class AbsentArgumentDefaultsBase<T> {
     open fun f(x: T, y: Int = 0) {}
     open fun f(x: String, y: Int) {}
+    open fun g(x: T, y: Int = 0) {}
+    open fun h(x: T, y: List<*>, z: Int = 0) {}
+    open fun h(x: String, y: List<*>, z: Int) {}
 }
 
 class AbsentArgumentDefaultsLeaf : AbsentArgumentJavaMid() {
     override fun f(x: String, y: Int) {}
+    override fun g(x: Absent, y: Int) {}
+    override fun h(x: String, y: List<*>, z: Int) {}
 }
 
 // the nested classes extending Absent cannot be loaded, only their class files can be read

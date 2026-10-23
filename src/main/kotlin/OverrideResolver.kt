@@ -232,27 +232,32 @@ internal class OverrideResolver(
      * The whole supertype hierarchy is matched, so that the declaration of an inherited default value is found
      * also through intermediate overrides.
      */
-    fun override(owner: KmClass, function: KmFunction): FunctionOverride? {
-        val overridables = overridables(owner)
-        val candidates = overridables.functions[function.name] ?: return null
-        val signature = overridables.signature(function)
-        val overridden = candidates.filter { overridables.overrides(signature, it) }
-        return when {
-            overridden.isNotEmpty() -> FunctionOverride(inheritedDefaultValues(overridden, signature))
-            overridables.isShrunk(function.signature) -> FunctionOverride(emptySet())
-            else -> null
-        }
-    }
+    fun override(owner: KmClass, function: KmFunction): FunctionOverride? =
+        override(owner, function, withDefaultValues = true)
 
     /**
      * Whether the [function] overrides a supertype function, like [override], without matching all of them.
      */
-    fun isOverride(owner: KmClass, function: KmFunction): Boolean {
+    fun isOverride(owner: KmClass, function: KmFunction): Boolean =
+        override(owner, function, withDefaultValues = false) != null
+
+    /**
+     * @param withDefaultValues whether to match all the overridden functions for their inherited default values,
+     *   otherwise the first one tells that the [function] is an override, without default values.
+     */
+    private fun override(owner: KmClass, function: KmFunction, withDefaultValues: Boolean): FunctionOverride? {
         val overridables = overridables(owner)
-        val candidates = overridables.functions[function.name] ?: return false
+        val candidates = overridables.functions[function.name] ?: return null
         val signature = overridables.signature(function)
-        return candidates.any { overridables.overrides(signature, it) } || overridables.isShrunk(function.signature)
+        val overridden = candidates.asSequence().filter { overridables.overrides(signature, it) }
+        return when {
+            !withDefaultValues -> if (overridden.any()) noDefaultValues else null
+            else -> overridden.toList().takeIf { it.isNotEmpty() }
+                ?.let { FunctionOverride(inheritedDefaultValues(it, signature)) }
+        } ?: if (overridables.isShrunk(function.signature)) noDefaultValues else null
     }
+
+    private val noDefaultValues = FunctionOverride(emptySet())
 
     /**
      * The types of a function checked for overriding, resolved in the context of its class.
@@ -289,6 +294,10 @@ internal class OverrideResolver(
      * As an unknown type, like a type parameter of a supertype whose type argument cannot be reflected, matches any type,
      * a sibling overload, which is not overridden, like `f(x: T, y: Int = 0)` of `f(x: String, y: Int)`, might be matched too,
      * so the default values are taken only from the functions matching on the known types, if there are any.
+     * This might drop a real default value inherited through a supertype which cannot be told,
+     * like one whose type argument refers to a class missing from the classpath,
+     * when another overridden function, like `f(x: String, y: Int)` of an interface, matches on the known types,
+     * as omitting a default value is preferred over claiming a false one, which would not compile when omitted.
      */
     private fun inheritedDefaultValues(overridden: List<Overridable>, signature: FunctionSignature): Set<Int> {
         if (overridden.all { it.declaresDefaultValues.isEmpty() }) return emptySet()
@@ -1116,8 +1125,11 @@ internal class OverrideResolver(
                 substitution[signature.name] ?: UnknownType
             }
         }
-        // an array of primitives or of classes is fully described by the descriptor
-        is SignatureType.ArrayOf -> if (signature.component == SignatureType.Other) asmType(type) else {
+        // an array of primitives or of classes is fully described by the descriptor,
+        // like a type of a malformed class file whose signature is an array, but the descriptor is not
+        is SignatureType.ArrayOf -> if (type.sort != AsmType.ARRAY || signature.component == SignatureType.Other) {
+            asmType(type)
+        } else {
             arrayType(asmType(AsmType.getType(type.descriptor.substring(1)), signature.component, generic, substitution))
         }
         SignatureType.Other -> asmType(type)

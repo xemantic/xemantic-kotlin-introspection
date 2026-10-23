@@ -20,7 +20,13 @@ package com.xemantic.kotlin.introspection.isolated;
 
 /**
  * A Java class extending a generic Kotlin class with a type argument referring to {@link Absent},
- * so that its generic superclass cannot be reflected without it, leaving the type parameter of the superclass unknown.
+ * so that its generic superclass cannot be reflected without it, leaving the type parameter of the superclass unknown,
+ * overriding a function of the superclass, which declares a default value.
  */
 public class AbsentArgumentJavaMid extends AbsentArgumentDefaultsBase<Absent> {
+
+    @Override
+    public void g(Absent x, int y) {
+    }
+
 }

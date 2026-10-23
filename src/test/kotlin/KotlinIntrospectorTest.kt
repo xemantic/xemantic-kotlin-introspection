@@ -2497,6 +2497,23 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should erase type parameters of raw inner Kotlin superclass of Java class and of its outer class to their bounds`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaRawInnerSubclass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaRawInnerSubclass [page 1/1]
+            class JavaRawInnerSubclass(outer: KotlinRawOuter<String>) : com.xemantic.kotlin.introspection.test.other.JavaRawInnerMid {
+                override fun outer(x: CharSequence)
+                fun outer(x: String)
+                override fun inner(x: Number)
+                fun inner(x: Int)
+                override fun chained(x: CharSequence)
+                fun chained(x: String)
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should erase type parameter of raw built-in supertype of Java class to its bound`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.JavaRawComparableSubclass"
