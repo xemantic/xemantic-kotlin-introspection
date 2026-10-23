@@ -82,6 +82,9 @@ com.example.AnnotationTestClass
   and the `pageSize` does not bound the number of lines of a page.
   A large companion object can be paged through by resolving it directly,
   like `introspector.resolve("com.example.Outer.Companion")`.
+* A member is resolved by the name of its class, like `com.example.Outer.create`,
+  which finds everything of that name the listing of the class shows:
+  its members, the members of its companion object, and the extensions of the class and its supertypes.
 * The Kotlin built-in types, like `kotlin.String` or `kotlin.collections.List`,
   which are mapped to the JVM types and have no Kotlin metadata, are resolved through `kotlin-reflect`.
   The mutable collection types, like `kotlin.collections.MutableList`,

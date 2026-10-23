@@ -22,3 +22,8 @@ package com.xemantic.kotlin.introspection.test
  * Example extension function for testing metadata resolution.
  */
 fun String.wordCount(): Int = split("\\s+".toRegex()).size
+
+/**
+ * Example extension function of a supertype of a built-in type, from outside of the standard library.
+ */
+fun CharSequence.charCount(): Int = length
