@@ -26,11 +26,10 @@ import org.objectweb.asm.ClassVisitor
 import org.objectweb.asm.MethodVisitor
 import org.objectweb.asm.Opcodes
 import java.io.File
+import java.io.IOException
 import java.net.URI
 import java.net.URL
 import java.net.URLClassLoader
-import java.util.Optional
-import java.util.concurrent.atomic.AtomicLong
 import java.util.jar.Attributes
 import java.util.jar.JarFile
 import kotlin.metadata.*
@@ -216,13 +215,20 @@ internal class DefaultKotlinIntrospector(
         builtinClasses.mapKeys { it.key.replace('/', '.') }
     }
 
+    /**
+     * The failures of the class lookups, and of the class file reads of the [overrideResolver], which might be transient,
+     * retried once per resolve, so that the [overrideResolver] does not cache what it computes from them meanwhile.
+     */
+    private val transientFailures = TransientFailures()
+
     private val overrideResolver = OverrideResolver(
         classLoader = classLoader,
         loadClassByMetadataName = { name -> findClassByMetadataName(name)?.clazz },
         loadKmClassByMetadataName = ::loadKmClass,
         // read directly, without loading the class, like a DefaultImpls class probed for every interface
-        readClassBytesByMetadataName = { name -> classLoader.readClassBytes(binaryNameOf(name)) },
-        transientLookupCount = { transientLookupCount.get() },
+        readClassBytesByMetadataName = { name -> readClassBytes(binaryNameOf(name)) },
+        unloadableClassBytesByMetadataName = { name -> lookUpClassByBinaryName(binaryNameOf(name)).unloadableClassBytes },
+        transientFailures = transientFailures,
         builtinClasses = { builtinClasses },
         builtinTypes = builtinTypes
     )
@@ -584,34 +590,36 @@ internal class DefaultKotlinIntrospector(
     )
 
     /**
-     * The recently found classes by their binary names, also the ones not found, as [Optional.empty],
+     * The lookups of the recently found classes by their binary names, also of the ones not found,
      * so that neither a class is loaded, nor its metadata parsed, nor a missing class looked up, more than once,
      * like for every nested class listed on every page of a paged resolve.
      * It is bounded, as a found class keeps its parsed metadata, so that a long-lived introspector
      * does not keep the metadata of every class ever looked up,
      * while the [overrideResolver] keeps the declarations it needs in its own bounded caches.
-     * The outcome of a lookup which might be transient is never cached, see [lookUpClass].
+     * The outcome of a lookup which might be transient is not cached, see [lookUpClass].
      */
-    private val foundClasses = BoundedCache<String, Optional<FoundClass>>(capacity = 1024)
-
-    /**
-     * The number of the class lookups so far whose outcome might be transient, see [lookUpClass],
-     * telling the [overrideResolver] not to cache what it computes while one happens.
-     */
-    private val transientLookupCount = AtomicLong()
+    private val foundClasses = BoundedCache<String, ClassLookup>(capacity = 1024)
 
     /**
      * Finds a class by its binary name, like `com.example.Outer${'$'}Nested`, cached also when it is not found,
      * unless [isMissCached] is `false`, like for a name which is not known to be exact.
      */
     private fun findClassByBinaryName(binaryName: String, isMissCached: Boolean = true): FoundClass? =
-        foundClasses.getOrCompute(binaryName) {
-            val lookup = lookUpClass(binaryName)
-            BoundedCache.Computed(
-                Optional.ofNullable(lookup.foundClass),
-                isCacheable = lookup.isCacheable && (isMissCached || lookup.foundClass != null)
-            )
-        }.getOrNull()
+        lookUpClassByBinaryName(binaryName, isMissCached).foundClass
+
+    private fun lookUpClassByBinaryName(binaryName: String, isMissCached: Boolean = true): ClassLookup {
+        val computed = foundClasses.getOrCompute(binaryName) {
+            val outcome = transientFailures.attempt("class $binaryName") {
+                val lookup = lookUpClass(binaryName, isMissCached)
+                TransientFailures.Outcome(lookup, lookup.isFinal)
+            }
+            val lookup = if (outcome.isFinal) outcome.value.asFinal() else outcome.value
+            BoundedCache.Computed(lookup, isCacheable = lookup.isFinal && (isMissCached || lookup.foundClass != null))
+        }
+        // also when computed by another thread
+        if (!computed.value.isFinal) transientFailures.mark()
+        return computed.value
+    }
 
     /**
      * Finds a class by its metadata name, like `com/example/Outer.Nested`.
@@ -634,32 +642,56 @@ internal class DefaultKotlinIntrospector(
     }
 
     /**
-     * @param isCacheable whether the outcome is final, unlike after a failure which might be transient.
+     * @param isFinal whether the outcome is final, unlike after a failure which might be transient.
+     * @param unloadableClassBytes the class file of a Java class which cannot be loaded, if read,
+     *   kept for the [overrideResolver], see [OverrideResolver.Declaration].
      */
-    private class ClassLookup(val foundClass: FoundClass?, val isCacheable: Boolean)
+    private class ClassLookup(
+        val foundClass: FoundClass?,
+        val isFinal: Boolean,
+        val unloadableClassBytes: ByteArray? = null
+    ) {
+        fun asFinal(): ClassLookup = if (isFinal) this else ClassLookup(foundClass, isFinal = true, unloadableClassBytes)
+    }
 
-    private fun lookUpClass(binaryName: String): ClassLookup = try {
+    /**
+     * @param isMissProbed whether a class which is not found is told apart from one whose class file is there,
+     *   but cannot be loaded, maybe only for now, like after an `IOException`,
+     *   which is worth a resource lookup only if the miss is cached.
+     */
+    private fun lookUpClass(binaryName: String, isMissProbed: Boolean): ClassLookup = try {
         val clazz = classLoader.loadClass(binaryName)
-        ClassLookup(FoundClass(binaryName, clazz), isCacheable = true)
+        ClassLookup(FoundClass(binaryName, clazz), isFinal = true)
     } catch (_: ClassNotFoundException) {
         // also thrown when the class file is there, but cannot be read, like by a URLClassLoader after an IOException
-        ClassLookup(null, isCacheable = !classLoader.hasClassFile(binaryName))
+        ClassLookup(null, isFinal = !isMissProbed || !classLoader.hasClassFile(binaryName))
     } catch (e: LinkageError) {
         // the class file is there, but refers to a class which is not, like its supertype,
-        // or is of a newer JVM version, while its declarations can still be read from its metadata;
-        // the class file is read also after any other linkage error, but then the class is to be loaded again,
-        // just like after a class file which is there, but cannot be read, maybe only for now,
+        // or is of a newer JVM version, or is malformed, while its declarations can still be read from its metadata;
+        // the class is to be loaded again only after a plain linkage error, like of two threads defining it at once,
+        // or when its class file is there, but cannot be read, maybe only for now,
         // unlike one which is not served at all, like by an in-memory class loader
         val bytes = classLoader.readClassBytes(binaryName)
+        val classFile = bytes?.let { readClassFile(binaryName, it) }
         ClassLookup(
-            bytes?.let { readClassFile(binaryName, it) }
-                ?.takeIf { it.metadata != null }
-                ?.let { classFile -> FoundClass(binaryName, clazz = null, classFile) },
-            isCacheable = (e is NoClassDefFoundError || e is UnsupportedClassVersionError) &&
-                (bytes != null || !classLoader.hasClassFile(binaryName))
+            classFile?.takeIf { it.metadata != null }?.let { FoundClass(binaryName, clazz = null, it) },
+            isFinal = e.javaClass != LinkageError::class.java && (bytes != null || !classLoader.hasClassFile(binaryName)),
+            unloadableClassBytes = bytes?.takeIf { classFile?.metadata == null }
         )
-    }.also { lookup ->
-        if (!lookup.isCacheable) transientLookupCount.incrementAndGet()
+    }
+
+    /**
+     * Reads the class file of a class by its JVM [binaryName] for the [overrideResolver],
+     * telling a failure which might be transient, an `IOException`, retried once per resolve, see [transientFailures].
+     */
+    private fun readClassBytes(binaryName: String): ByteArray? {
+        val outcome = transientFailures.attempt("class file $binaryName") {
+            var failure: Exception? = null
+            val bytes = classLoader.readClassBytes(binaryName) { failure = it }
+            TransientFailures.Outcome(bytes, isFinal = failure !is IOException)
+        }
+        if (!outcome.isFinal) transientFailures.mark()
+        return outcome.value
     }
 
     /**
@@ -3080,7 +3112,8 @@ internal class DefaultKotlinIntrospector(
         pageSize: Int
     ): String? {
         requirePositivePageSize(pageSize)
-        return resolve(name)?.render(name, page, pageSize)
+        // a class lookup failing maybe only for now is retried once per resolve
+        return transientFailures.operation { resolve(name) }?.render(name, page, pageSize)
     }
 
     override fun search(query: String, page: Int, pageSize: Int): String? {

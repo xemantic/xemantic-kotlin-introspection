@@ -129,7 +129,7 @@ class BoundedCacheTest {
     fun `should compute value again after computation telling it is not cacheable`() {
         // given
         val cache = BoundedCache<String, String>(capacity = 10)
-        val transient = cache.getOrCompute("key") { BoundedCache.Computed("transient", isCacheable = false) }
+        val transient = cache.getOrCompute("key") { BoundedCache.Computed("transient", isCacheable = false) }.value
 
         // when
         val value = cache.getOrPut("key") { "computed" }

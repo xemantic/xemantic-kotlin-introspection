@@ -19,6 +19,9 @@
 package com.xemantic.kotlin.introspection
 
 import com.xemantic.kotlin.test.assert
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.atomic.AtomicInteger
+import kotlin.concurrent.thread
 import kotlin.metadata.KmClass
 import kotlin.metadata.KmClassifier
 import kotlin.metadata.KmFunction
@@ -49,13 +52,16 @@ class OverrideResolverTest {
 
     private fun overrideResolver(
         builtinClasses: Map<String, KmClass> = emptyMap(),
-        classes: Map<String, KmClass> = emptyMap()
+        classes: Map<String, KmClass> = emptyMap(),
+        transientFailures: TransientFailures = TransientFailures(),
+        loadKmClass: (String) -> KmClass? = { classes[it] }
     ) = OverrideResolver(
         classLoader = javaClass.classLoader,
         loadClassByMetadataName = { null },
-        loadKmClassByMetadataName = { classes[it] },
+        loadKmClassByMetadataName = loadKmClass,
         readClassBytesByMetadataName = { null },
-        transientLookupCount = { 0 },
+        unloadableClassBytesByMetadataName = { null },
+        transientFailures = transientFailures,
         builtinClasses = { builtinClasses },
         builtinTypes = emptyMap()
     )
@@ -87,6 +93,41 @@ class OverrideResolverTest {
         // then
         assert(builtinOverrides == listOf(true, false))
         assert(classFileOverrides == listOf(false, true))
+    }
+
+    @Test
+    fun `should cache overridables computed while another thread fails transiently`() {
+        // given
+        val transientFailures = TransientFailures()
+        val base = kmClass("test/Base", null, "foo")
+        val owner = kmClass("test/Owner", supertype = "test/Base")
+        val lookups = AtomicInteger()
+        val lookingUp = CountDownLatch(1)
+        val failed = CountDownLatch(1)
+        val resolver = overrideResolver(transientFailures = transientFailures) { name ->
+            lookups.incrementAndGet()
+            if (name == "test/Base" && lookingUp.count > 0) {
+                lookingUp.countDown()
+                failed.await()
+            }
+            if (name == "test/Base") base else null
+        }
+        // a transient failure of a lookup of another computation, on another thread
+        val other = thread {
+            lookingUp.await()
+            transientFailures.mark()
+            failed.countDown()
+        }
+
+        // when
+        val first = resolver.isOverride(owner, function("foo"))
+        other.join()
+        val lookupsOfFirst = lookups.get()
+        val second = resolver.isOverride(owner, function("foo"))
+
+        // then
+        assert(first && second)
+        assert(lookups.get() == lookupsOfFirst)
     }
 
 }

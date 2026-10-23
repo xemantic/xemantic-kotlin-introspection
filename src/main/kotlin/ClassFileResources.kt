@@ -25,11 +25,12 @@ package com.xemantic.kotlin.introspection
 
 /**
  * Reads the class file of a class by its JVM [binaryName], like `com.example.Outer${'$'}Nested`,
- * or `null` if it is not served, or cannot be read.
+ * or `null` if it is not served, or cannot be read, telling the failure to [onFailure].
  */
-internal fun ClassLoader.readClassBytes(binaryName: String): ByteArray? = try {
+internal fun ClassLoader.readClassBytes(binaryName: String, onFailure: (Exception) -> Unit = {}): ByteArray? = try {
     getResourceAsStream(classFileResource(binaryName))?.use { it.readBytes() }
-} catch (_: Exception) {
+} catch (e: Exception) {
+    onFailure(e)
     null
 }
 

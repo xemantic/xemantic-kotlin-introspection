@@ -48,13 +48,14 @@ internal class BoundedCache<K : Any, V>(private val capacity: Int) {
     // the keys requested on the current thread, and not yet computed, telling a recursive request
     private val requestedKeys = ThreadLocal.withInitial { mutableSetOf<K>() }
 
-    fun getOrPut(key: K, compute: () -> V): V = getOrCompute(key) { Computed(compute(), isCacheable = true) }
+    fun getOrPut(key: K, compute: () -> V): V = getOrCompute(key) { Computed(compute(), isCacheable = true) }.value
 
     /**
      * The value of the [key], computed if absent, and then cached, unless it is not cacheable,
-     * while the requests waiting for the same computation receive it anyway.
+     * while the requests waiting for the same computation receive it anyway,
+     * telling whether it is cacheable, so that they do not cache what they compute from it either.
      */
-    fun getOrCompute(key: K, compute: () -> Computed<V>): V {
+    fun getOrCompute(key: K, compute: () -> Computed<V>): Computed<V> {
         val requested = requestedKeys.get()
         check(requested.add(key)) { "The computation of $key requests its own value" }
         try {
@@ -74,7 +75,7 @@ internal class BoundedCache<K : Any, V>(private val capacity: Int) {
                     entries.remove(key, entry)
                 }
             }
-            return computed.value
+            return computed
         } finally {
             requested.remove(key)
         }

@@ -76,7 +76,7 @@ import org.objectweb.asm.Type as AsmType
  * both kept in bounded caches of the least recently used ones,
  * so that a long-lived resolver over a large classpath does not keep the declarations of every class ever resolved,
  * as long as the classes are looked up through a bounded cache as well.
- * What is computed while a class lookup might fail only for now, see [transientLookupCount], is not cached.
+ * What is computed while a class lookup fails maybe only for now, see [transientFailures], is not cached.
  * This class is thread-safe.
  *
  * @param classLoader the class loader of the introspected classes, telling which classes have their own class files.
@@ -87,8 +87,10 @@ import org.objectweb.asm.Type as AsmType
  * @param readClassBytesByMetadataName reads the class file of a class by its Kotlin class name, like `com/example/Foo.DefaultImpls`,
  *   through the [classLoader], without loading the class, so also of one which cannot be loaded,
  *   or `null` if there is no such class file.
- * @param transientLookupCount the number of the class lookups so far, by the functions above,
- *   whose outcome might be transient, like after a linkage error, which might not happen again.
+ * @param unloadableClassBytesByMetadataName the class file of a class which cannot be loaded, by its Kotlin class name,
+ *   as read when looking the class up, or `null` if the class can be loaded, or its class file cannot be read.
+ * @param transientFailures the failures of the functions above which might be transient, like after a linkage error,
+ *   which might not happen again, as marked on the current thread.
  * @param builtinClasses the declarations of the Kotlin built-in types, by their Kotlin class name, like `kotlin/collections/List`.
  * @param builtinTypes the JVM classes of the Kotlin built-in types, by their fully qualified Kotlin name.
  */
@@ -98,7 +100,8 @@ internal class OverrideResolver(
     private val loadClassByMetadataName: (String) -> Class<*>?,
     private val loadKmClassByMetadataName: (String) -> KmClass?,
     private val readClassBytesByMetadataName: (String) -> ByteArray?,
-    private val transientLookupCount: () -> Long,
+    private val unloadableClassBytesByMetadataName: (String) -> ByteArray?,
+    private val transientFailures: TransientFailures,
     private val builtinClasses: () -> Map<String, KmClass>,
     builtinTypes: Map<String, kotlin.reflect.KClass<*>>
 ) {
@@ -209,17 +212,18 @@ internal class OverrideResolver(
     )
 
     /**
-     * @param ownerJvmMethods reads the JVM methods of the owner class, as names followed by descriptors,
+     * @param readOwnerJvmMethods reads the JVM methods of the owner class, as names followed by descriptors,
      *   or `null` if they can be neither read nor reflected;
-     *   only needed to tell a shrunk member or a friend module, so read lazily.
+     *   only needed to tell a shrunk member or a friend module, so read lazily, and cached on their own,
+     *   as they might fail transiently after the overridables are cached.
      */
     private class Overridables(
         val substitution: Map<Int, MemberType>,
         val functions: Map<String, List<Overridable>>,
         val properties: Map<String, List<Overridable>>,
-        ownerJvmMethods: () -> Set<String>?
+        private val readOwnerJvmMethods: () -> Set<String>?
     ) {
-        val ownerJvmMethods: Set<String>? by lazy(ownerJvmMethods)
+        val ownerJvmMethods: Set<String>? get() = readOwnerJvmMethods()
     }
 
     /**
@@ -265,14 +269,24 @@ internal class OverrideResolver(
     // the declarations of the supertypes of the recently resolved classes, shared between their hierarchies
     private val declarationCache = BoundedCache<String, Declaration>(capacity = 1024)
 
+    // the JVM methods of the owners of the overridables, see Overridables.ownerJvmMethods
+    private val jvmMethodsCache = BoundedCache<String, Set<String>?>(capacity = 256)
+
     /**
-     * The cached value of the [key], computed and cached unless a class lookup might fail only for now meanwhile,
-     * like the lookups of the classes of the computed value.
+     * The cached value of the [key], computed and cached unless a transient failure happens meanwhile on this thread,
+     * like of a lookup of a class the computed value is built from.
+     * A value which is not cached is marked as a transient failure,
+     * also when received from the computation of another thread,
+     * so that the computation requesting it is not cached either.
      */
-    private fun <K : Any, V> BoundedCache<K, V>.getOrPutUnlessTransient(key: K, compute: () -> V): V = getOrCompute(key) {
-        val lookupCount = transientLookupCount()
-        val value = compute()
-        BoundedCache.Computed(value, isCacheable = transientLookupCount() == lookupCount)
+    private fun <K : Any, V> BoundedCache<K, V>.getOrPutUnlessTransient(key: K, compute: () -> V): V {
+        val computed = getOrCompute(key) {
+            val failureCount = transientFailures.count()
+            val value = compute()
+            BoundedCache.Computed(value, isCacheable = transientFailures.count() == failureCount)
+        }
+        if (!computed.isCacheable) transientFailures.mark()
+        return computed.value
     }
 
     /**
@@ -593,7 +607,9 @@ internal class OverrideResolver(
         // only the name and the kind are captured, as the overridables are cached
         val ownerName = owner.name
         val isInterface = owner.kind == ClassKind.INTERFACE
-        return Overridables(ownerSubstitution, functions, properties) { jvmMethods(ownerName, isInterface) }
+        return Overridables(ownerSubstitution, functions, properties) {
+            jvmMethodsCache.getOrPutUnlessTransient(ownerName) { jvmMethods(ownerName, isInterface) }
+        }
     }
 
     /**
@@ -954,7 +970,7 @@ internal class OverrideResolver(
             return Declaration(kmClass, builtinJavaClass, hiddenJavaMethods)
         }
         loadClassByMetadataName(name)?.let { return Declaration(null, it) }
-        return Declaration(null, null, javaClassFile = readClassBytesByMetadataName(name)?.let { readJavaClassFile(it, name) })
+        return Declaration(null, null, javaClassFile = unloadableClassBytesByMetadataName(name)?.let { readJavaClassFile(it, name) })
     }
 
     /**

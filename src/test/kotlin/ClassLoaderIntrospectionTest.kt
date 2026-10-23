@@ -651,14 +651,24 @@ class ClassLoaderIntrospectionTest {
         private val failure: (String) -> Throwable = { LinkageError("transient failure of $it") }
     ) : ClassLoader(parent) {
         val loads = ConcurrentHashMap<String, Int>()
+        // the resources requested, also to read them, by their names, and the class files read, by their class names
+        val resources = ConcurrentHashMap<String, Int>()
+        val reads = ConcurrentHashMap<String, Int>()
         val failing: MutableSet<String> = ConcurrentHashMap.newKeySet()
         override fun loadClass(name: String, resolve: Boolean): Class<*> {
             val count = loads.merge(name, 1, Int::plus)
             if ((name in failingOnce && count == 1) || name in failing) throw failure(name)
             return super.loadClass(name, resolve)
         }
-        override fun getResourceAsStream(name: String): InputStream? =
-            if (name.removeSuffix(".class").replace('/', '.') in unreadable) null else super.getResourceAsStream(name)
+        override fun getResource(name: String): java.net.URL? {
+            resources.merge(name, 1, Int::plus)
+            return super.getResource(name)
+        }
+        override fun getResourceAsStream(name: String): InputStream? {
+            val className = name.removeSuffix(".class").replace('/', '.')
+            reads.merge(className, 1, Int::plus)
+            return if (className in unreadable) null else super.getResourceAsStream(name)
+        }
     }
 
     @Test
@@ -778,20 +788,82 @@ class ClassLoaderIntrospectionTest {
 
         // then
         assert(signatures[0] != null && "override fun process(item: String)" !in signatures[0]!!)
-        signatures[1] sameAsKotlin """
-            // com.xemantic.kotlin.introspection.test.JavaProcessor [page 1/1]
-            open class JavaProcessor : com.xemantic.kotlin.introspection.test.other.JavaProcessorBase<String> {
-                override fun process(item: String)
-                fun process(item: Int)
-                override fun handle(items: List<String>)
-                protected override fun count(): Int
-                fun finish()
-                override fun <N : Number> measure(value: N)
-                fun measure(value: String)
-                override fun all(items: Array<String>)
-                fun all(items: Array<Int>)
-            }
-        """.trimIndent()
+        signatures[1] sameAsKotlin javaProcessorSignature
+    }
+
+    @Test
+    fun `should not look up class files for the names tried only to resolve a member`() {
+        // given
+        val classLoader = CountingClassLoader(javaClass.classLoader)
+        val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.test.TestClass.greet")
+
+        // then
+        assert(signature != null && "fun greet(): String" in signature)
+        // the names tried as classes, like TestClass${'$'}greet, are not found, and not cached, so not worth probing
+        assert(classLoader.resources.keys.none { "greet" in it })
+    }
+
+    private val javaProcessorSignature = /* language=kotlin */ """
+        // com.xemantic.kotlin.introspection.test.JavaProcessor [page 1/1]
+        open class JavaProcessor : com.xemantic.kotlin.introspection.test.other.JavaProcessorBase<String> {
+            override fun process(item: String)
+            fun process(item: Int)
+            override fun handle(items: List<String>)
+            protected override fun count(): Int
+            fun finish()
+            override fun <N : Number> measure(value: N)
+            fun measure(value: String)
+            override fun all(items: Array<String>)
+            fun all(items: Array<Int>)
+        }
+    """.trimIndent()
+
+    @Test
+    fun `should look up Java superclass once when its loading fails permanently`() {
+        // given
+        val javaSuperclass = "com.xemantic.kotlin.introspection.test.other.JavaProcessorBase"
+        val classLoader = CountingClassLoader(
+            javaClass.classLoader,
+            failure = { IncompatibleClassChangeError(it) }
+        )
+        classLoader.failing += javaSuperclass
+        val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
+
+        // when
+        val signatures = List(3) {
+            introspector.resolve("com.xemantic.kotlin.introspection.test.JavaProcessor")
+        }
+
+        // then
+        // the overrides are told from the class file, read once
+        assert(signatures.all { it == javaProcessorSignature })
+        assert(classLoader.loads[javaSuperclass] == 1)
+        assert(classLoader.reads[javaSuperclass] == 1)
+    }
+
+    @Test
+    fun `should retry Java superclass failing transiently once per resolve, until its failure is deemed final`() {
+        // given
+        val javaSuperclass = "com.xemantic.kotlin.introspection.test.other.JavaProcessorBase"
+        // like a class loader serving the class file of a class it refuses to define
+        val classLoader = CountingClassLoader(
+            javaClass.classLoader,
+            failure = { ClassNotFoundException(it) }
+        )
+        classLoader.failing += javaSuperclass
+        val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
+
+        // when
+        val signatures = List(3) {
+            introspector.resolve("com.xemantic.kotlin.introspection.test.JavaProcessor")
+        }
+
+        // then
+        assert(signatures.all { it != null })
+        assert(classLoader.loads[javaSuperclass] == 2)
     }
 
     @Test
