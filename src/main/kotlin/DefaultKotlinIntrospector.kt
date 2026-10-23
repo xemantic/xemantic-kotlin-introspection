@@ -1710,83 +1710,82 @@ internal class DefaultKotlinIntrospector(
         type: KmType,
         contextPackage: String? = null,
         typeParameters: Map<Int, String> = emptyMap()
-    ): String {
-        val functionType = type.decodeFunctionType()
-        val formatted = when {
-            functionType != null -> functionType.format(
-                formatType = { formatType(it, contextPackage, typeParameters) },
-                formatReceiverType = { formatReceiverType(it, contextPackage, typeParameters) },
-                parameterName = { it.parameterName }
-            )
-            // an unexpected shape, the runtime type is printed, still marked as suspend
-            type.isSuspend -> "suspend " + formatClassType(type, contextPackage, typeParameters).removeSuffix("?")
-            else -> return formatClassType(type, contextPackage, typeParameters)
-        }
-        return if (type.isNullable) "($formatted)?" else formatted
-    }
+    ): String = MetadataTypeNotation(contextPackage, typeParameters).format(type)
 
     /**
-     * Formats a [type] as written, like `List<String>`, without the special syntax of function types.
-     */
-    private fun formatClassType(
-        type: KmType,
-        contextPackage: String?,
-        typeParameters: Map<Int, String>
-    ): String {
-        val outerType = type.outerType
-        val baseName = when (val classifier = type.classifier) {
-            // an inner class of a generic class, like `Outer<String>.Inner`,
-            // carries the type arguments of the outer class in the outer type
-            is KmClassifier.Class if outerType != null -> {
-                val outer = formatType(outerType, contextPackage, typeParameters)
-                "$outer.${escapeIdentifier(simpleClassName(classifier.name))}"
-            }
-            is KmClassifier.Class -> {
-                val fqn = classifier.name.replace("/", ".")
-                // the package is separated with '/', and nested classes with '.'
-                val typePackage = classifier.name.substringBeforeLast("/", "").replace("/", ".")
-                // Use simple name for:
-                // 1. Well-known stdlib types (kotlin.*, java.*)
-                // 2. Types from the same package as the context
-                escapeQualifiedName(
-                    if (isWellKnownType(fqn) || typePackage == contextPackage) {
-                        classifier.name.substringAfterLast("/")
-                    } else {
-                        fqn
-                    }
-                )
-            }
-            is KmClassifier.TypeAlias -> escapeQualifiedName(classifier.name.substringAfterLast("/"))
-            // a type parameter of an outer declaration might be unknown in this context
-            is KmClassifier.TypeParameter -> typeParameters[classifier.id]?.let(::escapeIdentifier) ?: "T"
-        }
-
-        val typeArgs = type.arguments.map { projection ->
-            val projType = projection.type ?: return@map "*"
-            when (projection.variance) {
-                KmVariance.INVARIANT, null -> formatType(projType, contextPackage, typeParameters)
-                KmVariance.IN -> "in ${formatType(projType, contextPackage, typeParameters)}"
-                KmVariance.OUT -> "out ${formatType(projType, contextPackage, typeParameters)}"
-            }
-        }
-
-        return if (typeArgs.isEmpty()) {
-            baseName + if (type.isNullable) "?" else ""
-        } else {
-            "$baseName<${typeArgs.joinToString(", ")}>" + if (type.isNullable) "?" else ""
-        }
-    }
-
-    /**
-     * Formats a receiver [type], parenthesizing a function type, like `(() -> Unit)`,
-     * which would otherwise absorb the following `.name`.
-     * A nullable one is already parenthesized by [formatType], like `(() -> Unit)?`.
+     * Formats a receiver [type], parenthesizing a function type, see [TypeNotation.formatReceiver].
      */
     private fun formatReceiverType(
         type: KmType,
         contextPackage: String?,
         typeParameters: Map<Int, String>
-    ): String = formatType(type, contextPackage, typeParameters).parenthesizedIf(type.needsParenthesesAsReceiver)
+    ): String = MetadataTypeNotation(contextPackage, typeParameters).formatReceiver(type)
+
+    /**
+     * The notation of the types of the Kotlin metadata.
+     *
+     * @param contextPackage the package of the rendered declaration, whose types are written with simple names.
+     * @param typeParameters the names of the type parameters in scope, by their ids.
+     */
+    private inner class MetadataTypeNotation(
+        private val contextPackage: String?,
+        private val typeParameters: Map<Int, String>
+    ) : TypeNotation<KmType>() {
+
+        override fun decodeFunctionType(type: KmType): FunctionType<KmType>? = type.decodeFunctionType()
+
+        override fun isMarkedSuspend(type: KmType): Boolean = type.isSuspend
+
+        override fun isMarkedNullable(type: KmType): Boolean = type.isNullable
+
+        override fun parameterName(type: KmType): String? = type.parameterName
+
+        override fun formatClassType(type: KmType, nullable: Boolean): String {
+            val outerType = type.outerType
+            val baseName = when (val classifier = type.classifier) {
+                // an inner class of a generic class, like `Outer<String>.Inner`,
+                // carries the type arguments of the outer class in the outer type
+                is KmClassifier.Class if outerType != null -> {
+                    "${format(outerType)}.${escapeIdentifier(simpleClassName(classifier.name))}"
+                }
+                is KmClassifier.Class -> {
+                    val fqn = classifier.name.replace("/", ".")
+                    // the package is separated with '/', and nested classes with '.'
+                    val typePackage = classifier.name.substringBeforeLast("/", "").replace("/", ".")
+                    // Use simple name for:
+                    // 1. Well-known stdlib types (kotlin.*, java.*)
+                    // 2. Types from the same package as the context
+                    escapeQualifiedName(
+                        if (isWellKnownType(fqn) || typePackage == contextPackage) {
+                            classifier.name.substringAfterLast("/")
+                        } else {
+                            fqn
+                        }
+                    )
+                }
+                is KmClassifier.TypeAlias -> escapeQualifiedName(classifier.name.substringAfterLast("/"))
+                // a type parameter of an outer declaration might be unknown in this context
+                is KmClassifier.TypeParameter -> typeParameters[classifier.id]?.let(::escapeIdentifier) ?: "T"
+            }
+
+            val typeArgs = type.arguments.map { projection ->
+                val projType = projection.type ?: return@map "*"
+                when (projection.variance) {
+                    KmVariance.INVARIANT, null -> format(projType)
+                    KmVariance.IN -> "in ${format(projType)}"
+                    KmVariance.OUT -> "out ${format(projType)}"
+                }
+            }
+
+            val nullableMarker = if (nullable) "?" else ""
+            return if (typeArgs.isEmpty()) {
+                baseName + nullableMarker
+            } else {
+                "$baseName<${typeArgs.joinToString(", ")}>$nullableMarker"
+            }
+        }
+
+    }
 
     /**
      * The simple name of a metadata class name, like `Nested` of `pkg/Parent.Nested`,
@@ -2733,12 +2732,15 @@ private class MemberListing(override val items: List<ListingItem.MemberItem>) : 
 /**
  * The key of the extension index under which an extension with the given receiver [type] is listed.
  * Extensions on a type parameter, like `fun <T> T.let()`, are not listed for any class,
- * so their key contains `<`, which cannot appear in a class name.
+ * so their key contains `[`, which cannot appear in a class name, nor in a segment of its package (JVMS §4.2.2).
  * A suspend function type, like `suspend () -> Unit`, is stored in the metadata as `Function1<Continuation<Unit>, Any?>`,
  * so it is keyed as `kotlin.coroutines.SuspendFunction0` instead, not to be listed as an extension of `kotlin.Function1`.
  */
 internal fun receiverIndexKey(type: KmType): String = when (val classifier = type.classifier) {
-    is KmClassifier.Class -> suspendFunctionTypeKey(type, classifier.name) ?: classifier.name.replace('/', '.')
+    is KmClassifier.Class -> type.takeIf { it.isSuspend }
+        ?.decodeRuntimeFunctionType()
+        ?.let { "kotlin.coroutines.SuspendFunction${it.parameters.size}" }
+        ?: classifier.name.replace('/', '.')
     is KmClassifier.TypeAlias -> classifier.name.replace('/', '.')
     is KmClassifier.TypeParameter -> TYPE_PARAMETER_RECEIVER_KEY
 }
@@ -2771,7 +2773,7 @@ internal fun Map<String, List<IndexedExtension>>.sortedByNameAndSourceClass(): M
 internal fun Map<String, List<IndexedExtensionProperty>>.sortedByNameAndSourceClass(): Map<String, List<IndexedExtensionProperty>> =
     mapValues { (_, properties) -> properties.sortedWith(extensionPropertyOrder) }
 
-private const val TYPE_PARAMETER_RECEIVER_KEY = "<type parameter>"
+private const val TYPE_PARAMETER_RECEIVER_KEY = "[type parameter]"
 
 /**
  * The source to import the top-level declarations of the file facade class named [binaryName] from,
@@ -2779,16 +2781,3 @@ private const val TYPE_PARAMETER_RECEIVER_KEY = "<type parameter>"
  * or the facade class name for the default package, which has no name.
  */
 private fun packageSourceOf(binaryName: String): String = binaryName.substringBeforeLast('.')
-
-private val runtimeFunctionTypeRegex = Regex("kotlin/(reflect/K)?Function\\d+")
-
-private fun suspendFunctionTypeKey(type: KmType, name: String): String? {
-    if (!type.isSuspend || type.arguments.size < 2) return null
-    val match = runtimeFunctionTypeRegex.matchEntire(name) ?: return null
-    val arity = type.arguments.size - 2
-    return if (match.groupValues[1].isEmpty()) {
-        "kotlin.coroutines.SuspendFunction$arity"
-    } else {
-        "kotlin.reflect.KSuspendFunction$arity"
-    }
-}

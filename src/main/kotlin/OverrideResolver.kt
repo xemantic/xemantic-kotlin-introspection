@@ -608,14 +608,10 @@ internal class OverrideResolver(
         typeParameters: Map<Int, TypeParameterType>
     ): ClassType? {
         if (!type.isSuspend) return null
-        val name = (type.classifier as? KmClassifier.Class)?.name ?: return null
-        val match = functionTypeRegex.matchEntire(name) ?: return null
-        val arguments = type.arguments.map { it.type ?: return null }
-        if (arguments.size < 2) return null
-        val returnType = arguments[arguments.size - 2].arguments.singleOrNull()?.type ?: return null
+        val functionType = type.decodeRuntimeFunctionType() ?: return null
         return ClassType(
-            name = "kotlin/${match.groupValues[1]}SuspendFunction${arguments.size - 2}",
-            arguments = (arguments.dropLast(2) + returnType).map {
+            name = "kotlin/SuspendFunction${functionType.parameters.size}",
+            arguments = (functionType.parameters + functionType.returnType).map {
                 TypeArgument(KmVariance.INVARIANT, kotlinType(it, substitution, typeParameters))
             },
             nullable = type.isNullable

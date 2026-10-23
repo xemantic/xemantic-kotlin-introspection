@@ -18,11 +18,11 @@
 
 package com.xemantic.kotlin.introspection
 
+import kotlin.jvm.functions.FunctionN
 import kotlin.metadata.KmAnnotation
 import kotlin.metadata.KmAnnotationArgument
 import kotlin.metadata.KmClassifier
 import kotlin.metadata.KmType
-import kotlin.metadata.isNullable
 import kotlin.metadata.isSuspend
 import kotlin.metadata.jvm.annotations
 import kotlin.reflect.KClass
@@ -41,9 +41,43 @@ internal class FunctionType<T>(
     val returnType: T
 )
 
-private val functionClassName = Regex("kotlin/Function(\\d+)")
+/**
+ * A function type as stored in the Kotlin metadata, a `FunctionN<…, R>`, see [KmType.decodeFunctionType],
+ * with the [parameters] not yet told apart into the context parameters, the receiver and the value parameters,
+ * and a suspend function type already stripped of its trailing `Continuation<R>, Any?` type arguments.
+ *
+ * It is all the overriding rules and the extension index need to know of a function type.
+ */
+internal class RuntimeFunctionType(
+    val isSuspend: Boolean,
+    val parameters: List<KmType>,
+    val returnType: KmType
+)
 
-private val functionQualifiedName = Regex("kotlin\\.Function(\\d+)")
+/**
+ * Decodes this type as a function type stored in the Kotlin metadata, see [KmType.decodeFunctionType],
+ * without telling apart the kinds of its parameters.
+ *
+ * A function reference type, like `KFunction1` or `KSuspendFunction0`, is stored under its own name,
+ * not as a function type.
+ *
+ * @return the decoded function type, or `null` if this type is not a function type,
+ * or does not have the expected shape, like a star-projected type argument.
+ */
+internal fun KmType.decodeRuntimeFunctionType(): RuntimeFunctionType? {
+    val classifier = classifier as? KmClassifier.Class ?: return null
+    val arity = functionArity(classifier.name, prefix = "kotlin/Function") ?: return null
+    if (arguments.size != arity + 1) return null
+    val arguments = arguments.map { it.type ?: return null }
+    if (!isSuspend) return RuntimeFunctionType(isSuspend = false, arguments.dropLast(1), arguments.last())
+    val continuation = arguments.getOrNull(arity - 1) ?: return null
+    val continuationClassifier = continuation.classifier
+    if (continuationClassifier !is KmClassifier.Class
+        || continuationClassifier.name != "kotlin/coroutines/Continuation"
+    ) return null
+    val returnType = continuation.arguments.singleOrNull()?.type ?: return null
+    return RuntimeFunctionType(isSuspend = true, arguments.take(arity - 1), returnType)
+}
 
 /**
  * Decodes this function type from its runtime representation in the Kotlin metadata.
@@ -55,32 +89,20 @@ private val functionQualifiedName = Regex("kotlin\\.Function(\\d+)")
  * A suspend function type, marked with [KmType.isSuspend], is stored as `FunctionN<…, Continuation<R>, Any?>`.
  * Thus `suspend context(Ctx) Foo.(Int) -> String` is `Function4<Ctx, Foo, Int, Continuation<String>, Any?>`.
  *
+ * Only the JVM metadata carries the type annotations, as kotlin-metadata-jvm registers just the JVM extensions,
+ * so a type read through `KotlinCommonMetadata` has none, and is decoded without the receiver and the context parameters:
+ * `suspend context(Ctx) Foo.() -> Unit` would be decoded as `suspend (Ctx, Foo) -> Unit`.
+ * No such function type is declared in the `.kotlin_builtins` files read here.
+ *
  * @return the decoded function type, or `null` if this type is not a function type,
  * or does not have the expected shape, like a star-projected type argument.
  */
 internal fun KmType.decodeFunctionType(): FunctionType<KmType>? {
-    val classifier = classifier
-    if (classifier !is KmClassifier.Class || !functionClassName.matches(classifier.name)) return null
-    val arguments = arguments.map { it.type ?: return null }
-    val (parameters, returnType) = if (isSuspend) {
-        if (arguments.size < 2) return null
-        val continuation = arguments[arguments.size - 2]
-        val continuationClassifier = continuation.classifier
-        if (continuationClassifier !is KmClassifier.Class
-            || continuationClassifier.name != "kotlin/coroutines/Continuation"
-        ) return null
-        arguments.dropLast(2) to (continuation.arguments.singleOrNull()?.type ?: return null)
-    } else {
-        if (arguments.isEmpty()) return null
-        arguments.dropLast(1) to arguments.last()
-    }
-    // Only the JVM metadata carries the type annotations: kotlin-metadata-jvm registers just the JVM extensions,
-    // so a type read through KotlinCommonMetadata has none, and its receiver and context parameters cannot be told.
-    // No function type with a receiver or context parameters is declared in the .kotlin_builtins files read here.
+    val runtimeType = decodeRuntimeFunctionType() ?: return null
     return decodeParameters(
-        isSuspend = isSuspend,
-        parameters = parameters,
-        returnType = returnType,
+        isSuspend = runtimeType.isSuspend,
+        parameters = runtimeType.parameters,
+        returnType = runtimeType.returnType,
         contextParameterCount = annotations.contextParameterCount ?: return null,
         hasReceiver = annotations.any { it.className == "kotlin/ExtensionFunctionType" }
     )
@@ -94,7 +116,7 @@ internal fun KmType.decodeFunctionType(): FunctionType<KmType>? {
  * and `@ExtensionFunctionType` type annotations,
  * but a suspend function type is not marked as such in the public API,
  * and kotlin-reflect replaces its trailing `Continuation<R>, Any?` type arguments with `R`,
- * thus it is told by the type arguments being one short of `N + 1`.
+ * thus it is told by the type arguments being one short of `N + 1`, see [KType.isSuspendFunctionType].
  *
  * @return the decoded function type, or `null` if this type is not a function type,
  * or does not have the expected shape, like a star-projected type argument.
@@ -102,7 +124,6 @@ internal fun KmType.decodeFunctionType(): FunctionType<KmType>? {
 internal fun KType.decodeFunctionType(): FunctionType<KType>? {
     val isSuspend = isSuspendFunctionType ?: return null
     val arguments = arguments.map { it.type ?: return null }
-    if (arguments.isEmpty()) return null
     return decodeParameters(
         isSuspend = isSuspend,
         parameters = arguments.dropLast(1),
@@ -115,17 +136,43 @@ internal fun KType.decodeFunctionType(): FunctionType<KType>? {
 /**
  * Tells if this `FunctionN` type is a suspend function type, see [KType.decodeFunctionType],
  * or `null` if it is not a function type of the expected shape.
+ *
+ * A function type of more than 22 runtime parameters is a `kotlin.jvm.functions.FunctionN`, not telling its arity.
+ * With 23 type arguments it is told to be a suspend function type of 22 parameters,
+ * as the function type of 22 parameters is a `Function22`.
+ * With more of them it cannot be told apart from a suspend function type, so it is taken as not suspend.
+ * With fewer of them it is not a function type.
  */
 internal val KType.isSuspendFunctionType: Boolean?
     get() {
-        val qualifiedName = (classifier as? KClass<*>)?.qualifiedName ?: return null
-        val arity = functionQualifiedName.matchEntire(qualifiedName)?.groupValues?.get(1)?.toIntOrNull() ?: return null
+        val kClass = classifier as? KClass<*> ?: return null
+        // a raw function type, without the type arguments, is not decoded
+        if (arguments.isEmpty()) return null
+        if (kClass == FunctionN::class) return when {
+            // a FunctionN written as such, like FunctionN<R>
+            arguments.size < 23 -> null
+            else -> arguments.size == 23
+        }
+        val arity = functionArity(kClass.qualifiedName ?: return null, prefix = "kotlin.Function") ?: return null
         return when (arguments.size) {
             arity + 1 -> false
             arity -> true
             else -> null
         }
     }
+
+/**
+ * The arity of a function type class, like `2` of `kotlin/Function2`, given its name and the expected [prefix],
+ * or `null` if the [name] is not the one of a function type class.
+ * The prefix is checked before anything else, as most of the types are not function types.
+ */
+private fun functionArity(name: String, prefix: String): Int? {
+    if (!name.startsWith(prefix) || name.length == prefix.length) return null
+    for (index in prefix.length until name.length) {
+        if (name[index] !in '0'..'9') return null
+    }
+    return name.substring(prefix.length).toIntOrNull()
+}
 
 private fun <T> decodeParameters(
     isSuspend: Boolean,
@@ -179,50 +226,81 @@ internal val KType.parameterName: String?
     get() = annotations.filterIsInstance<ParameterName>().firstOrNull()?.name
 
 /**
- * Formats this function type, like `suspend context(Ctx) Foo.(id: Int) -> String`, without the nullability.
- *
- * @param formatType formats a type, like a value parameter type.
- * @param formatReceiverType formats a receiver type, see [KmType.needsParenthesesAsReceiver].
- * @param parameterName gives the name of a value parameter, if declared.
+ * The notation of the types of one runtime representation, either a [KmType] of the Kotlin metadata,
+ * or a [KType] of kotlin-reflect,
+ * writing a function type in its special syntax, like `suspend context(Ctx) Foo.(id: Int) -> String`,
+ * and any other type as a class type, like `List<String>`.
  */
-internal fun <T> FunctionType<T>.format(
-    formatType: (T) -> String,
-    formatReceiverType: (T) -> String,
-    parameterName: (T) -> String?
-): String = buildString {
-    if (isSuspend) append("suspend ")
-    if (contextParameters.isNotEmpty()) {
-        append(contextParameters.joinToString(", ", prefix = "context(", postfix = ") ", transform = formatType))
+internal abstract class TypeNotation<T> {
+
+    /**
+     * Decodes the [type] as a function type, or returns `null` if it is not one, or does not have the expected shape.
+     */
+    protected abstract fun decodeFunctionType(type: T): FunctionType<T>?
+
+    /**
+     * Tells if the [type] is marked as a suspend function type,
+     * kept by a function type of an unexpected shape, which is written as a class type.
+     */
+    protected abstract fun isMarkedSuspend(type: T): Boolean
+
+    protected abstract fun isMarkedNullable(type: T): Boolean
+
+    /**
+     * The name of a function type parameter of the given [type], like `id` in `(id: Int) -> Unit`, if declared.
+     */
+    protected abstract fun parameterName(type: T): String?
+
+    /**
+     * Formats a [type] as written, like `List<String>`, without the special syntax of function types.
+     *
+     * @param nullable whether to mark the type as nullable, like `List<String>?`.
+     */
+    protected abstract fun formatClassType(type: T, nullable: Boolean): String
+
+    /**
+     * Formats a [type], like `List<String>` or `(Int) -> Unit`.
+     */
+    fun format(type: T): String = format(type, asReceiver = false)
+
+    /**
+     * Formats a receiver [type], parenthesizing a function type, like `(() -> Unit)`,
+     * which would otherwise absorb the following `.name`.
+     * A nullable one is parenthesized anyway, like `(() -> Unit)?`.
+     */
+    fun formatReceiver(type: T): String = format(type, asReceiver = true)
+
+    private fun format(type: T, asReceiver: Boolean): String {
+        val nullable = isMarkedNullable(type)
+        val functionType = decodeFunctionType(type)
+        val formatted = when {
+            functionType != null -> formatFunctionType(functionType)
+            // an unexpected shape, the runtime type is printed, still marked as suspend
+            isMarkedSuspend(type) -> "suspend " + formatClassType(type, nullable = false)
+            else -> return formatClassType(type, nullable)
+        }
+        return when {
+            nullable -> "($formatted)?"
+            asReceiver -> "($formatted)"
+            else -> formatted
+        }
     }
-    receiver?.let {
-        append(formatReceiverType(it))
-        append(".")
+
+    private fun formatFunctionType(functionType: FunctionType<T>): String = buildString {
+        if (functionType.isSuspend) append("suspend ")
+        if (functionType.contextParameters.isNotEmpty()) {
+            append(functionType.contextParameters.joinToString(", ", prefix = "context(", postfix = ") ", transform = ::format))
+        }
+        functionType.receiver?.let {
+            append(formatReceiver(it))
+            append(".")
+        }
+        append(functionType.valueParameters.joinToString(", ", prefix = "(", postfix = ")") { parameter ->
+            val type = format(parameter)
+            parameterName(parameter)?.let { "${escapeIdentifier(it)}: $type" } ?: type
+        })
+        append(" -> ")
+        append(format(functionType.returnType))
     }
-    append(valueParameters.joinToString(", ", prefix = "(", postfix = ")") { parameter ->
-        val type = formatType(parameter)
-        parameterName(parameter)?.let { "${escapeIdentifier(it)}: $type" } ?: type
-    })
-    append(" -> ")
-    append(formatType(returnType))
+
 }
-
-/**
- * Tells if this type, as a receiver, has to be parenthesized, like `(() -> Unit).foo()`,
- * as a function type would otherwise absorb the following `.foo`.
- * A nullable type is already parenthesized when formatted, like `(() -> Unit)?`.
- */
-internal val KmType.needsParenthesesAsReceiver: Boolean
-    get() = !isNullable && (isSuspend || decodeFunctionType() != null)
-
-/**
- * Tells if this type, as a receiver, has to be parenthesized, like `(() -> Unit).foo()`,
- * as a function type would otherwise absorb the following `.foo`.
- * A nullable type is already parenthesized when formatted, like `(() -> Unit)?`.
- */
-internal val KType.needsParenthesesAsReceiver: Boolean
-    get() = !isMarkedNullable && (isSuspendFunctionType == true || decodeFunctionType() != null)
-
-/**
- * Wraps this formatted type in parentheses if the [condition] holds.
- */
-internal fun String.parenthesizedIf(condition: Boolean): String = if (condition) "($this)" else this

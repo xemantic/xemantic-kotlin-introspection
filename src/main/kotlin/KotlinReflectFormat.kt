@@ -19,6 +19,7 @@
 package com.xemantic.kotlin.introspection
 
 import com.xemantic.kotlin.core.text.unaryPlus
+import kotlin.jvm.functions.FunctionN
 import kotlin.reflect.KClass
 import kotlin.reflect.KClassifier
 import kotlin.reflect.KFunction
@@ -161,54 +162,59 @@ internal fun formatKTypeParameters(typeParameters: List<KTypeParameter>): String
  * Format a KType for display, following the same rules as [DefaultKotlinIntrospector.formatType].
  * Uses simple names for kotlin.* types and fully qualified names for java.* types.
  */
-internal fun formatKTypeProjection(type: KType): String {
-    val functionType = type.decodeFunctionType()
-    val formatted = when {
-        functionType != null -> functionType.format(
-            formatType = ::formatKTypeProjection,
-            formatReceiverType = { formatKTypeProjection(it).parenthesizedIf(it.needsParenthesesAsReceiver) },
-            parameterName = { it.parameterName }
-        )
-        // an unexpected shape, the runtime type is printed, still marked as suspend
-        type.isSuspendFunctionType == true -> "suspend " + formatKClassType(type).removeSuffix("?")
-        else -> return formatKClassType(type)
-    }
-    return if (type.isMarkedNullable) "($formatted)?" else formatted
-}
+internal fun formatKTypeProjection(type: KType): String = ReflectTypeNotation.format(type)
 
 /**
- * Formats a [type] as written, like `List<String>`, without the special syntax of function types, using kotlin-reflect.
+ * The notation of the types of kotlin-reflect.
  */
-private fun formatKClassType(type: KType): String {
-    val baseName = when (val classifier = type.classifier) {
-        is KClass<*> -> {
-            val qualifiedName = classifier.qualifiedName ?: classifier.simpleName ?: "Unknown"
-            // Use simple name for kotlin.* types, fully qualified for others
-            if (qualifiedName.startsWith("kotlin.")) {
-                escapeIdentifier(classifier.simpleName ?: "Unknown")
-            } else {
-                escapeQualifiedName(qualifiedName)
+private object ReflectTypeNotation : TypeNotation<KType>() {
+
+    override fun decodeFunctionType(type: KType): FunctionType<KType>? = type.decodeFunctionType()
+
+    // a FunctionN is only guessed to be a suspend function type, which an undecodable shape does not confirm
+    override fun isMarkedSuspend(type: KType): Boolean =
+        type.classifier != FunctionN::class && type.isSuspendFunctionType == true
+
+    override fun isMarkedNullable(type: KType): Boolean = type.isMarkedNullable
+
+    override fun parameterName(type: KType): String? = type.parameterName
+
+    override fun formatClassType(type: KType, nullable: Boolean): String {
+        val baseName = when (val classifier = type.classifier) {
+            // kotlin-reflect gives the KFunction class for the function reference types, like KFunction1<P, R>,
+            // telling their arity by the type arguments, apart from KFunction<R> itself, which takes one;
+            // a KSuspendFunctionN cannot be told apart from a KFunctionN in the public API
+            KFunction::class if type.arguments.size > 1 -> "KFunction${type.arguments.size - 1}"
+            is KClass<*> -> {
+                val qualifiedName = classifier.qualifiedName ?: classifier.simpleName ?: "Unknown"
+                // Use simple name for kotlin.* types, fully qualified for others
+                if (qualifiedName.startsWith("kotlin.")) {
+                    escapeIdentifier(classifier.simpleName ?: "Unknown")
+                } else {
+                    escapeQualifiedName(qualifiedName)
+                }
+            }
+            // the name only, without the platform type marker
+            is KTypeParameter -> escapeIdentifier(classifier.name)
+            else -> type.toString()
+        }
+
+        val args = type.arguments.map { projection ->
+            val projType = projection.type ?: return@map "*"
+            when (projection.variance) {
+                KVariance.INVARIANT, null -> format(projType)
+                KVariance.IN -> "in ${format(projType)}"
+                KVariance.OUT -> "out ${format(projType)}"
             }
         }
-        // the name only, without the platform type marker
-        is KTypeParameter -> escapeIdentifier(classifier.name)
-        else -> type.toString()
-    }
 
-    val args = type.arguments.map { projection ->
-        val projType = projection.type ?: return@map "*"
-        when (projection.variance) {
-            KVariance.INVARIANT, null -> formatKTypeProjection(projType)
-            KVariance.IN -> "in ${formatKTypeProjection(projType)}"
-            KVariance.OUT -> "out ${formatKTypeProjection(projType)}"
+        val result = if (args.isEmpty()) {
+            baseName
+        } else {
+            "$baseName<${args.joinToString(", ")}>"
         }
+
+        return if (nullable) "$result?" else result
     }
 
-    val result = if (args.isEmpty()) {
-        baseName
-    } else {
-        "$baseName<${args.joinToString(", ")}>"
-    }
-
-    return if (type.isMarkedNullable) "$result?" else result
 }

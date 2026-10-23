@@ -54,8 +54,24 @@ class ReceiverIndexKeyTest {
         val key = receiverIndexKey(type)
 
         // then
-        // '<' cannot appear in a class name on the JVM
-        assert(key != "TypeParameter" && '<' in key)
+        assert(!couldBeClassKey(key))
+    }
+
+    @Test
+    fun `should not key a suspend FunctionN without Continuation as a suspend function type`() {
+        // given
+        val type = classType(
+            "kotlin/Function2",
+            classType("kotlin/String"),
+            classType("kotlin/collections/List", classType("kotlin/Int")),
+            classType("kotlin/Any")
+        ).apply { isSuspend = true }
+
+        // when
+        val key = receiverIndexKey(type)
+
+        // then
+        assert(key == "kotlin.Function2")
     }
 
     @Test
@@ -92,5 +108,12 @@ class ReceiverIndexKeyTest {
         // then
         assert(key == "kotlin.coroutines.SuspendFunction1")
     }
+
+    /**
+     * Tells if the [key] could be the one of a class, its qualified name,
+     * where no segment can contain any of `. ; [ /`, see JVMS §4.2.2.
+     */
+    private fun couldBeClassKey(key: String): Boolean =
+        key.split('.').all { segment -> segment.isNotEmpty() && segment.none { it in ";[/" } }
 
 }
