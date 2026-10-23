@@ -1242,8 +1242,8 @@ class ClassLoaderIntrospectionTest {
         greeter sameAsKotlin """
             // com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsGreeter [page 1/1]
             interface DefaultImplsGreeter : DefaultImplsBase {
-                override val label: String
-                override fun greet(name: String): String
+                open override val label: String
+                open override fun greet(name: String): String
             }
         """.trimIndent()
         processor sameAsKotlin """

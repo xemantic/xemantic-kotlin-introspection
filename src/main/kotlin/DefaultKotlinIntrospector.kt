@@ -2108,9 +2108,9 @@ internal class DefaultKotlinIntrospector(
      * unless the [owner] class is final itself, which makes all its members final.
      * An enum class is final in the metadata, even when its entries have bodies subclassing it,
      * which only its JVM class tells, see [mightHaveEntryBodies].
-     * The members of an interface are implicitly abstract, while the ones with a default body are not told apart,
-     * also when overriding, like the abstract `override fun f()` of an interface making abstract again
-     * the `f()` with a default body of its superinterface.
+     * The members of an interface are implicitly abstract, so the ones with a default body are rendered as open,
+     * also when overriding, like `open override fun f()`, telling it apart from an abstract `override fun f()`,
+     * which might make abstract again the `f()` with a default body of a superinterface.
      */
     private fun formatModalityModifiers(
         modality: Modality,
@@ -2120,7 +2120,7 @@ internal class DefaultKotlinIntrospector(
     ): String = buildString {
         when (modality) {
             Modality.ABSTRACT -> if (!inInterface) +"abstract "
-            Modality.OPEN -> if (!isOverride) +"open "
+            Modality.OPEN -> if (!isOverride || inInterface) +"open "
             Modality.FINAL -> if (
                 isOverride && owner != null && (
                     owner.modality != Modality.FINAL || (owner.kind == ClassKind.ENUM_CLASS && mightHaveEntryBodies(owner))

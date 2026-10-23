@@ -1494,8 +1494,8 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsGreeter [page 1/1]
             interface DefaultImplsGreeter : DefaultImplsBase {
-                override val label: String
-                override fun greet(name: String): String
+                open override val label: String
+                open override fun greet(name: String): String
             }
         """.trimIndent()
     }
@@ -1897,21 +1897,21 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should render override with default body in interface without modality`() {
-        // like any member of an interface, whether it has a default body or not
+    fun `should mark override with default body in interface as open`() {
+        // like any other member of an interface with a default body, unlike an abstract one
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.DefaultBodyOverride"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.DefaultBodyOverride [page 1/1]
             interface DefaultBodyOverride : DefaultBodyBase {
-                override fun f()
+                open override fun f()
             }
         """.trimIndent()
     }
 
     @Test
     fun `should render abstract override of member with default body in interface without modality`() {
-        // the metadata tells it is abstract again, which is not rendered, as for any other member of an interface
+        // abstract again, which is implicit, like for any other member of an interface without a default body
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.ReabstractedOverride"
         ) sameAsKotlin """
