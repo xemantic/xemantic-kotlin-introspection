@@ -18,10 +18,12 @@
 
 package com.xemantic.kotlin.introspection
 
+import com.xemantic.kotlin.introspection.test.KeywordMembersSample
 import com.xemantic.kotlin.introspection.test.ReflectedValueParametersSample
 import com.xemantic.kotlin.test.assert
 import kotlin.reflect.KFunction
 import kotlin.reflect.full.memberFunctions
+import kotlin.reflect.full.memberProperties
 import kotlin.test.Test
 
 /**
@@ -91,6 +93,42 @@ class KotlinReflectFormatTest {
 
         // then
         assert(rendered == "fun join(vararg parts: String, separator: String = …): String")
+    }
+
+    @Test
+    fun `should escape names of function and parameters like hard keywords or not as identifiers`() {
+        // when
+        val rendered = formatKFunction(KeywordMembersSample::class.memberFunctions.single { it.name == "fun" })
+
+        // then
+        assert(rendered == "fun `fun`(`if`: Int, `when`: (`in`: Int, `my name`: String) -> Unit)")
+    }
+
+    @Test
+    fun `should escape type parameter named like hard keyword`() {
+        // when
+        val rendered = formatKFunction(KeywordMembersSample::class.memberFunctions.single { it.name == "return" })
+
+        // then
+        assert(rendered == "fun <`class`> `return`(value: `class`): `class`")
+    }
+
+    @Test
+    fun `should escape property named like hard keyword`() {
+        // when
+        val rendered = formatKProperty(KeywordMembersSample::class.memberProperties.single { it.name == "typeof" })
+
+        // then
+        assert(rendered == "val `typeof`: String")
+    }
+
+    @Test
+    fun `should escape class name not being an identifier`() {
+        // when
+        val rendered = formatKFunction(KeywordMembersSample::class.memberFunctions.single { it.name == "nested" })
+
+        // then
+        assert(rendered == "fun nested(): com.xemantic.kotlin.introspection.test.KeywordMembersSample.`interface`")
     }
 
 }

@@ -66,7 +66,7 @@ internal fun formatKFunction(func: KFunction<*>, isOverride: Boolean = false): S
 
     +"fun "
     formatKTypeParameters(func.typeParameters).let { if (it.isNotEmpty()) +"$it " }
-    +func.name
+    +escapeIdentifier(func.name)
     +"("
 
     // Skip first parameter (receiver) for member functions
@@ -106,7 +106,7 @@ private val primitiveArrayElementTypes: Map<KClassifier, String> = mapOf(
  */
 internal fun formatKParameter(parameter: KParameter): String = buildString {
     if (parameter.isVararg) +"vararg "
-    +(parameter.name ?: "arg${parameter.index}")
+    +escapeIdentifier(parameter.name ?: "arg${parameter.index}")
     +": "
     // a vararg parameter is typed as an array, like Array<out T> or IntArray, while its element type is rendered
     val type = if (parameter.isVararg) {
@@ -128,7 +128,7 @@ internal fun formatKParameter(parameter: KParameter): String = buildString {
 internal fun formatKProperty(prop: KProperty1<*, *>, isOverride: Boolean = false): String = buildString {
     if (isOverride) +"override "
     +"val "
-    +prop.name
+    +escapeIdentifier(prop.name)
     +": "
     +formatKTypeProjection(prop.returnType)
 }
@@ -146,7 +146,7 @@ internal fun formatKTypeParameters(typeParameters: List<KTypeParameter>): String
                 KVariance.OUT -> +"out "
                 KVariance.INVARIANT -> {}
             }
-            +typeParameter.name
+            +escapeIdentifier(typeParameter.name)
             typeParameter.upperBounds.singleOrNull()
                 ?.takeUnless { it.classifier == Any::class && it.isMarkedNullable }
                 ?.let {
@@ -185,13 +185,13 @@ private fun formatKClassType(type: KType): String {
             val qualifiedName = classifier.qualifiedName ?: classifier.simpleName ?: "Unknown"
             // Use simple name for kotlin.* types, fully qualified for others
             if (qualifiedName.startsWith("kotlin.")) {
-                classifier.simpleName ?: "Unknown"
+                escapeIdentifier(classifier.simpleName ?: "Unknown")
             } else {
-                qualifiedName
+                escapeQualifiedName(qualifiedName)
             }
         }
         // the name only, without the platform type marker
-        is KTypeParameter -> classifier.name
+        is KTypeParameter -> escapeIdentifier(classifier.name)
         else -> type.toString()
     }
 

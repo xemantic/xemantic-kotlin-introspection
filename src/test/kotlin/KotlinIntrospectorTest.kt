@@ -845,7 +845,7 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should paginate enum entries named in backticks one by one`() {
-        // the entries are separate items, even when rendered like the continuation of a multi-line member
+        // the entries are separate items, whatever their names, which unescaped would look like the continuation of a multi-line member
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.BacktickedEntryEnum",
             page = 2,
@@ -853,7 +853,7 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.BacktickedEntryEnum [page 2/4]
             enum class BacktickedEntryEnum {
-                 SECOND,
+                ` SECOND`,
             }
         """.trimIndent()
     }
@@ -867,7 +867,7 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.BacktickedEntryEnum [page 2/2]
             enum class BacktickedEntryEnum {
-                };
+                `}`;
                 fun f()
             }
         """.trimIndent()
@@ -1677,7 +1677,7 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.JavaDollarTaker [page 1/1]
             class JavaDollarTaker : com.xemantic.kotlin.introspection.test.other.JavaDollarBase {
-                override fun take(nested: NestedClassesHolder.Dollar${'$'}Nested)
+                override fun take(nested: NestedClassesHolder.`Dollar${'$'}Nested`)
             }
         """.trimIndent()
     }
@@ -1918,7 +1918,7 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.test.DashedNameProcessor [page 1/1]
             class DashedNameProcessor : Processor<String> {
                 override fun process(item: String)
-                fun process-handler(item: String)
+                fun `process-handler`(item: String)
             }
         """.trimIndent()
     }
@@ -2734,8 +2734,8 @@ class KotlinIntrospectorTest {
                 object NestedObject
                 enum class NestedEnum
                 data class NestedData : NestedClassesHolder.NestedInterface
-                class Dollar${'$'}Nested
-                class ${'$'}Prefixed
+                class `Dollar${'$'}Nested`
+                class `${'$'}Prefixed`
                 fun anonymous(): Any
                 fun whenMapping(nestedEnum: NestedClassesHolder.NestedEnum): Int
                 companion object {
@@ -2751,8 +2751,118 @@ class KotlinIntrospectorTest {
             "com.xemantic.kotlin.introspection.test.NestedClassesHolder.Dollar\$Nested"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.NestedClassesHolder.Dollar${'$'}Nested [page 1/1]
-            class Dollar${'$'}Nested
+            class `Dollar${'$'}Nested`
         """.trimIndent()
+    }
+
+    @Test
+    fun `should escape enum entries named like hard keywords`() {
+        // a soft keyword, like data, is a valid identifier
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.KeywordEntryEnum"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.KeywordEntryEnum [page 1/1]
+            enum class KeywordEntryEnum {
+                `in`,
+                `object`,
+                data
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should escape declarations named like hard keywords or not as identifiers`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.KeywordMembersSample",
+            pageSize = 20
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.KeywordMembersSample [page 1/1]
+            class KeywordMembersSample<`in`>(val `is`: `in`, val value: Int) {
+                class `interface`
+                val `typeof`: String
+                var `val`: Int
+                fun `fun`(`if`: Int, `when`: (`in`: Int, `my name`: String) -> Unit)
+                fun <`class`> `return`(value: `class`): `class`
+                fun open(by: Int, get: String)
+                fun `with space`()
+                fun nested(): KeywordMembersSample.`interface`
+                companion object `object` {
+                    fun `throw`()
+                }
+            }
+            // from com.xemantic.kotlin.introspection.test
+            val KeywordMembersSample<*>.`null`: Int
+            fun KeywordMembersSample<*>.`for`()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member named like hard keyword by its unescaped name`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.KeywordMembersSample.return"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.KeywordMembersSample.return [page 1/1]
+            fun <`class`> `return`(value: `class`): `class`
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve nested class named like hard keyword by its unescaped name`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.KeywordMembersSample.interface"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.KeywordMembersSample.interface [page 1/1]
+            class `interface`
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member named like hard keyword by its escaped name`() {
+        // the escaped name is the one rendered, and therefore the one an LLM is likely to ask for
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.KeywordMembersSample.`return`"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.KeywordMembersSample.`return` [page 1/1]
+            fun <`class`> `return`(value: `class`): `class`
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve nested class named like hard keyword by its escaped name`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.KeywordMembersSample.`interface`"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.KeywordMembersSample.`interface` [page 1/1]
+            class `interface`
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve nested class named with dollar sign by its escaped name`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.NestedClassesHolder.`Dollar\$Nested`"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NestedClassesHolder.`Dollar${'$'}Nested` [page 1/1]
+            class `Dollar${'$'}Nested`
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should escape enum entry named like hard keyword in annotation default value`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.KeywordDefaultAnnotation"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.KeywordDefaultAnnotation [page 1/1]
+            annotation class KeywordDefaultAnnotation(val `if`: KeywordEntryEnum = KeywordEntryEnum.`object`)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `search should find nested class named like hard keyword by its unescaped name`() {
+        // the search results are names to resolve, not Kotlin code
+        resolver.search("interface", pageSize = 1000) should {
+            have("com.xemantic.kotlin.introspection.test.KeywordMembersSample.interface" in lines())
+        }
     }
 
     @Test
@@ -3032,7 +3142,7 @@ class KotlinIntrospectorTest {
             "com.xemantic.kotlin.introspection.test.NestedClassReferenceAnnotation"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.NestedClassReferenceAnnotation [page 1/1]
-            annotation class NestedClassReferenceAnnotation(val nested: KClass<*> = NestedClassesHolder.NestedClass::class, val dollar: KClass<*> = NestedClassesHolder.Dollar${'$'}Nested::class)
+            annotation class NestedClassReferenceAnnotation(val nested: KClass<*> = NestedClassesHolder.NestedClass::class, val dollar: KClass<*> = NestedClassesHolder.`Dollar${'$'}Nested`::class)
         """.trimIndent()
     }
 
