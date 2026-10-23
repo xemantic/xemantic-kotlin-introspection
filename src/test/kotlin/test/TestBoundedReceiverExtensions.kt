@@ -28,6 +28,10 @@ class BoundedReceiverOnlyA : BoundedReceiverA
 
 class BoundedReceiverBoth : BoundedReceiverA, BoundedReceiverB
 
+interface BoundedReceiverAB : BoundedReceiverA, BoundedReceiverB
+
+class BoundedReceiverSubtypeOfAB : BoundedReceiverAB
+
 fun <T : BoundedReceiverA> T.boundedByA(): T = this
 
 fun <T : BoundedReceiverA?> T.nullableBoundedByA() {}

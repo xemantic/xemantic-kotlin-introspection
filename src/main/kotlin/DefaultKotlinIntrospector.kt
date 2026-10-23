@@ -1287,12 +1287,15 @@ internal class DefaultKotlinIntrospector(
         // on the type and on its supertypes, but all with their receivers, under the `// from …` header,
         // while the listing renders the ones on the type itself, imported from a package, like `kotlin.text`,
         // within the class body, without the receiver
-        val receiverNames = listOf(className) + builtinSupertypeNames(kClass, className)
+        // also filtered by the multiple bounds of a type parameter receiver, like in the listing
+        val supertypeNames = builtinSupertypeNames(kClass, className)
+        val receiverNames = listOf(className) + supertypeNames
+        val satisfiedBounds = lazyOf(supertypeNames.toSet() + className)
         val extensions = extensionSignatures(
-            receiverNames.flatMap { getExtensionsFor(it) }.filter {
+            extensionIndex.listedFor(receiverNames, satisfiedBounds).filter {
                 it.function.name == memberName && isPublicKotlinPackageSource(it.sourceClass)
             },
-            receiverNames.flatMap { getExtensionPropertiesFor(it) }.filter {
+            extensionPropertyIndex.listedFor(receiverNames, satisfiedBounds).filter {
                 it.property.name == memberName && isPublicKotlinPackageSource(it.sourceClass)
             },
             contextPackage = null
@@ -1330,9 +1333,13 @@ internal class DefaultKotlinIntrospector(
         } + companion.functions.filter { it.name.matches() }.inMutableBuiltinApi().map {
             listOf(formatFunction(it, owner = companion))
         }
+        val receiverNames = listOf(name)
+        val satisfiedBounds = lazyOf(setOf(name))
         val extensions = extensionSignatures(
-            getExtensionsFor(name).filter { it.function.name.matches() && isPublicKotlinPackageSource(it.sourceClass) },
-            getExtensionPropertiesFor(name).filter {
+            extensionIndex.listedFor(receiverNames, satisfiedBounds).filter {
+                it.function.name.matches() && isPublicKotlinPackageSource(it.sourceClass)
+            },
+            extensionPropertyIndex.listedFor(receiverNames, satisfiedBounds).filter {
                 it.property.name.matches() && isPublicKotlinPackageSource(it.sourceClass)
             },
             contextPackage = null
@@ -3157,18 +3164,6 @@ internal class DefaultKotlinIntrospector(
         }
 
     }
-
-    /**
-     * Get extension functions for a given fully qualified type name.
-     */
-    private fun getExtensionsFor(typeName: String): List<IndexedExtension> =
-        extensionIndex[typeName].orEmpty()
-
-    /**
-     * Get extension properties for a given fully qualified type name.
-     */
-    private fun getExtensionPropertiesFor(typeName: String): List<IndexedExtensionProperty> =
-        extensionPropertyIndex[typeName].orEmpty()
 
     /**
      * The extensions of this index listed for a class, the ones on any of the [receiverNames], like the class

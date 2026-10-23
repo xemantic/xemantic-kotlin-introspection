@@ -3778,6 +3778,51 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should not resolve extension on type parameter with multiple bounds as member of subtype satisfying only one of them`() {
+        // looked up through the supertype BoundedReceiverA, under which it is indexed as well, but not listed
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.BoundedReceiverOnlyA.boundedByBoth") == null)
+    }
+
+    @Test
+    fun `should resolve extension on type parameter with multiple bounds as member of subtype satisfying them through supertype`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverSubtypeOfAB.boundedByBoth"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverSubtypeOfAB.boundedByBoth [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            fun <T> T.boundedByBoth() where T : BoundedReceiverA, T : BoundedReceiverB
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension on type parameter bounded by supertype as member of subtype`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverOnlyA.boundedByA"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverOnlyA.boundedByA [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            fun <T : BoundedReceiverA> T.boundedByA(): T
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve built-in type member with stdlib extension on type parameter bounded by its supertype`() {
+        // both the one declared for Int, and the one for any Comparable, like in the listing
+        resolver.resolve("kotlin.Int.coerceAtLeast") should {
+            have("fun Int.coerceAtLeast(minimumValue: Int): Int" in lines())
+            have("fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T): T" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve built-in type member with stdlib extension on type parameter with multiple bounds`() {
+        // like in the listing of String
+        resolver.resolve("kotlin.String.ifEmpty") should {
+            have("inline fun <C, R> C.ifEmpty(defaultValue: () -> R): R where C : CharSequence, C : R" in lines())
+        }
+    }
+
+    @Test
     fun `should resolve extension on type parameter bounded by interface as its member`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.BoundedReceiverA.boundedByA"
