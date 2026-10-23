@@ -39,3 +39,16 @@ class WhenMappingsHolder {
         EntryWithBody.WITH_BODY -> 2
     }
 }
+
+// A Kotlin class with nested classes, whose class file the tests rewrite, like a compiler plugin or a bytecode tool might.
+class RewrittenOuter {
+    class Nested {
+        class Deep
+    }
+}
+
+// The entries of a Java enum are compiled with the nested $EntriesMappings class,
+// which is not declared as a nested class in the metadata.
+class EntriesMappingsHolder {
+    fun units(): List<java.util.concurrent.TimeUnit> = java.util.concurrent.TimeUnit.entries
+}

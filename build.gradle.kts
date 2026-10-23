@@ -78,6 +78,15 @@ tasks.named<KotlinCompile>("compileJvmDefaultDisabledTestFixturesKotlin") {
     compilerOptions.jvmDefault = JvmDefaultMode.DISABLE
 }
 
+// compiled for Java 8, like the libraries still targeting it, without the NestMembers attribute of Java 11
+val java8TestFixtures: SourceSet = sourceSets.create("java8TestFixtures")
+
+tasks.named<JavaCompile>(java8TestFixtures.compileJavaTaskName) {
+    options.release = 8
+    // not warning that the release 8 is obsolete
+    options.compilerArgs.add("-Xlint:-options")
+}
+
 // a separate Kotlin module, whose internal members are not visible to the test module
 val otherModuleTestFixtures: SourceSet = sourceSets.create("otherModuleTestFixtures")
 
@@ -136,6 +145,9 @@ tasks.test {
     val isolatedTestFixturesDirs = isolatedTestFixtures.output.classesDirs
     inputs.files(isolatedTestFixturesDirs).withPropertyName("isolatedTestFixtures")
     systemProperty("isolatedTestFixtures", isolatedTestFixturesDirs.asPath)
+    val java8TestFixturesDirs = java8TestFixtures.output.classesDirs
+    inputs.files(java8TestFixturesDirs).withPropertyName("java8TestFixtures")
+    systemProperty("java8TestFixtures", java8TestFixturesDirs.asPath)
 }
 
 powerAssert {

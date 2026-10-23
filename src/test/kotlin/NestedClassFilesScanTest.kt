@@ -38,10 +38,9 @@ class NestedClassFilesScanTest {
     @TempDir
     lateinit var tempDir: Path
 
-    private val isolatedTestFixtures: List<File> = System.getProperty("isolatedTestFixtures")
-        .split(File.pathSeparator)
-        .map { File(it) }
-        .filter { it.exists() }
+    private val isolatedTestFixtures: List<File> = testFixtures("isolatedTestFixtures")
+
+    private val java8TestFixtures: List<File> = testFixtures("java8TestFixtures")
 
     /**
      * The class files of the Java class `JavaOuter`, with its nested classes,
@@ -74,13 +73,24 @@ class NestedClassFilesScanTest {
         )
 
         // when
-        val introspector = DefaultKotlinIntrospector(classLoader)
-        val readingEveryClassFile = DefaultKotlinIntrospector(classLoader, skipNonKotlinNestedClassFiles = false)
+        val skipping = scan(classLoader)
+        val readingEveryClassFile = scan(classLoader, skipNestedClassFiles = false)
 
         // then
-        assert(introspector.skippedClassFileCount > 0)
-        assert(readingEveryClassFile.skippedClassFileCount == 0)
-        introspector.indexDump() sameAs readingEveryClassFile.indexDump()
+        assert(readingEveryClassFile.skippedClassFiles.isEmpty())
+        assert(skipping.skippedClassFileCount == skipping.skippedClassFiles.size)
+        assert(skipping.readClassFileCount + skipping.skippedClassFileCount == readingEveryClassFile.readClassFileCount)
+        assert(
+            skipping.skippedClassFiles.containsAll(
+                listOf(
+                    "com/xemantic/kotlin/introspection/isolated/JavaOuter\$Nested",
+                    "com/xemantic/kotlin/introspection/isolated/JavaOuter\$Nested\$Deep",
+                    "com/xemantic/kotlin/introspection/isolated/JavaOuter\$Member",
+                    "com/xemantic/kotlin/introspection/isolated/WhenMappingsHolder\$WhenMappings"
+                )
+            )
+        )
+        skipping.indexDump() sameAs readingEveryClassFile.indexDump()
     }
 
     @Test
@@ -92,23 +102,27 @@ class NestedClassFilesScanTest {
         }
 
         // when
-        val introspector = DefaultKotlinIntrospector(classLoader(root))
+        val skipping = scan(classLoader(root))
 
         // then
-        // JavaOuter$Nested, JavaOuter$Nested$Deep, JavaOuter$Member and WhenMappingsHolder$WhenMappings,
-        // but neither JavaOuter$Impostor, nor EntryWithBody$WITH_BODY
-        assert(introspector.skippedClassFileCount == 4)
-        introspector.search("Impostor") sameAs """
+        // neither JavaOuter$Impostor, nor EntryWithBody$WITH_BODY
+        assert(
+            skipping.skippedClassFiles.sorted() == listOf(
+                "com/xemantic/kotlin/introspection/isolated/JavaOuter\$Member",
+                "com/xemantic/kotlin/introspection/isolated/JavaOuter\$Nested",
+                "com/xemantic/kotlin/introspection/isolated/JavaOuter\$Nested\$Deep",
+                "com/xemantic/kotlin/introspection/isolated/WhenMappingsHolder\$WhenMappings"
+            )
+        )
+        DefaultKotlinIntrospector(classLoader(root)).search("Impostor") sameAs """
             // search results for "Impostor" [page 1/1]
             com.xemantic.kotlin.introspection.isolated.JavaOuter${'$'}Impostor
         """.trimIndent()
-        introspector.indexDump() sameAs DefaultKotlinIntrospector(
-            classLoader(root), skipNonKotlinNestedClassFiles = false
-        ).indexDump()
+        skipping.indexDump() sameAs scan(classLoader(root), skipNestedClassFiles = false).indexDump()
     }
 
     @Test
-    fun `search should not find synthetic nested class without class metadata even when reading it`() {
+    fun `should not index synthetic nested class without class metadata even when reading it`() {
         // given
         val root = tempDir.resolve("classes")
         nestedClassFiles.forEach { (path, file) ->
@@ -117,14 +131,12 @@ class NestedClassFilesScanTest {
         val whenMappings = nestedClassFiles.map { (path, _) -> path }.filter { it.endsWith("\$WhenMappings.class") }
 
         // when
-        val introspector = DefaultKotlinIntrospector(classLoader(root), skipNonKotlinNestedClassFiles = false)
+        val skipping = scan(classLoader(root), skipNestedClassFiles = false)
 
         // then
         assert(whenMappings == listOf("com/xemantic/kotlin/introspection/isolated/WhenMappingsHolder\$WhenMappings.class"))
-        introspector.search("WhenMappings") sameAs """
-            // search results for "WhenMappings" [page 1/1]
-            com.xemantic.kotlin.introspection.isolated.WhenMappingsHolder
-        """.trimIndent()
+        assert("whenmappings" !in skipping.classIndex)
+        assert(skipping.classIndex["whenmappingsholder"] == listOf("com.xemantic.kotlin.introspection.isolated.WhenMappingsHolder"))
     }
 
     @Test
@@ -140,21 +152,152 @@ class NestedClassFilesScanTest {
         }
 
         // when
-        val introspector = DefaultKotlinIntrospector(classLoader(jar))
+        val skipping = scan(classLoader(jar))
 
         // then
-        assert(introspector.skippedClassFileCount == 4)
-        introspector.indexDump() sameAs DefaultKotlinIntrospector(
-            classLoader(jar), skipNonKotlinNestedClassFiles = false
-        ).indexDump()
+        assert(skipping.skippedClassFiles.size == 4)
+        skipping.indexDump() sameAs scan(classLoader(jar), skipNestedClassFiles = false).indexDump()
+    }
+
+    @Test
+    fun `should skip generated nested class files not declared in Kotlin class metadata`() {
+        // given
+        val root = tempDir.resolve("classes")
+        val defaultImpls = "com/xemantic/kotlin/introspection/defaultimpls/DefaultImplsGreeter"
+        // compiled without the JVM default methods, and on the test classpath
+        listOf(defaultImpls, "$defaultImpls\$DefaultImpls").forEach { name ->
+            javaClass.classLoader.getResourceAsStream("$name.class")!!.use { input ->
+                root.resolve("$name.class").toFile().apply { parentFile.mkdirs() }.outputStream().use { input.copyTo(it) }
+            }
+        }
+        isolatedTestFixtures.forEach { dir ->
+            dir.walkTopDown().filter { it.isFile && it.name.startsWith("EntriesMappingsHolder") }.forEach { file ->
+                file.copyTo(root.resolve(file.relativeTo(dir).path).toFile())
+            }
+        }
+
+        // when
+        val skipping = scan(classLoader(root))
+
+        // then
+        assert(
+            skipping.skippedClassFiles.sorted() == listOf(
+                "$defaultImpls\$DefaultImpls",
+                "com/xemantic/kotlin/introspection/isolated/EntriesMappingsHolder\$EntriesMappings"
+            )
+        )
+        skipping.indexDump() sameAs scan(classLoader(root), skipNestedClassFiles = false).indexDump()
+    }
+
+    @Test
+    fun `should read nested class file of Kotlin class not declaring it in metadata`() {
+        // given
+        // like a compiler plugin might generate the class with the class metadata, without declaring it in the outer one
+        val root = rewrittenOuterRoot { bytes -> withoutNestedClassInMetadata(bytes, "Nested") }
+
+        // when
+        val skipping = scan(classLoader(root))
+
+        // then
+        assert(skipping.skippedClassFiles.isEmpty())
+        assert(skipping.classIndex["nested"] == listOf("com.xemantic.kotlin.introspection.isolated.RewrittenOuter.Nested"))
+        skipping.indexDump() sameAs scan(classLoader(root), skipNestedClassFiles = false).indexDump()
+    }
+
+    @Test
+    fun `should skip nested class files of Kotlin class with metadata stripped, as they cannot be indexed anyway`() {
+        // given
+        // like R8 might strip the metadata of a class, while keeping the one of its nested classes
+        val root = rewrittenOuterRoot { bytes -> withoutMetadata(bytes) }
+
+        // when
+        val skipping = scan(classLoader(root))
+        val readingEveryClassFile = scan(classLoader(root), skipNestedClassFiles = false)
+
+        // then
+        // RewrittenOuter declares only its own member classes, like Java8Outer, so that RewrittenOuter$Nested$Deep is read
+        assert(skipping.skippedClassFiles == listOf("com/xemantic/kotlin/introspection/isolated/RewrittenOuter\$Nested"))
+        // found when read, but not indexed, as the outer class is unknown
+        assert(
+            readingEveryClassFile.classes.map { it.name }.sorted() == listOf(
+                "com/xemantic/kotlin/introspection/isolated/RewrittenOuter.Nested",
+                "com/xemantic/kotlin/introspection/isolated/RewrittenOuter.Nested.Deep"
+            )
+        )
+        assert(readingEveryClassFile.classIndex.isEmpty())
+        skipping.indexDump(withClasses = false) sameAs readingEveryClassFile.indexDump(withClasses = false)
+    }
+
+    @Test
+    fun `should skip nested class files of class with metadata of unknown kind, as they cannot be indexed anyway`() {
+        // given
+        // like a future version of Kotlin might introduce
+        val root = rewrittenOuterRoot { bytes -> withMetadataKind(bytes, kind = 99) }
+
+        // when
+        val skipping = scan(classLoader(root))
+        val readingEveryClassFile = scan(classLoader(root), skipNestedClassFiles = false)
+
+        // then
+        // RewrittenOuter declares only its own member classes, like Java8Outer, so that RewrittenOuter$Nested$Deep is read
+        assert(skipping.skippedClassFiles == listOf("com/xemantic/kotlin/introspection/isolated/RewrittenOuter\$Nested"))
+        // found when read, but not indexed, as the outer class is unknown
+        assert(readingEveryClassFile.classes.size == 2)
+        assert(readingEveryClassFile.classIndex.isEmpty())
+        skipping.indexDump(withClasses = false) sameAs readingEveryClassFile.indexDump(withClasses = false)
+    }
+
+    @Test
+    fun `should skip nested class files of Java class compiled for Java 8 declared by class files read`() {
+        // given
+        val root = tempDir.resolve("classes")
+        java8TestFixtures.forEach { dir -> dir.copyRecursively(root.toFile()) }
+
+        // when
+        val skipping = scan(classLoader(root))
+
+        // then
+        // without the NestMembers attribute, Java8Outer declares only its own member classes,
+        // so that Java8Outer$Nested$Deep, declared only by the skipped Java8Outer$Nested, is read,
+        // telling in turn that Java8Outer$Nested$Deep$Deeper is nested in it
+        assert(skipping.readClassFileCount == 2)
+        assert(
+            skipping.skippedClassFiles.sorted() == listOf(
+                "com/xemantic/kotlin/introspection/isolated/Java8Outer\$Member",
+                "com/xemantic/kotlin/introspection/isolated/Java8Outer\$Nested",
+                "com/xemantic/kotlin/introspection/isolated/Java8Outer\$Nested\$Deep\$Deeper"
+            )
+        )
+    }
+
+    /**
+     * A root with the class files of `RewrittenOuter`, [rewritten][rewrite], and of its nested classes.
+     */
+    private fun rewrittenOuterRoot(rewrite: (ByteArray) -> ByteArray): Path {
+        val root = tempDir.resolve("rewritten")
+        isolatedTestFixtures.forEach { dir ->
+            dir.walkTopDown().filter { it.isFile && it.name.startsWith("RewrittenOuter") }.forEach { file ->
+                val target = root.resolve(file.relativeTo(dir).path).toFile()
+                target.parentFile.mkdirs()
+                target.writeBytes(if (file.name == "RewrittenOuter.class") rewrite(file.readBytes()) else file.readBytes())
+            }
+        }
+        return root
     }
 
 }
 
+private fun scan(
+    classLoader: ClassLoader,
+    skipNestedClassFiles: Boolean = true
+): DefaultKotlinIntrospector.ClasspathScan = DefaultKotlinIntrospector(classLoader, scanEntireClasspath = false)
+    .scanClasspath(skipNestedClassFiles, collectSkippedClassFiles = true)
+
 /**
- * The extensions and classes indexed by the classpath scan, one per line, in a stable order.
+ * The extensions and classes indexed by the classpath scan, one per line, in the scan order,
+ * and, [withClasses], all the Kotlin classes found, with their flags, which decide what is indexed.
  */
-private fun DefaultKotlinIntrospector.indexDump(): String = buildList {
+private fun DefaultKotlinIntrospector.ClasspathScan.indexDump(withClasses: Boolean = true): String = buildList {
     extensionIndex.forEach { (receiver, extensions) ->
         extensions.forEach {
             add("fun $receiver.${it.function.name} in ${it.sourceClass} from ${it.source} object=${it.isObjectMember}")
@@ -162,10 +305,26 @@ private fun DefaultKotlinIntrospector.indexDump(): String = buildList {
     }
     extensionPropertyIndex.forEach { (receiver, extensions) ->
         extensions.forEach {
-            add("val $receiver.${it.property.name} in ${it.sourceClass} from ${it.source} object=${it.isObjectMember}")
+            add(
+                "val $receiver.${it.property.name} in ${it.sourceClass} from ${it.source} " +
+                    "object=${it.isObjectMember} assignable=${it.isAssignable}"
+            )
         }
     }
     classIndex.forEach { (simpleName, classes) ->
-        classes.forEach { add("class $simpleName: $it") }
+        classes.forEach { add("indexed $simpleName: $it") }
     }
-}.sorted().joinToString("\n")
+    if (withClasses) classes.forEach {
+        add(
+            "class ${it.name} (${it.binaryName}) ${it.scope.visibility} open=${it.scope.isOpen} " +
+                "companion=${it.scope.isCompanion} usable=${it.isUsable} searchable=${it.isSearchable} " +
+                "extensions=${it.extensions.map { e -> e.function.name }} " +
+                "properties=${it.extensionProperties.map { p -> p.property.name }}"
+        )
+    }
+}.joinToString("\n")
+
+private fun testFixtures(property: String): List<File> = System.getProperty(property)
+    .split(File.pathSeparator)
+    .map { File(it) }
+    .filter { it.exists() }
