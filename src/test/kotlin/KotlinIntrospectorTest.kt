@@ -1869,8 +1869,8 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should keep final modality of override in enum class without entry bodies`() {
-        // the metadata does not tell whether the entries have bodies
+    fun `should not mark override in enum class without entry bodies as final`() {
+        // the metadata does not tell whether the entries have bodies, but the JVM class is final without them
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.PlainEnum"
         ) sameAsKotlin """
@@ -1879,7 +1879,45 @@ class KotlinIntrospectorTest {
                 A,
                 B;
                 override fun f(): Int
-                final override fun g()
+                override fun g()
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not mark constructor property override in enum class without entry bodies as final`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.PlainConstructorOverrideEnum"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PlainConstructorOverrideEnum [page 1/1]
+            enum class PlainConstructorOverrideEnum(override val u: UInt) : HasU {
+                A
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render override with default body in interface without modality`() {
+        // like any member of an interface, whether it has a default body or not
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.DefaultBodyOverride"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DefaultBodyOverride [page 1/1]
+            interface DefaultBodyOverride : DefaultBodyBase {
+                override fun f()
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render abstract override of member with default body in interface without modality`() {
+        // the metadata tells it is abstract again, which is not rendered, as for any other member of an interface
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ReabstractedOverride"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ReabstractedOverride [page 1/1]
+            interface ReabstractedOverride : DefaultBodyBase {
+                override fun f()
             }
         """.trimIndent()
     }

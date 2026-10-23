@@ -1981,8 +1981,10 @@ internal class DefaultKotlinIntrospector(
      * An override is implicitly open, therefore its `final` is rendered,
      * unless the [owner] class is final itself, which makes all its members final.
      * An enum class is final in the metadata, even when its entries have bodies subclassing it,
-     * which the metadata does not tell, therefore `final` is always rendered in an enum class.
-     * The members of an interface are implicitly abstract.
+     * which only its JVM class tells, see [mightHaveEntryBodies].
+     * The members of an interface are implicitly abstract, while the ones with a default body are not told apart,
+     * also when overriding, like the abstract `override fun f()` of an interface making abstract again
+     * the `f()` with a default body of its superinterface.
      */
     private fun formatModalityModifiers(
         modality: Modality,
@@ -1994,12 +1996,21 @@ internal class DefaultKotlinIntrospector(
             Modality.ABSTRACT -> if (!inInterface) +"abstract "
             Modality.OPEN -> if (!isOverride) +"open "
             Modality.FINAL -> if (
-                isOverride && owner != null && (owner.modality != Modality.FINAL || owner.kind == ClassKind.ENUM_CLASS)
+                isOverride && owner != null && (
+                    owner.modality != Modality.FINAL || (owner.kind == ClassKind.ENUM_CLASS && mightHaveEntryBodies(owner))
+                )
             ) +"final "
             Modality.SEALED -> {}
         }
         if (isOverride) +"override "
     }
+
+    /**
+     * Whether the entries of the [enumClass] might have bodies, subclassing it, which the metadata does not tell,
+     * unlike its JVM class, which is final without them, assumed when its class file cannot be read.
+     */
+    private fun mightHaveEntryBodies(enumClass: KmClass): Boolean =
+        findClassByMetadataName(enumClass.name)?.classFile?.isFinal != true
 
     /**
      * Whether this property might be declared by the constructor [parameter], like `class Foo(val x: Int)`.
@@ -2576,6 +2587,7 @@ internal class DefaultKotlinIntrospector(
         return ClassFile(
             metadata = metadata,
             isSynthetic = reader.access and Opcodes.ACC_SYNTHETIC != 0,
+            isFinal = reader.access and Opcodes.ACC_FINAL != 0,
             isHiddenDeprecated = isHiddenDeprecated,
             nesting = memberClasses?.let { members ->
                 Nesting(memberClasses = members, nestMembers = nestMembers.orEmpty())
@@ -2603,6 +2615,8 @@ internal class DefaultKotlinIntrospector(
     /**
      * What is read from a class file, without loading the class.
      *
+     * @property isFinal whether the JVM class is final, which, unlike the metadata, tells that an enum class
+     *   has no entries with bodies, compiled to its subclasses.
      * @property nesting what the class file tells about the classes nested in this class,
      *   read only by the classpath scan, see [NestedClassFiles].
      * @property hiddenMethods the JVM signatures, like `max(Ljava/lang/CharSequence;)Ljava/lang/Character;`,
@@ -2614,6 +2628,7 @@ internal class DefaultKotlinIntrospector(
     private class ClassFile(
         val metadata: Metadata?,
         val isSynthetic: Boolean,
+        val isFinal: Boolean = false,
         val isHiddenDeprecated: Boolean,
         val nesting: Nesting? = null,
         val hiddenMethods: Set<String> = emptySet(),
