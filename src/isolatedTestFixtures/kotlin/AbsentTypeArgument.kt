@@ -186,3 +186,20 @@ class MissingOuter {
         fun f() {}
     }
 }
+
+// the Java superclass cannot be loaded, so that its members and its generic supertypes are read from its class file
+abstract class AbsentGenericJavaLeaf : AbsentGenericJavaMid<String>() {
+    override fun process(item: String) {}
+    fun process(item: Int) {}
+    override fun run() {}
+    fun finish(code: Int) {}
+    override fun compareTo(other: String): Int = 0
+    fun compareTo(other: Int): Int = 0
+}
+
+// the type variable of the raw Java superclass, read from its class file, is erased to its bound
+abstract class AbsentRawGenericJavaLeaf : AbsentRawGenericJavaMid() {
+    override fun process(item: Any?) {}
+    fun process(item: String) {}
+    override fun compareTo(other: Any?): Int = 0
+}

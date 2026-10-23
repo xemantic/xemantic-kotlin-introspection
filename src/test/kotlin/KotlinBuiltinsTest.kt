@@ -20,13 +20,18 @@ package com.xemantic.kotlin.introspection
 
 import com.xemantic.kotlin.test.assert
 import org.junit.jupiter.api.io.TempDir
+import java.net.JarURLConnection
 import java.net.URI
 import java.net.URL
+import java.net.URLConnection
+import java.net.URLStreamHandler
 import java.nio.file.Path
 import java.util.jar.JarEntry
+import java.util.jar.JarFile
 import java.util.jar.JarOutputStream
 import kotlin.io.path.createDirectories
 import kotlin.io.path.outputStream
+import kotlin.io.path.writeBytes
 import kotlin.io.path.writeText
 import kotlin.test.Test
 
@@ -182,6 +187,74 @@ class KotlinBuiltinsTest {
                 listOf("kotlin/kotlin.kotlin_builtins", "kotlin/collections/collections.kotlin_builtins")
             )
         )
+    }
+
+    @Test
+    fun `should read kotlin_builtins resources from the container of the anchor`() {
+        // given
+        // another standard library, like an older or a shaded one, whose collections resource declares other types,
+        // while the standard library of the class path still serves the original one
+        val root = tempDir.resolve("other-stdlib")
+        fun copy(resource: String, target: String) {
+            val bytes = KotlinVersion::class.java.getResourceAsStream("/$resource")!!.use { it.readBytes() }
+            root.resolve(target).also { it.parent.createDirectories() }.writeBytes(bytes)
+        }
+        copy("kotlin/kotlin.kotlin_builtins", "kotlin/kotlin.kotlin_builtins")
+        copy("kotlin/ranges/ranges.kotlin_builtins", "kotlin/collections/collections.kotlin_builtins")
+        val anchor = root.resolve("kotlin/kotlin.kotlin_builtins").toUri().toURL()
+
+        // when
+        val classes = readKotlinBuiltinClasses(anchor)
+
+        // then
+        assert("kotlin/Any" in classes)
+        assert("kotlin/ranges/IntRange" in classes && "kotlin/collections/List" !in classes)
+    }
+
+    @Test
+    fun `should close jar file of custom URL handler only when it is not cached`() {
+        // given
+        val jar = tempDir.resolve("nested.jar")
+        JarOutputStream(jar.outputStream()).use { output ->
+            resources.forEach { resource ->
+                output.putNextEntry(JarEntry(resource))
+                output.closeEntry()
+            }
+        }
+        val closedJarFiles = mutableListOf<Boolean>()
+        val openedJarFiles = mutableListOf<JarFile>()
+        // like the handler of a nested jar of a fat jar, whose jar file is not a file of a file: URL
+        fun anchor(useCaches: Boolean): URL {
+            val handler = object : URLStreamHandler() {
+                override fun openConnection(url: URL): URLConnection = object : JarURLConnection(url) {
+                    init {
+                        this.useCaches = useCaches
+                    }
+                    override fun connect() {}
+                    override fun getJarFile(): JarFile = object : JarFile(jar.toFile()) {
+                        override fun close() {
+                            closedJarFiles += useCaches
+                            super.close()
+                        }
+                    }.also { openedJarFiles += it }
+                }
+            }
+            @Suppress("DEPRECATION")
+            return URL(null, "jar:http://localhost/nested.jar!/kotlin/kotlin.kotlin_builtins", handler)
+        }
+
+        // when
+        val found = listOf(
+            kotlinBuiltinsResources(anchor(useCaches = true)),
+            kotlinBuiltinsResources(anchor(useCaches = false))
+        )
+        val closed = closedJarFiles.toList()
+        openedJarFiles.forEach { it.close() }
+
+        // then
+        assert(found == listOf(resources.sorted(), resources.sorted()))
+        // the cached jar file is shared with the class loader, so it is left open
+        assert(closed == listOf(false))
     }
 
 }

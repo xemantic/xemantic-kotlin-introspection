@@ -639,19 +639,26 @@ class ClassLoaderIntrospectionTest {
     }
 
     /**
-     * A class loader counting the classes requested by their names.
+     * A class loader counting the classes requested by their names,
+     * failing the first request of the classes [failingOnce], and every request of the classes [failing],
+     * with the [failure], and not serving the class files of the classes [unreadable].
      */
     private class CountingClassLoader(
         parent: ClassLoader,
-        private val failingOnce: Set<String> = emptySet()
+        private val failingOnce: Set<String> = emptySet(),
+        private val unreadable: Set<String> = emptySet(),
+        // like a transient failure, unlike a class missing from the classpath
+        private val failure: (String) -> Throwable = { LinkageError("transient failure of $it") }
     ) : ClassLoader(parent) {
         val loads = ConcurrentHashMap<String, Int>()
+        val failing: MutableSet<String> = ConcurrentHashMap.newKeySet()
         override fun loadClass(name: String, resolve: Boolean): Class<*> {
             val count = loads.merge(name, 1, Int::plus)
-            // like a transient failure, unlike a class missing from the classpath
-            if (name in failingOnce && count == 1) throw LinkageError("transient failure of $name")
+            if ((name in failingOnce && count == 1) || name in failing) throw failure(name)
             return super.loadClass(name, resolve)
         }
+        override fun getResourceAsStream(name: String): InputStream? =
+            if (name.removeSuffix(".class").replace('/', '.') in unreadable) null else super.getResourceAsStream(name)
     }
 
     @Test
@@ -705,6 +712,158 @@ class ClassLoaderIntrospectionTest {
         // read from the class file the first time, and loaded the second time
         assert(signatures.all { it != null && "class Sorted<T>" in it })
         assert(classLoader.loads[nested] == 2)
+    }
+
+    @Test
+    fun `should look up nested class again after ClassNotFoundException when its class file is there`() {
+        // given
+        val nested = "com.xemantic.kotlin.introspection.test.TypeParametersNestedHolder\$Sorted"
+        // like a URLClassLoader failing to read the class file with an IOException
+        val classLoader = CountingClassLoader(
+            javaClass.classLoader,
+            failingOnce = setOf(nested),
+            failure = { ClassNotFoundException(it) }
+        )
+        val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
+
+        // when
+        val signatures = List(2) {
+            introspector.resolve("com.xemantic.kotlin.introspection.test.TypeParametersNestedHolder")
+        }
+
+        // then
+        assert(signatures[0] != null && "class Sorted<T>" !in signatures[0]!!)
+        assert(signatures[1] != null && "class Sorted<T>" in signatures[1]!!)
+        assert(classLoader.loads[nested] == 2)
+    }
+
+    @Test
+    fun `should load nested class again after NoClassDefFoundError and failed read of its class file`() {
+        // given
+        val nested = "com.xemantic.kotlin.introspection.test.TypeParametersNestedHolder\$Sorted"
+        val classLoader = CountingClassLoader(
+            javaClass.classLoader,
+            failingOnce = setOf(nested),
+            unreadable = setOf(nested),
+            failure = { NoClassDefFoundError(it) }
+        )
+        val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
+
+        // when
+        val signatures = List(2) {
+            introspector.resolve("com.xemantic.kotlin.introspection.test.TypeParametersNestedHolder")
+        }
+
+        // then
+        assert(signatures[0] != null && "class Sorted<T>" !in signatures[0]!!)
+        assert(signatures[1] != null && "class Sorted<T>" in signatures[1]!!)
+        assert(classLoader.loads[nested] == 2)
+    }
+
+    @Test
+    fun `should mark overrides of Java superclass again after its transient linkage error`() {
+        // given
+        val javaSuperclass = "com.xemantic.kotlin.introspection.test.other.JavaProcessorBase"
+        // the class file is not served, so that the first resolve knows nothing about the Java superclass
+        val classLoader = CountingClassLoader(javaClass.classLoader, unreadable = setOf(javaSuperclass))
+        classLoader.failing += javaSuperclass
+        val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
+
+        // when
+        val signatures = List(2) {
+            introspector.resolve("com.xemantic.kotlin.introspection.test.JavaProcessor").also {
+                classLoader.failing.clear()
+            }
+        }
+
+        // then
+        assert(signatures[0] != null && "override fun process(item: String)" !in signatures[0]!!)
+        signatures[1] sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaProcessor [page 1/1]
+            open class JavaProcessor : com.xemantic.kotlin.introspection.test.other.JavaProcessorBase<String> {
+                override fun process(item: String)
+                fun process(item: Int)
+                override fun handle(items: List<String>)
+                protected override fun count(): Int
+                fun finish()
+                override fun <N : Number> measure(value: N)
+                fun measure(value: String)
+                override fun all(items: Array<String>)
+                fun all(items: Array<Int>)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark overrides of Java superclass which cannot be loaded, as read from its class file`() {
+        // given
+        val introspector = introspectorWithoutAbsentClass()
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.AbsentGenericJavaLeaf"
+        )
+
+        // then
+        // the type argument of the generic Java superclass is substituted also in its own generic supertype
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.AbsentGenericJavaLeaf [page 1/1]
+            abstract class AbsentGenericJavaLeaf : AbsentGenericJavaMid<String> {
+                override fun process(item: String)
+                fun process(item: Int)
+                override fun run()
+                fun finish(code: Int)
+                override operator fun compareTo(other: String): Int
+                fun compareTo(other: Int): Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark overrides of raw Java superclass which cannot be loaded, as read from its class file without generic signature`() {
+        // given
+        val introspector = introspectorWithoutAbsentClass()
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.AbsentRawGenericJavaLeaf"
+        )
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.AbsentRawGenericJavaLeaf [page 1/1]
+            abstract class AbsentRawGenericJavaLeaf : AbsentRawGenericJavaMid {
+                override fun process(item: Any?)
+                fun process(item: String)
+                override operator fun compareTo(other: Any?): Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark overrides of members of built-in type declared only in its class file when class loader serves no standard library resources`() {
+        // given
+        // like an in-memory class loader of a scripting host, defining the classes of the standard library
+        // without serving their class files as resources
+        val classLoader = object : URLClassLoader(
+            isolatedTestFixtures.map { it.toURI().toURL() }.toTypedArray(),
+            javaClass.classLoader
+        ) {
+            override fun getResource(name: String): java.net.URL? =
+                if (name.startsWith("kotlin/")) null else super.getResource(name)
+        }
+        val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.NonSuspendCallable")
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.NonSuspendCallable [page 1/1]
+            abstract class NonSuspendCallable : KCallable<String> {
+                override val isSuspend: Boolean
+            }
+        """.trimIndent()
     }
 
     @Test

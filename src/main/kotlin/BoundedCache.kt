@@ -23,8 +23,11 @@ package com.xemantic.kotlin.introspection
  *
  * A value is computed once, also when requested concurrently: the other requests of the same key wait for it.
  * The computation runs outside the lock of the cache, so it may request the values of other keys,
- * but never of its own key, which would recurse, or deadlock when two threads request each other's keys.
- * A failed computation is not cached, and runs again on the next request.
+ * but never of its own key, directly or through the computations of other keys:
+ * such a request fails with an [IllegalStateException] on the thread computing the key,
+ * while two threads requesting each other's keys at the same time would still deadlock.
+ * A failed computation is not cached, and runs again on the next request,
+ * just like a computation telling that its value is not cacheable, see [getOrCompute].
  */
 internal class BoundedCache<K : Any, V>(private val capacity: Int) {
 
@@ -32,21 +35,48 @@ internal class BoundedCache<K : Any, V>(private val capacity: Int) {
         require(capacity > 0) { "capacity must be positive" }
     }
 
-    private val entries = object : LinkedHashMap<K, Lazy<V>>(16, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<K, Lazy<V>>): Boolean = size > capacity
+    /**
+     * A computed [value], cached only if [isCacheable], unlike one computed after a transient failure.
+     */
+    class Computed<V>(val value: V, val isCacheable: Boolean)
+
+    private val entries = object : LinkedHashMap<K, Lazy<Computed<V>>>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<K, Lazy<Computed<V>>>): Boolean =
+            size > capacity
     }
 
-    fun getOrPut(key: K, compute: () -> V): V {
-        val entry = synchronized(entries) {
-            entries.getOrPut(key) { lazy(compute) }
-        }
-        return try {
-            entry.value
-        } catch (e: Throwable) {
-            synchronized(entries) {
-                entries.remove(key, entry)
+    // the keys requested on the current thread, and not yet computed, telling a recursive request
+    private val requestedKeys = ThreadLocal.withInitial { mutableSetOf<K>() }
+
+    fun getOrPut(key: K, compute: () -> V): V = getOrCompute(key) { Computed(compute(), isCacheable = true) }
+
+    /**
+     * The value of the [key], computed if absent, and then cached, unless it is not cacheable,
+     * while the requests waiting for the same computation receive it anyway.
+     */
+    fun getOrCompute(key: K, compute: () -> Computed<V>): V {
+        val requested = requestedKeys.get()
+        check(requested.add(key)) { "The computation of $key requests its own value" }
+        try {
+            val entry = synchronized(entries) {
+                entries.getOrPut(key) { lazy(compute) }
             }
-            throw e
+            val computed = try {
+                entry.value
+            } catch (e: Throwable) {
+                synchronized(entries) {
+                    entries.remove(key, entry)
+                }
+                throw e
+            }
+            if (!computed.isCacheable) {
+                synchronized(entries) {
+                    entries.remove(key, entry)
+                }
+            }
+            return computed.value
+        } finally {
+            requested.remove(key)
         }
     }
 

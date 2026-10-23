@@ -18,6 +18,7 @@
 
 package com.xemantic.kotlin.introspection
 
+import org.objectweb.asm.AnnotationVisitor
 import org.objectweb.asm.ClassReader
 import org.objectweb.asm.ClassVisitor
 import org.objectweb.asm.MethodVisitor
@@ -65,14 +66,17 @@ import org.objectweb.asm.Type as AsmType
  * the `Continuation` parameter of suspend functions, the getter names of properties,
  * or the JVM names of the built-in members, like `charAt` for `CharSequence.get`, are irrelevant.
  *
- * Only Java supertypes are reflected, and their methods are matched by the erasure of the parameter types,
+ * Only Java supertypes are reflected, or read from their class files when they cannot be loaded,
+ * and their methods are matched by the erasure of the parameter types,
  * as the nullability and the mutability of their types are not known in Kotlin,
  * except for a primitive type, which is not nullable.
  * A Java type mapped to a Kotlin built-in type, like `java.util.List`, is replaced with the built-in type.
  *
  * The overridable members of the supertypes are collected once per class, and the declarations are read once per class,
  * both kept in bounded caches of the least recently used ones,
- * so that a long-lived resolver over a large classpath does not keep the declarations of every class ever resolved.
+ * so that a long-lived resolver over a large classpath does not keep the declarations of every class ever resolved,
+ * as long as the classes are looked up through a bounded cache as well.
+ * What is computed while a class lookup might fail only for now, see [transientLookupCount], is not cached.
  * This class is thread-safe.
  *
  * @param classLoader the class loader of the introspected classes, telling which classes have their own class files.
@@ -83,6 +87,8 @@ import org.objectweb.asm.Type as AsmType
  * @param readClassBytesByMetadataName reads the class file of a class by its Kotlin class name, like `com/example/Foo.DefaultImpls`,
  *   through the [classLoader], without loading the class, so also of one which cannot be loaded,
  *   or `null` if there is no such class file.
+ * @param transientLookupCount the number of the class lookups so far, by the functions above,
+ *   whose outcome might be transient, like after a linkage error, which might not happen again.
  * @param builtinClasses the declarations of the Kotlin built-in types, by their Kotlin class name, like `kotlin/collections/List`.
  * @param builtinTypes the JVM classes of the Kotlin built-in types, by their fully qualified Kotlin name.
  */
@@ -92,6 +98,7 @@ internal class OverrideResolver(
     private val loadClassByMetadataName: (String) -> Class<*>?,
     private val loadKmClassByMetadataName: (String) -> KmClass?,
     private val readClassBytesByMetadataName: (String) -> ByteArray?,
+    private val transientLookupCount: () -> Long,
     private val builtinClasses: () -> Map<String, KmClass>,
     builtinTypes: Map<String, kotlin.reflect.KClass<*>>
 ) {
@@ -222,15 +229,57 @@ internal class OverrideResolver(
     private class Declaration(
         val kotlin: KmClass?,
         val java: Class<*>?,
-        val hiddenJavaMethods: Set<String> = emptySet()
+        val hiddenJavaMethods: Set<String> = emptySet(),
+        val javaClassFile: JavaClassFile? = null
     )
+
+    /**
+     * A Java class which cannot be loaded, like when its supertype is missing from the classpath,
+     * as read from its class file.
+     *
+     * @param internalName the internal name of the class, like `com/example/Outer${'$'}Nested`.
+     * @param signature the generic signature of the class, telling its type variables and generic supertypes.
+     * @param superName the internal name of the superclass, like `java/lang/Object`.
+     * @param interfaces the internal names of the interfaces.
+     */
+    private class JavaClassFile(
+        val internalName: String,
+        val methods: List<DeclaredMethod>,
+        val signature: String?,
+        val superName: String?,
+        val interfaces: List<String>
+    ) {
+        val packageName: String get() = internalName.substringBeforeLast('/', "").replace('/', '.')
+    }
+
+    /**
+     * The owner of the overridables, by its name, and whether it is the declaration of a built-in type,
+     * which might be incomplete, unlike the declaration of the class file of the same name, like of `KClass`.
+     */
+    private data class OwnerKey(val name: String, val isBuiltin: Boolean)
 
     // collecting the overridables never requests other overridables, and finding a declaration never requests
     // another declaration, so that neither computation requests its own key, which the BoundedCache forbids
-    private val overridablesCache = BoundedCache<String, Overridables>(capacity = 256)
+    private val overridablesCache = BoundedCache<OwnerKey, Overridables>(capacity = 256)
 
     // the declarations of the supertypes of the recently resolved classes, shared between their hierarchies
     private val declarationCache = BoundedCache<String, Declaration>(capacity = 1024)
+
+    /**
+     * The cached value of the [key], computed and cached unless a class lookup might fail only for now meanwhile,
+     * like the lookups of the classes of the computed value.
+     */
+    private fun <K : Any, V> BoundedCache<K, V>.getOrPutUnlessTransient(key: K, compute: () -> V): V = getOrCompute(key) {
+        val lookupCount = transientLookupCount()
+        val value = compute()
+        BoundedCache.Computed(value, isCacheable = transientLookupCount() == lookupCount)
+    }
+
+    /**
+     * Whether the standard library classes the [classLoader] defines have class files served as resources,
+     * unlike the ones of an in-memory class loader of a compiler or a scripting host.
+     */
+    private val servesStdlibClassFiles: Boolean by lazy { classLoader.hasClassFile("kotlin.KotlinVersion") }
 
     /**
      * The Kotlin class names of the built-in types, like `kotlin/collections/Map.Entry`,
@@ -418,7 +467,9 @@ internal class OverrideResolver(
     }
 
     private fun overridables(owner: KmClass): Overridables =
-        overridablesCache.getOrPut(owner.name) { collectOverridables(owner) }
+        overridablesCache.getOrPutUnlessTransient(OwnerKey(owner.name, isBuiltin = builtinClasses()[owner.name] === owner)) {
+            collectOverridables(owner)
+        }
 
     /**
      * Walks the whole supertype hierarchy of the [owner] once,
@@ -527,6 +578,15 @@ internal class OverrideResolver(
                 if (declaration.kotlin == null) {
                     pending += javaSupertypes(javaClass, substitution)
                 }
+            }
+
+            declaration.javaClassFile?.let { classFile ->
+                val signature = classFile.signature?.let { genericClassSignature(it) }
+                val substitution = classFileSubstitution(signature, supertype)
+                asmMethods(classFile.methods, classFile.packageName, ownerPackage, substitution).forEach { (name, method) ->
+                    functions.getOrPut(name) { mutableListOf() } += method
+                }
+                pending += classFileSupertypes(classFile, signature, substitution)
             }
         }
 
@@ -674,15 +734,6 @@ internal class OverrideResolver(
     }
 
     private fun outerClassName(name: String): String = name.substringBeforeLast('.')
-
-    /**
-     * The JVM binary name of a Kotlin class name, like `com.example.Outer${'$'}Nested` for `com/example/Outer.Nested`.
-     */
-    private fun binaryName(name: String): String {
-        val packageName = name.substringBeforeLast('/', "")
-        val simpleName = name.substringAfterLast('/').replace('.', '$')
-        return if (packageName.isEmpty()) simpleName else packageName.replace('/', '.') + "." + simpleName
-    }
 
     private fun erasure(typeParameter: KmTypeParameter, typeParameters: Map<Int, KmTypeParameter>): String? =
         erasedBound(typeParameter, typeParameters)?.let { normalizedName(it.name) }
@@ -881,13 +932,14 @@ internal class OverrideResolver(
     }
 
     private fun declaration(name: String): Declaration =
-        declarationCache.getOrPut(name) { findDeclaration(name) }
+        declarationCache.getOrPutUnlessTransient(name) { findDeclaration(name) }
 
     private fun findDeclaration(name: String): Declaration {
         val builtinClass = builtinClasses()[name]
         // a built-in type without its own class file, like List, is not looked up through the class loader,
-        // which would only throw a ClassNotFoundException
-        if (builtinClass == null || classLoader.hasClassFile(binaryName(name))) {
+        // which would only throw a ClassNotFoundException, unless the class loader serves no class files
+        // of the standard library, so that the ones it has cannot be told
+        if (builtinClass == null || !servesStdlibClassFiles || classLoader.hasClassFile(binaryNameOf(name))) {
             // the built-in declaration of a type having its own class file, like KClass, is incomplete
             loadKmClassByMetadataName(name)?.let { return Declaration(it, null) }
         }
@@ -901,22 +953,68 @@ internal class OverrideResolver(
             }
             return Declaration(kmClass, builtinJavaClass, hiddenJavaMethods)
         }
-        return Declaration(null, loadClassByMetadataName(name))
+        loadClassByMetadataName(name)?.let { return Declaration(null, it) }
+        return Declaration(null, null, javaClassFile = readClassBytesByMetadataName(name)?.let { readJavaClassFile(it, name) })
+    }
+
+    /**
+     * Reads the class file of a Java class of the Kotlin class [name], which cannot be loaded,
+     * or returns `null` if it cannot be parsed, or it is of another class, like one of a name differing only in case,
+     * or it is a Kotlin class, whose metadata cannot be read, as its JVM methods are not its Kotlin members.
+     */
+    private fun readJavaClassFile(bytes: ByteArray, name: String): JavaClassFile? {
+        var classFile: JavaClassFile? = null
+        var isKotlin = false
+        val methods = mutableListOf<DeclaredMethod>()
+        try {
+            ClassReader(bytes).accept(object : ClassVisitor(Opcodes.ASM9) {
+                override fun visit(
+                    version: Int,
+                    access: Int,
+                    name: String,
+                    signature: String?,
+                    superName: String?,
+                    interfaces: Array<out String>?
+                ) {
+                    classFile = JavaClassFile(name, methods, signature, superName, interfaces?.toList().orEmpty())
+                }
+
+                override fun visitAnnotation(descriptor: String, visible: Boolean): AnnotationVisitor? {
+                    if (descriptor == "Lkotlin/Metadata;") isKotlin = true
+                    return null
+                }
+
+                override fun visitMethod(
+                    access: Int,
+                    name: String,
+                    descriptor: String,
+                    signature: String?,
+                    exceptions: Array<out String>?
+                ): MethodVisitor? {
+                    methods += DeclaredMethod(access, name, descriptor, signature)
+                    return null
+                }
+            }, ClassReader.SKIP_CODE or ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES)
+        } catch (_: Exception) {
+            return null
+        }
+        return classFile?.takeIf { !isKotlin && it.internalName == binaryNameOf(name).replace('.', '/') }
     }
 
     /**
      * The type arguments substituted for the type variables of a Java class, and of its outer classes if it is an inner class,
      * bound per declaring class, from the innermost one.
      *
-     * @param scopes the declaring classes with the type arguments of their type variables, by their names.
+     * @param scopes the declaring classes with the type arguments of their type variables, by their names,
+     *   where the class is `null` for a class known only from its class file, see [classFileSubstitution].
      */
-    private class JavaSubstitution(private val scopes: List<Pair<Class<*>, Map<String, Lazy<MemberType>>>>) {
+    private class JavaSubstitution(private val scopes: List<Pair<Class<*>?, Map<String, Lazy<MemberType>>>>) {
 
         /**
          * The type argument of a reflected type variable of a class, or `null` if it is not declared by one of the scopes.
          */
         operator fun get(typeVariable: TypeVariable<*>): MemberType? =
-            scopes.firstOrNull { (declaration, _) -> declaration == typeVariable.genericDeclaration }
+            scopes.firstOrNull { (declaration, _) -> declaration != null && declaration == typeVariable.genericDeclaration }
                 ?.second?.get(typeVariable.name)?.value
 
         /**
@@ -934,7 +1032,7 @@ internal class OverrideResolver(
      * or to the erasures of their bounds if the [supertype] is raw, reflected only when a member refers to them.
      */
     private fun javaSubstitution(javaClass: Class<*>, supertype: ClassType): JavaSubstitution {
-        val scopes = mutableListOf<Pair<Class<*>, Map<String, Lazy<MemberType>>>>()
+        val scopes = mutableListOf<Pair<Class<*>?, Map<String, Lazy<MemberType>>>>()
         var declaration: Class<*>? = javaClass
         var type: ClassType? = supertype
         // the outer type of a raw inner type is raw as well
@@ -1136,11 +1234,24 @@ internal class OverrideResolver(
         val bytes = readClassBytesByMetadataName(kotlinClassName(javaClass)) ?: return emptyList()
         // the methods of a class file which cannot be parsed are unknown
         val methods = readMethods(bytes) ?: return emptyList()
+        return asmMethods(methods, javaClass.packageName, ownerPackage, substitution)
+    }
+
+    /**
+     * The overridable [methods] of a Java class of the [packageName], read from its class file,
+     * matched by the erasure of the parameter types.
+     */
+    private fun asmMethods(
+        methods: List<DeclaredMethod>,
+        packageName: String,
+        ownerPackage: String,
+        substitution: JavaSubstitution
+    ): List<Pair<String, Overridable>> {
         return methods.mapNotNull { method ->
             val access = method.access
             val isOverridable = access and (Opcodes.ACC_STATIC or Opcodes.ACC_FINAL or Opcodes.ACC_PRIVATE or
                 Opcodes.ACC_SYNTHETIC or Opcodes.ACC_BRIDGE) == 0 &&
-                (access and (Opcodes.ACC_PUBLIC or Opcodes.ACC_PROTECTED) != 0 || javaClass.packageName == ownerPackage) &&
+                (access and (Opcodes.ACC_PUBLIC or Opcodes.ACC_PROTECTED) != 0 || packageName == ownerPackage) &&
                 !method.name.startsWith("<")
             if (!isOverridable) return@mapNotNull null
             // the method of a malformed descriptor is unknown
@@ -1260,6 +1371,205 @@ internal class OverrideResolver(
             )
         }
         else -> ClassType(primitiveNames.getValue(type.className), nullable = false, isJavaPrimitive = true)
+    }
+
+    /**
+     * Parses the generic [signature] of a class, or returns `null` if it is malformed,
+     * so that the class is read like one without a generic signature.
+     */
+    private fun genericClassSignature(signature: String): GenericClassSignature? = try {
+        GenericClassSignature(signature)
+    } catch (_: IllegalArgumentException) {
+        null
+    } catch (_: IndexOutOfBoundsException) {
+        null
+    }
+
+    /**
+     * The type variables of a class known only from its class file, see [Declaration.javaClassFile],
+     * mapped to the type arguments of the [supertype], or to the erasures of their bounds if the [supertype] is raw,
+     * like [javaSubstitution] does for a loaded class, except for the type variables of the outer classes, unknown here.
+     */
+    private fun classFileSubstitution(signature: GenericClassSignature?, supertype: ClassType): JavaSubstitution {
+        if (signature == null) return JavaSubstitution(emptyList())
+        val typeArguments = signature.typeParameters.withIndex().associate { (index, typeVariable) ->
+            typeVariable to if (supertype.isRaw) {
+                lazy(LazyThreadSafetyMode.NONE) { signature.erasure(typeVariable)?.let { objectType(it) } ?: UnknownType }
+            } else {
+                lazyOf(supertype.arguments.getOrNull(index)?.type ?: UnknownType)
+            }
+        }
+        return JavaSubstitution(listOf(null to typeArguments))
+    }
+
+    /**
+     * The supertypes of a class known only from its class file, with the type variables of the class substituted,
+     * as declared by its generic [signature], or else raw, like the reflected ones, see [javaSupertypes].
+     */
+    private fun classFileSupertypes(
+        classFile: JavaClassFile,
+        signature: GenericClassSignature?,
+        substitution: JavaSubstitution
+    ): List<ClassType> {
+        if (signature != null) {
+            val supertypes = mutableListOf<ClassType>()
+            val isRead = try {
+                SignatureReader(signature.signature).accept(object : SignatureVisitor(Opcodes.ASM9) {
+                    override fun visitClassBound(): SignatureVisitor = ignoringSignatureVisitor
+                    override fun visitInterfaceBound(): SignatureVisitor = ignoringSignatureVisitor
+                    override fun visitSuperclass(): SignatureVisitor = supertypeBuilder()
+                    override fun visitInterface(): SignatureVisitor = supertypeBuilder()
+                    private fun supertypeBuilder() = SignatureTypeBuilder(substitution, isSupertype = true) { type ->
+                        if (type is ClassType) supertypes += type
+                    }
+                })
+                true
+            } catch (_: IllegalArgumentException) {
+                false
+            } catch (_: IndexOutOfBoundsException) {
+                false
+            }
+            if (isRead) return supertypes
+        }
+        return (listOfNotNull(classFile.superName) + classFile.interfaces).map { objectType(it).copy(isRaw = true) }
+    }
+
+    /**
+     * The type of a class of the [internalName], like `java/util/Map${'$'}Entry`, as a Java type, see [asmType].
+     */
+    private fun objectType(internalName: String): ClassType = asmType(AsmType.getObjectType(internalName)) as ClassType
+
+    /**
+     * The type variables of a generic class signature, with their first bounds telling their erasures.
+     */
+    private class GenericClassSignature(val signature: String) {
+
+        val typeParameters = mutableListOf<String>()
+
+        /**
+         * The first bounds of the type variables, by their names:
+         * the internal names of the classes, or the names of other type variables, as told by [isTypeVariable].
+         */
+        private val firstBounds = mutableMapOf<String, Pair<String, Boolean>>()
+
+        /**
+         * The internal name of the class the [typeVariable] is erased to,
+         * or `null` if unknown, like for cyclic bounds of a malformed class file.
+         */
+        fun erasure(typeVariable: String): String? {
+            val visited = mutableSetOf<String>()
+            var current = typeVariable
+            while (visited.add(current)) {
+                val (name, isTypeVariable) = firstBounds[current] ?: return "java/lang/Object"
+                if (!isTypeVariable) return name
+                current = name
+            }
+            return null
+        }
+
+        init {
+            SignatureReader(signature).accept(object : SignatureVisitor(Opcodes.ASM9) {
+
+                private fun boundCollector(): SignatureVisitor {
+                    val typeParameter = typeParameters.last()
+                    return object : SignatureVisitor(Opcodes.ASM9) {
+                        private var className = ""
+                        override fun visitTypeVariable(name: String) {
+                            firstBounds.putIfAbsent(typeParameter, name to true)
+                        }
+                        override fun visitClassType(name: String) {
+                            className = name
+                        }
+                        override fun visitInnerClassType(name: String) {
+                            className += "$$name"
+                        }
+                        override fun visitTypeArgument(wildcard: Char): SignatureVisitor = ignoringSignatureVisitor
+                        override fun visitEnd() {
+                            firstBounds.putIfAbsent(typeParameter, className to false)
+                        }
+                    }
+                }
+
+                override fun visitFormalTypeParameter(name: String) {
+                    typeParameters += name
+                }
+
+                override fun visitClassBound(): SignatureVisitor = boundCollector()
+
+                override fun visitInterfaceBound(): SignatureVisitor = boundCollector()
+
+                override fun visitSuperclass(): SignatureVisitor = ignoringSignatureVisitor
+
+                override fun visitInterface(): SignatureVisitor = ignoringSignatureVisitor
+
+            })
+        }
+
+    }
+
+    /**
+     * Builds a type of a generic signature, passing it to [onType] when visited,
+     * with the type variables substituted, matched by the erasure of their classes, like the reflected types,
+     * see [javaType].
+     *
+     * @param isSupertype whether this is a supertype of a class, which is raw, when generic, without type arguments.
+     */
+    private inner class SignatureTypeBuilder(
+        private val substitution: JavaSubstitution,
+        private val isSupertype: Boolean = false,
+        private val onType: (MemberType) -> Unit
+    ) : SignatureVisitor(Opcodes.ASM9) {
+
+        private var internalName = ""
+
+        private var outer: ClassType? = null
+
+        private val arguments = mutableListOf<TypeArgument>()
+
+        override fun visitBaseType(descriptor: Char) = onType(asmType(AsmType.getType(descriptor.toString())))
+
+        override fun visitTypeVariable(name: String) = onType(substitution[name] ?: UnknownType)
+
+        override fun visitArrayType(): SignatureVisitor = SignatureTypeBuilder(substitution) { component ->
+            onType(
+                if (component is ClassType && component.isJavaPrimitive) {
+                    ClassType("kotlin/${component.name.substringAfter('/')}Array", nullable = null)
+                } else {
+                    arrayType(component)
+                }
+            )
+        }
+
+        override fun visitClassType(name: String) {
+            internalName = name
+        }
+
+        override fun visitInnerClassType(name: String) {
+            outer = classType()
+            internalName += "$$name"
+            arguments.clear()
+        }
+
+        override fun visitTypeArgument() {
+            arguments += TypeArgument(null, UnknownType)
+        }
+
+        override fun visitTypeArgument(wildcard: Char): SignatureVisitor = SignatureTypeBuilder(substitution) { type ->
+            arguments += when {
+                wildcard == EXTENDS && type is ClassType && type.name == "kotlin/Any" -> TypeArgument(null, UnknownType)
+                wildcard == EXTENDS -> TypeArgument(KmVariance.OUT, type)
+                wildcard == SUPER -> TypeArgument(KmVariance.IN, type)
+                else -> TypeArgument(KmVariance.INVARIANT, type)
+            }
+        }
+
+        override fun visitEnd() {
+            val type = classType()
+            onType(if (isSupertype && arguments.isEmpty() && outer == null) type.copy(isRaw = true) else type)
+        }
+
+        private fun classType(): ClassType = objectType(internalName).copy(arguments = arguments.toList(), outer = outer)
+
     }
 
     /**

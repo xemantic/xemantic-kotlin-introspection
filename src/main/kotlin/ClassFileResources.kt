@@ -43,3 +43,13 @@ internal fun ClassLoader.hasClassFile(binaryName: String): Boolean = try {
 }
 
 private fun classFileResource(binaryName: String): String = binaryName.replace('.', '/') + ".class"
+
+/**
+ * The JVM binary name, like `com.example.Outer${'$'}Nested`, of a metadata name, like `com/example/Outer.Nested`,
+ * the Kotlin class name of the metadata, where the nested classes are separated with `.`.
+ */
+internal fun binaryNameOf(metadataName: String): String {
+    val packageName = metadataName.substringBeforeLast('/', "")
+    val simpleName = metadataName.substringAfterLast('/').replace('.', '$')
+    return if (packageName.isEmpty()) simpleName else "${packageName.replace('/', '.')}.$simpleName"
+}
