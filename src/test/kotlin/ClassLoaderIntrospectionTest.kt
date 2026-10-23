@@ -1443,6 +1443,47 @@ class ClassLoaderIntrospectionTest {
         """.trimIndent()
     }
 
+    /**
+     * A class loader defining the nested classes of `DeprecatedNestedHolder` without serving their class files,
+     * like an in-memory class loader.
+     */
+    private fun unservedDeprecatedNestedClassLoader(): ClassLoader {
+        val root = isolatedTestFixturesCopy("unservedDeprecatedNested")
+        return object : URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader) {
+            override fun getResourceAsStream(name: String): InputStream? =
+                if ("DeprecatedNestedHolder$" in name) null else super.getResourceAsStream(name)
+        }
+    }
+
+    @Test
+    fun `should render deprecation of nested class whose class file is not served as a resource`() {
+        // given
+        val introspector = KotlinIntrospector(unservedDeprecatedNestedClassLoader())
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.DeprecatedNestedHolder")
+
+        // then - the hidden companion object is not listed either
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.DeprecatedNestedHolder [page 1/1]
+            class DeprecatedNestedHolder {
+                @Deprecated("Old") class Old
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve member of hidden companion object whose class file is not served as a resource`() {
+        // given
+        val introspector = KotlinIntrospector(unservedDeprecatedNestedClassLoader())
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.DeprecatedNestedHolder.create")
+
+        // then
+        assert(signature == null)
+    }
+
     @Test
     fun `should mark override of Java method taking dollar-named nested class without outer class and class file`() {
         // given

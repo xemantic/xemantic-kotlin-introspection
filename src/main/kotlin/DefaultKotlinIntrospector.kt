@@ -486,6 +486,12 @@ internal class DefaultKotlinIntrospector(
         // the flags reflected once, and only when the class file cannot be read, see reflectedClassFile
         val reflectedClassFile: ClassFile by lazy { reflectedClassFile(clazz) }
 
+        /**
+         * The deprecation of the class itself, read from its class file,
+         * or reflected, when the class file cannot be read, see [reflectedClassFile].
+         */
+        val classDeprecation: Deprecation? get() = (classFile ?: reflectedClassFile).classDeprecation
+
         // parsed once, and only when needed, as some classes are loaded only for the Java reflection
         val metadata: KotlinClassMetadata? by lazy {
             (if (clazz != null) clazz.getAnnotation(Metadata::class.java) else classFile?.metadata)
@@ -809,7 +815,7 @@ internal class DefaultKotlinIntrospector(
         val companionClass = findClassByBinaryName("${foundClass.binaryName}\$$name") ?: return null
         // a hidden companion object cannot be referred to, neither can its members
         val companion = companionClass.kmClass?.takeIf {
-            it.visibility.isApiIn(scopes) && companionClass.classFile?.isHiddenDeprecated != true
+            it.visibility.isApiIn(scopes) && companionClass.classDeprecation?.isHidden != true
         } ?: return null
         return ApiCompanion(companion, companionClass, scopes)
     }
@@ -821,7 +827,7 @@ internal class DefaultKotlinIntrospector(
     private fun formatCompanionHeader(kmClass: KmClass, companion: ApiCompanion, contextPackage: String): String {
         val companionName = kmClass.companionObject.takeIf { it != DEFAULT_COMPANION_NAME } ?: ""
         return formatClassHeader(
-            companion.kmClass, companionName, contextPackage, deprecation = companion.foundClass.classFile?.classDeprecation
+            companion.kmClass, companionName, contextPackage, deprecation = companion.foundClass.classDeprecation
         )
     }
 
@@ -1426,7 +1432,7 @@ internal class DefaultKotlinIntrospector(
 
         val header = formatClassHeader(
             kmClass, simpleClassName(kmClass.name), contextPackage, typeParameters, constructorDeclaration,
-            foundClass.classFile?.classDeprecation
+            foundClass.classDeprecation
         )
 
         // the parameters are the only members of an annotation class, listed without its extensions
@@ -1586,7 +1592,7 @@ internal class DefaultKotlinIntrospector(
     private fun formatListedClassHeader(listed: ListedClass, contextPackage: String): String =
         formatClassHeader(
             listed.kmClass, listed.name, contextPackage, typeParametersInScope(listed.kmClass),
-            deprecation = listed.foundClass.classFile?.classDeprecation
+            deprecation = listed.foundClass.classDeprecation
         )
 
     /**

@@ -25,3 +25,14 @@ class HiddenNestedHolder {
     @Deprecated("generated", level = DeprecationLevel.HIDDEN)
     object Hidden
 }
+
+// A deprecated nested class, and a companion object deprecated with the HIDDEN level,
+// whose class files a test does not serve as resources, judged then by reflection.
+class DeprecatedNestedHolder {
+    @Deprecated("Old")
+    class Old
+    @Deprecated("generated", level = DeprecationLevel.HIDDEN)
+    companion object {
+        fun create(): DeprecatedNestedHolder = DeprecatedNestedHolder()
+    }
+}
