@@ -644,9 +644,9 @@ internal class DefaultKotlinIntrospector(
         }
 
         val companionMembers = apiCompanionOf(kmClass, scopes, foundClass)?.let { companion ->
-            val signatures = companion.properties.filter { it.name == memberName }.map {
+            val signatures = companion.propertiesNamed(memberName).map {
                 formatCompanionProperty(it, companion, contextPackage)
-            } + companion.functions.filter { it.name == memberName }.map {
+            } + companion.functionsNamed(memberName).map {
                 formatCompanionFunction(it, companion, contextPackage)
             }
             if (signatures.isEmpty()) null else buildList {
@@ -679,9 +679,22 @@ internal class DefaultKotlinIntrospector(
          */
         val scopes: List<ClassScope> = outerScopes + kmClass.scope
 
-        val properties: List<KmProperty> = kmClass.properties.inApi(scopes, foundClass)
+        val properties: List<KmProperty> by lazy { propertiesNamed(null) }
 
-        val functions: List<KmFunction> = kmClass.functions.inApi(scopes, foundClass)
+        val functions: List<KmFunction> by lazy { functionsNamed(null) }
+
+        /**
+         * The [properties] named [name], or all of them, if `null`, filtered by name first,
+         * not to tell whether each of the others is hidden.
+         */
+        fun propertiesNamed(name: String?): List<KmProperty> =
+            kmClass.properties.filter { name == null || it.name == name }.inApi(scopes, foundClass)
+
+        /**
+         * The [functions] named [name], or all of them, like the [propertiesNamed].
+         */
+        fun functionsNamed(name: String?): List<KmFunction> =
+            kmClass.functions.filter { name == null || it.name == name }.inApi(scopes, foundClass)
 
     }
 
@@ -738,8 +751,7 @@ internal class DefaultKotlinIntrospector(
             format: (KmPackage, FoundClass, contextPackage: String) -> List<String>
         ): List<ListingItem.Extension> = kmPackages.flatMap { (kmPackage, foundClass) ->
             val binaryName = foundClass.binaryName
-            // the facade class name for the default package, which has no name, like in the extension index
-            val source = binaryName.substringBeforeLast('.')
+            val source = packageSourceOf(binaryName)
             format(kmPackage, foundClass, binaryName.substringBeforeLast('.', "")).map { ListingItem.Extension(source, it) }
         }
         val properties = signatures { kmPackage, foundClass, contextPackage ->
@@ -852,7 +864,7 @@ internal class DefaultKotlinIntrospector(
         // Only include extensions from kotlin.* packages for built-in types
         // The ones to import from an object, like Int.seconds of Duration.Companion, are shown outside class body
         val (objectExtensions, packageExtensions) = getExtensionsFor(kotlinName)
-            .filter { isPublicStdlibSource(it.sourceClass) }
+            .filter { isPublicKotlinPackageSource(it.sourceClass) }
             .partition { it.isObjectMember }
         packageExtensions.forEach { ext ->
             allMembers.add(Member(ext.function.name, formatFunction(ext.function, withReceiver = false)))
@@ -860,7 +872,7 @@ internal class DefaultKotlinIntrospector(
 
         // Extension properties on this exact type (shown inside class body)
         val (objectExtensionProperties, packageExtensionProperties) = getExtensionPropertiesFor(kotlinName)
-            .filter { isPublicStdlibSource(it.sourceClass) }
+            .filter { isPublicKotlinPackageSource(it.sourceClass) }
             .partition { it.isObjectMember }
         packageExtensionProperties.forEach { extProp ->
             allMembers.add(Member(extProp.property.name, formatProperty(extProp.property, withReceiver = false)))
@@ -870,11 +882,11 @@ internal class DefaultKotlinIntrospector(
         // Only include extensions from kotlin.* packages for built-in types
         val supertypeExtensions = objectExtensions + supertypeNames.flatMap { supertypeName ->
             getExtensionsFor(supertypeName)
-                .filter { isPublicStdlibSource(it.sourceClass) }
+                .filter { isPublicKotlinPackageSource(it.sourceClass) }
         }
         val supertypeExtensionProperties = objectExtensionProperties + supertypeNames.flatMap { supertypeName ->
             getExtensionPropertiesFor(supertypeName)
-                .filter { isPublicStdlibSource(it.sourceClass) }
+                .filter { isPublicKotlinPackageSource(it.sourceClass) }
         }
 
         return ClassListing(
@@ -965,14 +977,16 @@ internal class DefaultKotlinIntrospector(
     }
 
     /**
-     * Only public packages of the standard library are relevant for the built-in types,
-     * other libraries, like kotlin-reflect, also ship `kotlin.*` packages, for internal use,
-     * and public ones, see [kotlinReflectPackages], whose extensions would be listed with the built-in types
-     * only when kotlin-reflect is on the classpath, duplicating the ones of the standard library, like `KClass.cast()`.
+     * Whether the extensions declared in the [sourceClass] are shown with the built-in types:
+     * only the ones of the public `kotlin.*` packages, not the ones of the other libraries, like the test package,
+     * or the ones of the internal packages, like `kotlin.reflect.jvm.internal`.
+     * Such a package is not necessarily one of the standard library, it can also be of another library
+     * on the classpath, like `kotlin.reflect.full` of kotlin-reflect, whose extensions, like `KClass.memberFunctions`,
+     * can be called by the user code depending on it, even if some of them, like `KClass.cast()`,
+     * have the same signature as the ones of the standard library, imported from another package.
      */
-    private fun isPublicStdlibSource(sourceClass: String): Boolean =
-        sourceClass.startsWith("kotlin.") && !sourceClass.split('.').contains("internal") &&
-            kotlinReflectPackages.none { sourceClass.startsWith("$it.") }
+    private fun isPublicKotlinPackageSource(sourceClass: String): Boolean =
+        sourceClass.startsWith("kotlin.") && !sourceClass.split('.').contains("internal")
 
     /**
      * Resolve a member of a built-in type.
@@ -1005,17 +1019,17 @@ internal class DefaultKotlinIntrospector(
             }
         }
 
-        // The same extensions as the listing of the built-in type shows, the ones of the standard library
+        // The same extensions as the listing of the built-in type shows, the ones of the public kotlin.* packages
         // on the type and on its supertypes, but all with their receivers, under the `// from …` header,
         // while the listing renders the ones on the type itself, imported from a package, like `kotlin.text`,
         // within the class body, without the receiver
         val receiverNames = listOf(className) + builtinSupertypeNames(kClass, mutableKmClass)
         val extensions = renderExtensions(
             receiverNames.flatMap { getExtensionsFor(it) }.filter {
-                it.function.name == memberName && isPublicStdlibSource(it.sourceClass)
+                it.function.name == memberName && isPublicKotlinPackageSource(it.sourceClass)
             },
             receiverNames.flatMap { getExtensionPropertiesFor(it) }.filter {
-                it.property.name == memberName && isPublicStdlibSource(it.sourceClass)
+                it.property.name == memberName && isPublicKotlinPackageSource(it.sourceClass)
             },
             contextPackage = null
         )
@@ -2107,8 +2121,7 @@ internal class DefaultKotlinIntrospector(
             kmPackage.functions.filter { it.receiverParameterType != null && !classFile.isHidden(it) },
             kmPackage.properties.filter { it.receiverParameterType != null && !classFile.isHidden(it) },
             className,
-            // the facade class name for the default package, which has no name
-            source = className.substringBeforeLast('.'),
+            source = packageSourceOf(className),
             isObjectMember = false,
             funcIndex,
             propIndex
@@ -2615,9 +2628,11 @@ internal fun Map<String, List<IndexedExtensionProperty>>.sortedByNameAndSourceCl
 private const val TYPE_PARAMETER_RECEIVER_KEY = "<type parameter>"
 
 /**
- * The public packages of kotlin-reflect, which are not part of the standard library.
+ * The source to import the top-level declarations of the file facade class named [binaryName] from,
+ * shown in the `// from …` header: its package,
+ * or the facade class name for the default package, which has no name.
  */
-private val kotlinReflectPackages = listOf("kotlin.reflect.full", "kotlin.reflect.jvm")
+private fun packageSourceOf(binaryName: String): String = binaryName.substringBeforeLast('.')
 
 private val runtimeFunctionTypeRegex = Regex("kotlin/(reflect/K)?Function\\d+")
 

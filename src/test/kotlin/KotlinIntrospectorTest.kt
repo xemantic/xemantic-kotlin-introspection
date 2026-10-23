@@ -4135,23 +4135,36 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should resolve extension of built-in type only from the standard library, not from kotlin-reflect`() {
-        // both kotlin-reflect and the standard library declare KClass.cast,
-        // the kotlin.reflect.full one is not listed with KClass, depending on kotlin-reflect being on the classpath
+    fun `should resolve same-named extensions as class member grouped by the package to import them from`() {
+        // both the standard library and kotlin-reflect declare KClass.cast, two functions imported differently
         resolver.resolve(
             "kotlin.reflect.KClass.cast"
         ) sameAsKotlin """
             // kotlin.reflect.KClass.cast [page 1/1]
             // from kotlin.reflect
             fun <T : Any> KClass<T>.cast(value: Any?): T
+            // from kotlin.reflect.full
+            fun <T : Any> KClass<T>.cast(value: Any?): T
         """.trimIndent()
     }
 
     @Test
-    fun `should not list extensions of built-in type from kotlin-reflect`() {
+    fun `should resolve extension of built-in type from public kotlin package of another library as its member`() {
+        // kotlin-reflect, a library the user depends on, extends KClass in kotlin.reflect.full
+        resolver.resolve(
+            "kotlin.reflect.KClass.memberFunctions"
+        ) sameAsKotlin """
+            // kotlin.reflect.KClass.memberFunctions [page 1/1]
+            // from kotlin.reflect.full
+            val KClass<*>.memberFunctions: Collection<KFunction<*>>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should list extensions of built-in type from public kotlin package of another library`() {
         resolver.resolve("kotlin.reflect.KClass", pageSize = 10000) should {
-            have(!contains("// from kotlin.reflect.full"))
-            have(!contains("// from kotlin.reflect.jvm"))
+            have(lines().any { "val memberFunctions: Collection<KFunction<*>>" in it })
+            have(lines().any { "val companionObject: KClass<*>?" in it })
         }
     }
 
