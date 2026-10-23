@@ -103,6 +103,10 @@ com.example.AnnotationTestClass
   the protected ones only of an open or abstract class, or of the companion object of one,
   and never the ones deprecated with the `HIDDEN` level,
   or with `@DeprecatedSinceKotlin(hiddenSince = …)` not newer than the standard library of the class loader.
+  The exception is a property declared by a primary constructor parameter of a data class, or a value class,
+  which cannot be declared without it,
+  so it is rendered with its visibility, like `private val b: Int`,
+  or its deprecation, like `@Deprecated("Replaced", level = DeprecationLevel.HIDDEN) val a: Int`.
   The same rule applies to the setter of a `var`:
   when it cannot be called, like with `private set`, or `@set:Deprecated(level = HIDDEN)`,
   the property is rendered as a `val`,
@@ -117,6 +121,41 @@ com.example.AnnotationTestClass
   An override of a `var` is the exception, as a `val` cannot override a `var`:
   it stays a `var`, with its setter rendered with its actual visibility,
   like `protected set` in a final class, even though the setter cannot be called there.
+* A class, a constructor, a function, or a property deprecated with the `WARNING` or the `ERROR` level,
+  which can still be referred to,
+  is rendered with its `@Deprecated` annotation inline, telling what to use instead, like:
+
+  ```kotlin
+  @Deprecated("Use uppercase() instead.", ReplaceWith("uppercase(Locale.getDefault())"), level = DeprecationLevel.ERROR) inline fun String.toUpperCase(): String
+  ```
+
+  The level is the one in effect for the standard library of the class loader,
+  also when told by `@DeprecatedSinceKotlin`, as for the declarations of the standard library,
+  and it is rendered unless it is the default `WARNING`.
+  To keep the signature compact,
+  only the first line of the message is rendered, followed by `…` if there are more,
+  and only the expression of `ReplaceWith`, without its imports.
+* A class header without a constructor, like `class Foo`, means the implicit public constructor without parameters,
+  as in Kotlin,
+  so an explicit one is rendered whenever it differs,
+  like `class Foo()` next to the secondary constructors listed in the class body,
+  or `open class Foo protected constructor()`, callable only from a subclass.
+  A class without any constructor callable from the user code,
+  which can neither be instantiated, nor subclassed there,
+  is marked with `private constructor()`, like `open class Base64 private constructor()`,
+  whatever the actual visibility and parameters of its constructors,
+  while the properties declared by its primary constructor are rendered in the class body.
+  A data class, or a value class, cannot be declared without the parameters of its primary constructor,
+  each declaring a property,
+  so they are rendered after its `private constructor`, with the actual visibility of their properties,
+  like `@JvmInline value class Duration private constructor(private val rawValue: Long)`.
+  An object, an enum class, a sealed class, an interface, or an annotation class is not marked,
+  as its kind already tells how it can be created, if at all.
+  The built-in types rendered through `kotlin-reflect`, like `kotlin.Int`, do not follow this rule yet,
+  and are rendered without constructors.
+  Neither do the headers of the nested classes and the sealed subclasses listed in their outer class,
+  which are only references, rendered without constructors,
+  while resolving such a class by its own name renders its constructors.
 * The whole classpath visible to the given class loader is scanned on creation, which takes a while,
   so the instance should be created once and reused.
   The scan can be disabled with `KotlinIntrospector(scanEntireClasspath = false)`,

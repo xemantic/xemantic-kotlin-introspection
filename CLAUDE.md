@@ -66,6 +66,9 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 - In a function type the `suspend` modifier precedes the context parameters: `suspend context(Ctx) () -> Unit` —
   the `context(Ctx) suspend () -> Unit` order, which the GitHub issues used, does not compile.
 
+- kotlin-reflect reports a synthetic `@Deprecated("This member is not fully supported by Kotlin compiler, …")` on the JDK members of the built-in types newer than the mapped ones, like `String.strip()` or `describeConstable()`,
+  mirroring the compiler warning, so the built-in listings render it as a deprecation, though no source declares it.
+
 ## Anti-patterns to avoid
 
 - Do not add content to this file that is already discoverable by reading the source or build scripts — that inflates context without adding signal, reducing AI agent task success rates (see [arxiv 2602.11988](https://arxiv.org/abs/2602.11988)).

@@ -740,7 +740,7 @@ class ClassLoaderIntrospectionTest {
         signature sameAsKotlin """
             // com.xemantic.kotlin.introspection.isolated.HiddenSinceHolder [page 1/1]
             class HiddenSinceHolder {
-                val hiddenSinceProperty: Int
+                @Deprecated("replaced") val hiddenSinceProperty: Int
                 fun hiddenSinceFuture(): Int
             }
         """.trimIndent()
@@ -1242,8 +1242,8 @@ class ClassLoaderIntrospectionTest {
         greeter sameAsKotlin """
             // com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsGreeter [page 1/1]
             interface DefaultImplsGreeter : DefaultImplsBase {
-                override val label: String
-                override fun greet(name: String): String
+                open override val label: String
+                open override fun greet(name: String): String
             }
         """.trimIndent()
         processor sameAsKotlin """
@@ -1308,11 +1308,12 @@ class ClassLoaderIntrospectionTest {
         val signature = introspector.resolve("com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsOverloader")
 
         // then
-        // the JVM methods of the interface itself still tell the overload as shrunk
+        // the JVM methods of the interface itself still tell the overload as shrunk,
+        // an override with a default body, which a subinterface can still override
         signature sameAsKotlin """
             // com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsOverloader [page 1/1]
             interface DefaultImplsOverloader : DefaultImplsBase {
-                override fun greet(times: Int): String
+                open override fun greet(times: Int): String
             }
         """.trimIndent()
     }
@@ -1440,6 +1441,47 @@ class ClassLoaderIntrospectionTest {
                 class Visible
             }
         """.trimIndent()
+    }
+
+    /**
+     * A class loader defining the nested classes of `DeprecatedNestedHolder` without serving their class files,
+     * like an in-memory class loader.
+     */
+    private fun unservedDeprecatedNestedClassLoader(): ClassLoader {
+        val root = isolatedTestFixturesCopy("unservedDeprecatedNested")
+        return object : URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader) {
+            override fun getResourceAsStream(name: String): InputStream? =
+                if ("DeprecatedNestedHolder$" in name) null else super.getResourceAsStream(name)
+        }
+    }
+
+    @Test
+    fun `should render deprecation of nested class whose class file is not served as a resource`() {
+        // given
+        val introspector = KotlinIntrospector(unservedDeprecatedNestedClassLoader())
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.DeprecatedNestedHolder")
+
+        // then - the hidden companion object is not listed either
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.DeprecatedNestedHolder [page 1/1]
+            class DeprecatedNestedHolder {
+                @Deprecated("Old") class Old
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve member of hidden companion object whose class file is not served as a resource`() {
+        // given
+        val introspector = KotlinIntrospector(unservedDeprecatedNestedClassLoader())
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.DeprecatedNestedHolder.create")
+
+        // then
+        assert(signature == null)
     }
 
     @Test

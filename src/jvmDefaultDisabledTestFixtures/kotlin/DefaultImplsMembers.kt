@@ -45,3 +45,14 @@ interface DefaultImplsHiddenProperties {
     @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
     val hiddenWithGetter: Int get() = 1
 }
+
+interface DefaultImplsDeprecatedProperties {
+    @Deprecated("Abstract")
+    val abstractProperty: Int
+    @Deprecated("With getter")
+    val propertyWithGetter: Int get() = 1
+    // the property is hidden in the DefaultImpls, while its getter is only deprecated in the interface
+    @Deprecated("Replaced", level = DeprecationLevel.HIDDEN)
+    @get:Deprecated("Getter")
+    val hiddenWithDeprecatedGetter: Int get() = 1
+}

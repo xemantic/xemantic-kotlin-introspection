@@ -726,6 +726,23 @@ enum class PlainEnum : EnumOverridable {
     final override fun g() {}
 }
 
+enum class PlainConstructorOverrideEnum(final override val u: UInt) : HasU {
+    A(1u)
+}
+
+// An interface overriding a member with a default body, either keeping a default body, or making it abstract again
+interface DefaultBodyBase {
+    fun f() {}
+}
+
+interface DefaultBodyOverride : DefaultBodyBase {
+    override fun f() {}
+}
+
+interface ReabstractedOverride : DefaultBodyBase {
+    override fun f()
+}
+
 // Sealed classes, objects and companion objects as owners of overrides
 sealed class SealedModalityOverrides : ModalityBase() {
     abstract override fun abstracted()

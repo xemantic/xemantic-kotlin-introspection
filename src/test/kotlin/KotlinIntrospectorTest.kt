@@ -39,8 +39,8 @@ class KotlinIntrospectorTest {
             // kotlin.String [page 1/41]
             class String : Comparable<String>, CharSequence {
                 inline fun byteInputStream(charset: java.nio.charset.Charset = …): java.io.ByteArrayInputStream
-                fun capitalize(): String
-                fun capitalize(locale: java.util.Locale): String
+                @Deprecated("Use replaceFirstChar instead.", ReplaceWith("replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }")) fun capitalize(): String
+                @Deprecated("Use replaceFirstChar instead.", ReplaceWith("replaceFirstChar { if (it.isLowerCase()) it.titlecase(locale) else it.toString() }")) fun capitalize(locale: java.util.Locale): String
                 fun chars(): java.util.stream.IntStream
                 inline fun codePointAt(index: Int): Int
                 inline fun codePointBefore(index: Int): Int
@@ -63,9 +63,9 @@ class KotlinIntrospectorTest {
             class String : Comparable<String>, CharSequence {
                 inline fun contentEquals(charSequence: CharSequence): Boolean
                 inline fun contentEquals(stringBuilder: java.lang.StringBuffer): Boolean
-                fun decapitalize(): String
-                fun decapitalize(locale: java.util.Locale): String
-                fun describeConstable(): java.util.Optional<String>
+                @Deprecated("Use replaceFirstChar instead.", ReplaceWith("replaceFirstChar { it.lowercase(Locale.getDefault()) }")) fun decapitalize(): String
+                @Deprecated("Use replaceFirstChar instead.", ReplaceWith("replaceFirstChar { it.lowercase(locale) }")) fun decapitalize(locale: java.util.Locale): String
+                @Deprecated("This member is not fully supported by Kotlin compiler, so it may be absent or have different signature in next major version") fun describeConstable(): java.util.Optional<String>
                 fun drop(n: Int): String
                 fun dropLast(n: Int): String
                 inline fun dropLastWhile(predicate: (Char) -> Boolean): String
@@ -150,8 +150,8 @@ class KotlinIntrospectorTest {
             // kotlin.String [page 1/1]
             class String : Comparable<String>, CharSequence {
                 inline fun byteInputStream(charset: java.nio.charset.Charset = …): java.io.ByteArrayInputStream
-                fun capitalize(): String
-                fun capitalize(locale: java.util.Locale): String
+                @Deprecated("Use replaceFirstChar instead.", ReplaceWith("replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }")) fun capitalize(): String
+                @Deprecated("Use replaceFirstChar instead.", ReplaceWith("replaceFirstChar { if (it.isLowerCase()) it.titlecase(locale) else it.toString() }")) fun capitalize(locale: java.util.Locale): String
                 fun chars(): java.util.stream.IntStream
                 inline fun codePointAt(index: Int): Int
                 inline fun codePointBefore(index: Int): Int
@@ -161,9 +161,9 @@ class KotlinIntrospectorTest {
                 fun compareTo(other: String, ignoreCase: Boolean = …): Int
                 inline fun contentEquals(charSequence: CharSequence): Boolean
                 inline fun contentEquals(stringBuilder: java.lang.StringBuffer): Boolean
-                fun decapitalize(): String
-                fun decapitalize(locale: java.util.Locale): String
-                fun describeConstable(): java.util.Optional<String>
+                @Deprecated("Use replaceFirstChar instead.", ReplaceWith("replaceFirstChar { it.lowercase(Locale.getDefault()) }")) fun decapitalize(): String
+                @Deprecated("Use replaceFirstChar instead.", ReplaceWith("replaceFirstChar { it.lowercase(locale) }")) fun decapitalize(locale: java.util.Locale): String
+                @Deprecated("This member is not fully supported by Kotlin compiler, so it may be absent or have different signature in next major version") fun describeConstable(): java.util.Optional<String>
                 fun drop(n: Int): String
                 fun dropLast(n: Int): String
                 inline fun dropLastWhile(predicate: (Char) -> Boolean): String
@@ -234,12 +234,12 @@ class KotlinIntrospectorTest {
                 inline fun slice(indices: Iterable<Int>): String
                 fun startsWith(prefix: String, ignoreCase: Boolean = …): Boolean
                 fun startsWith(prefix: String, startIndex: Int, ignoreCase: Boolean = …): Boolean
-                fun strip(): String
-                fun stripIndent(): String
-                fun stripLeading(): String
-                fun stripTrailing(): String
+                @Deprecated("This member is not fully supported by Kotlin compiler, so it may be absent or have different signature in next major version") fun strip(): String
+                @Deprecated("This member is not fully supported by Kotlin compiler, so it may be absent or have different signature in next major version") fun stripIndent(): String
+                @Deprecated("This member is not fully supported by Kotlin compiler, so it may be absent or have different signature in next major version") fun stripLeading(): String
+                @Deprecated("This member is not fully supported by Kotlin compiler, so it may be absent or have different signature in next major version") fun stripTrailing(): String
                 override fun subSequence(startIndex: Int, endIndex: Int): CharSequence
-                inline fun subSequence(start: Int, end: Int): CharSequence
+                @Deprecated("Use parameters named startIndex and endIndex.", ReplaceWith("subSequence(startIndex = start, endIndex = end)"), level = DeprecationLevel.ERROR) inline fun subSequence(start: Int, end: Int): CharSequence
                 inline fun substring(startIndex: Int): String
                 inline fun substring(startIndex: Int, endIndex: Int): String
                 fun substring(range: IntRange): String
@@ -287,8 +287,8 @@ class KotlinIntrospectorTest {
                 inline fun toLong(radix: Int): Long
                 fun toLongOrNull(): Long?
                 fun toLongOrNull(radix: Int): Long?
-                inline fun toLowerCase(): String
-                inline fun toLowerCase(locale: java.util.Locale): String
+                @Deprecated("Use lowercase() instead.", ReplaceWith("lowercase(Locale.getDefault())"), level = DeprecationLevel.ERROR) inline fun toLowerCase(): String
+                @Deprecated("Use lowercase() instead.", ReplaceWith("lowercase(locale)"), level = DeprecationLevel.ERROR) inline fun toLowerCase(locale: java.util.Locale): String
                 inline fun toPattern(flags: Int = …): java.util.regex.Pattern
                 inline fun toRegex(): Regex
                 inline fun toRegex(option: RegexOption): Regex
@@ -314,9 +314,9 @@ class KotlinIntrospectorTest {
                 fun toUShort(radix: Int): UShort
                 fun toUShortOrNull(): UShort?
                 fun toUShortOrNull(radix: Int): UShort?
-                inline fun toUpperCase(): String
-                inline fun toUpperCase(locale: java.util.Locale): String
-                fun translateEscapes(): String
+                @Deprecated("Use uppercase() instead.", ReplaceWith("uppercase(Locale.getDefault())"), level = DeprecationLevel.ERROR) inline fun toUpperCase(): String
+                @Deprecated("Use uppercase() instead.", ReplaceWith("uppercase(locale)"), level = DeprecationLevel.ERROR) inline fun toUpperCase(locale: java.util.Locale): String
+                @Deprecated("This member is not fully supported by Kotlin compiler, so it may be absent or have different signature in next major version") fun translateEscapes(): String
                 inline fun trim(predicate: (Char) -> Boolean): String
                 fun trim(vararg chars: Char): String
                 inline fun trim(): String
@@ -521,8 +521,8 @@ class KotlinIntrospectorTest {
             fun CharSequence.subSequence(range: IntRange): CharSequence
             inline fun CharSequence.substring(startIndex: Int, endIndex: Int = …): String
             fun CharSequence.substring(range: IntRange): String
-            inline fun CharSequence.sumBy(selector: (Char) -> Int): Int
-            inline fun CharSequence.sumByDouble(selector: (Char) -> Double): Double
+            @Deprecated("Use sumOf instead.", ReplaceWith("this.sumOf(selector)")) inline fun CharSequence.sumBy(selector: (Char) -> Int): Int
+            @Deprecated("Use sumOf instead.", ReplaceWith("this.sumOf(selector)")) inline fun CharSequence.sumByDouble(selector: (Char) -> Double): Double
             inline fun CharSequence.sumOf(selector: (Char) -> java.math.BigDecimal): java.math.BigDecimal
             inline fun CharSequence.sumOf(selector: (Char) -> java.math.BigInteger): java.math.BigInteger
             inline fun CharSequence.sumOf(selector: (Char) -> Double): Double
@@ -1494,8 +1494,8 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsGreeter [page 1/1]
             interface DefaultImplsGreeter : DefaultImplsBase {
-                override val label: String
-                override fun greet(name: String): String
+                open override val label: String
+                open override fun greet(name: String): String
             }
         """.trimIndent()
     }
@@ -1869,8 +1869,8 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should keep final modality of override in enum class without entry bodies`() {
-        // the metadata does not tell whether the entries have bodies
+    fun `should not mark override in enum class without entry bodies as final`() {
+        // the metadata does not tell whether the entries have bodies, but the JVM class is final without them
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.PlainEnum"
         ) sameAsKotlin """
@@ -1879,7 +1879,45 @@ class KotlinIntrospectorTest {
                 A,
                 B;
                 override fun f(): Int
-                final override fun g()
+                override fun g()
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not mark constructor property override in enum class without entry bodies as final`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.PlainConstructorOverrideEnum"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PlainConstructorOverrideEnum [page 1/1]
+            enum class PlainConstructorOverrideEnum(override val u: UInt) : HasU {
+                A
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark override with default body in interface as open`() {
+        // like any other member of an interface with a default body, unlike an abstract one
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.DefaultBodyOverride"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DefaultBodyOverride [page 1/1]
+            interface DefaultBodyOverride : DefaultBodyBase {
+                open override fun f()
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render abstract override of member with default body in interface without modality`() {
+        // abstract again, which is implicit, like for any other member of an interface without a default body
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ReabstractedOverride"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ReabstractedOverride [page 1/1]
+            interface ReabstractedOverride : DefaultBodyBase {
+                override fun f()
             }
         """.trimIndent()
     }
@@ -3325,7 +3363,7 @@ class KotlinIntrospectorTest {
     @Test
     fun `should resolve standard library value class`() {
         resolver.resolve("kotlin.time.Duration", pageSize = 1) should {
-            have(lines()[1] == "@JvmInline value class Duration : Comparable<Duration> {")
+            have(lines()[1] == "@JvmInline value class Duration private constructor(private val rawValue: Long) : Comparable<Duration> {")
         }
     }
 
@@ -3777,7 +3815,7 @@ class KotlinIntrospectorTest {
             "com.xemantic.kotlin.introspection.test.PrivateConstructorHolder"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.PrivateConstructorHolder [page 1/1]
-            class PrivateConstructorHolder {
+            class PrivateConstructorHolder private constructor() {
                 val id: Int
                 val label: String
                 companion object {
@@ -3793,7 +3831,7 @@ class KotlinIntrospectorTest {
             "com.xemantic.kotlin.introspection.test.InternalConstructorHolder"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.InternalConstructorHolder [page 1/1]
-            class InternalConstructorHolder {
+            class InternalConstructorHolder private constructor() {
                 val id: Int
             }
         """.trimIndent()
@@ -3808,6 +3846,133 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.test.ProtectedConstructorHolder [page 1/1]
             abstract class ProtectedConstructorHolder protected constructor(val id: Int)
         """.trimIndent()
+    }
+
+    @Test
+    fun `should mark class with only internal secondary constructor as not constructible`() {
+        // a bare class header would read as having the implicit public constructor without parameters
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InternalSecondaryConstructorOnly"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InternalSecondaryConstructorOnly [page 1/1]
+            class InternalSecondaryConstructorOnly private constructor() {
+                val x: Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark abstract class with internal constructor as not subclassable`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InternalConstructorAbstractClass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InternalConstructorAbstractClass [page 1/1]
+            abstract class InternalConstructorAbstractClass private constructor() {
+                abstract fun f()
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark open class with private constructor as not constructible`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.PrivateConstructorOpenClass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PrivateConstructorOpenClass [page 1/1]
+            open class PrivateConstructorOpenClass private constructor() {
+                companion object {
+                    val instance: PrivateConstructorOpenClass
+                }
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark final class with protected constructor as not constructible`() {
+        // no subclass can call it
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ProtectedConstructorFinalClass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ProtectedConstructorFinalClass [page 1/1]
+            class ProtectedConstructorFinalClass private constructor()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark inner class with private constructor as not constructible`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InnerPrivateConstructorOuter.Inner"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InnerPrivateConstructorOuter.Inner [page 1/1]
+            inner class Inner private constructor()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render protected constructor without parameters of open class`() {
+        // without it, the class would read as having the implicit public constructor
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ProtectedEmptyConstructorOpenClass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ProtectedEmptyConstructorOpenClass [page 1/1]
+            open class ProtectedEmptyConstructorOpenClass protected constructor()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render protected constructor without parameters of abstract class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ProtectedEmptyConstructorAbstractClass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ProtectedEmptyConstructorAbstractClass [page 1/1]
+            abstract class ProtectedEmptyConstructorAbstractClass protected constructor()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render parameters of value class constructor which cannot be called`() {
+        // a value class cannot be declared without its single parameter
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InternalConstructorValueClass", pageSize = 1
+        ) should {
+            have(lines()[1] == "@JvmInline value class InternalConstructorValueClass private constructor(val raw: Long) {")
+        }
+    }
+
+    @Test
+    fun `should render parameters of data class constructor which cannot be called`() {
+        // a data class cannot be declared without parameters, each declaring a property, also a private one
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.PrivateConstructorDataClass", pageSize = 1
+        ) should {
+            have(lines()[1] == "data class PrivateConstructorDataClass private constructor(val a: Int, private val b: Int) {")
+        }
+    }
+
+    @Test
+    fun `should render private property of data class constructor`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.PrivatePropertyDataClass", pageSize = 1
+        ) should {
+            have(lines()[1] == "data class PrivatePropertyDataClass(val a: Int, private val b: Int) {")
+        }
+    }
+
+    @Test
+    fun `should not render constructor of data object`() {
+        // an object cannot have a constructor, unlike a data class
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.SealedTestClass.SubDataObject", pageSize = 1
+        ) should {
+            have(lines()[1].startsWith("data object SubDataObject : SealedTestClass"))
+        }
+    }
+
+    @Test
+    fun `should mark stdlib class with private constructor as not constructible`() {
+        resolver.resolve("kotlin.io.encoding.Base64") should {
+            have(lines()[1] == "open class Base64 private constructor() {")
+        }
     }
 
     @Test
@@ -5264,7 +5429,7 @@ class KotlinIntrospectorTest {
             class HiddenDeprecationTarget(val value: Int) {
                 constructor(value: Long)
                 fun member(): Int
-                fun errorMember(): Int
+                @Deprecated("replaced", level = DeprecationLevel.ERROR) fun errorMember(): Int
                 companion object {
                     fun create(): HiddenDeprecationTarget
                 }
@@ -5277,12 +5442,270 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should render deprecation of class members, constructors and extensions`() {
+        // the declarations deprecated with the ERROR level can still be referred to, but not called
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.DeprecationTarget"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DeprecationTarget [page 1/1]
+            class DeprecationTarget @Deprecated("Use create()") constructor(val value: Int) {
+                @Deprecated("No \"replacement\" for \${'$'}value") val deprecatedProperty: Int
+                @Deprecated("Getter") val deprecatedGetter: Int
+                @Deprecated("Use the Int constructor", level = DeprecationLevel.ERROR) constructor(value: String)
+                @Deprecated("Use newMember()", ReplaceWith("newMember()")) fun warningMember(): Int
+                @Deprecated("Use newMember()", ReplaceWith("newMember()"), level = DeprecationLevel.ERROR) fun errorMember(): Int
+                fun newMember(): Int
+                companion object {
+                    @Deprecated("Use the constructor") fun create(): DeprecationTarget
+                }
+            }
+            // from com.xemantic.kotlin.introspection.test
+            @Deprecated("Gone", level = DeprecationLevel.ERROR) val DeprecationTarget.deprecatedExtensionProperty: Int
+            @Deprecated("Use newMember()", ReplaceWith("newMember()")) fun DeprecationTarget.deprecatedExtension(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render deprecation of class and nested class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.DeprecatedClass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DeprecatedClass [page 1/1]
+            @Deprecated("Use DeprecationTarget instead", ReplaceWith("DeprecationTarget")) class DeprecatedClass {
+                @Deprecated("Nested in deprecated") class Nested
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render only first line of deprecation message`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.MultilineDeprecationTarget.f"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.MultilineDeprecationTarget.f [page 1/1]
+            @Deprecated("First line. …") fun f()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render first non-blank line of deprecation message`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.MultilineDeprecationTarget.g"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.MultilineDeprecationTarget.g [page 1/1]
+            @Deprecated("Use f() instead.") fun g()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not list property with getter deprecated with hidden level`() {
+        // even though the property itself is deprecated with the WARNING level
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenGetterHolder"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenGetterHolder [page 1/1]
+            class HiddenGetterHolder {
+                val visible: Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not list companion object deprecated with hidden level`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenCompanionHolder"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenCompanionHolder [page 1/1]
+            class HiddenCompanionHolder {
+                fun f()
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve member of companion object deprecated with hidden level through outer class`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenCompanionHolder.create") == null)
+    }
+
+    @Test
+    fun `should render deprecation of companion object member found by outer class member lookup`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.DeprecationTarget.create"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DeprecationTarget.create [page 1/1]
+            companion object {
+                @Deprecated("Use the constructor") fun create(): DeprecationTarget
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render deprecation of companion object declaration found by outer class member lookup`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.DeprecatedCompanionHolder.create"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DeprecatedCompanionHolder.create [page 1/1]
+            @Deprecated("Use the constructor") companion object {
+                fun create(): DeprecatedCompanionHolder
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render deprecation of extension property found by file facade member lookup`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.TestDeprecationKt.deprecatedExtensionProperty"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.TestDeprecationKt.deprecatedExtensionProperty [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            @Deprecated("Gone", level = DeprecationLevel.ERROR) val DeprecationTarget.deprecatedExtensionProperty: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render deprecation of extension found by outer class member lookup`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.DeprecationTarget.deprecatedExtension"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DeprecationTarget.deprecatedExtension [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            @Deprecated("Use newMember()", ReplaceWith("newMember()")) fun DeprecationTarget.deprecatedExtension(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not render hidden deprecation of class resolved directly`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenTopLevelHolder"
+        ) should {
+            have(lines()[1] == "class HiddenTopLevelHolder {")
+        }
+    }
+
+    @Test
+    fun `should not render deprecation of enum class constructor`() {
+        // it is always private, called only by the entries
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.DeprecatedConstructorEnum"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DeprecatedConstructorEnum [page 1/1]
+            enum class DeprecatedConstructorEnum(val v: Int) {
+                A
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render deprecation of property declared in primary constructor`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.DeprecatedConstructorProperty"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DeprecatedConstructorProperty [page 1/1]
+            class DeprecatedConstructorProperty(@Deprecated("Use baz", level = DeprecationLevel.ERROR) val bar: Int) {
+                val baz: Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render hidden property of data class constructor with its deprecation`() {
+        // the parameter must declare a property, which cannot be used
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenPropertyDataClass", pageSize = 1
+        ) should {
+            have(
+                lines()[1] == "data class HiddenPropertyDataClass(" +
+                    "@Deprecated(\"Replaced\", level = DeprecationLevel.HIDDEN) val a: Int, val b: Int) {"
+            )
+        }
+    }
+
+    @Test
+    fun `should render hidden property of value class constructor with its deprecation`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenPropertyValueClass", pageSize = 1
+        ) should {
+            have(
+                lines()[1] == "@JvmInline value class HiddenPropertyValueClass(" +
+                    "@Deprecated(\"Replaced\", level = DeprecationLevel.HIDDEN) val raw: Int) {"
+            )
+        }
+    }
+
+    @Test
+    fun `should resolve deprecated member`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.DeprecationTarget.errorMember"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DeprecationTarget.errorMember [page 1/1]
+            @Deprecated("Use newMember()", ReplaceWith("newMember()"), level = DeprecationLevel.ERROR) fun errorMember(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve deprecated top-level function`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.TestDeprecationKt.deprecationTopLevel"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.TestDeprecationKt.deprecationTopLevel [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            @Deprecated("Use deprecationTopLevel(value)", ReplaceWith("deprecationTopLevel(0)")) fun deprecationTopLevel(): Int
+            fun deprecationTopLevel(value: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render deprecation of interface properties`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.DeprecationInterface"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DeprecationInterface [page 1/1]
+            interface DeprecationInterface {
+                @Deprecated("Abstract") val abstractProperty: Int
+                @Deprecated("With getter") open val propertyWithGetter: Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render deprecation of interface properties compiled without jvm default`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsDeprecatedProperties"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsDeprecatedProperties [page 1/1]
+            interface DefaultImplsDeprecatedProperties {
+                @Deprecated("Abstract") val abstractProperty: Int
+                @Deprecated("With getter") open val propertyWithGetter: Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render deprecation level of stdlib extension deprecated since Kotlin version`() {
+        // @DeprecatedSinceKotlin(warningSince = "1.5", errorSince = "2.1") tells the level for the stdlib of the classpath
+        resolver.resolve("kotlin.String.toUpperCase") sameAsKotlin """
+            // kotlin.String.toUpperCase [page 1/1]
+            // from kotlin.text
+            @Deprecated("Use uppercase() instead.", ReplaceWith("uppercase(Locale.getDefault())"), level = DeprecationLevel.ERROR) inline fun String.toUpperCase(): String
+            @Deprecated("Use uppercase() instead.", ReplaceWith("uppercase(locale)"), level = DeprecationLevel.ERROR) inline fun String.toUpperCase(locale: java.util.Locale): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render deprecation of built-in member`() {
+        resolver.resolve("kotlin.Long.toChar") sameAsKotlin """
+            // kotlin.Long.toChar [page 1/1]
+            @Deprecated("Direct conversion to Char is deprecated. Use toInt().toChar() or Char constructor instead.", ReplaceWith("this.toInt().toChar()"), level = DeprecationLevel.ERROR) override fun toChar(): Char
+        """.trimIndent()
+    }
+
+    @Test
     fun `should not render primary constructor deprecated with hidden level`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.HiddenOnlyConstructor"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.HiddenOnlyConstructor [page 1/1]
-            class HiddenOnlyConstructor {
+            class HiddenOnlyConstructor private constructor() {
                 val a: Int
             }
         """.trimIndent()
@@ -5388,7 +5811,7 @@ class KotlinIntrospectorTest {
     fun `should resolve built-in type with members deprecated without explicit level`() {
         // kotlin-reflect cannot tell the default level of the @Deprecated of the built-in Long.toChar()
         resolver.resolve("kotlin.Long", pageSize = 10000) should {
-            have("    override fun toChar(): Char" in lines())
+            have(lines().any { it.endsWith(" override fun toChar(): Char") })
         }
     }
 
@@ -5396,7 +5819,7 @@ class KotlinIntrospectorTest {
     fun `should resolve member of built-in type deprecated without explicit level`() {
         resolver.resolve("kotlin.Number.toChar") sameAsKotlin """
             // kotlin.Number.toChar [page 1/1]
-            fun toChar(): Char
+            @Deprecated("Direct conversion to Char is deprecated. Use toInt().toChar() or Char constructor instead. …", ReplaceWith("this.toInt().toChar()"), level = DeprecationLevel.ERROR) fun toChar(): Char
         """.trimIndent()
     }
 
