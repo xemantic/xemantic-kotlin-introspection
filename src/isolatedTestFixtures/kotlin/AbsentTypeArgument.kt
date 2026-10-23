@@ -180,6 +180,12 @@ sealed interface StrippedSealed {
     class Stripped : StrippedSealed
 }
 
+// tests leave out the class file of a subclass named like a hard keyword, or strip its metadata
+sealed interface KeywordSubclassSealed {
+    class Kept : KeywordSubclassSealed
+    class `in` : KeywordSubclassSealed
+}
+
 // tests leave the class file of the outer class out
 class MissingOuter {
     class Nested {

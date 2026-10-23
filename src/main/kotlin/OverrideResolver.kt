@@ -1723,29 +1723,6 @@ internal class OverrideResolver(
             "void" to "kotlin/Unit"
         )
 
-        /**
-         * The Kotlin class name, like `kotlin/collections/Map.Entry`, of a fully qualified Kotlin name of a built-in type,
-         * whose package segments start with a lowercase letter.
-         */
-        fun kotlinClassName(qualifiedName: String): String {
-            val segments = qualifiedName.split('.')
-            val packageSize = segments.indexOfFirst { it.first().isUpperCase() }.coerceAtLeast(0)
-            return kotlinClassName(
-                segments.take(packageSize).joinToString("."),
-                segments.drop(packageSize).joinToString(".")
-            )
-        }
-
-        fun kotlinClassName(javaClass: Class<*>): String =
-            kotlinClassName(javaClass.packageName, javaClass.nestedClassName())
-
-        /**
-         * The Kotlin class name, like `java/util/Map.Entry`, of the [packageName] and the [name] of a class within it,
-         * where the nested classes are separated with `.`.
-         */
-        fun kotlinClassName(packageName: String, name: String): String =
-            if (packageName.isEmpty()) name else "${packageName.replace('.', '/')}/$name"
-
     }
 
 }
@@ -1805,3 +1782,26 @@ private fun assumedNestedClassName(simpleBinaryName: String): String =
  * and followed by any character.
  */
 private val nestedClassSeparator = Regex("(?<=[^$])\\$(?=.)")
+
+/**
+ * The Kotlin class name, like `kotlin/collections/Map.Entry`, of a fully qualified name, like of a built-in type,
+ * whose package segments start with a lowercase letter, unlike the names of the classes.
+ */
+internal fun kotlinClassName(qualifiedName: String): String {
+    val segments = qualifiedName.split('.')
+    val packageSize = segments.indexOfFirst { it.first().isUpperCase() }.coerceAtLeast(0)
+    return kotlinClassName(
+        segments.take(packageSize).joinToString("."),
+        segments.drop(packageSize).joinToString(".")
+    )
+}
+
+internal fun kotlinClassName(javaClass: Class<*>): String =
+    kotlinClassName(javaClass.packageName, javaClass.nestedClassName())
+
+/**
+ * The Kotlin class name, like `java/util/Map.Entry`, of the [packageName] and the [name] of a class within it,
+ * where the nested classes are separated with `.`.
+ */
+internal fun kotlinClassName(packageName: String, name: String): String =
+    if (packageName.isEmpty()) name else "${packageName.replace('.', '/')}/$name"

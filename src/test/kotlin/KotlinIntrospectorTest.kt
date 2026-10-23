@@ -22,12 +22,22 @@ package com.xemantic.kotlin.introspection
 import com.xemantic.kotlin.test.assert
 import com.xemantic.kotlin.test.have
 import com.xemantic.kotlin.test.should
+import org.junit.jupiter.api.Assumptions.assumeFalse
+import java.lang.reflect.Method
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
 
 // we keep this dependency statically initialized, so that classpath scanning happens only once
 // given
 val resolver = KotlinIntrospector()
+
+/**
+ * Skips a test assuming that the Java [method] has no parameter names,
+ * like the methods of the JDK, unless it is built with the `-parameters` option.
+ */
+internal fun assumeNoParameterNames(method: Method) {
+    assumeFalse(method.parameters.any { it.isNamePresent }, "$method has parameter names")
+}
 
 class KotlinIntrospectorTest {
 
@@ -41,11 +51,11 @@ class KotlinIntrospectorTest {
                 inline fun byteInputStream(charset: java.nio.charset.Charset = …): java.io.ByteArrayInputStream
                 @Deprecated("Use replaceFirstChar instead.", ReplaceWith("replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }")) fun capitalize(): String
                 @Deprecated("Use replaceFirstChar instead.", ReplaceWith("replaceFirstChar { if (it.isLowerCase()) it.titlecase(locale) else it.toString() }")) fun capitalize(locale: java.util.Locale): String
-                fun chars(): java.util.stream.IntStream
+                override fun chars(): java.util.stream.IntStream
                 inline fun codePointAt(index: Int): Int
                 inline fun codePointBefore(index: Int): Int
                 inline fun codePointCount(beginIndex: Int, endIndex: Int): Int
-                fun codePoints(): java.util.stream.IntStream
+                override fun codePoints(): java.util.stream.IntStream
                 override operator fun compareTo(other: String): Int
                 fun compareTo(other: String, ignoreCase: Boolean = …): Int
             }
@@ -87,27 +97,32 @@ class KotlinIntrospectorTest {
                 fun encodeToByteArray(startIndex: Int = …, endIndex: Int = …, throwOnInvalidSequence: Boolean = …): ByteArray
                 fun endsWith(suffix: String, ignoreCase: Boolean = …): Boolean
                 override operator fun equals(other: Any?): Boolean
-                fun equals(other: String?, ignoreCase: Boolean = …): Boolean
                 inline fun filter(predicate: (Char) -> Boolean): String
                 inline fun filterIndexed(predicate: (index: Int, Char) -> Boolean): String
                 inline fun filterNot(predicate: (Char) -> Boolean): String
                 inline fun format(vararg args: Any?): String
                 inline fun format(locale: java.util.Locale?, vararg args: Any?): String
                 override operator fun get(index: Int): Char
+                fun hexToByte(format: HexFormat = …): Byte
             }
         """.trimIndent()
     }
 
     @Test
-    fun `should resolve String as known stdlib class - page 19 (transition page with members and extensions)`() {
-        // page 19 shows the last class member and first extensions
+    fun `should resolve String as known stdlib class - page 18 (transition page with members and extensions)`() {
+        // page 18 shows the last class members, the companion object, and the first extensions
         resolver.resolve(
             "kotlin.String",
-            page = 19
+            page = 18
         ) sameAsKotlin """
-            // kotlin.String [page 19/42]
+            // kotlin.String [page 18/42]
             class String : Comparable<String>, CharSequence {
+                inline fun trimStart(predicate: (Char) -> Boolean): String
+                fun trimStart(vararg chars: Char): String
+                inline fun trimStart(): String
+                inline fun uppercase(): String
                 inline fun uppercase(locale: java.util.Locale): String
+                companion object
             }
             // from kotlin
             inline infix fun <T> Comparable<T>.compareTo(other: T): Int
@@ -115,12 +130,6 @@ class KotlinIntrospectorTest {
             fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T): T
             fun <T : Comparable<T>> T.coerceAtMost(maximumValue: T): T
             fun <T : Comparable<T>> T.coerceIn(minimumValue: T?, maximumValue: T?): T
-            fun <T : Comparable<T>> T.coerceIn(range: ClosedFloatingPointRange<T>): T
-            fun <T : Comparable<T>> T.coerceIn(range: ClosedRange<T>): T
-            operator fun <T : Comparable<T>> T.rangeTo(that: T): ClosedRange<T>
-            operator fun <T : Comparable<T>> T.rangeUntil(that: T): OpenEndRange<T>
-            // from kotlin.text
-            val CharSequence.indices: IntRange
         """.trimIndent()
     }
 
@@ -133,7 +142,6 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // kotlin.String [page 42/42]
             // from kotlin.text
-            fun CharSequence.windowedSequence(size: Int, step: Int = …, partialWindows: Boolean = …): Sequence<String>
             fun <R> CharSequence.windowedSequence(size: Int, step: Int = …, partialWindows: Boolean = …, transform: (CharSequence) -> R): Sequence<R>
             fun CharSequence.withIndex(): Iterable<IndexedValue<Char>>
             infix fun CharSequence.zip(other: CharSequence): List<Pair<Char, Char>>
@@ -154,11 +162,11 @@ class KotlinIntrospectorTest {
                 inline fun byteInputStream(charset: java.nio.charset.Charset = …): java.io.ByteArrayInputStream
                 @Deprecated("Use replaceFirstChar instead.", ReplaceWith("replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }")) fun capitalize(): String
                 @Deprecated("Use replaceFirstChar instead.", ReplaceWith("replaceFirstChar { if (it.isLowerCase()) it.titlecase(locale) else it.toString() }")) fun capitalize(locale: java.util.Locale): String
-                fun chars(): java.util.stream.IntStream
+                override fun chars(): java.util.stream.IntStream
                 inline fun codePointAt(index: Int): Int
                 inline fun codePointBefore(index: Int): Int
                 inline fun codePointCount(beginIndex: Int, endIndex: Int): Int
-                fun codePoints(): java.util.stream.IntStream
+                override fun codePoints(): java.util.stream.IntStream
                 override operator fun compareTo(other: String): Int
                 fun compareTo(other: String, ignoreCase: Boolean = …): Int
                 inline fun contentEquals(charSequence: CharSequence): Boolean
@@ -174,14 +182,12 @@ class KotlinIntrospectorTest {
                 fun encodeToByteArray(startIndex: Int = …, endIndex: Int = …, throwOnInvalidSequence: Boolean = …): ByteArray
                 fun endsWith(suffix: String, ignoreCase: Boolean = …): Boolean
                 override operator fun equals(other: Any?): Boolean
-                fun equals(other: String?, ignoreCase: Boolean = …): Boolean
                 inline fun filter(predicate: (Char) -> Boolean): String
                 inline fun filterIndexed(predicate: (index: Int, Char) -> Boolean): String
                 inline fun filterNot(predicate: (Char) -> Boolean): String
                 inline fun format(vararg args: Any?): String
                 inline fun format(locale: java.util.Locale?, vararg args: Any?): String
                 override operator fun get(index: Int): Char
-                fun hashCode(): Int
                 fun hexToByte(format: HexFormat = …): Byte
                 fun hexToByteArray(format: HexFormat = …): ByteArray
                 fun hexToInt(format: HexFormat = …): Int
@@ -193,13 +199,11 @@ class KotlinIntrospectorTest {
                 inline fun hexToULong(format: HexFormat = …): ULong
                 inline fun hexToUShort(format: HexFormat = …): UShort
                 inline fun intern(): String
-                fun isEmpty(): Boolean
                 fun isLocalClassName(): Boolean
                 override val length: Int
                 inline fun lowercase(): String
                 inline fun lowercase(locale: java.util.Locale): String
                 inline fun offsetByCodePoints(index: Int, codePointOffset: Int): Int
-                inline fun orEmpty(): String
                 fun padEnd(length: Int, padChar: Char = …): String
                 fun padStart(length: Int, padChar: Char = …): String
                 inline fun partition(predicate: (Char) -> Boolean): Pair<String, String>
@@ -241,7 +245,6 @@ class KotlinIntrospectorTest {
                 @Deprecated("This member is not fully supported by Kotlin compiler, so it may be absent or have different signature in next major version") fun stripLeading(): String
                 @Deprecated("This member is not fully supported by Kotlin compiler, so it may be absent or have different signature in next major version") fun stripTrailing(): String
                 override fun subSequence(startIndex: Int, endIndex: Int): CharSequence
-                @Deprecated("Use parameters named startIndex and endIndex.", ReplaceWith("subSequence(startIndex = start, endIndex = end)"), level = DeprecationLevel.ERROR) inline fun subSequence(start: Int, end: Int): CharSequence
                 inline fun substring(startIndex: Int): String
                 inline fun substring(startIndex: Int, endIndex: Int): String
                 fun substring(range: IntRange): String
@@ -265,7 +268,6 @@ class KotlinIntrospectorTest {
                 inline fun toBigInteger(radix: Int): java.math.BigInteger
                 fun toBigIntegerOrNull(): java.math.BigInteger?
                 fun toBigIntegerOrNull(radix: Int): java.math.BigInteger?
-                inline fun toBoolean(): Boolean
                 fun toBooleanStrict(): Boolean
                 fun toBooleanStrictOrNull(): Boolean?
                 inline fun toByte(): Byte
@@ -332,6 +334,7 @@ class KotlinIntrospectorTest {
                 inline fun trimStart(): String
                 inline fun uppercase(): String
                 inline fun uppercase(locale: java.util.Locale): String
+                companion object
             }
             // from kotlin
             inline infix fun <T> Comparable<T>.compareTo(other: T): Int
@@ -381,6 +384,7 @@ class KotlinIntrospectorTest {
             inline fun CharSequence.elementAtOrNull(index: Int): Char?
             fun CharSequence.endsWith(char: Char, ignoreCase: Boolean = …): Boolean
             fun CharSequence.endsWith(suffix: CharSequence, ignoreCase: Boolean = …): Boolean
+            fun String?.equals(other: String?, ignoreCase: Boolean = …): Boolean
             inline fun CharSequence.filter(predicate: (Char) -> Boolean): CharSequence
             inline fun CharSequence.filterIndexed(predicate: (index: Int, Char) -> Boolean): CharSequence
             inline fun <C : java.lang.Appendable> CharSequence.filterIndexedTo(destination: C, predicate: (index: Int, Char) -> Boolean): C
@@ -481,6 +485,7 @@ class KotlinIntrospectorTest {
             inline fun CharSequence.none(predicate: (Char) -> Boolean): Boolean
             inline fun <S : CharSequence> S.onEach(action: (Char) -> Unit): S
             inline fun <S : CharSequence> S.onEachIndexed(action: (index: Int, Char) -> Unit): S
+            inline fun String?.orEmpty(): String
             fun CharSequence.padEnd(length: Int, padChar: Char = …): CharSequence
             fun CharSequence.padStart(length: Int, padChar: Char = …): CharSequence
             inline fun CharSequence.partition(predicate: (Char) -> Boolean): Pair<CharSequence, CharSequence>
@@ -532,6 +537,7 @@ class KotlinIntrospectorTest {
             fun CharSequence.startsWith(char: Char, ignoreCase: Boolean = …): Boolean
             fun CharSequence.startsWith(prefix: CharSequence, ignoreCase: Boolean = …): Boolean
             fun CharSequence.startsWith(prefix: CharSequence, startIndex: Int, ignoreCase: Boolean = …): Boolean
+            @Deprecated("Use parameters named startIndex and endIndex.", ReplaceWith("subSequence(startIndex = start, endIndex = end)"), level = DeprecationLevel.ERROR) inline fun String.subSequence(start: Int, end: Int): CharSequence
             fun CharSequence.subSequence(range: IntRange): CharSequence
             inline fun CharSequence.substring(startIndex: Int, endIndex: Int = …): String
             fun CharSequence.substring(range: IntRange): String
@@ -548,6 +554,7 @@ class KotlinIntrospectorTest {
             fun CharSequence.takeLast(n: Int): CharSequence
             inline fun CharSequence.takeLastWhile(predicate: (Char) -> Boolean): CharSequence
             inline fun CharSequence.takeWhile(predicate: (Char) -> Boolean): CharSequence
+            inline fun String?.toBoolean(): Boolean
             fun <C : MutableCollection<in Char>> CharSequence.toCollection(destination: C): C
             fun CharSequence.toHashSet(): java.util.HashSet<Char>
             fun CharSequence.toList(): List<Char>
@@ -3410,6 +3417,105 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should escape where clause and inner class type named like hard keywords`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.KeywordPositionsSample"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.KeywordPositionsSample [page 1/1]
+            class KeywordPositionsSample<`is`> {
+                inner class `fun`
+                fun <`in`> bounded(value: `in`): `in` where `in` : CharSequence, `in` : Comparable<`in`>
+                fun inner(): KeywordPositionsSample<`is`>.`fun`
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should escape sealed subclass inner in other generic class named like hard keywords`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.KeywordSealedSample"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.KeywordSealedSample [page 1/1]
+            sealed interface KeywordSealedSample<`is`> {
+                inner class KeywordSealedOuter<`is`>.`as` : KeywordSealedSample<`is`>
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class of package named like hard keyword by its unescaped name`() {
+        // the types of the package of the class are referred to by their simple names,
+        // while the package to import the extensions from is escaped, like in an import directive
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.in.KeywordPackageSample"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.in.KeywordPackageSample [page 1/1]
+            class KeywordPackageSample(val value: Int) {
+                class Nested
+                fun nested(): KeywordPackageSample.Nested
+            }
+            // from com.xemantic.kotlin.introspection.test.`in`
+            fun KeywordPackageSample.extension(): KeywordPackageSample
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class of package named like hard keyword by its escaped name`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.`in`.KeywordPackageSample.Nested"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.`in`.KeywordPackageSample.Nested [page 1/1]
+            class Nested
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve sealed class of package named like hard keyword`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.in.KeywordPackageSealed"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.in.KeywordPackageSealed [page 1/1]
+            sealed interface KeywordPackageSealed {
+                class KeywordPackageSealedImpl : KeywordPackageSealed
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve top-level function of package named like hard keyword`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.in.TestKeywordPackageKt.keywordPackageFunction"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.in.TestKeywordPackageKt.keywordPackageFunction [page 1/1]
+            // from com.xemantic.kotlin.introspection.test.`in`
+            fun keywordPackageFunction(sample: KeywordPackageSample): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should escape package named like hard keyword in type and extension source of other package`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.KeywordPackageClient"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.KeywordPackageClient [page 1/1]
+            class KeywordPackageClient {
+                fun sample(): com.xemantic.kotlin.introspection.test.`in`.KeywordPackageSample
+            }
+            // from com.xemantic.kotlin.introspection.test.`in`
+            fun KeywordPackageClient.keywordPackageExtension(): com.xemantic.kotlin.introspection.test.`in`.KeywordPackageSample
+        """.trimIndent()
+    }
+
+    @Test
+    fun `search should find class of package named like hard keyword by its unescaped name`() {
+        // the search results are names to resolve, not Kotlin code
+        resolver.search("KeywordPackageSample") sameAsKotlin """
+            // search results for "KeywordPackageSample" [page 1/1]
+            com.xemantic.kotlin.introspection.test.in.KeywordPackageSample
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve inner class`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.NestedClassesHolder.NestedInnerClass"
@@ -3574,9 +3680,10 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve built-in unsigned type as value class`() {
-        // the unsigned types are described by kotlin-reflect, not by their Kotlin metadata
+        // the unsigned types have no declarations in the .kotlin_builtins resources, but their own Kotlin metadata,
+        // with the primary constructor callable only from the inline functions of the standard library
         resolver.resolve("kotlin.UInt", pageSize = 1) should {
-            have(lines()[1] == "@JvmInline value class UInt : Comparable<UInt> {")
+            have(lines()[1] == "@JvmInline value class UInt private constructor(internal val data: Int) : Comparable<UInt> {")
         }
     }
 
@@ -4151,6 +4258,65 @@ class KotlinIntrospectorTest {
     @Test
     fun `should not resolve non-public extension of built-in type as its member`() {
         assert(resolver.resolve("kotlin.String.internalStringHelper") == null)
+    }
+
+    @Test
+    fun `should not resolve Java-only member of built-in type which its listing leaves out`() {
+        // the JDK is compiled without parameter names, so String.indent(arg0: Int) tells nothing about its parameter
+        assumeNoParameterNames(String::class.java.getMethod("indent", Int::class.java))
+        assert(resolver.resolve("kotlin.String.indent") == null)
+    }
+
+    @Test
+    fun `should resolve extension of built-in type without Java-only member of the same name`() {
+        // not with the addSuppressed(arg0: Throwable) of java.lang.Throwable, which the listing leaves out
+        assumeNoParameterNames(Throwable::class.java.getMethod("addSuppressed", Throwable::class.java))
+        resolver.resolve("kotlin.Throwable.addSuppressed") sameAsKotlin """
+            // kotlin.Throwable.addSuppressed [page 1/1]
+            // from kotlin
+            fun Throwable.addSuppressed(exception: Throwable)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should list no member of built-in type with synthetic parameter names`() {
+        // when
+        val listings = DefaultKotlinIntrospector.builtinTypes.keys.associateWith { type ->
+            resolver.resolve(type, pageSize = 100_000).orEmpty()
+        }
+
+        // then
+        val synthetic = listings.filterValues { listing -> listing.lines().any { "(arg0: " in it || "(vararg arg0: " in it } }
+        assert(synthetic.keys.isEmpty())
+    }
+
+    @Test
+    fun `should resolve only the members of built-in type which its listing shows`() {
+        // given - the names of the members of the JVM class, like String.indent, too
+        val memberNames = DefaultKotlinIntrospector.builtinTypes.mapValues { (_, kClass) ->
+            kClass.members.mapTo(sortedSetOf()) { it.name }
+        }
+
+        // when
+        val unlisted = memberNames.flatMap { (type, names) ->
+            val listing = resolver.resolve(type, pageSize = 100_000).orEmpty().lines()
+            val listed = listing.mapTo(HashSet()) { it.trim() }
+            // the properties declared in the primary constructor, like `open val cause: Throwable?` of Throwable
+            val header = listing.getOrElse(1) { "" }
+            names.flatMap { name ->
+                // the members and the companion object members, followed by the extensions under their `// from` headers,
+                // which a built-in type can list in its body without their receivers
+                resolver.resolve("$type.$name", pageSize = 100_000)?.lines().orEmpty()
+                    .takeWhile { !it.startsWith("// from ") }
+                    .map { it.trim() }
+                    .filter { !it.startsWith("//") && it != "companion object {" && it != "}" }
+                    .filter { it !in listed && "($it, " !in header && ", $it)" !in header && "($it)" !in header }
+                    .map { "$type.$name: $it" }
+            }
+        }
+
+        // then
+        assert(unlisted.isEmpty())
     }
 
     @Test
@@ -5625,9 +5791,9 @@ class KotlinIntrospectorTest {
                 fun add(index: Int, element: E)
                 override fun addAll(elements: Collection<E>): Boolean
                 fun addAll(index: Int, elements: Collection<E>): Boolean
-                fun <T> asReversed(): MutableList<T>
+                fun asReversed(): MutableList<E>
                 override fun clear()
-                inline fun <T> fill(value: T)
+                inline fun fill(value: E)
                 override fun listIterator(): MutableListIterator<E>
                 override fun listIterator(index: Int): MutableListIterator<E>
                 override fun remove(element: E): Boolean
@@ -5687,8 +5853,8 @@ class KotlinIntrospectorTest {
             have("    override operator fun compareTo(other: String): Int" in lines())
             have("    override operator fun equals(other: Any?): Boolean" in lines())
             have("    override fun toString(): String" in lines())
-            // not redeclared by String, just inherited from Any
-            have("    fun hashCode(): Int" in lines())
+            // not redeclared by String, just inherited from Any, like any inherited member not listed
+            have(lines().none { it.trim() == "fun hashCode(): Int" })
             have("    fun compareTo(other: String, ignoreCase: Boolean = …): Int" in lines())
             have("    operator fun plus(other: Any?): String" in lines())
         }
@@ -5701,22 +5867,23 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // kotlin.Int.compareTo [page 1/1]
             operator fun compareTo(other: Byte): Int
-            operator fun compareTo(other: Double): Int
-            operator fun compareTo(other: Float): Int
+            operator fun compareTo(other: Short): Int
             override operator fun compareTo(other: Int): Int
             operator fun compareTo(other: Long): Int
-            operator fun compareTo(other: Short): Int
+            operator fun compareTo(other: Float): Int
+            operator fun compareTo(other: Double): Int
             // from kotlin
             inline infix fun <T> Comparable<T>.compareTo(other: T): Int
         """.trimIndent()
     }
 
     @Test
-    fun `should resolve Any members as not overriding`() {
+    fun `should resolve Any members as open and not overriding`() {
         resolver.resolve("kotlin.Any") should {
-            have("    operator fun equals(other: Any?): Boolean" in lines())
-            have("    fun hashCode(): Int" in lines())
-            have("    fun toString(): String" in lines())
+            have(lines()[1] == "open class Any {")
+            have("    open operator fun equals(other: Any?): Boolean" in lines())
+            have("    open fun hashCode(): Int" in lines())
+            have("    open fun toString(): String" in lines())
         }
     }
 
@@ -6570,7 +6737,7 @@ class KotlinIntrospectorTest {
     fun `should resolve member of built-in type deprecated without explicit level`() {
         resolver.resolve("kotlin.Number.toChar") sameAsKotlin """
             // kotlin.Number.toChar [page 1/1]
-            @Deprecated("Direct conversion to Char is deprecated. Use toInt().toChar() or Char constructor instead. …", ReplaceWith("this.toInt().toChar()"), level = DeprecationLevel.ERROR) fun toChar(): Char
+            @Deprecated("Direct conversion to Char is deprecated. Use toInt().toChar() or Char constructor instead. …", ReplaceWith("this.toInt().toChar()"), level = DeprecationLevel.ERROR) open fun toChar(): Char
         """.trimIndent()
     }
 
@@ -6586,6 +6753,199 @@ class KotlinIntrospectorTest {
             // then
             assert(signature != null)
             assert(memberSignatures.isNotEmpty())
+        }
+    }
+
+    // built-in types rendered from their declarations in the .kotlin_builtins resources
+
+    @Test
+    fun `should resolve Unit as object`() {
+        resolver.resolve("kotlin.Unit") sameAsKotlin """
+            // kotlin.Unit [page 1/1]
+            object Unit {
+                override fun toString(): String
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve abstract built-in class with its modality`() {
+        resolver.resolve("kotlin.Number", pageSize = 1) should {
+            have(lines()[1] == "abstract class Number {")
+        }
+    }
+
+    @Test
+    fun `should resolve Enum as not constructible, with its properties in the class body`() {
+        // its constructor is called only by the enum classes, a class cannot extend it directly
+        resolver.resolve("kotlin.Enum", pageSize = 10000) should {
+            have(lines()[1] == "abstract class Enum<E : Enum<E>> private constructor() : Comparable<E> {")
+            have("    val name: String" in lines())
+            have("    val ordinal: Int" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve built-in type without constructor callable from user code as not constructible`() {
+        resolver.resolve("kotlin.Int", pageSize = 1) should {
+            have(lines()[1] == "class Int private constructor() : Number, Comparable<Int> {")
+        }
+    }
+
+    @Test
+    fun `should resolve Nothing as not constructible`() {
+        resolver.resolve("kotlin.Nothing") sameAsKotlin """
+            // kotlin.Nothing [page 1/1]
+            class Nothing private constructor()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve built-in array type with its constructors`() {
+        // the property declared in the class body cannot be told apart from a constructor property
+        resolver.resolve("kotlin.IntArray", pageSize = 10000) should {
+            have(lines()[1] == "class IntArray(val size: Int) {")
+            have("    constructor(size: Int, init: (Int) -> Int)" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve built-in open class with its constructors`() {
+        resolver.resolve("kotlin.Throwable", pageSize = 10000) should {
+            have(lines()[1] == "open class Throwable(open val message: String?, open val cause: Throwable?) {")
+            have("    constructor(message: String?)" in lines())
+            have("    constructor(cause: Throwable?)" in lines())
+            have("    constructor()" in lines())
+        }
+    }
+
+    @Test
+    fun `should list companion object of built-in type`() {
+        resolver.resolve("kotlin.Int", pageSize = 10000) should {
+            have("    companion object {" in lines())
+            have("        const val MAX_VALUE: Int" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve companion object member of built-in type by the name of the type`() {
+        resolver.resolve("kotlin.Int.MAX_VALUE") sameAsKotlin """
+            // kotlin.Int.MAX_VALUE [page 1/1]
+            companion object {
+                const val MAX_VALUE: Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of unsigned type overriding Comparable member`() {
+        // the unsigned types have no declarations in the .kotlin_builtins resources, but their own Kotlin metadata
+        resolver.resolve("kotlin.UInt.compareTo") should {
+            have("override inline operator fun compareTo(other: UInt): Int" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve JVM-only member of built-in type overriding JVM member of its supertype`() {
+        // String.chars() is declared only by java.lang.String, overriding the one of java.lang.CharSequence
+        resolver.resolve("kotlin.String.chars") sameAsKotlin """
+            // kotlin.String.chars [page 1/1]
+            override fun chars(): java.util.stream.IntStream
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve JVM-only members of open built-in class as open`() {
+        resolver.resolve("kotlin.Throwable", pageSize = 10000) should {
+            have("    open fun fillInStackTrace(): Throwable" in lines())
+        }
+    }
+
+    @Test
+    fun `should list each declaration of every built-in type once`() {
+        DefaultKotlinIntrospector.builtinTypes.keys.forEach { name ->
+            // when
+            val lines = resolver.resolve(name, pageSize = 10000)!!.lines()
+
+            // then
+            // the same signature might be declared in two packages, like KClass.cast() of kotlin.reflect.full
+            var section = "body"
+            val declarations = lines.drop(1).mapNotNull { line ->
+                if (line.startsWith("// from ")) section = line
+                if (line == "}" || line.startsWith("// ")) null else section to line
+            }
+            val duplicates = declarations.groupBy { it }.filterValues { it.size > 1 }.keys
+            assert(duplicates.isEmpty())
+        }
+    }
+
+    @Test
+    fun `should list extensions of built-in type with nullable receiver outside of the class body`() {
+        resolver.resolve("kotlin.String", pageSize = 10000) should {
+            have("    inline fun orEmpty(): String" !in lines())
+            have("inline fun String?.orEmpty(): String" in lines())
+        }
+    }
+
+    @Test
+    fun `should list extensions of built-in type with type arguments of their own outside of the class body`() {
+        resolver.resolve("kotlin.collections.Iterable", pageSize = 10000) should {
+            have("    fun average(): Double" !in lines())
+            have("fun Iterable<Int>.average(): Double" in lines())
+        }
+    }
+
+    @Test
+    fun `should list extensions of built-in type with star-projected and own type arguments outside of the class body`() {
+        resolver.resolve("kotlin.collections.Map", pageSize = 10000) should {
+            have("inline fun <K> Map<out K, *>.containsKey(key: K): Boolean" in lines())
+        }
+    }
+
+    @Test
+    fun `should not resolve member of built-in type inherited from its supertype`() {
+        // like the members of any class, the inherited ones are neither listed, nor resolved, MutableList.get is List.get
+        assert(resolver.resolve("kotlin.collections.MutableList.get") == null)
+    }
+
+    @Test
+    fun `should list extensions of built-in type on star-projected receiver in the class body`() {
+        resolver.resolve("kotlin.collections.Collection", pageSize = 10000) should {
+            have("    val indices: IntRange" in lines())
+        }
+    }
+
+    @Test
+    fun `should list extensions of built-in type with type parameters bounded like the ones of the class in the class body`() {
+        resolver.resolve("kotlin.Enum", pageSize = 10000) should {
+            have("    val declaringJavaClass: java.lang.Class<E>" in lines())
+        }
+    }
+
+    @Test
+    fun `should list extensions of built-in type shadowed by its members outside of the class body`() {
+        // the member is called instead, the extension would read like its duplicate in the class body
+        resolver.resolve("kotlin.collections.Map", pageSize = 10000) should {
+            have("    operator fun get(key: K): V?" in lines())
+            have("    inline operator fun get(key: K): V?" !in lines())
+            have("inline operator fun <K, V> Map<out K, V>.get(key: K): V?" in lines())
+        }
+    }
+
+    @Test
+    fun `should list same extensions of built-in type from two packages outside of the class body`() {
+        // only the source tells them apart, which the class body does not show
+        resolver.resolve("kotlin.reflect.KClass", pageSize = 10000) should {
+            have("    fun cast(value: Any?): T" !in lines())
+            have(lines().count { it == "fun <T : Any> KClass<T>.cast(value: Any?): T" } == 2)
+        }
+    }
+
+    @Test
+    fun `should list extensions of generic built-in type in the class body with the type parameters of the class`() {
+        resolver.resolve("kotlin.collections.MutableList", pageSize = 10000) should {
+            have("    inline fun fill(value: E)" in lines())
+            have("    fun asReversed(): MutableList<E>" in lines())
         }
     }
 

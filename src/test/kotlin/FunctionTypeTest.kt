@@ -48,6 +48,10 @@ class FunctionTypeTest {
 
     private val introspector = DefaultKotlinIntrospector(scanEntireClasspath = false)
 
+    // a type described by kotlin-reflect, converted to the Kotlin metadata, see toKmType
+    private fun formatReflected(type: KType): String =
+        introspector.formatType(type.toKmType(ReflectedTypeParameters.classTypeParameters(emptyList())))
+
     private val ctx = classType("test/Ctx")
     private val foo = classType("test/Foo")
     private val int = classType("kotlin/Int")
@@ -231,7 +235,7 @@ class FunctionTypeTest {
             .filter { it.classifier != Unit::class }
 
         // when
-        val formatted = types.map { formatKTypeProjection(it) }
+        val formatted = types.map { formatReflected(it) }
 
         // then
         assert(
@@ -256,7 +260,7 @@ class FunctionTypeTest {
         val type = kotlinReflectType(Function0::class)
 
         // when
-        val formatted = formatKTypeProjection(type)
+        val formatted = formatReflected(type)
 
         // then
         assert(formatted == "Function0")
@@ -268,7 +272,7 @@ class FunctionTypeTest {
         val type = kotlinReflectType(kotlin.jvm.functions.FunctionN::class, KTypeProjection.invariant(typeOf<String>()))
 
         // when
-        val formatted = formatKTypeProjection(type)
+        val formatted = formatReflected(type)
 
         // then
         assert(formatted == "FunctionN<String>")
@@ -284,7 +288,7 @@ class FunctionTypeTest {
         )
 
         // when
-        val formatted = formatKTypeProjection(type)
+        val formatted = formatReflected(type)
 
         // then
         assert(formatted == "FunctionN<*, ${List(22) { "Int" }.joinToString(", ")}>")
@@ -298,7 +302,7 @@ class FunctionTypeTest {
             .map { it.parameters[1].type }
 
         // when
-        val formatted = types.map { formatKTypeProjection(it) }
+        val formatted = types.map { formatReflected(it) }
 
         // then
         assert(
@@ -317,7 +321,7 @@ class FunctionTypeTest {
             .map { it.parameters[1].type }
 
         // when
-        val formatted = types.map { formatKTypeProjection(it) }
+        val formatted = types.map { formatReflected(it) }
 
         // then
         assert(

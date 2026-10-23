@@ -19,19 +19,26 @@
 package com.xemantic.kotlin.introspection
 
 import com.xemantic.kotlin.introspection.test.ContextParametersSample
+import com.xemantic.kotlin.introspection.test.GenericInnerTypes
 import com.xemantic.kotlin.introspection.test.KeywordMembersSample
+import com.xemantic.kotlin.introspection.test.NonGenericInnerTypes
 import com.xemantic.kotlin.introspection.test.ReflectedValueParametersSample
+import com.xemantic.kotlin.introspection.test.other.JavaUnnamedParameters
 import com.xemantic.kotlin.test.assert
+import kotlin.metadata.KmClassifier
+import kotlin.metadata.KmType
 import kotlin.reflect.KFunction
 import kotlin.reflect.full.memberFunctions
 import kotlin.reflect.full.memberProperties
 import kotlin.test.Test
 
 /**
- * The kotlin-reflect rendering of the members of the built-in types,
+ * The members of the built-in types described by kotlin-reflect, converted to the Kotlin metadata, and rendered,
  * exercised on a regular class, as no built-in member has such parameters.
  */
-class KotlinReflectFormatTest {
+class ReflectedDeclarationsTest {
+
+    private val introspector = DefaultKotlinIntrospector(scanEntireClasspath = false)
 
     private fun function(name: String): KFunction<*> =
         ReflectedValueParametersSample::class.memberFunctions.single { it.name == name }
@@ -50,8 +57,8 @@ class KotlinReflectFormatTest {
 
     @Test
     fun `should treat the parameter names of a Java method compiled without them as synthetic`() {
-        // given
-        val indent = String::class.memberFunctions.single { it.name == "indent" }
+        // given - a test fixture, not the JDK, which a build could compile with the -parameters option
+        val indent = JavaUnnamedParameters::class.memberFunctions.single { it.name == "indent" }
 
         // when
         val synthetic = hasSyntheticParameterNames(indent)
@@ -61,9 +68,33 @@ class KotlinReflectFormatTest {
     }
 
     @Test
+    fun `should render element type of Java vararg as nullable like its platform type`() {
+        // given - Object... is seen in Kotlin as vararg of Any!, accepting null elements
+        val format = JavaUnnamedParameters::class.memberFunctions.single { it.name == "format" }
+
+        // when
+        val rendered = introspector.formatReflectedFunction(format)
+
+        // then
+        assert(rendered == "open fun format(vararg arg0: Any?): String")
+    }
+
+    @Test
+    fun `should degrade vararg of unknown array type to the array type`() {
+        // given - no such vararg type today, but a future standard library could declare one
+        val arrayType = KmType().also { it.classifier = KmClassifier.Class("kotlin/FutureArray") }
+
+        // when
+        val elementType = varargElementType(arrayType)
+
+        // then
+        assert(elementType === arrayType)
+    }
+
+    @Test
     fun `should render vararg of nullable type as its element type`() {
         // when
-        val rendered = formatKFunction(function("format"))
+        val rendered = introspector.formatReflectedFunction(function("format"))
 
         // then
         assert(rendered == "fun format(vararg args: Any?): String")
@@ -72,7 +103,7 @@ class KotlinReflectFormatTest {
     @Test
     fun `should render vararg of primitive type as its element type`() {
         // when
-        val rendered = formatKFunction(function("sum"))
+        val rendered = introspector.formatReflectedFunction(function("sum"))
 
         // then
         assert(rendered == "fun sum(vararg ints: Int): Int")
@@ -81,7 +112,7 @@ class KotlinReflectFormatTest {
     @Test
     fun `should render vararg of unsigned type as its element type`() {
         // when
-        val rendered = formatKFunction(function("sumUnsigned"))
+        val rendered = introspector.formatReflectedFunction(function("sumUnsigned"))
 
         // then
         assert(rendered == "fun sumUnsigned(vararg uints: UInt): UInt")
@@ -90,7 +121,7 @@ class KotlinReflectFormatTest {
     @Test
     fun `should render optional parameter with default value marker`() {
         // when
-        val rendered = formatKFunction(function("join"))
+        val rendered = introspector.formatReflectedFunction(function("join"))
 
         // then
         assert(rendered == "fun join(vararg parts: String, separator: String = …): String")
@@ -99,7 +130,7 @@ class KotlinReflectFormatTest {
     @Test
     fun `should escape names of function and parameters like hard keywords or not as identifiers`() {
         // when
-        val rendered = formatKFunction(KeywordMembersSample::class.memberFunctions.single { it.name == "fun" })
+        val rendered = introspector.formatReflectedFunction(KeywordMembersSample::class.memberFunctions.single { it.name == "fun" })
 
         // then
         assert(rendered == "fun `fun`(`if`: Int, `when`: (`in`: Int, `my name`: String) -> Unit)")
@@ -108,7 +139,7 @@ class KotlinReflectFormatTest {
     @Test
     fun `should escape type parameter named like hard keyword`() {
         // when
-        val rendered = formatKFunction(KeywordMembersSample::class.memberFunctions.single { it.name == "return" })
+        val rendered = introspector.formatReflectedFunction(KeywordMembersSample::class.memberFunctions.single { it.name == "return" })
 
         // then
         assert(rendered == "fun <`class`> `return`(value: `class`): `class`")
@@ -117,16 +148,16 @@ class KotlinReflectFormatTest {
     @Test
     fun `should escape property named like hard keyword`() {
         // when
-        val rendered = formatKProperty(KeywordMembersSample::class.memberProperties.single { it.name == "typeof" })
+        val rendered = introspector.formatReflectedProperty(KeywordMembersSample::class.memberProperties.single { it.name == "typeof" })
 
         // then
-        assert(rendered == "val `typeof`: String")
+        assert(rendered == listOf("val `typeof`: String"))
     }
 
     @Test
     fun `should escape class name not being an identifier`() {
         // when
-        val rendered = formatKFunction(KeywordMembersSample::class.memberFunctions.single { it.name == "nested" })
+        val rendered = introspector.formatReflectedFunction(KeywordMembersSample::class.memberFunctions.single { it.name == "nested" })
 
         // then
         assert(rendered == "fun nested(): com.xemantic.kotlin.introspection.test.KeywordMembersSample.`interface`")
@@ -138,29 +169,16 @@ class KotlinReflectFormatTest {
         val run = ContextParametersSample::class.memberFunctions.filter { it.name == "run" }
 
         // when
-        val rendered = run.map { formatKFunction(it) }.sorted()
+        val rendered = run.map { introspector.formatReflectedFunction(it) }.sorted()
 
         // then
         assert(rendered == listOf("context(log: com.xemantic.kotlin.introspection.test.Logger) fun run()", "fun run()"))
     }
 
-    // the key to sort the overloads of a built-in member by, which a context prefix must not precede
-    @Test
-    fun `should render function declaration without context parameters and override modifier`() {
-        // given
-        val process = ContextParametersSample::class.memberFunctions.single { it.name == "process" }
-
-        // when
-        val declaration = formatKFunctionDeclaration(process)
-
-        // then
-        assert(declaration == "fun <T> process(item: T): List<T>")
-    }
-
     @Test
     fun `should render all context parameters of function`() {
         // when
-        val rendered = formatKFunction(ContextParametersSample::class.memberFunctions.single { it.name == "process" })
+        val rendered = introspector.formatReflectedFunction(ContextParametersSample::class.memberFunctions.single { it.name == "process" })
 
         // then
         assert(
@@ -177,7 +195,7 @@ class KotlinReflectFormatTest {
         }
 
         // when
-        val rendered = functions.map { formatKFunction(it) }
+        val rendered = functions.map { introspector.formatReflectedFunction(it) }
 
         // then
         assert(
@@ -186,6 +204,34 @@ class KotlinReflectFormatTest {
                 "context(`in`: com.xemantic.kotlin.introspection.test.Logger) fun keyword()"
             )
         )
+    }
+
+    @Test
+    fun `should render inner class type with the type arguments of its outer class`() {
+        // given - kotlin-reflect lists the type arguments of the outer class after the ones of the inner class
+        val functions = GenericInnerTypes::class.memberFunctions.sortedBy { it.name }
+
+        // when
+        val rendered = functions.filter { it.name in setOf("accept", "cursor", "nullableCursor") }
+            .map { introspector.formatReflectedFunction(it) }
+
+        // then
+        assert(
+            rendered == listOf(
+                "fun accept(cursor: com.xemantic.kotlin.introspection.test.GenericInnerOuter<Long>.Inner<com.xemantic.kotlin.introspection.test.GenericInnerOuter<Int>.Inner<String>>)",
+                "fun cursor(): com.xemantic.kotlin.introspection.test.GenericInnerOuter<String>.Inner<Int>",
+                "fun nullableCursor(): com.xemantic.kotlin.introspection.test.GenericInnerOuter<String>.Inner<Int>?"
+            )
+        )
+    }
+
+    @Test
+    fun `should render inner class type of non-generic outer class with its own type arguments`() {
+        // when
+        val rendered = introspector.formatReflectedFunction(NonGenericInnerTypes::class.memberFunctions.single { it.name == "cursor" })
+
+        // then
+        assert(rendered == "fun cursor(): com.xemantic.kotlin.introspection.test.NonGenericInnerOuter.In<String>")
     }
 
 }
