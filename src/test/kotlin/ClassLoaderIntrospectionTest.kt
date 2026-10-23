@@ -109,19 +109,39 @@ class ClassLoaderIntrospectionTest {
     }
 
     /**
+     * Copies the isolated test fixtures, without the class files of the [absentClassFiles],
+     * and the ones [isAbsent] tells by their file names, to the [name] directory,
+     * transforming the class bytes by their file names.
+     */
+    private fun isolatedTestFixturesCopy(
+        name: String,
+        vararg absentClassFiles: String,
+        isAbsent: (fileName: String) -> Boolean = { false },
+        transform: (fileName: String, bytes: ByteArray) -> ByteArray = { _, bytes -> bytes }
+    ): Path {
+        val root = tempDir.resolve(name)
+        isolatedTestFixtures.filter { it.exists() }.forEach { dir ->
+            val files = dir.walkTopDown().filter { it.isFile && it.name !in absentClassFiles && !isAbsent(it.name) }
+            files.forEach { file ->
+                val target = root.resolve(file.relativeTo(dir).path).toFile()
+                target.parentFile.mkdirs()
+                target.writeBytes(transform(file.name, file.readBytes()))
+            }
+        }
+        return root
+    }
+
+    /**
      * An introspector of the isolated test fixtures without the class `Absent`,
      * which they refer to, without the nested classes named `Gone`, and without the other [absentClassFiles].
      */
     private fun introspectorWithoutAbsentClass(vararg absentClassFiles: String): KotlinIntrospector {
-        val root = tempDir.resolve("withoutAbsent")
-        isolatedTestFixtures.filter { it.exists() }.forEach { dir ->
-            dir.walkTopDown()
-                .filter {
-                    it.isFile && it.name != "Absent.class" && !it.name.endsWith("\$Gone.class") &&
-                        it.name !in absentClassFiles
-                }
-                .forEach { it.copyTo(root.resolve(it.relativeTo(dir).path).toFile(), overwrite = true) }
-        }
+        val root = isolatedTestFixturesCopy(
+            "withoutAbsent",
+            "Absent.class",
+            *absentClassFiles,
+            isAbsent = { it.endsWith("\$Gone.class") }
+        )
         val classLoader = URLClassLoader(
             arrayOf(root.toUri().toURL()),
             javaClass.classLoader
@@ -591,18 +611,11 @@ class ClassLoaderIntrospectionTest {
     @Test
     fun `should mark overrides of members of Kotlin superclass without metadata`() {
         // given
-        val root = tempDir.resolve("stripped")
-        isolatedTestFixtures.filter { it.exists() }.forEach { dir ->
-            dir.walkTopDown().filter { it.isFile }.forEach { file ->
-                val target = root.resolve(file.relativeTo(dir).path).toFile()
-                target.parentFile.mkdirs()
-                target.writeBytes(
-                    when (file.name) {
-                        "MetadataStrippedBase.class" -> shrunk(withoutMetadata(file.readBytes()))
-                        "MetadataStrippedSubclass.class" -> shrunk(file.readBytes())
-                        else -> file.readBytes()
-                    }
-                )
+        val root = isolatedTestFixturesCopy("stripped") { fileName, bytes ->
+            when (fileName) {
+                "MetadataStrippedBase.class" -> shrunk(withoutMetadata(bytes))
+                "MetadataStrippedSubclass.class" -> shrunk(bytes)
+                else -> bytes
             }
         }
         val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
@@ -639,19 +652,8 @@ class ClassLoaderIntrospectionTest {
     @Test
     fun `should neither find nor list synthetic nested class declared in metadata of outer class`() {
         // given
-        val root = tempDir.resolve("synthetic")
-        isolatedTestFixtures.filter { it.exists() }.forEach { dir ->
-            dir.walkTopDown().filter { it.isFile }.forEach { file ->
-                val target = root.resolve(file.relativeTo(dir).path).toFile()
-                target.parentFile.mkdirs()
-                target.writeBytes(
-                    if (file.name == "SyntheticNestedHolder\$\$serializer.class") {
-                        synthetic(file.readBytes())
-                    } else {
-                        file.readBytes()
-                    }
-                )
-            }
+        val root = isolatedTestFixturesCopy("synthetic") { fileName, bytes ->
+            if (fileName == "SyntheticNestedHolder\$\$serializer.class") synthetic(bytes) else bytes
         }
         val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
 
@@ -672,25 +674,16 @@ class ClassLoaderIntrospectionTest {
     @Test
     fun `should not list declarations hidden since an older Kotlin version`() {
         // given
-        val root = tempDir.resolve("hiddenSince")
-        isolatedTestFixtures.filter { it.exists() }.forEach { dir ->
-            dir.walkTopDown().filter { it.isFile }.forEach { file ->
-                val target = root.resolve(file.relativeTo(dir).path).toFile()
-                target.parentFile.mkdirs()
-                target.writeBytes(
-                    if (file.name == "HiddenSinceHolder.class") {
-                        hiddenSince(
-                            file.readBytes(),
-                            "hiddenSincePast" to "1.0",
-                            // a property is annotated through the synthetic method for its annotations
-                            "getHiddenSinceProperty\$annotations" to "1.0",
-                            "hiddenSinceFuture" to "${KotlinVersion.CURRENT.major + 1}.0"
-                        )
-                    } else {
-                        file.readBytes()
-                    }
+        val root = isolatedTestFixturesCopy("hiddenSince") { fileName, bytes ->
+            if (fileName == "HiddenSinceHolder.class") {
+                hiddenSince(
+                    bytes,
+                    "hiddenSincePast" to "1.0",
+                    // a property is annotated through the synthetic method for its annotations
+                    "getHiddenSinceProperty\$annotations" to "1.0",
+                    "hiddenSinceFuture" to "${KotlinVersion.CURRENT.major + 1}.0"
                 )
-            }
+            } else bytes
         }
         val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
 
@@ -758,39 +751,18 @@ class ClassLoaderIntrospectionTest {
     /**
      * Removes the JVM methods `shrunk(int)` and `shrunkAlone()` from the class bytes, like R8 might.
      */
-    private fun shrunk(bytes: ByteArray): ByteArray {
-        val writer = ClassWriter(0)
-        ClassReader(bytes).accept(object : ClassVisitor(Opcodes.ASM9, writer) {
-            override fun visitMethod(
-                access: Int,
-                name: String,
-                descriptor: String,
-                signature: String?,
-                exceptions: Array<out String>?
-            ): MethodVisitor? = if ((name == "shrunk" && descriptor == "(I)V") || name == "shrunkAlone") {
-                null
-            } else {
-                super.visitMethod(access, name, descriptor, signature, exceptions)
-            }
-        }, 0)
-        return writer.toByteArray()
+    private fun shrunk(bytes: ByteArray): ByteArray = withoutMethods(bytes) { name, descriptor ->
+        (name == "shrunk" && descriptor == "(I)V") || name == "shrunkAlone"
     }
 
     @Test
     fun `should mark overrides of other Java methods when generic signature of one method mismatches its descriptor`() {
         // given
-        val root = tempDir.resolve("mismatchedSignature")
-        isolatedTestFixtures.filter { it.exists() }.forEach { dir ->
-            dir.walkTopDown().filter { it.isFile && it.name != "Absent.class" }.forEach { file ->
-                val target = root.resolve(file.relativeTo(dir).path).toFile()
-                target.parentFile.mkdirs()
-                target.writeBytes(
-                    if (file.name == "AbsentJavaBase.class") {
-                        // a malformed class file, declaring an array of T as the type of the parameter taking T
-                        withMethodSignature(file.readBytes(), "process", "(Ljava/lang/Object;)V", "([TT;)V")
-                    } else file.readBytes()
-                )
-            }
+        val root = isolatedTestFixturesCopy("mismatchedSignature", "Absent.class") { fileName, bytes ->
+            if (fileName == "AbsentJavaBase.class") {
+                // a malformed class file, declaring an array of T as the type of the parameter taking T
+                withMethodSignature(bytes, "process", "(Ljava/lang/Object;)V", "([TT;)V")
+            } else bytes
         }
         val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
 
@@ -858,12 +830,7 @@ class ClassLoaderIntrospectionTest {
      * with an unsupported major version, like a class file too new for ASM.
      */
     private fun introspectorWithUnreadableClassFiles(vararg unreadableClasses: String): KotlinIntrospector {
-        val root = tempDir.resolve("unreadable")
-        isolatedTestFixtures.filter { it.exists() }.forEach { dir ->
-            dir.walkTopDown()
-                .filter { it.isFile && it.name != "Absent.class" }
-                .forEach { it.copyTo(root.resolve(it.relativeTo(dir).path).toFile(), overwrite = true) }
-        }
+        val root = isolatedTestFixturesCopy("unreadable", "Absent.class")
         val unreadableResources = unreadableClasses.map { it.replace('.', '/') + ".class" }.toSet()
         val classLoader = object : URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader) {
             override fun getResourceAsStream(name: String): InputStream? {
@@ -1201,41 +1168,21 @@ class ClassLoaderIntrospectionTest {
     }
 
     /**
-     * Copies the isolated test fixtures, without the class files of the [absentClassFiles],
-     * to the [name] directory, transforming the class bytes by their file names.
+     * Removes the JVM methods which are [removed], by their names and descriptors, from the class bytes, like R8 might.
      */
-    private fun isolatedTestFixturesCopy(
-        name: String,
-        vararg absentClassFiles: String,
-        transform: (fileName: String, bytes: ByteArray) -> ByteArray = { _, bytes -> bytes }
-    ): Path {
-        val root = tempDir.resolve(name)
-        isolatedTestFixtures.filter { it.exists() }.forEach { dir ->
-            dir.walkTopDown().filter { it.isFile && it.name !in absentClassFiles }.forEach { file ->
-                val target = root.resolve(file.relativeTo(dir).path).toFile()
-                target.parentFile.mkdirs()
-                target.writeBytes(transform(file.name, file.readBytes()))
-            }
-        }
-        return root
-    }
-
-    /**
-     * Removes the JVM method of the [name] and the [descriptor] from the class bytes, like R8 might.
-     */
-    private fun withoutMethod(bytes: ByteArray, name: String, descriptor: String): ByteArray {
+    private fun withoutMethods(bytes: ByteArray, removed: (name: String, descriptor: String) -> Boolean): ByteArray {
         val writer = ClassWriter(0)
         ClassReader(bytes).accept(object : ClassVisitor(Opcodes.ASM9, writer) {
             override fun visitMethod(
                 access: Int,
-                methodName: String,
-                methodDescriptor: String,
+                name: String,
+                descriptor: String,
                 signature: String?,
                 exceptions: Array<out String>?
-            ): MethodVisitor? = if (methodName == name && methodDescriptor == descriptor) {
+            ): MethodVisitor? = if (removed(name, descriptor)) {
                 null
             } else {
-                super.visitMethod(access, methodName, methodDescriptor, signature, exceptions)
+                super.visitMethod(access, name, descriptor, signature, exceptions)
             }
         }, 0)
         return writer.toByteArray()
@@ -1255,7 +1202,9 @@ class ClassLoaderIntrospectionTest {
                 val bytes = stream.use { it.readBytes() }
                 return when (name) {
                     // the JVM method of the overload is removed, like by R8
-                    interfaceResource -> withoutMethod(bytes, "greet", "(I)Ljava/lang/String;")
+                    interfaceResource -> withoutMethods(bytes) { methodName, descriptor ->
+                        methodName == "greet" && descriptor == "(I)Ljava/lang/String;"
+                    }
                     // the major version, following the magic number and the minor version, unsupported
                     defaultImplsName.replace('.', '/') + ".class" -> bytes.also {
                         it[6] = 0x7F
@@ -1281,32 +1230,103 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
-    fun `should mark overrides of other Java methods when generic signature of one method is malformed`() {
+    fun `should mark overrides of other Java methods when generic signature or descriptor of one method is malformed`() {
         // given
-        val root = isolatedTestFixturesCopy("malformedSignature", "Absent.class") { fileName, bytes ->
-            if (fileName == "AbsentJavaBase.class") {
-                withMethodSignature(bytes, "process", "(Ljava/lang/Object;)V", "(!)V")
-            } else bytes
+        val root = isolatedTestFixturesCopy("malformedMethods", "Absent.class")
+        // the class is defined from the intact class file, while the one served as a resource is malformed
+        val classLoader = object : URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader) {
+            override fun getResourceAsStream(name: String): InputStream? {
+                val stream = super.getResourceAsStream(name) ?: return null
+                if (!name.endsWith("/AbsentJavaBase.class")) return stream
+                val bytes = stream.use { it.readBytes() }
+                return withMethodDescriptor(
+                    withMethodSignature(bytes, "process", "(Ljava/lang/Object;)V", "(!)V"),
+                    "run", "()V", "(!)V"
+                ).inputStream()
+            }
         }
-        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+        val introspector = KotlinIntrospector(classLoader)
 
         // when
         val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.AbsentJavaSubclass")
 
         // then
-        // only the method of the malformed signature is matched by its descriptor, erasing T to Object,
-        // so its override, implicitly open, is not told
+        // the method of the malformed signature is matched by its descriptor, erasing T to Object,
+        // and the method of the malformed descriptor is unknown, so their overrides, implicitly open, are not told
         signature sameAsKotlin """
             // com.xemantic.kotlin.introspection.isolated.AbsentJavaSubclass [page 1/1]
             class AbsentJavaSubclass : AbsentJavaBase<String> {
                 open fun process(item: String)
                 fun process(item: Int)
-                override fun run()
+                open fun run()
                 fun run(times: Int)
                 fun prim(x: Int?)
                 override fun <S : String> bounded(x: S)
                 fun <S : Number> bounded(x: S)
                 override fun take(nested: DollarHolder.`Dollar${'$'}Nested`)
+            }
+        """.trimIndent()
+    }
+
+    /**
+     * Replaces the descriptor of the method of the [name] and the [descriptor] in the class bytes.
+     */
+    private fun withMethodDescriptor(bytes: ByteArray, name: String, descriptor: String, replacement: String): ByteArray {
+        val writer = ClassWriter(0)
+        ClassReader(bytes).accept(object : ClassVisitor(Opcodes.ASM9, writer) {
+            override fun visitMethod(
+                access: Int,
+                methodName: String,
+                methodDescriptor: String,
+                signature: String?,
+                exceptions: Array<out String>?
+            ): MethodVisitor? = super.visitMethod(
+                access,
+                methodName,
+                if (methodName == name && methodDescriptor == descriptor) replacement else methodDescriptor,
+                signature,
+                exceptions
+            )
+        }, 0)
+        return writer.toByteArray()
+    }
+
+    @Test
+    fun `should mark override of Java method taking dollar-named nested class missing from the classpath`() {
+        // given
+        val introspector = introspectorWithoutAbsentClass("DollarHolder.class", "DollarHolder\$\$Named.class")
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.AbsentDollarJavaSubclass")
+
+        // then
+        // a missing class is assumed to be nested at every `$`, except for one starting a simple name
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.AbsentDollarJavaSubclass [page 1/1]
+            class AbsentDollarJavaSubclass : AbsentDollarJavaBase {
+                override fun take(named: DollarHolder.`${'$'}Named`)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class through class loader throwing when looking up resources`() {
+        // given
+        // like a closed or a restricted class loader
+        val classLoader = object : ClassLoader(javaClass.classLoader) {
+            override fun getResource(name: String): java.net.URL = throw SecurityException("no resources: $name")
+        }
+        val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.test.KeyedMap")
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.KeyedMap [page 1/1]
+            abstract class KeyedMap : Map<String, Int> {
+                override val keys: Set<String>
+                override val entries: Set<Map.Entry<String, Int>>
             }
         """.trimIndent()
     }

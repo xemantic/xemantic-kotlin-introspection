@@ -684,13 +684,6 @@ internal class OverrideResolver(
         return if (packageName.isEmpty()) simpleName else packageName.replace('/', '.') + "." + simpleName
     }
 
-    /**
-     * Whether the [classLoader] has a class file for the class of this JVM binary name.
-     * A class file resource is never encapsulated, also when it is in a named module.
-     */
-    private fun hasClassFile(binaryName: String): Boolean =
-        classLoader.getResource(binaryName.replace('.', '/') + ".class") != null
-
     private fun erasure(typeParameter: KmTypeParameter, typeParameters: Map<Int, KmTypeParameter>): String? =
         erasedBound(typeParameter, typeParameters)?.let { normalizedName(it.name) }
 
@@ -894,7 +887,7 @@ internal class OverrideResolver(
         val builtinClass = builtinClasses()[name]
         // a built-in type without its own class file, like List, is not looked up through the class loader,
         // which would only throw a ClassNotFoundException
-        if (builtinClass == null || hasClassFile(binaryName(name))) {
+        if (builtinClass == null || classLoader.hasClassFile(binaryName(name))) {
             // the built-in declaration of a type having its own class file, like KClass, is incomplete
             loadKmClassByMetadataName(name)?.let { return Declaration(it, null) }
         }
@@ -1150,8 +1143,10 @@ internal class OverrideResolver(
                 (access and (Opcodes.ACC_PUBLIC or Opcodes.ACC_PROTECTED) != 0 || javaClass.packageName == ownerPackage) &&
                 !method.name.startsWith("<")
             if (!isOverridable) return@mapNotNull null
+            // the method of a malformed descriptor is unknown
+            val parameterTypes = argumentTypes(method.descriptor) ?: return@mapNotNull null
             val generic = method.signature?.let { genericMethodSignature(it) }
-            val parameters = AsmType.getArgumentTypes(method.descriptor).mapIndexed { index, parameterType ->
+            val parameters = parameterTypes.mapIndexed { index, parameterType ->
                 val parameterSignature = generic?.parameterTypes?.getOrNull(index)
                 if (parameterSignature == null) asmType(parameterType) else {
                     asmType(parameterType, parameterSignature, generic, substitution)
@@ -1164,6 +1159,23 @@ internal class OverrideResolver(
                 isJava = true
             )
         }
+    }
+
+    /**
+     * The parameter types of a method [descriptor], or `null` if it is malformed,
+     * as ASM does not validate the descriptors when reading a class file.
+     */
+    private fun argumentTypes(descriptor: String): List<AsmType>? = try {
+        // a `(` within the parameters is read as a method type, also as an array component
+        AsmType.getArgumentTypes(descriptor).toList().takeIf { types ->
+            types.none { type ->
+                type.sort == AsmType.METHOD || (type.sort == AsmType.ARRAY && type.elementType.sort == AsmType.METHOD)
+            }
+        }
+    } catch (_: IllegalArgumentException) {
+        null
+    } catch (_: IndexOutOfBoundsException) {
+        null
     }
 
     /**
@@ -1231,11 +1243,11 @@ internal class OverrideResolver(
         AsmType.OBJECT -> {
             val binaryName = type.className
             val simpleBinaryName = binaryName.substringAfterLast('.')
-            // a class missing from the classpath is assumed to be named without `$`,
-            // which is also the metadata name the class of this binary name is loaded by
+            // a class missing from the classpath is assumed to be nested at its `$` separators, see [assumedNestedClassName],
+            // which is also a metadata name the class of this binary name is loaded by
             val assumedName = kotlinClassName(
                 binaryName.substringBeforeLast('.', ""),
-                simpleBinaryName.replace('$', '.')
+                assumedNestedClassName(simpleBinaryName)
             )
             ClassType(
                 javaToKotlinNames[binaryName]
@@ -1430,8 +1442,7 @@ internal fun Class<*>.nestedClassName(): String {
 /**
  * The [nestedClassName] of a class whose declaring class cannot be loaded, neither its simple name reflected,
  * read from the `InnerClasses` attribute of its class file, which lists the enclosing classes as well,
- * or, if it cannot be read, assuming that every `$` following another character of the name separates the nested classes,
- * while the one starting a name, like of `Outer$$serializer`, is a part of it.
+ * or, if it cannot be read, by the [assumedNestedClassName].
  */
 private fun Class<*>.nestedClassNameWithoutDeclaringClass(): String {
     val internalName = name.replace('.', '/')
@@ -1448,7 +1459,7 @@ private fun Class<*>.nestedClassNameWithoutDeclaringClass(): String {
             // judged by the name only
         }
     }
-    if (internalName !in innerClasses) return name.substringAfterLast('.').replace(nestedClassSeparator, ".")
+    if (internalName !in innerClasses) return assumedNestedClassName(name.substringAfterLast('.'))
     fun nestedName(name: String): String = innerClasses[name]
         ?.let { (outerName, innerName) -> "${nestedName(outerName)}.$innerName" }
         ?: name.substringAfterLast('/')
@@ -1456,19 +1467,16 @@ private fun Class<*>.nestedClassNameWithoutDeclaringClass(): String {
 }
 
 /**
+ * The name of a class within its package, like `Outer.Nested`, assumed from its [simpleBinaryName],
+ * like `Outer${'$'}Nested`, when the nesting cannot be told from the class or its class file:
+ * every `$` following another character of the name separates the nested classes,
+ * while the one starting a name, like of `Outer${'$'}${'$'}serializer`, is a part of it.
+ */
+private fun assumedNestedClassName(simpleBinaryName: String): String =
+    simpleBinaryName.replace(nestedClassSeparator, ".")
+
+/**
  * A `$` of a binary name assumed to separate nested classes: one following another character than `$`,
  * and followed by any character.
  */
 private val nestedClassSeparator = Regex("(?<=[^$])\\$(?=.)")
-
-/**
- * Reads the class file of a class by its JVM [binaryName], like `com.example.Outer${'$'}Nested`,
- * through this class loader, without loading the class, or `null` if it is not served as a resource,
- * or cannot be read, like when the class loader throws, even a runtime exception, like a closed or a restricted one.
- * A class file resource is never encapsulated, also when it is in a named module.
- */
-internal fun ClassLoader.readClassBytes(binaryName: String): ByteArray? = try {
-    getResourceAsStream(binaryName.replace('.', '/') + ".class")?.use { it.readBytes() }
-} catch (_: Exception) {
-    null
-}
