@@ -39,3 +39,10 @@ class WhenMappingsHolder {
         EntryWithBody.WITH_BODY -> 2
     }
 }
+
+// A Kotlin class with nested classes, whose class file the tests rewrite, like a compiler plugin or a bytecode tool might.
+class RewrittenOuter {
+    class Nested {
+        class Deep
+    }
+}

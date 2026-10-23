@@ -24,7 +24,6 @@ import com.xemantic.kotlin.introspection.test.TestClass
 import com.xemantic.kotlin.test.assert
 import com.xemantic.kotlin.test.sameAs
 import org.junit.jupiter.api.io.TempDir
-import org.objectweb.asm.AnnotationVisitor
 import org.objectweb.asm.ClassReader
 import org.objectweb.asm.ClassVisitor
 import org.objectweb.asm.ClassWriter
@@ -909,18 +908,6 @@ class ClassLoaderIntrospectionTest {
                 if (methodName == name && methodDescriptor == descriptor) signature else methodSignature,
                 exceptions
             )
-        }, 0)
-        return writer.toByteArray()
-    }
-
-    /**
-     * Removes the `@Metadata` annotation from the class bytes, like R8 or shading might.
-     */
-    private fun withoutMetadata(bytes: ByteArray): ByteArray {
-        val writer = ClassWriter(0)
-        ClassReader(bytes).accept(object : ClassVisitor(Opcodes.ASM9, writer) {
-            override fun visitAnnotation(descriptor: String, visible: Boolean): AnnotationVisitor? =
-                if (descriptor == "Lkotlin/Metadata;") null else super.visitAnnotation(descriptor, visible)
         }, 0)
         return writer.toByteArray()
     }
