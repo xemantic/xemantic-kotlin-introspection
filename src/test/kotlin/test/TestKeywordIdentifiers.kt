@@ -50,3 +50,9 @@ class KeywordMembersSample<`in`>(val `is`: `in`, val value: Int) {
 fun KeywordMembersSample<*>.`for`() {}
 
 val KeywordMembersSample<*>.`null`: Int get() = 0
+
+// Class referring to a class of a package with a segment named like a hard keyword, rendered fully qualified
+class KeywordPackageClient {
+    fun sample(): com.xemantic.kotlin.introspection.test.`in`.KeywordPackageSample =
+        com.xemantic.kotlin.introspection.test.`in`.KeywordPackageSample(42)
+}

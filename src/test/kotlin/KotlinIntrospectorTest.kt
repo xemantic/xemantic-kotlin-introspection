@@ -3417,6 +3417,79 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve class of package named like hard keyword by its unescaped name`() {
+        // the types of the package of the class are referred to by their simple names,
+        // while the package to import the extensions from is escaped, like in an import directive
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.in.KeywordPackageSample"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.in.KeywordPackageSample [page 1/1]
+            class KeywordPackageSample(val value: Int) {
+                class Nested
+                fun nested(): KeywordPackageSample.Nested
+            }
+            // from com.xemantic.kotlin.introspection.test.`in`
+            fun KeywordPackageSample.extension(): KeywordPackageSample
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class of package named like hard keyword by its escaped name`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.`in`.KeywordPackageSample.Nested"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.`in`.KeywordPackageSample.Nested [page 1/1]
+            class Nested
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve sealed class of package named like hard keyword`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.in.KeywordPackageSealed"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.in.KeywordPackageSealed [page 1/1]
+            sealed interface KeywordPackageSealed {
+                class KeywordPackageSealedImpl : KeywordPackageSealed
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve top-level function of package named like hard keyword`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.in.TestKeywordPackageKt.keywordPackageFunction"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.in.TestKeywordPackageKt.keywordPackageFunction [page 1/1]
+            // from com.xemantic.kotlin.introspection.test.`in`
+            fun keywordPackageFunction(sample: KeywordPackageSample): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should escape package named like hard keyword in type and extension source of other package`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.KeywordPackageClient"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.KeywordPackageClient [page 1/1]
+            class KeywordPackageClient {
+                fun sample(): com.xemantic.kotlin.introspection.test.`in`.KeywordPackageSample
+            }
+            // from com.xemantic.kotlin.introspection.test.`in`
+            fun KeywordPackageClient.keywordPackageExtension(): com.xemantic.kotlin.introspection.test.`in`.KeywordPackageSample
+        """.trimIndent()
+    }
+
+    @Test
+    fun `search should find class of package named like hard keyword by its unescaped name`() {
+        // the search results are names to resolve, not Kotlin code
+        resolver.search("KeywordPackageSample") sameAsKotlin """
+            // search results for "KeywordPackageSample" [page 1/1]
+            com.xemantic.kotlin.introspection.test.in.KeywordPackageSample
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve inner class`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.NestedClassesHolder.NestedInnerClass"

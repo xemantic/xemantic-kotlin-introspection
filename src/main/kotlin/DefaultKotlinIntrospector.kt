@@ -3501,7 +3501,8 @@ private fun List<ListingItem.Extension>.renderLines(): List<String> = buildList 
     var source: String? = null
     for (extension in this@renderLines) {
         if (extension.source != source) {
-            add("// from ${extension.source}")
+            // escaped like in an import directive, like `import com.example.`in`.*`
+            add("// from ${escapeQualifiedName(extension.source)}")
             source = extension.source
         }
         addAll(extension.lines)
