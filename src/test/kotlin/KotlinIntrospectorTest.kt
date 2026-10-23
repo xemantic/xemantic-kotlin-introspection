@@ -2467,6 +2467,36 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should erase type parameters of raw Kotlin superclass of Java class to their bounds`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaRawKotlinSubclass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaRawKotlinSubclass [page 1/1]
+            class JavaRawKotlinSubclass : com.xemantic.kotlin.introspection.test.other.JavaRawKotlinMid {
+                override fun bounded(x: CharSequence)
+                fun bounded(x: String)
+                override fun compared(x: Comparable<*>)
+                fun compared(x: String)
+                override fun chained(x: CharSequence)
+                fun chained(x: String)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should erase type parameter of raw built-in supertype of Java class to its bound`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaRawComparableSubclass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaRawComparableSubclass [page 1/1]
+            abstract class JavaRawComparableSubclass : com.xemantic.kotlin.introspection.test.other.JavaRawComparable {
+                override operator fun compareTo(other: Any?): Int
+                fun compareTo(other: String): Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should not bind Java method type variable shadowing type variable of its class to type argument of the class`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.JavaOuterSubclass"
