@@ -1775,15 +1775,15 @@ internal class DefaultKotlinIntrospector(
      * The ones which cannot be found, or read, are not listed, as neither their kind nor their visibility is known,
      * but still told, while the ones which cannot be loaded, but whose class files can still be read, are listed,
      * like by [lookUpClass].
-     * The own companion object is not listed, as it is already rendered as such,
-     * while the companion object of another class is, as a branch of a `when` expression.
+     * The own companion object is not listed, as it is already rendered as such, when it is part of the API,
+     * or else omitted like any other subclass which is not,
+     * while the companion object of another class is listed, as a branch of a `when` expression.
      */
     private fun listedSealedSubclasses(kmClass: KmClass): SealedSubclasses {
         val notFound = mutableListOf<String>()
         val notRead = mutableListOf<String>()
         var hasOmitted = false
         val listed = kmClass.sealedSubclasses.mapNotNull { subclassName ->
-            if (subclassName == "${kmClass.name}.${kmClass.companionObject}") return@mapNotNull null
             val subclassClass = findClassByMetadataName(subclassName)
             val subclass = subclassClass?.kmClass
             if (subclass == null) {
@@ -1794,6 +1794,7 @@ internal class DefaultKotlinIntrospector(
                 hasOmitted = true
                 return@mapNotNull null
             }
+            if (subclassName == "${kmClass.name}.${kmClass.companionObject}") return@mapNotNull null
             ListedClass(subclassName.removePrefix("${kmClass.name}.").substringAfterLast('/'), subclass, subclassClass)
         }
         return SealedSubclasses(listed.sortedBy { it.name }, notFound, notRead, hasOmitted)

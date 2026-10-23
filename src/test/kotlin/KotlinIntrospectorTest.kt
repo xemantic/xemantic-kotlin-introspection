@@ -4746,6 +4746,32 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should tell own internal companion object subclass as omitted`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InternalCompanionSealed"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InternalCompanionSealed [page 1/1]
+            sealed class InternalCompanionSealed {
+                class A : InternalCompanionSealed
+                // sealed subclasses not part of the API omitted
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should tell own hidden companion object subclass as omitted`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenCompanionSealed"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenCompanionSealed [page 1/1]
+            sealed class HiddenCompanionSealed {
+                class A : HiddenCompanionSealed
+                // sealed subclasses not part of the API omitted
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should tell sealed subclasses omitted when no subclass is part of the API`() {
         // a when expression of the user code cannot name any of them, and still needs an else branch
         resolver.resolve(

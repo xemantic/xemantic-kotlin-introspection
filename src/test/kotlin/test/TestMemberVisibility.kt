@@ -137,6 +137,18 @@ class PublicSealedSubclassHolder {
     class NestedSubclass : SealedVisibilityHolder()
 }
 
+// The own companion object which is a subclass, but not part of the API, is omitted like any other subclass
+sealed class InternalCompanionSealed {
+    class A : InternalCompanionSealed()
+    internal companion object : InternalCompanionSealed()
+}
+
+sealed class HiddenCompanionSealed {
+    class A : HiddenCompanionSealed()
+    @Deprecated("hidden", level = DeprecationLevel.HIDDEN)
+    companion object : HiddenCompanionSealed()
+}
+
 // A sealed class without any subclass of the API is rendered without a body
 sealed class HiddenSubclassesSealed {
     private class Impl : HiddenSubclassesSealed()
