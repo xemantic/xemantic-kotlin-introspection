@@ -3040,6 +3040,7 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.test.CompanionNestedClassesHolder [page 2/2]
             class CompanionNestedClassesHolder {
                 companion object {
+                    // 4 members, resolve com.xemantic.kotlin.introspection.test.CompanionNestedClassesHolder.Companion to page through them
                     class Builder<T : CharSequence> : Iterable<T>
                     interface Factory
                     object Defaults : CompanionNestedClassesHolder.Companion.Factory
@@ -4430,6 +4431,7 @@ class KotlinIntrospectorTest {
             pageSize = Int.MAX_VALUE
         ) should {
             have(this == resolver.resolve("kotlin.String", pageSize = 10000))
+            have(startsWith("// kotlin.String [page 1/1]\n"))
         }
     }
 
@@ -4449,7 +4451,160 @@ class KotlinIntrospectorTest {
             pageSize = Int.MAX_VALUE
         ) should {
             have(this == resolver.search("TestClass", pageSize = 1000))
+            have(startsWith("// search results for \"TestClass\" [page 1/1]\n"))
         }
+    }
+
+    @Test
+    fun `resolve should coerce page past the end to the only page when pageSize is half of Int MAX_VALUE`() {
+        // a large page size which is not Int.MAX_VALUE, for which 2 * pageSize overflows an Int,
+        // pins that a page past the end is coerced to the only one, however the start index is computed
+        resolver.resolve(
+            "kotlin.String",
+            page = 3,
+            pageSize = Int.MAX_VALUE / 2 + 1
+        ) should {
+            have(this == resolver.resolve("kotlin.String", pageSize = 10000))
+            have(startsWith("// kotlin.String [page 1/1]\n"))
+        }
+    }
+
+    @Test
+    fun `search should coerce page past the end to the only page when pageSize is half of Int MAX_VALUE`() {
+        resolver.search(
+            "TestClass",
+            page = 2,
+            pageSize = Int.MAX_VALUE / 2 + 1
+        ) should {
+            have(this == resolver.search("TestClass", pageSize = 1000))
+            have(startsWith("// search results for \"TestClass\" [page 1/1]\n"))
+        }
+    }
+
+    @Test
+    fun `should paginate member lookup by signatures - the first page`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.PagedMemberHolder.paged",
+            pageSize = 2
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PagedMemberHolder.paged [page 1/5]
+            val paged: Int
+            fun paged(x: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should paginate member lookup by signatures - the page with members of the companion object`() {
+        // the declaration of the companion object is repeated on every page with its members
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.PagedMemberHolder.paged",
+            page = 2,
+            pageSize = 2
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PagedMemberHolder.paged [page 2/5]
+            fun paged(x: String): String
+            companion object {
+                fun paged(): PagedMemberHolder
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should paginate member lookup by signatures - the page with members of the companion object and extensions`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.PagedMemberHolder.paged",
+            page = 3,
+            pageSize = 2
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PagedMemberHolder.paged [page 3/5]
+            companion object {
+                fun paged(x: Long): PagedMemberHolder
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun PagedMemberHolder.paged(x: Double): Double
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should paginate member lookup by signatures - the page continuing extensions of a source`() {
+        // the `// from` header is repeated, so that every page tells where to import the extensions from
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.PagedMemberHolder.paged",
+            page = 5,
+            pageSize = 2
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PagedMemberHolder.paged [page 5/5]
+            // from com.xemantic.kotlin.introspection.test.ext
+            fun PagedMemberHolder.paged(x: Byte): Byte
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should paginate package member lookup by signatures`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.TestOverloadsKt.topLevelOverloaded",
+            page = 2,
+            pageSize = 1
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.TestOverloadsKt.topLevelOverloaded [page 2/2]
+            // from com.xemantic.kotlin.introspection.test
+            fun topLevelOverloaded(x: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should paginate built-in type member lookup by signatures`() {
+        resolver.resolve("kotlin.collections.MutableList.plus", pageSize = 5) should {
+            have(startsWith("// kotlin.collections.MutableList.plus [page 1/"))
+            have(!startsWith("// kotlin.collections.MutableList.plus [page 1/1]"))
+            have(lines().count { !it.startsWith("//") } == 5)
+        }
+    }
+
+    @Test
+    fun `should hint resolving the companion object directly on a page holding it when it is larger than the page`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.PaginatedCompanionClass",
+            page = 10,
+            pageSize = 1
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PaginatedCompanionClass [page 10/10]
+            class PaginatedCompanionClass {
+                companion object {
+                    // 2 members, resolve com.xemantic.kotlin.introspection.test.PaginatedCompanionClass.Companion to page through them
+                    const val CONSTANT: String
+                    fun create(): PaginatedCompanionClass
+                }
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve companion object of built-in type directly`() {
+        resolver.resolve("kotlin.Int.Companion", pageSize = 1000) should {
+            have(startsWith("// kotlin.Int.Companion [page 1/1]\ncompanion object Companion {\n"))
+            have("    const val MAX_VALUE: Int" in lines())
+            have("    const val MIN_VALUE: Int" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve companion object of built-in type directly with its extensions`() {
+        resolver.resolve("kotlin.String.Companion", pageSize = 1000) should {
+            have(startsWith("// kotlin.String.Companion [page 1/1]\n"))
+            have("// from kotlin.text" in lines())
+            have(lines().any { it.startsWith("inline fun String.Companion.format(") })
+        }
+    }
+
+    @Test
+    fun `should resolve member of companion object of built-in type`() {
+        resolver.resolve(
+            "kotlin.Int.Companion.MAX_VALUE"
+        ) sameAsKotlin """
+            // kotlin.Int.Companion.MAX_VALUE [page 1/1]
+            const val MAX_VALUE: Int
+        """.trimIndent()
     }
 
     // search() tests

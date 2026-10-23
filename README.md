@@ -76,20 +76,26 @@ com.example.AnnotationTestClass
 
 * Both `resolve` and `search` take the 1-based `page`, and the positive `pageSize`, `10` by default,
   and return `null` if nothing is found.
-* A class is paged by items: its enum entries, its members, and its extensions, one item each.
+* The output is paged by items,
+  and every page can be read on its own,
+  as the headers the items are listed under, like the `// from` header of the extensions,
+  are repeated on every page.
+* A class is paged by its enum entries, its members, and its extensions, one item each.
   A member is never split across pages,
   so a multi-line block, like a `companion object { … }`, counts as a single item,
   and the `pageSize` does not bound the number of lines of a page.
-  A large companion object can be paged through by resolving it directly,
+  A companion object having more members than a page comes with a hint to page through it by resolving it directly,
   like `introspector.resolve("com.example.Outer.Companion")`.
 * A member is resolved by the name of its class, like `com.example.Outer.create`,
   which finds everything of that name the listing of the class shows:
-  its members, the members of its companion object, and the extensions of the class and its supertypes.
+  its members, the members of its companion object, and the extensions of the class and its supertypes,
+  paged by signatures, one item each.
 * The Kotlin built-in types, like `kotlin.String` or `kotlin.collections.List`,
   which are mapped to the JVM types and have no Kotlin metadata, are resolved through `kotlin-reflect`.
   The mutable collection types, like `kotlin.collections.MutableList`,
   sharing the JVM type with their read-only counterparts,
-  are resolved from the `.kotlin_builtins` metadata of the standard library instead.
+  are resolved from the `.kotlin_builtins` metadata of the standard library instead,
+  and so are the companion objects of the built-in types, like `kotlin.Int.Companion`.
 * The types of the `kotlin.*` packages are rendered with simple names, as LLMs know them well,
   while the other types are fully qualified, to avoid ambiguity.
 * The whole classpath visible to the given class loader is scanned on creation, which takes a while,
