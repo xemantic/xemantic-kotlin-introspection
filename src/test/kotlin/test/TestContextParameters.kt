@@ -49,3 +49,21 @@ fun ContextParametersSample.contextExtension() {}
 
 context(log: Logger)
 val ContextParametersSample.contextExtensionLabel: String get() = ""
+
+// the context parameters of the members of a companion object, found by a member lookup on the outer class
+class ContextCompanionSample {
+    companion object {
+        context(log: Logger)
+        val created: String get() = ""
+        context(log: Logger)
+        fun create(): ContextCompanionSample = ContextCompanionSample()
+    }
+}
+
+// the context parameters of an extension of a supertype, found by a member lookup on the subtype
+interface ContextSupertype
+
+class ContextSubtype : ContextSupertype
+
+context(log: Logger)
+fun ContextSupertype.describeInContext() {}

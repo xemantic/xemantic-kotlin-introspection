@@ -2062,7 +2062,8 @@ class KotlinIntrospectorTest {
             "com.xemantic.kotlin.introspection.test.TestContextParametersKt.contextRun"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.TestContextParametersKt.contextRun [page 1/1]
-            context(log: com.xemantic.kotlin.introspection.test.Logger) fun contextRun()
+            // from com.xemantic.kotlin.introspection.test
+            context(log: Logger) fun contextRun()
         """.trimIndent()
     }
 
@@ -2072,7 +2073,43 @@ class KotlinIntrospectorTest {
             "com.xemantic.kotlin.introspection.test.TestContextParametersKt.contextLabel"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.TestContextParametersKt.contextLabel [page 1/1]
-            context(log: com.xemantic.kotlin.introspection.test.Logger) val contextLabel: String
+            // from com.xemantic.kotlin.introspection.test
+            context(log: Logger) val contextLabel: String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render context parameters of companion object function found by outer class member lookup`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ContextCompanionSample.create"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ContextCompanionSample.create [page 1/1]
+            companion object {
+                context(log: Logger) fun create(): ContextCompanionSample
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render context parameters of companion object property found by outer class member lookup`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ContextCompanionSample.created"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ContextCompanionSample.created [page 1/1]
+            companion object {
+                context(log: Logger) val created: String
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render context parameters of supertype extension found by subtype member lookup`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ContextSubtype.describeInContext"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ContextSubtype.describeInContext [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            context(log: Logger) fun ContextSupertype.describeInContext()
         """.trimIndent()
     }
 
