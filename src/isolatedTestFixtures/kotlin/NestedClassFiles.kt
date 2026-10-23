@@ -46,3 +46,9 @@ class RewrittenOuter {
         class Deep
     }
 }
+
+// The entries of a Java enum are compiled with the nested $EntriesMappings class,
+// which is not declared as a nested class in the metadata.
+class EntriesMappingsHolder {
+    fun units(): List<java.util.concurrent.TimeUnit> = java.util.concurrent.TimeUnit.entries
+}
