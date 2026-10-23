@@ -26,7 +26,6 @@ import org.objectweb.asm.ClassVisitor
 import org.objectweb.asm.MethodVisitor
 import org.objectweb.asm.Opcodes
 import java.io.File
-import java.net.JarURLConnection
 import java.net.URI
 import java.net.URL
 import java.net.URLClassLoader
@@ -38,6 +37,7 @@ import kotlin.metadata.*
 import kotlin.metadata.jvm.JvmMethodSignature
 import kotlin.metadata.jvm.KotlinClassMetadata
 import kotlin.metadata.jvm.getterSignature
+import kotlin.metadata.jvm.setterSignature
 import kotlin.metadata.jvm.signature
 import kotlin.metadata.jvm.syntheticMethodForAnnotations
 import kotlin.metadata.jvm.annotations
@@ -72,8 +72,12 @@ internal data class IndexedExtensionProperty(
     val property: KmProperty,
     val sourceClass: String,  // fully qualified class name where it's defined
     val source: String,  // the package, or the object, to import it from
-    val isObjectMember: Boolean  // whether the source is an object
-)
+    val isObjectMember: Boolean,  // whether the source is an object
+    val isAssignable: Boolean  // whether its setter can be called, see apiSetterVisibility
+) {
+    // the setter of an extension is public, as only the public extensions are indexed
+    val setterVisibility: Visibility? get() = if (isAssignable) Visibility.PUBLIC else null
+}
 
 /**
  * A Kotlin class found on the classpath, by its metadata name, like `com/example/Outer.Nested`,
@@ -85,8 +89,8 @@ private class IndexedClass(
     val scope: ClassScope,
     val isUsable: Boolean,
     val isSearchable: Boolean,
-    val extensions: List<KmFunction>,
-    val extensionProperties: List<KmProperty>
+    val extensions: List<IndexedExtension>,
+    val extensionProperties: List<IndexedExtensionProperty>
 )
 
 /**
@@ -128,6 +132,52 @@ private fun Visibility.isApiIn(enclosing: List<ClassScope>): Boolean {
     return isVisible && owner.visibility.isApiIn(outerClasses)
 }
 
+/**
+ * Tells which declarations of a class are hidden, and cannot be used in the source code,
+ * like the ones deprecated with the `HIDDEN` level, which the metadata does not tell.
+ * The one place deciding it, for listing, resolving, and indexing the declarations alike.
+ */
+private interface HiddenDeclarations {
+
+    fun isHidden(function: KmFunction): Boolean
+
+    fun isHidden(constructor: KmConstructor): Boolean
+
+    fun isHidden(property: KmProperty): Boolean
+
+    /**
+     * Whether only the setter of a `var` [property] is hidden, like with `@set:Deprecated(level = HIDDEN)`.
+     */
+    fun isSetterHidden(property: KmProperty): Boolean
+
+}
+
+/**
+ * The functions which are part of the API in the [scopes], see [isApiIn], unless [hidden][HiddenDeclarations],
+ * when the [hidden] declarations of their declaring class are known.
+ */
+@JvmName("apiFunctions")
+private fun List<KmFunction>.inApi(scopes: List<ClassScope>, hidden: HiddenDeclarations?): List<KmFunction> =
+    filter { it.visibility.isApiIn(scopes) && hidden?.isHidden(it) != true }
+
+/**
+ * The properties which are part of the API, like the functions, see [inApi].
+ */
+@JvmName("apiProperties")
+private fun List<KmProperty>.inApi(scopes: List<ClassScope>, hidden: HiddenDeclarations?): List<KmProperty> =
+    filter { it.visibility.isApiIn(scopes) && hidden?.isHidden(it) != true }
+
+/**
+ * The visibility of the setter of this property, when it is a `var` whose setter is part of the API,
+ * like the property itself, see [inApi], or else `null`, telling that the property cannot be assigned
+ * from the user code, and is rendered as a `val`, like with `private set`, or the `protected set` of a final class.
+ */
+private fun KmProperty.apiSetterVisibility(scopes: List<ClassScope>, hidden: HiddenDeclarations?): Visibility? {
+    if (!isVar) return null
+    val setterVisibility = setter?.visibility ?: visibility
+    return setterVisibility.takeIf { it.isApiIn(scopes) && hidden?.isSetterHidden(this) != true }
+}
+
 internal class DefaultKotlinIntrospector(
     private val classLoader: ClassLoader = Thread.currentThread().contextClassLoader,
     scanEntireClasspath: Boolean = true,
@@ -158,21 +208,19 @@ internal class DefaultKotlinIntrospector(
      */
     private val stdlibVersion: KotlinVersion by lazy {
         try {
-            // the Implementation-Version of the manifest of the jar of the standard library the class loader finds,
-            // which is the same as the one of this library, unless the class loader prefers its own resources;
-            // unless the manifest is of another jar, like a fat jar with the standard library inside
-            val connection = classLoader.getResource("kotlin/KotlinVersion.class")?.openConnection() as? JarURLConnection
-            // not cached, so that the jar file is closed, and not locked for the life of the JVM
-            connection?.useCaches = false
-            connection?.jarFile?.use { jarFile ->
-                jarFile.manifest?.mainAttributes
-                    ?.takeIf { it.getValue(Attributes.Name.IMPLEMENTATION_TITLE) == "kotlin-stdlib" }
-                    ?.getValue(Attributes.Name.IMPLEMENTATION_VERSION)
-                    ?.let { parseKotlinVersion(it) }
-            }
+            // the KotlinVersion.CURRENT of the standard library the class loader uses, which is the same
+            // as the one of this library, unless the class loader prefers its own classes, like an isolated one,
+            // regardless of how the standard library is packaged, like in a directory, a fat jar, or a jlink image
+            Class.forName(KotlinVersion::class.java.name, true, classLoader)
+                .getField("CURRENT")
+                .get(null)
+                ?.let { parseKotlinVersion(it.toString()) }
         } catch (_: Exception) {
             null
-        } ?: KotlinVersion.CURRENT // like for a standard library in a directory, or in a fat jar
+        } catch (e: LinkageError) {
+            logger.debug(e) { "Cannot load KotlinVersion of the class loader" }
+            null
+        } ?: KotlinVersion.CURRENT // like for a standard library relocated by shading
     }
 
     // Declarations of the built-in types, by their Kotlin class name, like kotlin/collections/List
@@ -271,6 +319,9 @@ internal class DefaultKotlinIntrospector(
         private const val DEPRECATED_DESCRIPTOR = "Lkotlin/Deprecated;"
 
         private const val DEPRECATED_SINCE_KOTLIN_DESCRIPTOR = "Lkotlin/DeprecatedSinceKotlin;"
+
+        // the annotations which might hide the declarations they annotate, see isHidingAnnotation
+        private val HIDING_ANNOTATION_DESCRIPTORS = setOf(DEPRECATED_DESCRIPTOR, DEPRECATED_SINCE_KOTLIN_DESCRIPTOR)
 
         // the supertype of the serializers generated by kotlinx.serialization
         private const val GENERATED_SERIALIZER = "kotlinx/serialization/internal/GeneratedSerializer"
@@ -398,7 +449,11 @@ internal class DefaultKotlinIntrospector(
      * A class of the classpath, by its JVM [binaryName], either loaded, or, when it cannot be loaded,
      * like when it extends a class missing from the classpath, only read from its class file.
      */
-    private inner class FoundClass(val binaryName: String, val clazz: Class<*>?, readFile: ClassFile? = null) {
+    private inner class FoundClass(
+        val binaryName: String,
+        val clazz: Class<*>?,
+        readFile: ClassFile? = null
+    ) : HiddenDeclarations {
 
         /**
          * The class file, read once, and only when needed: already when the class cannot be loaded,
@@ -417,46 +472,35 @@ internal class DefaultKotlinIntrospector(
         }
 
         /**
-         * The `DefaultImpls` class file of an interface, holding the synthetic methods for the annotations
-         * of its properties, unless compiled with `-jvm-default=no-compatibility`, read only when needed.
+         * The `DefaultImpls` class file of an interface, or of an annotation class, holding the synthetic methods
+         * for the annotations of its properties, unless compiled with `-jvm-default=no-compatibility`,
+         * read only when needed.
          */
         private val defaultImplsFile: ClassFile? by lazy { readClassFile("$binaryName\$$DEFAULT_IMPLS") }
 
         // whether a declaration of this class is hidden, see ClassFile, never when the class file cannot be read
 
-        fun isHidden(function: KmFunction): Boolean = classFile?.isHidden(function) == true
+        override fun isHidden(function: KmFunction): Boolean = classFile?.isHidden(function) == true
 
-        fun isHidden(constructor: KmConstructor): Boolean = classFile?.isHidden(constructor) == true
+        override fun isHidden(constructor: KmConstructor): Boolean = classFile?.isHidden(constructor) == true
 
-        fun isHidden(property: KmProperty): Boolean {
+        override fun isHidden(property: KmProperty): Boolean {
             val classFile = classFile ?: return false
             if (classFile.isHidden(property)) return true
             // the synthetic method for the annotations of an interface property is rather in its DefaultImpls
             val annotationsMethod = property.syntheticMethodForAnnotations ?: return false
-            return !classFile.declares(annotationsMethod) &&
-                kmClass?.kind == ClassKind.INTERFACE &&
+            val kind = kmClass?.kind
+            return (kind == ClassKind.INTERFACE || kind == ClassKind.ANNOTATION_CLASS) &&
+                !classFile.declares(annotationsMethod) &&
                 defaultImplsFile?.isHidden(property) == true
         }
+
+        override fun isSetterHidden(property: KmProperty): Boolean = classFile?.isSetterHidden(property) == true
 
     }
 
     private val FoundClass.kmClass: KmClass?
         get() = (metadata as? KotlinClassMetadata.Class)?.kmClass
-
-    /**
-     * The functions which are part of the API in the [scopes], see [isApiIn], unless hidden,
-     * see [FoundClass.isHidden], when declared in the [declaringClass] known.
-     */
-    @JvmName("apiFunctions")
-    private fun List<KmFunction>.inApi(scopes: List<ClassScope>, declaringClass: FoundClass?): List<KmFunction> =
-        filter { it.visibility.isApiIn(scopes) && declaringClass?.isHidden(it) != true }
-
-    /**
-     * The properties which are part of the API, like the functions, see [inApi].
-     */
-    @JvmName("apiProperties")
-    private fun List<KmProperty>.inApi(scopes: List<ClassScope>, declaringClass: FoundClass?): List<KmProperty> =
-        filter { it.visibility.isApiIn(scopes) && declaringClass?.isHidden(it) != true }
 
     /**
      * The functions of a mutable built-in collection type which are part of the API.
@@ -465,13 +509,13 @@ internal class DefaultKotlinIntrospector(
      * None of the built-in collection declarations is deprecated, which `KotlinBuiltinsTest` guards.
      */
     @JvmName("mutableBuiltinApiFunctions")
-    private fun List<KmFunction>.inMutableBuiltinApi(): List<KmFunction> = inApi(emptyList(), declaringClass = null)
+    private fun List<KmFunction>.inMutableBuiltinApi(): List<KmFunction> = inApi(emptyList(), hidden = null)
 
     /**
      * The properties of a mutable built-in collection type which are part of the API, see the functions.
      */
     @JvmName("mutableBuiltinApiProperties")
-    private fun List<KmProperty>.inMutableBuiltinApi(): List<KmProperty> = inApi(emptyList(), declaringClass = null)
+    private fun List<KmProperty>.inMutableBuiltinApi(): List<KmProperty> = inApi(emptyList(), hidden = null)
 
     /**
      * Whether a member of a built-in type, described by kotlin-reflect, is part of the API:
@@ -660,16 +704,19 @@ internal class DefaultKotlinIntrospector(
         val contextPackage = contextPackageOf(foundClass, kmClass)
 
         val members = kmClass.properties.filter { it.name == memberName }.inApi(scopes, foundClass).map { property ->
-            formatProperty(property, inInterface = isInterface, owner = kmClass, contextPackage = contextPackage, classTypeParameters = typeParameters)
+            formatProperty(
+                property, property.apiSetterVisibility(scopes, foundClass),
+                inInterface = isInterface, owner = kmClass, contextPackage = contextPackage, classTypeParameters = typeParameters
+            )
         } + kmClass.functions.filter { it.name == memberName }.inApi(scopes, foundClass).map { function ->
-            formatFunction(function, inInterface = isInterface, owner = kmClass, contextPackage = contextPackage, classTypeParameters = typeParameters)
+            listOf(formatFunction(function, inInterface = isInterface, owner = kmClass, contextPackage = contextPackage, classTypeParameters = typeParameters))
         }
 
         val companionMembers = apiCompanionOf(kmClass, scopes, foundClass)?.let { companion ->
             val signatures = companion.propertiesNamed(memberName).map {
                 formatCompanionProperty(it, companion, contextPackage)
             } + companion.functionsNamed(memberName).map {
-                formatCompanionFunction(it, companion, contextPackage)
+                listOf(formatCompanionFunction(it, companion, contextPackage))
             }
             // the header is formatted only when there are signatures to render within it
             val header by lazy { formatCompanionHeader(kmClass, companion, contextPackage) }
@@ -740,8 +787,15 @@ internal class DefaultKotlinIntrospector(
         return formatClassHeader(companion.kmClass, companionName, contextPackage)
     }
 
-    private fun formatCompanionProperty(property: KmProperty, companion: ApiCompanion, contextPackage: String): String =
-        formatProperty(property, owner = companion.kmClass, contextPackage = contextPackage)
+    /**
+     * Format a [property] of the [companion] object on its lines, see [formatProperty],
+     * the setter visibility decided in the scopes of the companion object.
+     */
+    private fun formatCompanionProperty(property: KmProperty, companion: ApiCompanion, contextPackage: String): List<String> =
+        formatProperty(
+            property, property.apiSetterVisibility(companion.scopes, companion.foundClass),
+            owner = companion.kmClass, contextPackage = contextPackage
+        )
 
     private fun formatCompanionFunction(function: KmFunction, companion: ApiCompanion, contextPackage: String): String =
         formatFunction(function, inInterface = false, owner = companion.kmClass, contextPackage = contextPackage)
@@ -761,8 +815,9 @@ internal class DefaultKotlinIntrospector(
      * @param kmPackages the package declarations, with the class declaring them, like a file facade.
      */
     private fun resolvePackageMember(kmPackages: List<Pair<KmPackage, FoundClass>>, memberName: String): MemberListing? {
+        // each declaration on its lines
         fun signatures(
-            format: (KmPackage, FoundClass, contextPackage: String) -> List<String>
+            format: (KmPackage, FoundClass, contextPackage: String) -> List<List<String>>
         ): List<ListingItem.Extension> = kmPackages.flatMap { (kmPackage, foundClass) ->
             val binaryName = foundClass.binaryName
             val source = packageSourceOf(binaryName)
@@ -770,12 +825,12 @@ internal class DefaultKotlinIntrospector(
         }
         val properties = signatures { kmPackage, foundClass, contextPackage ->
             kmPackage.properties.filter { it.name == memberName }.inApi(emptyList(), foundClass).map {
-                formatProperty(it, contextPackage = contextPackage)
+                formatProperty(it, it.apiSetterVisibility(emptyList(), foundClass), contextPackage = contextPackage)
             }
         }
         val functions = signatures { kmPackage, foundClass, contextPackage ->
             kmPackage.functions.filter { it.name == memberName }.inApi(emptyList(), foundClass).map {
-                formatFunction(it, contextPackage = contextPackage)
+                listOf(formatFunction(it, contextPackage = contextPackage))
             }
         }
         return MemberListing.of(properties + functions)
@@ -793,7 +848,8 @@ internal class DefaultKotlinIntrospector(
         val mutableKmClass = if (kotlinName in mutableBuiltinTypes) builtinKmClass else null
 
         // Collect all members to sort them together alphabetically
-        data class Member(val name: String, val formatted: String)
+        // a member rendered on its lines, like a property followed by its setter
+        data class Member(val name: String, val lines: List<String>)
         val allMembers = mutableListOf<Member>()
 
         val declaration: String
@@ -815,7 +871,10 @@ internal class DefaultKotlinIntrospector(
                 allMembers.add(
                     Member(
                         property.name,
-                        formatProperty(property, inInterface = true, owner = mutableKmClass, classTypeParameters = typeParameters)
+                        formatProperty(
+                            property, property.apiSetterVisibility(emptyList(), hidden = null),
+                            inInterface = true, owner = mutableKmClass, classTypeParameters = typeParameters
+                        )
                     )
                 )
             }
@@ -823,7 +882,7 @@ internal class DefaultKotlinIntrospector(
                 allMembers.add(
                     Member(
                         function.name,
-                        formatFunction(function, inInterface = true, owner = mutableKmClass, classTypeParameters = typeParameters)
+                        listOf(formatFunction(function, inInterface = true, owner = mutableKmClass, classTypeParameters = typeParameters))
                     )
                 )
             }
@@ -854,7 +913,7 @@ internal class DefaultKotlinIntrospector(
             kClass.memberProperties
                 .filter { isBuiltinApi(it) }
                 .forEach { prop ->
-                    allMembers.add(Member(prop.name, formatKProperty(prop, isOverride(builtinKmClass, prop))))
+                    allMembers.add(Member(prop.name, listOf(formatKProperty(prop, isOverride(builtinKmClass, prop)))))
                 }
 
             // Functions (only public, non-extension, excluding synthetic, internal, and Java-only methods taking parameters)
@@ -868,7 +927,7 @@ internal class DefaultKotlinIntrospector(
                 .filter { !hasSyntheticParameterNames(it) }
                 .toList()
                 .forEach { func ->
-                    allMembers.add(Member(func.name, formatKFunction(func, isOverride(builtinKmClass, func))))
+                    allMembers.add(Member(func.name, listOf(formatKFunction(func, isOverride(builtinKmClass, func)))))
                 }
 
         }
@@ -881,7 +940,7 @@ internal class DefaultKotlinIntrospector(
             .filter { isPublicKotlinPackageSource(it.sourceClass) }
             .partition { it.isObjectMember }
         packageExtensions.forEach { ext ->
-            allMembers.add(Member(ext.function.name, formatFunction(ext.function, withReceiver = false)))
+            allMembers.add(Member(ext.function.name, listOf(formatFunction(ext.function, withReceiver = false))))
         }
 
         // Extension properties on this exact type (shown inside class body)
@@ -889,7 +948,9 @@ internal class DefaultKotlinIntrospector(
             .filter { isPublicKotlinPackageSource(it.sourceClass) }
             .partition { it.isObjectMember }
         packageExtensionProperties.forEach { extProp ->
-            allMembers.add(Member(extProp.property.name, formatProperty(extProp.property, withReceiver = false)))
+            allMembers.add(
+                Member(extProp.property.name, formatProperty(extProp.property, extProp.setterVisibility, withReceiver = false))
+            )
         }
 
         // Extension functions and properties on all the supertypes (shown outside class body)
@@ -906,7 +967,7 @@ internal class DefaultKotlinIntrospector(
         return ClassListing.of(
             header = declaration,
             // Sort all members alphabetically
-            members = allMembers.sortedBy { it.name }.map { ListingItem.Declaration(it.formatted) },
+            members = allMembers.sortedBy { it.name }.map { ListingItem.Declaration(it.lines) },
             extensions = extensionSignatures(supertypeExtensions, supertypeExtensionProperties, contextPackage = null)
         )
     }
@@ -919,12 +980,17 @@ internal class DefaultKotlinIntrospector(
      */
     private fun isHiddenDeprecated(member: KCallable<*>): Boolean = reflectedAnnotationValue(default = false) {
         member.annotations.any { annotation ->
-            val isHidden = annotation is Deprecated &&
-                reflectedAnnotationValue(DeprecationLevel.WARNING) { annotation.level } == DeprecationLevel.HIDDEN
-            isHidden || (
-                annotation is DeprecatedSinceKotlin &&
-                    isHiddenSince(reflectedAnnotationValue("") { annotation.hiddenSince })
+            when (annotation) {
+                is Deprecated -> isHidingAnnotation(
+                    DEPRECATED_DESCRIPTOR,
+                    mapOf("level" to reflectedAnnotationValue(default = null) { annotation.level.name })::get
                 )
+                is DeprecatedSinceKotlin -> isHidingAnnotation(
+                    DEPRECATED_SINCE_KOTLIN_DESCRIPTOR,
+                    mapOf("hiddenSince" to reflectedAnnotationValue(default = null) { annotation.hiddenSince })::get
+                )
+                else -> false
+            }
         }
     }
 
@@ -1015,9 +1081,12 @@ internal class DefaultKotlinIntrospector(
         val mutableMembers = mutableKmClass?.let { kmClass ->
             val typeParameters = kmClass.typeParameters.namesById()
             kmClass.properties.filter { it.name == memberName }.inMutableBuiltinApi().map {
-                formatProperty(it, inInterface = true, owner = kmClass, classTypeParameters = typeParameters)
+                formatProperty(
+                    it, it.apiSetterVisibility(emptyList(), hidden = null),
+                    inInterface = true, owner = kmClass, classTypeParameters = typeParameters
+                )
             } + kmClass.functions.filter { it.name == memberName }.inMutableBuiltinApi().map {
-                formatFunction(it, inInterface = true, owner = kmClass, classTypeParameters = typeParameters)
+                listOf(formatFunction(it, inInterface = true, owner = kmClass, classTypeParameters = typeParameters))
             }
         } ?: emptyList()
 
@@ -1026,9 +1095,9 @@ internal class DefaultKotlinIntrospector(
         val members = mutableMembers.ifEmpty {
             kClass.memberProperties.filter {
                 it.name == memberName && isBuiltinApi(it)
-            }.map { formatKProperty(it, isOverride(builtinKmClass, it)) } + kClass.memberFunctions.filter {
+            }.map { listOf(formatKProperty(it, isOverride(builtinKmClass, it))) } + kClass.memberFunctions.filter {
                 it.name == memberName && isBuiltinApi(it)
-            }.sortedBy { formatKFunctionDeclaration(it) }.map { formatKFunction(it, isOverride(builtinKmClass, it)) }
+            }.sortedBy { formatKFunctionDeclaration(it) }.map { listOf(formatKFunction(it, isOverride(builtinKmClass, it))) }
         }
 
         // The same extensions as the listing of the built-in type shows, the ones of the public kotlin.* packages
@@ -1074,9 +1143,9 @@ internal class DefaultKotlinIntrospector(
     ): Pair<List<ListingItem.Declaration>, List<ListingItem.Extension>> {
         fun String.matches() = memberName == null || this == memberName
         val members = companion.properties.filter { it.name.matches() }.inMutableBuiltinApi().map {
-            formatProperty(it, owner = companion)
+            formatProperty(it, it.apiSetterVisibility(emptyList(), hidden = null), owner = companion)
         } + companion.functions.filter { it.name.matches() }.inMutableBuiltinApi().map {
-            formatFunction(it, owner = companion)
+            listOf(formatFunction(it, owner = companion))
         }
         val extensions = extensionSignatures(
             getExtensionsFor(name).filter { it.function.name.matches() && isPublicKotlinPackageSource(it.sourceClass) },
@@ -1183,6 +1252,7 @@ internal class DefaultKotlinIntrospector(
         val constructorProperties = renderedConstructor?.valueParameters.orEmpty().mapNotNull { param ->
             properties.firstOrNull { it.isDeclaredBy(param) }?.let { param.name to it }
         }.toMap()
+        val declaredInConstructor = constructorProperties.values.toSet()
 
         // The companion object, unless it is not part of the API, with its members which are
         val companion = apiCompanionOf(kmClass, scopes, foundClass)
@@ -1209,7 +1279,9 @@ internal class DefaultKotlinIntrospector(
                 formatValueParameter(
                     param,
                     contextPackage,
-                    prefix = "val ",
+                    // the property of a parameter can be hidden, while the argument can still be passed,
+                    // as the parameter itself cannot be annotated with @Deprecated
+                    prefix = if (properties.any { it.name == param.name }) "val " else "",
                     // the default values are only present in the JVM annotation, not in the Kotlin metadata
                     defaultValue = { clazz?.let { formatAnnotationDefaultValue(it, param.name, contextPackage) } }
                 )
@@ -1235,7 +1307,10 @@ internal class DefaultKotlinIntrospector(
                             param,
                             contextPackage,
                             typeParameters,
-                            prefix = if (prop.isVar) "var " else "val ",
+                            // never with a setter narrower than the property, which is declared in the class body
+                            prefix = if (
+                                renderedSetterVisibility(prop, prop.apiSetterVisibility(scopes, foundClass), isOverride(kmClass, prop)) != null
+                            ) "var " else "val ",
                             // a constructor property is never abstract, but it can be open or final
                             modifiers = formatVisibility(prop.visibility) + formatModalityModifiers(
                                 prop.modality, isOverride(kmClass, prop), inInterface = false, kmClass
@@ -1261,25 +1336,31 @@ internal class DefaultKotlinIntrospector(
             // The sealed subclasses first, then the other nested classes, only referenced,
             // as they can be resolved by their own name
             (sealedSubclasses + nestedClasses).forEach { (name, listedKmClass) ->
-                add(ListingItem.Declaration(formatClassHeader(listedKmClass, name, contextPackage, typeParametersInScope(listedKmClass))))
+                add(ListingItem.Declaration(listOf(formatClassHeader(listedKmClass, name, contextPackage, typeParametersInScope(listedKmClass)))))
             }
 
             // Properties (excluding constructor properties)
-            val declaredInConstructor = constructorProperties.values.toSet()
             properties
                 .filter { it !in declaredInConstructor }
                 .forEach { property ->
-                    add(ListingItem.Declaration(formatProperty(property, inInterface = isInterface, owner = kmClass, contextPackage = contextPackage, classTypeParameters = typeParameters)))
+                    add(
+                        ListingItem.Declaration(
+                            formatProperty(
+                                property, property.apiSetterVisibility(scopes, foundClass),
+                                inInterface = isInterface, owner = kmClass, contextPackage = contextPackage, classTypeParameters = typeParameters
+                            )
+                        )
+                    )
                 }
 
             // Secondary constructors, in the conventional order, between the properties and the functions
             secondaryConstructors.forEach { constructor ->
-                add(ListingItem.Declaration(formatSecondaryConstructor(constructor, contextPackage, typeParameters)))
+                add(ListingItem.Declaration(listOf(formatSecondaryConstructor(constructor, contextPackage, typeParameters))))
             }
 
             // Functions
             functions.forEach { function ->
-                add(ListingItem.Declaration(formatFunction(function, inInterface = isInterface, owner = kmClass, contextPackage = contextPackage, classTypeParameters = typeParameters)))
+                add(ListingItem.Declaration(listOf(formatFunction(function, inInterface = isInterface, owner = kmClass, contextPackage = contextPackage, classTypeParameters = typeParameters))))
             }
 
             // even without members of the API, the companion object is a value, like a CoroutineContext.Key,
@@ -1291,7 +1372,7 @@ internal class DefaultKotlinIntrospector(
                     members = buildList {
                         // Companion nested classes, only referenced, like the ones of the outer class
                         companionNestedClasses.forEach { (name, listedKmClass) ->
-                            add(formatClassHeader(listedKmClass, name, contextPackage, typeParametersInScope(listedKmClass)))
+                            add(listOf(formatClassHeader(listedKmClass, name, contextPackage, typeParametersInScope(listedKmClass))))
                         }
 
                         // Companion properties
@@ -1301,7 +1382,7 @@ internal class DefaultKotlinIntrospector(
 
                         // Companion functions
                         companion.functions.forEach { function ->
-                            add(formatCompanionFunction(function, companion, contextPackage))
+                            add(listOf(formatCompanionFunction(function, companion, contextPackage)))
                         }
                     },
                     name = escapeQualifiedName("$className.${kmClass.companionObject}")
@@ -1400,10 +1481,10 @@ internal class DefaultKotlinIntrospector(
         return sources.flatMap { source ->
             propertiesBySource[source].orEmpty()
                 .sortedWith(extensionPropertyOrder)
-                .map { ListingItem.Extension(source, formatProperty(it.property, contextPackage = contextPackage)) } +
+                .map { ListingItem.Extension(source, formatProperty(it.property, it.setterVisibility, contextPackage = contextPackage)) } +
                 functionsBySource[source].orEmpty()
                     .sortedWith(extensionFunctionOrder)
-                    .map { ListingItem.Extension(source, formatFunction(it.function, contextPackage = contextPackage)) }
+                    .map { ListingItem.Extension(source, listOf(formatFunction(it.function, contextPackage = contextPackage))) }
         }
     }
 
@@ -1639,8 +1720,12 @@ internal class DefaultKotlinIntrospector(
     ): String = formatContextParameters(parameters.map { it.name to formatType(it.type, contextPackage, typeParameters) })
 
     /**
-     * Format a member, top-level or extension property.
+     * Format a member, top-level or extension property, on its lines: the declaration, followed by the line
+     * of its setter, like `    protected set`, when its visibility differs from the one of the property.
      *
+     * @param setterVisibility the visibility of the setter, when the property can be assigned from the user code,
+     *   see [apiSetterVisibility], otherwise the property is rendered as a `val`,
+     *   unless it overrides a `var`, see [renderedSetterVisibility].
      * @param owner the class declaring the [property], to tell whether it is an override.
      * @param withReceiver whether to render the receiver of an extension property,
      *   which is omitted when the extension is listed in the body of its receiver class.
@@ -1648,36 +1733,54 @@ internal class DefaultKotlinIntrospector(
     @OptIn(ExperimentalContextParameters::class)
     private fun formatProperty(
         property: KmProperty,
+        setterVisibility: Visibility?,
         inInterface: Boolean = false,
         owner: KmClass? = null,
         contextPackage: String? = null,
         classTypeParameters: Map<Int, String> = emptyMap(),
         withReceiver: Boolean = true
-    ): String = buildString {
+    ): List<String> = buildList {
         val typeParameters = classTypeParameters + property.typeParameters.namesById()
+        val isOverride = isOverride(owner, property)
+        val renderedSetterVisibility = renderedSetterVisibility(property, setterVisibility, isOverride)
+        add(buildString {
+            +formatContextParameters(property.contextParameters, contextPackage, typeParameters)
+            +formatVisibility(property.visibility)
 
-        +formatContextParameters(property.contextParameters, contextPackage, typeParameters)
-        +formatVisibility(property.visibility)
+            +formatModalityModifiers(property.modality, isOverride, inInterface, owner)
+            if (property.isConst) +"const "
 
-        +formatModalityModifiers(property.modality, isOverride(owner, property), inInterface, owner)
-        if (property.isConst) +"const "
+            +(if (renderedSetterVisibility != null) "var " else "val ")
+            formatTypeParameters(property.typeParameters, typeParameters, contextPackage).let {
+                if (it.isNotEmpty()) +"$it "
+            }
 
-        +(if (property.isVar) "var " else "val ")
-        formatTypeParameters(property.typeParameters, typeParameters, contextPackage).let {
-            if (it.isNotEmpty()) +"$it "
+            // the receiver of an extension property
+            property.receiverParameterType?.takeIf { withReceiver }?.let { receiverType ->
+                +formatReceiverType(receiverType, contextPackage, typeParameters)
+                +"."
+            }
+
+            +escapeIdentifier(property.name)
+            +": "
+            +formatType(property.returnType, contextPackage, typeParameters)
+            +formatWhereClause(property.typeParameters, typeParameters, contextPackage)
+        })
+        // a setter narrower than the property, like a protected one of a public property of an open class
+        if (renderedSetterVisibility != null && renderedSetterVisibility != property.visibility) {
+            add("    ${formatVisibility(renderedSetterVisibility)}set")
         }
-
-        // the receiver of an extension property
-        property.receiverParameterType?.takeIf { withReceiver }?.let { receiverType ->
-            +formatReceiverType(receiverType, contextPackage, typeParameters)
-            +"."
-        }
-
-        +escapeIdentifier(property.name)
-        +": "
-        +formatType(property.returnType, contextPackage, typeParameters)
-        +formatWhereClause(property.typeParameters, typeParameters, contextPackage)
     }
+
+    /**
+     * The visibility of the setter rendered for the [property], or `null` when it is rendered as a `val`:
+     * the [setterVisibility] of the API, see [apiSetterVisibility], except for an override of a `var`,
+     * which cannot be a `val`, so that its setter is rendered with its actual visibility, like `protected set`,
+     * even when it cannot be called, like in a final class.
+     * A hidden setter of an override, whose visibility does not tell it, still renders the override as a `var`.
+     */
+    private fun renderedSetterVisibility(property: KmProperty, setterVisibility: Visibility?, isOverride: Boolean): Visibility? =
+        setterVisibility ?: if (property.isVar && isOverride) property.setter?.visibility ?: property.visibility else null
 
     private fun List<KmTypeParameter>.namesById(): Map<Int, String> = associate { it.id to it.name }
 
@@ -1872,22 +1975,24 @@ internal class DefaultKotlinIntrospector(
      * Whether this property might be declared by the constructor [parameter], like `class Foo(val x: Int)`.
      *
      * The metadata does not tell where a property is declared, so a property of the same name is excluded
-     * when it cannot be declared in the constructor: it has a receiver, an accessor other than the default one
-     * (with a body, also the only way of declaring a property without a backing field,
-     * or only changing the visibility, like `private set`), a delegate, a constant initializer, no implementation,
+     * when it cannot be declared in the constructor: it is not declared in the class, but delegated
+     * to the implementation of an interface, it has a receiver (and so the type parameters, which only a receiver
+     * can use), an accessor other than the default one (with a body, also the only way of declaring a property
+     * without a backing field, or only changing the visibility, like `private set`, and also of a delegated property),
+     * a `lateinit` modifier, a constant initializer (also of every `const`), no implementation,
      * or a type other than the parameter type, like `class Foo(x: Int) { val x: Long = x.toLong() }`.
      * What remains, like `class Foo(x: Int) { val x: Int = x }`, cannot be distinguished from
-     * a constructor property in the metadata, and has the same API.
+     * a constructor property in the metadata, and has the same API, unlike `class Foo(x: Int) { val x: Int = x * 2 }`,
+     * which is still rendered as a constructor property.
+     * The order of the properties in the metadata would not tell them apart either: while Kotlin 2 keeps
+     * the declaration order, the constructor properties first, Kotlin 1 (metadata version 1.x) sorted them by name.
      */
     private fun KmProperty.isDeclaredBy(parameter: KmValueParameter): Boolean =
         name == parameter.name &&
             kind == MemberKind.DECLARATION &&
             modality != Modality.ABSTRACT &&
             receiverParameterType == null &&
-            typeParameters.isEmpty() &&
-            !isDelegated &&
             !isLateinit &&
-            !isConst &&
             !hasConstant &&
             !getter.isNotDefault &&
             setter?.isNotDefault != true &&
@@ -1988,15 +2093,7 @@ internal class DefaultKotlinIntrospector(
                     enclosingScopes(indexedClass)?.all { it.visibility == Visibility.PUBLIC } == true
             }
             .forEach { indexedClass ->
-                indexExtensions(
-                    indexedClass.extensions,
-                    indexedClass.extensionProperties,
-                    indexedClass.binaryName,
-                    source = indexedClass.name.replace('/', '.'),
-                    isObjectMember = true,
-                    funcIndex,
-                    propIndex
-                )
+                indexExtensions(indexedClass.extensions, indexedClass.extensionProperties, funcIndex, propIndex)
             }
 
         // Index the classes by their simple names (lowercase for case-insensitive search)
@@ -2168,6 +2265,7 @@ internal class DefaultKotlinIntrospector(
             // while the ones of objects can be imported, which is decided once all the enclosing classes are known
             val isObject = kmClass.kind == ClassKind.OBJECT || kmClass.kind == ClassKind.COMPANION_OBJECT
             classes.getOrPut(kmClass.name) {
+                val source = kmClass.name.replace('/', '.')
                 IndexedClass(
                     name = kmClass.name,
                     binaryName = className,
@@ -2175,10 +2273,10 @@ internal class DefaultKotlinIntrospector(
                     isUsable = isUsableClass(kmClass, classFile),
                     isSearchable = isListedClass(kmClass, classFile),
                     extensions = if (isObject) {
-                        kmClass.functions.filter { it.receiverParameterType != null && !classFile.isHidden(it) }
+                        apiExtensions(kmClass.functions, classFile, className, source, isObjectMember = true)
                     } else emptyList(),
                     extensionProperties = if (isObject) {
-                        kmClass.properties.filter { it.receiverParameterType != null && !classFile.isHidden(it) }
+                        apiExtensionProperties(kmClass.properties, classFile, className, source, isObjectMember = true)
                     } else emptyList()
                 )
             }
@@ -2190,43 +2288,61 @@ internal class DefaultKotlinIntrospector(
             is KotlinClassMetadata.MultiFileClassPart -> metadata.kmPackage
             else -> return
         }
+        val source = packageSourceOf(className)
         indexExtensions(
-            kmPackage.functions.filter { it.receiverParameterType != null && !classFile.isHidden(it) },
-            kmPackage.properties.filter { it.receiverParameterType != null && !classFile.isHidden(it) },
-            className,
-            source = packageSourceOf(className),
-            isObjectMember = false,
+            apiExtensions(kmPackage.functions, classFile, className, source, isObjectMember = false),
+            apiExtensionProperties(kmPackage.properties, classFile, className, source, isObjectMember = false),
             funcIndex,
             propIndex
         )
     }
 
-    private fun indexExtensions(
+    /*
+     * The extensions of the API, declared in the class file of the className, to be indexed.
+     * Once imported, even the members of an object are shown to all the users of the receiver type,
+     * like the top-level ones, so only the public ones are, and only the ones which are not hidden.
+     */
+
+    private fun apiExtensions(
         functions: List<KmFunction>,
-        properties: List<KmProperty>,
+        classFile: ClassFile,
         className: String,
         source: String,
-        isObjectMember: Boolean,
+        isObjectMember: Boolean
+    ): List<IndexedExtension> = functions
+        .filter { it.receiverParameterType != null }
+        .inApi(emptyList(), classFile)
+        .map { IndexedExtension(it, className, source, isObjectMember) }
+
+    private fun apiExtensionProperties(
+        properties: List<KmProperty>,
+        classFile: ClassFile,
+        className: String,
+        source: String,
+        isObjectMember: Boolean
+    ): List<IndexedExtensionProperty> = properties
+        .filter { it.receiverParameterType != null }
+        .inApi(emptyList(), classFile)
+        .map {
+            IndexedExtensionProperty(
+                it, className, source, isObjectMember,
+                isAssignable = it.apiSetterVisibility(emptyList(), classFile) != null
+            )
+        }
+
+    private fun indexExtensions(
+        functions: List<IndexedExtension>,
+        properties: List<IndexedExtensionProperty>,
         funcIndex: MutableMap<String, MutableList<IndexedExtension>>,
         propIndex: MutableMap<String, MutableList<IndexedExtensionProperty>>
     ) {
-        // Only the extensions of the API are indexed, the hidden ones are already filtered out by the caller.
-        // Once imported, even the members of an object are shown to all the users of the receiver type,
-        // like the top-level ones, so only the public ones are.
-        for (function in functions.filter { it.visibility.isApiIn(emptyList()) }) {
-            val receiverType = function.receiverParameterType ?: continue
-            val receiverName = receiverIndexKey(receiverType)
-
-            funcIndex.getOrPut(receiverName) { mutableListOf() }
-                .add(IndexedExtension(function, className, source, isObjectMember))
+        for (extension in functions) {
+            val receiverType = extension.function.receiverParameterType ?: continue
+            funcIndex.getOrPut(receiverIndexKey(receiverType)) { mutableListOf() }.add(extension)
         }
-
-        for (property in properties.filter { it.visibility.isApiIn(emptyList()) }) {
-            val receiverType = property.receiverParameterType ?: continue
-            val receiverName = receiverIndexKey(receiverType)
-
-            propIndex.getOrPut(receiverName) { mutableListOf() }
-                .add(IndexedExtensionProperty(property, className, source, isObjectMember))
+        for (extension in properties) {
+            val receiverType = extension.property.receiverParameterType ?: continue
+            propIndex.getOrPut(receiverIndexKey(receiverType)) { mutableListOf() }.add(extension)
         }
     }
 
@@ -2258,24 +2374,43 @@ internal class DefaultKotlinIntrospector(
             kmClass.supertypes.any { (it.classifier as? KmClassifier.Class)?.name == GENERATED_SERIALIZER }
 
     /**
-     * Visits a `@kotlin.Deprecated` annotation of a class or a method, calling [onHidden] when its level is `HIDDEN`,
-     * or a `@kotlin.DeprecatedSinceKotlin` one, calling [onHidden] when it is [hidden since][isHiddenSince]
-     * the Kotlin version of the classpath, either of which makes the declaration unusable in the source code.
-     * Returns `null` for any other annotation.
+     * Whether an annotation, by its JVM [descriptor], makes the declaration it annotates unusable
+     * in the source code, telling its attribute values by their names, an enum one by the name of its entry:
+     * a `@kotlin.Deprecated` one of the `HIDDEN` level, or a `@kotlin.DeprecatedSinceKotlin` one
+     * [hidden since][isHiddenSince] the Kotlin version of the classpath.
+     * The one rule for both the annotations read from the class files, see [hiddenDeprecationVisitor],
+     * and the ones of the built-in types, described by kotlin-reflect, see [isHiddenDeprecated].
+     */
+    private fun isHidingAnnotation(descriptor: String, attribute: (name: String) -> Any?): Boolean =
+        when (descriptor) {
+            DEPRECATED_DESCRIPTOR -> attribute("level") == DeprecationLevel.HIDDEN.name
+            DEPRECATED_SINCE_KOTLIN_DESCRIPTOR -> (attribute("hiddenSince") as? String)?.let { isHiddenSince(it) } == true
+            else -> false
+        }
+
+    /**
+     * Visits an annotation of a class or a method, calling [onHidden] when it is a [hiding one][isHidingAnnotation],
+     * or returns `null` for an annotation which cannot be.
      */
     private fun hiddenDeprecationVisitor(descriptor: String, onHidden: () -> Unit): AnnotationVisitor? =
-        when (descriptor) {
-            DEPRECATED_DESCRIPTOR -> object : AnnotationVisitor(Opcodes.ASM9) {
-                override fun visitEnum(name: String?, descriptor: String, value: String) {
-                    if (name == "level" && value == DeprecationLevel.HIDDEN.name) onHidden()
-                }
-            }
-            DEPRECATED_SINCE_KOTLIN_DESCRIPTOR -> object : AnnotationVisitor(Opcodes.ASM9) {
+        if (descriptor in HIDING_ANNOTATION_DESCRIPTORS) {
+            object : AnnotationVisitor(Opcodes.ASM9) {
+                private val attributes = mutableMapOf<String, Any?>()
+
                 override fun visit(name: String?, value: Any?) {
-                    if (name == "hiddenSince" && value is String && isHiddenSince(value)) onHidden()
+                    if (name != null) attributes[name] = value
+                }
+
+                override fun visitEnum(name: String?, descriptor: String, value: String) {
+                    if (name != null) attributes[name] = value
+                }
+
+                override fun visitEnd() {
+                    if (isHidingAnnotation(descriptor, attributes::get)) onHidden()
                 }
             }
-            else -> null
+        } else {
+            null
         }
 
     /**
@@ -2297,8 +2432,10 @@ internal class DefaultKotlinIntrospector(
         var isHiddenDeprecated = false
         val memberClasses = mutableListOf<MemberClass>()
         val nestMembers = mutableListOf<String>()
-        val hiddenMethods = mutableSetOf<String>()
-        val annotationsMethods = mutableSetOf<String>()
+        // allocated only when needed, as most classes have no hidden methods, and only interfaces need the others
+        val hiddenMethods = LazySet()
+        val annotationsMethods = LazySet()
+        val isInterface = reader.access and Opcodes.ACC_INTERFACE != 0
         reader.accept(object : ClassVisitor(Opcodes.ASM9) {
             override fun visitAnnotation(descriptor: String, visible: Boolean): AnnotationVisitor? =
                 if (descriptor == METADATA_DESCRIPTOR) {
@@ -2317,7 +2454,7 @@ internal class DefaultKotlinIntrospector(
                 // the declarations of a class without the metadata, visited before the methods, are not rendered
                 null
             } else {
-                if (name.endsWith(ANNOTATIONS_METHOD_SUFFIX)) annotationsMethods += name + descriptor
+                if (isInterface && name.endsWith(ANNOTATIONS_METHOD_SUFFIX)) annotationsMethods += name + descriptor
                 object : MethodVisitor(Opcodes.ASM9) {
                     override fun visitAnnotation(annotationDescriptor: String, visible: Boolean): AnnotationVisitor? =
                         hiddenDeprecationVisitor(annotationDescriptor) { hiddenMethods += name + descriptor }
@@ -2341,9 +2478,24 @@ internal class DefaultKotlinIntrospector(
             isHiddenDeprecated = isHiddenDeprecated,
             memberClasses = memberClasses,
             nestMembers = nestMembers,
-            hiddenMethods = hiddenMethods,
-            annotationsMethods = annotationsMethods
+            hiddenMethods = hiddenMethods.toSet(),
+            annotationsMethods = annotationsMethods.toSet()
         )
+    }
+
+    /**
+     * A set of strings allocated only once the first one is added, as most of them stay empty.
+     */
+    private class LazySet {
+
+        private var elements: MutableSet<String>? = null
+
+        operator fun plusAssign(element: String) {
+            (elements ?: mutableSetOf<String>().also { elements = it }) += element
+        }
+
+        fun toSet(): Set<String> = elements ?: emptySet()
+
     }
 
     /**
@@ -2356,7 +2508,8 @@ internal class DefaultKotlinIntrospector(
      * @property hiddenMethods the JVM signatures, like `max(Ljava/lang/CharSequence;)Ljava/lang/Character;`,
      *   of the methods annotated as hidden, see [hiddenDeprecationVisitor].
      * @property annotationsMethods the JVM signatures of the synthetic methods for the annotations of the properties,
-     *   like `getName${'$'}annotations()V`.
+     *   like `getName${'$'}annotations()V`, only of an interface, or an annotation class, being one on the JVM,
+     *   as only for them these methods might be in the `DefaultImpls` class instead, see [FoundClass.isHidden].
      */
     private class ClassFile(
         val metadata: Metadata?,
@@ -2366,27 +2519,31 @@ internal class DefaultKotlinIntrospector(
         val nestMembers: List<String> = emptyList(),
         val hiddenMethods: Set<String> = emptySet(),
         val annotationsMethods: Set<String> = emptySet()
-    ) {
+    ) : HiddenDeclarations {
 
         /*
          * Whether a declaration of the class is deprecated as hidden, and cannot be used in the source code,
          * like an overload kept only for the binary compatibility, which the metadata does not tell.
          * The annotation is found on the JVM method of a function or a constructor,
-         * and on the synthetic method for the annotations of a property, or its getter, if annotated itself.
+         * and on the synthetic method for the annotations of a property, or its getter, if annotated itself,
+         * while only the setter is hidden when annotated itself.
          * The ACC_SYNTHETIC flag, which the compiler also sets on the hidden methods, is not relied on,
          * as @JvmSynthetic sets it on the declarations which are still callable from Kotlin,
          * while the field of a hidden @JvmField or const property does not have it.
          */
 
-        fun isHidden(function: KmFunction): Boolean = isHidden(function.signature)
+        override fun isHidden(function: KmFunction): Boolean = isHidden(function.signature)
 
-        fun isHidden(constructor: KmConstructor): Boolean = isHidden(constructor.signature)
+        override fun isHidden(constructor: KmConstructor): Boolean = isHidden(constructor.signature)
 
-        fun isHidden(property: KmProperty): Boolean =
+        override fun isHidden(property: KmProperty): Boolean =
             isHidden(property.syntheticMethodForAnnotations) || isHidden(property.getterSignature)
 
+        override fun isSetterHidden(property: KmProperty): Boolean = isHidden(property.setterSignature)
+
         /**
-         * Whether the class declares the synthetic method for the annotations of a property, by its [signature].
+         * Whether the interface, or the annotation class, declares the synthetic method for the annotations
+         * of a property, by its [signature].
          */
         fun declares(signature: JvmMethodSignature): Boolean = signature.toString() in annotationsMethods
 
@@ -2609,29 +2766,30 @@ private sealed interface ListingItem {
     class EnumEntry(val line: String) : ClassBodyItem
 
     /**
-     * A single-line declaration, like a function, of the body of a [ClassListing],
-     * or found by a [MemberListing], rendered there as is.
+     * A declaration of the body of a [ClassListing], or found by a [MemberListing], rendered there as is, on its [lines]:
+     * a single one, like a function, or more, like a property with the line of its setter, never split across pages.
      */
-    class Declaration(val signature: String) : ClassBodyItem, MemberItem
+    class Declaration(val lines: List<String>) : ClassBodyItem, MemberItem
 
     /**
-     * The companion object of a [ClassListing], declared with the [header], with its [members],
+     * The companion object of a [ClassListing], declared with the [header], with its [members], each on its lines,
      * a single item, as the members of the companion object are paged by resolving it directly by the [name].
      *
      * @param name the fully qualified name of the companion object to resolve, like `com.example.Outer.Companion`.
      */
-    class CompanionObject(val header: String, val members: List<String>, val name: String) : ClassBodyItem
+    class CompanionObject(val header: String, val members: List<List<String>>, val name: String) : ClassBodyItem
 
     /**
-     * A member of a companion object found by a [MemberListing],
+     * A member of a companion object found by a [MemberListing], on its [lines], see [Declaration],
      * rendered within the declaration of the companion object, the [header], repeated on every page.
      */
-    class CompanionMember(val header: String, val signature: String) : MemberItem
+    class CompanionMember(val header: String, val lines: List<String>) : MemberItem
 
     /**
-     * An extension, listed under the `// from` header of its [source], repeated on every page.
+     * An extension, listed under the `// from` header of its [source], repeated on every page,
+     * rendered on its [lines], see [Declaration].
      */
-    class Extension(val source: String, val signature: String) : ClassItem, MemberItem
+    class Extension(val source: String, val lines: List<String>) : ClassItem, MemberItem
 
 }
 
@@ -2645,7 +2803,7 @@ private fun List<ListingItem.Extension>.renderLines(): List<String> = buildList 
             add("// from ${extension.source}")
             source = extension.source
         }
-        add(extension.signature)
+        addAll(extension.lines)
     }
 }
 
@@ -2675,7 +2833,7 @@ private class ClassListing(
             body.forEach { item ->
                 when (item) {
                     is ListingItem.EnumEntry -> add("    ${item.line}")
-                    is ListingItem.Declaration -> add("    ${item.signature}")
+                    is ListingItem.Declaration -> item.lines.forEach { add("    $it") }
                     is ListingItem.CompanionObject -> renderCompanionObject(item, page.pageSize).forEach { add("    $it") }
                 }
             }
@@ -2695,7 +2853,7 @@ private class ClassListing(
             if (companion.members.size > pageSize) {
                 add("    // ${companion.members.size} members, resolve ${companion.name} to page through them")
             }
-            companion.members.forEach { add("    $it") }
+            companion.members.flatten().forEach { add("    $it") }
             add("}")
         }
 
@@ -2738,10 +2896,10 @@ private class ClassListing(
 private class MemberListing(override val items: List<ListingItem.MemberItem>) : Resolved<ListingItem.MemberItem> {
 
     override fun renderPage(page: Page<ListingItem.MemberItem>): List<String> = buildList {
-        page.items.filterIsInstance<ListingItem.Declaration>().forEach { add(it.signature) }
+        page.items.filterIsInstance<ListingItem.Declaration>().forEach { addAll(it.lines) }
         page.items.filterIsInstance<ListingItem.CompanionMember>().groupBy { it.header }.forEach { (header, members) ->
             add("$header {")
-            members.forEach { add("    ${it.signature}") }
+            members.forEach { member -> member.lines.forEach { add("    $it") } }
             add("}")
         }
         addAll(page.items.filterIsInstance<ListingItem.Extension>().renderLines())

@@ -39,7 +39,8 @@ class ExtensionIndexOrderTest {
         property = KmProperty(name),
         sourceClass = sourceClass,
         source = sourceClass.substringBeforeLast('.'),
-        isObjectMember = false
+        isObjectMember = false,
+        isAssignable = false
     )
 
     @Test

@@ -57,3 +57,29 @@ class ConstructorParameterShadowedByConstantProperty(x: Int, y: String) {
 
 // the accessors renamed for the JVM have no body, and the properties are still declared in the constructor
 class ConstructorPropertiesWithJvmNames(@get:JvmName("fetchX") val x: Int, @set:JvmName("storeY") var y: Int)
+
+// a body property with a narrowed setter is never declared in the constructor
+class ConstructorParameterShadowedByPrivateSetterProperty(x: Int) {
+    var x: Int = x
+        private set
+}
+
+// a delegated property is never declared in the constructor
+class ConstructorParameterShadowedByDelegatedProperty(x: Int) {
+    val x: Int by lazy { x }
+}
+
+// a lateinit property is never declared in the constructor
+class ConstructorParameterShadowedByLateinitProperty(@Suppress("unused") x: String) {
+    lateinit var x: String
+}
+
+interface ConstructorParameterDelegate {
+    val x: Int
+}
+
+// a property delegated to the implementation of an interface is never declared in the constructor
+class ConstructorParameterShadowedByInterfaceDelegation(
+    @Suppress("unused") x: Int,
+    delegate: ConstructorParameterDelegate
+) : ConstructorParameterDelegate by delegate

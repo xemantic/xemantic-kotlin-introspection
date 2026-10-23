@@ -98,6 +98,25 @@ com.example.AnnotationTestClass
   and so are the companion objects of the built-in types, like `kotlin.Int.Companion`.
 * The types of the `kotlin.*` packages are rendered with simple names, as LLMs know them well,
   while the other types are fully qualified, to avoid ambiguity.
+* Only the declarations which can be used from the user code are rendered:
+  never the private or internal ones,
+  the protected ones only of an open or abstract class, or of the companion object of one,
+  and never the ones deprecated with the `HIDDEN` level,
+  or with `@DeprecatedSinceKotlin(hiddenSince = …)` not newer than the standard library of the class loader.
+  The same rule applies to the setter of a `var`:
+  when it cannot be called, like with `private set`, or `@set:Deprecated(level = HIDDEN)`,
+  the property is rendered as a `val`,
+  while a setter which can be called, but is narrower than the property,
+  like the `protected set` of an open class, is rendered on its own line:
+
+  ```kotlin
+  var count: Int
+      protected set
+  ```
+
+  An override of a `var` is the exception, as a `val` cannot override a `var`:
+  it stays a `var`, with its setter rendered with its actual visibility,
+  like `protected set` in a final class, even though the setter cannot be called there.
 * The whole classpath visible to the given class loader is scanned on creation, which takes a while,
   so the instance should be created once and reused.
   The scan can be disabled with `KotlinIntrospector(scanEntireClasspath = false)`,
