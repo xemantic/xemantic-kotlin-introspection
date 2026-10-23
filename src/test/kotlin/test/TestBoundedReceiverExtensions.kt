@@ -43,3 +43,16 @@ fun <T> T.boundedByBoth() where T : BoundedReceiverA, T : BoundedReceiverB {}
 val <T : BoundedReceiverA> T.boundedPropertyOfA: Int get() = 0
 
 fun <T> T.unboundedReceiver() {}
+
+// the context parameters and the deprecation of the extensions on a bounded type parameter, or on a function type,
+// rendered like of any other extension
+interface BoundedReceiverC
+
+class BoundedReceiverOnlyC : BoundedReceiverC
+
+@Deprecated("Use boundedByA")
+context(log: Logger)
+fun <T : BoundedReceiverC> T.deprecatedInContext() {}
+
+context(log: Logger)
+fun ((Int, Int, Int, Int, Int, Int, Int, Int, Int) -> Unit).invokeInContext() {}

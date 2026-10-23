@@ -3844,6 +3844,42 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve class with deprecated extension in context on type parameter bounded by its supertype`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverOnlyC"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverOnlyC [page 1/1]
+            class BoundedReceiverOnlyC : BoundedReceiverC
+            // from com.xemantic.kotlin.introspection.test
+            @Deprecated("Use boundedByA") context(log: Logger) fun <T : BoundedReceiverC> T.deprecatedInContext()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve deprecated extension in context on type parameter bounded by supertype as member`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverOnlyC.deprecatedInContext"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverOnlyC.deprecatedInContext [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            @Deprecated("Use boundedByA") context(log: Logger) fun <T : BoundedReceiverC> T.deprecatedInContext()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension in context on function type as member of its function type class`() {
+        // the same under the Kotlin name and the JVM interface name, with the types outside kotlin.* fully qualified,
+        // as there is no package of the function type class to refer to them by their simple names from
+        listOf("kotlin.Function9", "kotlin.jvm.functions.Function9").forEach { className ->
+            resolver.resolve("$className.invokeInContext") sameAsKotlin """
+                // $className.invokeInContext [page 1/1]
+                // from com.xemantic.kotlin.introspection.test
+                context(log: com.xemantic.kotlin.introspection.test.Logger) fun ((Int, Int, Int, Int, Int, Int, Int, Int, Int) -> Unit).invokeInContext()
+            """.trimIndent()
+        }
+    }
+
+    @Test
     fun `should resolve extension on type parameter bounded by interface as its member`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.BoundedReceiverA.boundedByA"
