@@ -96,6 +96,22 @@ com.example.AnnotationTestClass
   sharing the JVM type with their read-only counterparts,
   are resolved from the `.kotlin_builtins` metadata of the standard library instead,
   and so are the companion objects of the built-in types, like `kotlin.Int.Companion`.
+* The function types are resolved by their Kotlin names, like `kotlin.Function1` of `(P1) -> R`,
+  or `kotlin.coroutines.SuspendFunction0` of `suspend () -> R`, listing the extensions on the function types,
+  like `(suspend () -> T).startCoroutine(…)`.
+  The compiler synthesizes these classes, so they are rendered like declared in the standard library sources,
+  like `interface Function1<in P1, out R> : Function<R> { operator fun invoke(p1: P1): R }`.
+  A function type with a receiver, or with context parameters, is of the same class,
+  like `String.() -> Unit` and `context(String) () -> Unit` are both `kotlin.Function1`.
+* The extensions on a type parameter bounded by a type,
+  like `fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T): T`,
+  are listed among the extensions of the bound,
+  and with multiple bounds, like `where T : A, T : B`, only for the types satisfying all of them.
+  Like any extension of a supertype, they are listed for the subtypes of the bound among the built-in types,
+  but not for the other classes when the bound is a `kotlin.*` or `java.*` type,
+  so that, e.g., a class implementing `Comparable` is not flooded with the generic extensions of the standard library.
+  The extensions on an unbounded type parameter, like `let` or `also`, are not listed for any type,
+  as they would be listed for every one.
 * The types of the `kotlin.*` packages are rendered with simple names, as LLMs know them well,
   while the other types are fully qualified, to avoid ambiguity.
 * Only the declarations which can be used from the user code are rendered:

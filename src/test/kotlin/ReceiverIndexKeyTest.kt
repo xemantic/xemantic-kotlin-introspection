@@ -21,8 +21,10 @@ package com.xemantic.kotlin.introspection
 import com.xemantic.kotlin.test.assert
 import kotlin.metadata.KmClassifier
 import kotlin.metadata.KmType
+import kotlin.metadata.KmTypeParameter
 import kotlin.metadata.KmTypeProjection
 import kotlin.metadata.KmVariance
+import kotlin.metadata.isNullable
 import kotlin.metadata.isSuspend
 import kotlin.test.Test
 
@@ -39,22 +41,179 @@ class ReceiverIndexKeyTest {
         val type = classType("kotlin/collections/List", classType("kotlin/String"))
 
         // when
-        val key = receiverIndexKey(type)
+        val key = receiverIndexKeys(type).single()
 
         // then
         assert(key == "kotlin.collections.List")
     }
 
+    private fun typeParameterType(id: Int, nullable: Boolean = false) = KmType().apply {
+        classifier = KmClassifier.TypeParameter(id)
+        isNullable = nullable
+    }
+
+    private fun typeParameter(id: Int, vararg upperBounds: KmType) =
+        KmTypeParameter("T$id", id, KmVariance.INVARIANT).apply { this.upperBounds += upperBounds }
+
     @Test
     fun `should key a type parameter receiver apart from any class name`() {
         // given
-        val type = KmType().apply { classifier = KmClassifier.TypeParameter(0) }
+        val type = typeParameterType(0)
 
         // when
-        val key = receiverIndexKey(type)
+        val keys = receiverIndexKeys(type, listOf(typeParameter(0)))
 
         // then
-        assert(!couldBeClassKey(key))
+        assert(keys.size == 1 && !couldBeClassKey(keys.single()))
+    }
+
+    @Test
+    fun `should key a type parameter receiver bounded by Any? apart from any class name`() {
+        // given
+        val type = typeParameterType(0)
+        val bound = classType("kotlin/Any").apply { isNullable = true }
+
+        // when
+        val keys = receiverIndexKeys(type, listOf(typeParameter(0, bound)))
+
+        // then
+        assert(keys.size == 1 && !couldBeClassKey(keys.single()))
+    }
+
+    @Test
+    fun `should key a type parameter receiver of an unknown type parameter apart from any class name`() {
+        // given
+        val type = typeParameterType(1)
+
+        // when
+        val keys = receiverIndexKeys(type, listOf(typeParameter(0, classType("kotlin/CharSequence"))))
+
+        // then
+        assert(keys.size == 1 && !couldBeClassKey(keys.single()))
+    }
+
+    @Test
+    fun `should key a bounded type parameter receiver by its bound`() {
+        // given
+        // fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T): T
+        val type = typeParameterType(0)
+        val bound = classType("kotlin/Comparable", typeParameterType(0))
+
+        // when
+        val keys = receiverIndexKeys(type, listOf(typeParameter(0, bound)))
+
+        // then
+        assert(keys == listOf("kotlin.Comparable"))
+    }
+
+    @Test
+    fun `should key a type parameter receiver with a nullable bound by the bound`() {
+        // given
+        // fun <T : CharSequence?> T.foo()
+        val type = typeParameterType(0, nullable = true)
+        val bound = classType("kotlin/CharSequence").apply { isNullable = true }
+
+        // when
+        val keys = receiverIndexKeys(type, listOf(typeParameter(0, bound)))
+
+        // then
+        assert(keys == listOf("kotlin.CharSequence"))
+    }
+
+    @Test
+    fun `should key a type parameter receiver bounded by Any by Any`() {
+        // given
+        // val <T : Any> T.javaClass: Class<T>
+        val type = typeParameterType(0)
+
+        // when
+        val keys = receiverIndexKeys(type, listOf(typeParameter(0, classType("kotlin/Any"))))
+
+        // then
+        assert(keys == listOf("kotlin.Any"))
+    }
+
+    @Test
+    fun `should key a type parameter receiver with multiple bounds by each bound`() {
+        // given
+        // fun <T> T.foo() where T : CharSequence, T : Comparable<T>
+        val type = typeParameterType(0)
+        val typeParameters = listOf(
+            typeParameter(0, classType("kotlin/CharSequence"), classType("kotlin/Comparable", typeParameterType(0)))
+        )
+
+        // when
+        val keys = receiverIndexKeys(type, typeParameters)
+
+        // then
+        assert(keys == listOf("kotlin.CharSequence", "kotlin.Comparable"))
+    }
+
+    @Test
+    fun `should key a type parameter receiver with Any among multiple bounds by the other bounds`() {
+        // given
+        // fun <T> T.foo() where T : Any, T : Comparable<T>
+        val type = typeParameterType(0)
+        val typeParameters = listOf(
+            typeParameter(0, classType("kotlin/Any"), classType("kotlin/Comparable", typeParameterType(0)))
+        )
+
+        // when
+        val keys = receiverIndexKeys(type, typeParameters)
+
+        // then
+        assert(keys == listOf("kotlin.Comparable"))
+    }
+
+    @Test
+    fun `should key a type parameter receiver bounded by a type parameter by the bounds of that type parameter`() {
+        // given
+        // fun <U : CharSequence, T : U> T.foo()
+        val type = typeParameterType(1)
+        val typeParameters = listOf(
+            typeParameter(0, classType("kotlin/CharSequence")),
+            typeParameter(1, typeParameterType(0))
+        )
+
+        // when
+        val keys = receiverIndexKeys(type, typeParameters)
+
+        // then
+        assert(keys == listOf("kotlin.CharSequence"))
+    }
+
+    @Test
+    fun `should skip an unbounded type parameter among the bounds of a type parameter receiver`() {
+        // given
+        // inline fun <C, R> C.ifEmpty(defaultValue: () -> R): R where C : CharSequence, C : R
+        val type = typeParameterType(0)
+        val typeParameters = listOf(
+            typeParameter(0, classType("kotlin/CharSequence"), typeParameterType(1)),
+            typeParameter(1)
+        )
+
+        // when
+        val keys = receiverIndexKeys(type, typeParameters)
+
+        // then
+        assert(keys == listOf("kotlin.CharSequence"))
+    }
+
+    @Test
+    fun `should key a type parameter receiver with cyclic type parameter bounds apart from any class name`() {
+        // given
+        // not valid Kotlin, but the metadata could still say so
+        val type = typeParameterType(0)
+        val typeParameters = listOf(
+            typeParameter(0, typeParameterType(1)),
+            typeParameter(1, typeParameterType(0))
+        )
+
+        // when
+        val keys = receiverIndexKeys(type, typeParameters)
+
+        // then
+        assert(keys.size == 1 && !couldBeClassKey(keys.single()))
     }
 
     @Test
@@ -68,7 +227,7 @@ class ReceiverIndexKeyTest {
         ).apply { isSuspend = true }
 
         // when
-        val key = receiverIndexKey(type)
+        val key = receiverIndexKeys(type).single()
 
         // then
         assert(key == "kotlin.Function2")
@@ -85,7 +244,7 @@ class ReceiverIndexKeyTest {
         ).apply { isSuspend = true }
 
         // when
-        val key = receiverIndexKey(type)
+        val key = receiverIndexKeys(type).single()
 
         // then
         assert(key == "kotlin.coroutines.SuspendFunction0")
@@ -103,7 +262,7 @@ class ReceiverIndexKeyTest {
         ).apply { isSuspend = true }
 
         // when
-        val key = receiverIndexKey(type)
+        val key = receiverIndexKeys(type).single()
 
         // then
         assert(key == "kotlin.coroutines.SuspendFunction1")
