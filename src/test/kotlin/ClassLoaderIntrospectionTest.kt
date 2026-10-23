@@ -464,12 +464,112 @@ class ClassLoaderIntrospectionTest {
         )
 
         // then
+        // the one without a class file cannot be listed, but is still told, as a when expression has to cover it
         signature sameAsKotlin """
             // com.xemantic.kotlin.introspection.isolated.AbsentSealed [page 1/1]
             sealed interface AbsentSealed {
                 class AbsentSubclass : Absent, AbsentSealed
                 class Present : AbsentSealed
+                // sealed subclass not found: com.xemantic.kotlin.introspection.isolated.AbsentSealed.Gone
+                class NotASubclass
             }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve nested class of outer class which cannot be loaded, as read from its class file`() {
+        // given
+        val introspector = introspectorWithoutAbsentClass()
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.AbsentOuter.Nested"
+        )
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.AbsentOuter.Nested [page 1/1]
+            class Nested {
+                fun f()
+            }
+        """.trimIndent()
+    }
+
+    /**
+     * An introspector of the isolated test fixtures without the class `Absent`,
+     * and without the Kotlin metadata of the [strippedClassFiles].
+     */
+    private fun introspectorWithoutMetadata(vararg strippedClassFiles: String): KotlinIntrospector {
+        val root = tempDir.resolve("withoutMetadata")
+        isolatedTestFixtures.filter { it.exists() }.forEach { dir ->
+            dir.walkTopDown().filter { it.isFile && it.name != "Absent.class" }.forEach { file ->
+                val target = root.resolve(file.relativeTo(dir).path).toFile()
+                target.parentFile.mkdirs()
+                target.writeBytes(
+                    if (file.name in strippedClassFiles) withoutMetadata(file.readBytes()) else file.readBytes()
+                )
+            }
+        }
+        return KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+    }
+
+    @Test
+    fun `should neither resolve nor find nested class of outer class without metadata`() {
+        // given
+        val introspector = introspectorWithoutMetadata("StrippedOuter.class")
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.StrippedOuter.Nested")
+        val searchResult = introspector.search("Nested", pageSize = 1000)
+
+        // then
+        // the outer class might be private, as its class file is there, but cannot be read
+        assert(signature == null)
+        assert(searchResult?.contains("StrippedOuter") != true)
+    }
+
+    @Test
+    fun `should tell sealed subclass without metadata as not read`() {
+        // given
+        val introspector = introspectorWithoutMetadata("StrippedSealed\$Stripped.class")
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.StrippedSealed")
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.StrippedSealed [page 1/1]
+            sealed interface StrippedSealed {
+                class Kept : StrippedSealed
+                // sealed subclass could not be read: com.xemantic.kotlin.introspection.isolated.StrippedSealed.Stripped
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve nested class of outer class without class file`() {
+        // given
+        val introspector = introspectorWithoutAbsentClass("MissingOuter.class")
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.MissingOuter.Nested"
+        )
+        val member = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.MissingOuter.Nested.f"
+        )
+
+        // then
+        // the outer class is assumed to be part of the API, as nothing tells otherwise
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.MissingOuter.Nested [page 1/1]
+            class Nested {
+                fun f()
+            }
+        """.trimIndent()
+        member sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.MissingOuter.Nested.f [page 1/1]
+            fun f()
         """.trimIndent()
     }
 
@@ -668,6 +768,61 @@ class ClassLoaderIntrospectionTest {
                 class Visible
             }
         """.trimIndent()
+    }
+
+    @Test
+    fun `should neither list nor resolve synthetic companion object`() {
+        // given
+        val root = tempDir.resolve("syntheticCompanion")
+        isolatedTestFixtures.filter { it.exists() }.forEach { dir ->
+            dir.walkTopDown().filter { it.isFile }.forEach { file ->
+                val target = root.resolve(file.relativeTo(dir).path).toFile()
+                target.parentFile.mkdirs()
+                target.writeBytes(
+                    if (file.name == "SyntheticCompanionHolder\$Companion.class") {
+                        synthetic(file.readBytes())
+                    } else {
+                        file.readBytes()
+                    }
+                )
+            }
+        }
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.SyntheticCompanionHolder")
+        val companion = introspector.resolve("com.xemantic.kotlin.introspection.isolated.SyntheticCompanionHolder.Companion")
+        val member = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.SyntheticCompanionHolder.Companion.create"
+        )
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.SyntheticCompanionHolder [page 1/1]
+            class SyntheticCompanionHolder {
+                fun f()
+            }
+        """.trimIndent()
+        assert(companion == null)
+        assert(member == null)
+    }
+
+    @Test
+    fun `should not load companion object of annotation class with parameters`() {
+        // given
+        val classLoader = CountingClassLoader(javaClass.classLoader)
+        val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.test.CompanionAnnotation")
+
+        // then
+        // the parameters are the only members of an annotation class rendered
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.CompanionAnnotation [page 1/1]
+            annotation class CompanionAnnotation(val value: Int)
+        """.trimIndent()
+        assert(classLoader.loads.keys.none { it.endsWith("CompanionAnnotation\$Companion") })
     }
 
     @Test
@@ -1482,6 +1637,50 @@ class ClassLoaderIntrospectionTest {
 
         // then
         assert(signature == null)
+    }
+
+    @Test
+    fun `should neither resolve hidden nested class nor hidden companion object whose class files are not served as resources`() {
+        // given
+        val introspector = KotlinIntrospector(unservedDeprecatedNestedClassLoader())
+
+        // when
+        val companion = introspector.resolve("com.xemantic.kotlin.introspection.isolated.DeprecatedNestedHolder.Companion")
+        val companionMember = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.DeprecatedNestedHolder.Companion.create"
+        )
+        val deprecated = introspector.resolve("com.xemantic.kotlin.introspection.isolated.DeprecatedNestedHolder.Old")
+
+        // then
+        // their deprecations are reflected, telling which ones are part of the API
+        assert(companion == null)
+        assert(companionMember == null)
+        deprecated sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.DeprecatedNestedHolder.Old [page 1/1]
+            @Deprecated("Old") class Old
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve member of synthetic companion object through outer class`() {
+        // given
+        val root = tempDir.resolve("syntheticCompanionMember")
+        isolatedTestFixtures.filter { it.exists() }.forEach { dir ->
+            dir.walkTopDown().filter { it.isFile }.forEach { file ->
+                val target = root.resolve(file.relativeTo(dir).path).toFile()
+                target.parentFile.mkdirs()
+                target.writeBytes(
+                    if (file.name == "SyntheticCompanionHolder\$Companion.class") synthetic(file.readBytes()) else file.readBytes()
+                )
+            }
+        }
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val member = introspector.resolve("com.xemantic.kotlin.introspection.isolated.SyntheticCompanionHolder.create")
+
+        // then
+        assert(member == null)
     }
 
     @Test

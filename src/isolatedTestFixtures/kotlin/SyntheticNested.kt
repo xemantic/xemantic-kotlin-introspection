@@ -24,3 +24,11 @@ class SyntheticNestedHolder {
     class Visible
     object `$serializer`
 }
+
+// A companion object whose class file has the ACC_SYNTHETIC flag, which a test adds
+class SyntheticCompanionHolder {
+    fun f() {}
+    companion object {
+        fun create(): SyntheticCompanionHolder = SyntheticCompanionHolder()
+    }
+}

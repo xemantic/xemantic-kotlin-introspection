@@ -204,3 +204,16 @@ class NestedClassesHolder {
         NestedEnum.B -> 2
     }
 }
+
+// The private property of an enum constructor parameter is not part of the API, unlike the parameter
+enum class PrivatePropertyEnum(private val code: Int, val label: String) {
+    A(1, "a");
+    fun codeOf(): Int = code
+}
+
+// The companion object of an annotation class with parameters is not rendered, so it is not loaded either
+annotation class CompanionAnnotation(val value: Int) {
+    companion object {
+        const val DEFAULT: Int = 1
+    }
+}

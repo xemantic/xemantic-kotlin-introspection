@@ -316,8 +316,8 @@ private fun DefaultKotlinIntrospector.ClasspathScan.indexDump(withClasses: Boole
     }
     if (withClasses) classes.forEach {
         add(
-            "class ${it.name} (${it.binaryName}) ${it.scope.visibility} open=${it.scope.isOpen} " +
-                "companion=${it.scope.isCompanion} usable=${it.isUsable} searchable=${it.isSearchable} " +
+            "class ${it.name} (${it.binaryName}) ${it.scope.visibility} subclassable=${it.scope.isSubclassable} " +
+                "companion=${it.scope.isCompanion} usable=${it.scope.isUsable} sealed=${it.scope.sealedSubclasses} " +
                 "extensions=${it.extensions.map { e -> e.function.name }} " +
                 "properties=${it.extensionProperties.map { p -> p.property.name }}"
         )

@@ -44,8 +44,14 @@ public interface KotlinIntrospector {
      * the ones of the companion object, rendered within its declaration, and the extensions, one item each.
      *
      * Only the declarations which can be used from the user code are rendered: neither the private,
-     * nor the internal ones, nor the ones deprecated as hidden, while the protected ones only of an open
-     * or abstract class, or of the companion object of one.
+     * nor the internal ones, nor the ones deprecated as hidden, while the protected ones only of a class
+     * which the user code can subclass, maybe indirectly, or of the companion object of one:
+     * an open or abstract class with a constructor other than a private one,
+     * or a sealed class with such a subclass of the API.
+     * Neither the classes which cannot be used, like the hidden or synthetic ones, are rendered,
+     * nor anything declared within them.
+     * A declaration within a protected class, resolved directly, follows a comment telling that class,
+     * like `// in protected companion object Outer.Named`.
      * A `var` whose setter cannot be called, like with `private set`, is rendered as a `val`,
      * while a setter narrower than its property, like `protected set`, is rendered on the line following it.
      * An override of a `var` stays a `var`, as a `val` cannot override it, with its setter rendered

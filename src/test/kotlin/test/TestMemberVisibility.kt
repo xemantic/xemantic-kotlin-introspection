@@ -142,3 +142,74 @@ sealed class HiddenSubclassesSealed {
     private class Impl : HiddenSubclassesSealed()
     internal object InternalImpl : HiddenSubclassesSealed()
 }
+
+// Without a constructor callable from a subclass, no user subclass can use the protected members
+open class PrivateConstructorProtectedHolder private constructor() {
+    protected fun p() {}
+    protected class ProtectedNested
+    fun f() {}
+    companion object {
+        protected fun protectedFactory(): Int = 1
+        fun create(): PrivateConstructorProtectedHolder = PrivateConstructorProtectedHolder()
+    }
+}
+
+// A user subclass of an open sealed subclass can use the protected members of the sealed class,
+// but still cannot call its constructor
+sealed class SealedWithOpenSubclass(protected val code: Int) {
+    protected fun h() {}
+    protected class ProtectedNested
+    companion object {
+        protected fun protectedFactory(): Int = 1
+    }
+}
+
+open class OpenSealedSubclass : SealedWithOpenSubclass(1)
+
+// also through a sealed subclass nested in the sealed class
+sealed class SealedWithNestedOpenSubclass {
+    protected fun h() {}
+    sealed class Mid : SealedWithNestedOpenSubclass() {
+        open class Leaf : Mid()
+    }
+}
+
+// but neither through an open subclass which is not part of the API, nor through a final one
+sealed class SealedWithInternalOpenSubclass {
+    protected fun h() {}
+    class Final : SealedWithInternalOpenSubclass()
+}
+
+internal open class InternalOpenSealedSubclass : SealedWithInternalOpenSubclass()
+
+// The members of a protected companion object can be used only by the subclasses of the outer class
+open class ProtectedNamedCompanionHolder {
+    protected companion object Named : NamedFactory {
+        fun f() {}
+        var counter: Int = 0
+        override fun make(): Int = 0
+        class InCompanion {
+            fun g() {}
+        }
+    }
+    protected interface ProtectedInterface {
+        fun h()
+    }
+    protected class ProtectedNested {
+        fun p() {}
+        companion object {
+            fun q() {}
+        }
+    }
+}
+
+interface NamedFactory {
+    fun make(): Int
+}
+
+// An internal constructor can be called by the subclasses in the same module, which can be public and open
+abstract class InternalConstructorBase internal constructor() {
+    protected abstract fun mustOverride(): Int
+}
+
+abstract class InternalConstructorBaseSub : InternalConstructorBase()
