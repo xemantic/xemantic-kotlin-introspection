@@ -60,17 +60,20 @@ internal fun hasSyntheticParameterNames(function: KFunction<*>): Boolean =
  */
 @OptIn(ExperimentalContextParameters::class)
 internal fun formatKFunction(func: KFunction<*>, isOverride: Boolean = false): String = buildString {
-
     // kotlin-reflect lists the context parameters among the parameters, while they precede the declaration
-    val contextParameters = func.parameters.filter { it.kind == KParameter.Kind.CONTEXT }
-    if (contextParameters.isNotEmpty()) {
-        +contextParameters.joinToString(", ", prefix = "context(", postfix = ") ") {
-            // the anonymous context parameter, declared as _, has no name
-            "${it.name?.let(::escapeIdentifier) ?: "_"}: ${formatKTypeProjection(it.type)}"
-        }
-    }
-
+    +formatContextParameters(
+        func.parameters.filter { it.kind == KParameter.Kind.CONTEXT }.map { it.name to formatKTypeProjection(it.type) }
+    )
     if (isOverride) +"override "
+    +formatKFunctionDeclaration(func)
+}
+
+/**
+ * Format a KFunction using kotlin-reflect, like [formatKFunction], but without the context parameters
+ * and the `override` modifier, from its other modifiers on, like `operator fun plus(other: Int): Int`,
+ * which is also the key to sort the overloads by.
+ */
+internal fun formatKFunctionDeclaration(func: KFunction<*>): String = buildString {
     if (func.isOperator) +"operator "
     if (func.isInfix) +"infix "
     if (func.isSuspend) +"suspend "

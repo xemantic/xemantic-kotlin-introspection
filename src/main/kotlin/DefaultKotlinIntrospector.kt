@@ -1028,9 +1028,7 @@ internal class DefaultKotlinIntrospector(
                 it.name == memberName && isBuiltinApi(it)
             }.map { formatKProperty(it, isOverride(builtinKmClass, it)) } + kClass.memberFunctions.filter {
                 it.name == memberName && isBuiltinApi(it)
-            }.map { formatKFunction(it, isOverride(builtinKmClass, it)) }.sortedBy {
-                it.removePrefix("override ")
-            }
+            }.sortedBy { formatKFunctionDeclaration(it) }.map { formatKFunction(it, isOverride(builtinKmClass, it)) }
         }
 
         // The same extensions as the listing of the built-in type shows, the ones of the public kotlin.* packages
@@ -1632,17 +1630,13 @@ internal class DefaultKotlinIntrospector(
     }
 
     /**
-     * Format the context parameters of a function or property, like `context(log: Logger, _: Ctx) `,
-     * preceding all the other modifiers, or an empty string if there are none.
-     * Their names are a part of the signature, as a function body can refer to them.
+     * Format the context parameters of a function or property with [com.xemantic.kotlin.introspection.formatContextParameters].
      */
     private fun formatContextParameters(
         parameters: List<KmValueParameter>,
         contextPackage: String?,
         typeParameters: Map<Int, String>
-    ): String = if (parameters.isEmpty()) "" else parameters.joinToString(", ", prefix = "context(", postfix = ") ") {
-        "${escapeContextParameterName(it.name)}: ${formatType(it.type, contextPackage, typeParameters)}"
-    }
+    ): String = formatContextParameters(parameters.map { it.name to formatType(it.type, contextPackage, typeParameters) })
 
     /**
      * Format a member, top-level or extension property.

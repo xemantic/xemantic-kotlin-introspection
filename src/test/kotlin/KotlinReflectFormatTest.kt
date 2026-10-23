@@ -144,6 +144,19 @@ class KotlinReflectFormatTest {
         assert(rendered == listOf("context(log: com.xemantic.kotlin.introspection.test.Logger) fun run()", "fun run()"))
     }
 
+    // the key to sort the overloads of a built-in member by, which a context prefix must not precede
+    @Test
+    fun `should render function declaration without context parameters and override modifier`() {
+        // given
+        val process = ContextParametersSample::class.memberFunctions.single { it.name == "process" }
+
+        // when
+        val declaration = formatKFunctionDeclaration(process)
+
+        // then
+        assert(declaration == "fun <T> process(item: T): List<T>")
+    }
+
     @Test
     fun `should render all context parameters of function`() {
         // when
