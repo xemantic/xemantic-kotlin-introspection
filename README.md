@@ -117,6 +117,18 @@ com.example.AnnotationTestClass
   An override of a `var` is the exception, as a `val` cannot override a `var`:
   it stays a `var`, with its setter rendered with its actual visibility,
   like `protected set` in a final class, even though the setter cannot be called there.
+* A class header without a constructor, like `class Foo`, means the implicit public constructor without parameters,
+  as in Kotlin,
+  so an explicit one is rendered whenever it differs,
+  like `class Foo()` next to the secondary constructors listed in the class body,
+  or `open class Foo protected constructor()`, callable only from a subclass.
+  A class without any constructor callable from the user code,
+  which can neither be instantiated, nor subclassed there,
+  is marked with `private constructor()`, like `open class Base64 private constructor()`,
+  whatever the actual visibility and parameters of its constructors,
+  while the properties declared by its primary constructor are rendered in the class body.
+  An object, an enum class, a sealed class, an interface, or an annotation class is not marked,
+  as its kind already tells how it can be created, if at all.
 * The whole classpath visible to the given class loader is scanned on creation, which takes a while,
   so the instance should be created once and reused.
   The scan can be disabled with `KotlinIntrospector(scanEntireClasspath = false)`,

@@ -3325,7 +3325,7 @@ class KotlinIntrospectorTest {
     @Test
     fun `should resolve standard library value class`() {
         resolver.resolve("kotlin.time.Duration", pageSize = 1) should {
-            have(lines()[1] == "@JvmInline value class Duration : Comparable<Duration> {")
+            have(lines()[1] == "@JvmInline value class Duration private constructor() : Comparable<Duration> {")
         }
     }
 
@@ -3777,7 +3777,7 @@ class KotlinIntrospectorTest {
             "com.xemantic.kotlin.introspection.test.PrivateConstructorHolder"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.PrivateConstructorHolder [page 1/1]
-            class PrivateConstructorHolder {
+            class PrivateConstructorHolder private constructor() {
                 val id: Int
                 val label: String
                 companion object {
@@ -3793,7 +3793,7 @@ class KotlinIntrospectorTest {
             "com.xemantic.kotlin.introspection.test.InternalConstructorHolder"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.InternalConstructorHolder [page 1/1]
-            class InternalConstructorHolder {
+            class InternalConstructorHolder private constructor() {
                 val id: Int
             }
         """.trimIndent()
@@ -3808,6 +3808,94 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.test.ProtectedConstructorHolder [page 1/1]
             abstract class ProtectedConstructorHolder protected constructor(val id: Int)
         """.trimIndent()
+    }
+
+    @Test
+    fun `should mark class with only internal secondary constructor as not constructible`() {
+        // a bare class header would read as having the implicit public constructor without parameters
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InternalSecondaryConstructorOnly"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InternalSecondaryConstructorOnly [page 1/1]
+            class InternalSecondaryConstructorOnly private constructor() {
+                val x: Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark abstract class with internal constructor as not subclassable`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InternalConstructorAbstractClass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InternalConstructorAbstractClass [page 1/1]
+            abstract class InternalConstructorAbstractClass private constructor() {
+                abstract fun f()
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark open class with private constructor as not constructible`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.PrivateConstructorOpenClass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PrivateConstructorOpenClass [page 1/1]
+            open class PrivateConstructorOpenClass private constructor() {
+                companion object {
+                    val instance: PrivateConstructorOpenClass
+                }
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark final class with protected constructor as not constructible`() {
+        // no subclass can call it
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ProtectedConstructorFinalClass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ProtectedConstructorFinalClass [page 1/1]
+            class ProtectedConstructorFinalClass private constructor()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark inner class with private constructor as not constructible`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InnerPrivateConstructorOuter.Inner"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InnerPrivateConstructorOuter.Inner [page 1/1]
+            inner class Inner private constructor()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render protected constructor without parameters of open class`() {
+        // without it, the class would read as having the implicit public constructor
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ProtectedEmptyConstructorOpenClass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ProtectedEmptyConstructorOpenClass [page 1/1]
+            open class ProtectedEmptyConstructorOpenClass protected constructor()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render protected constructor without parameters of abstract class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ProtectedEmptyConstructorAbstractClass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ProtectedEmptyConstructorAbstractClass [page 1/1]
+            abstract class ProtectedEmptyConstructorAbstractClass protected constructor()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark stdlib class with private constructor as not constructible`() {
+        resolver.resolve("kotlin.io.encoding.Base64") should {
+            have(lines()[1] == "open class Base64 private constructor() {")
+        }
     }
 
     @Test
@@ -5282,7 +5370,7 @@ class KotlinIntrospectorTest {
             "com.xemantic.kotlin.introspection.test.HiddenOnlyConstructor"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.HiddenOnlyConstructor [page 1/1]
-            class HiddenOnlyConstructor {
+            class HiddenOnlyConstructor private constructor() {
                 val a: Int
             }
         """.trimIndent()

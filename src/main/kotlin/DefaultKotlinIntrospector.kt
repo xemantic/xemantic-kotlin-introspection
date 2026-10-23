@@ -339,6 +339,14 @@ internal class DefaultKotlinIntrospector(
          */
         internal const val DEFAULT_VALUE_MARKER = "…"
 
+        /**
+         * Follows the name of a class without any constructor callable from the user code,
+         * which therefore can neither be instantiated, nor subclassed there,
+         * rendered regardless of the actual visibility and parameters of its constructors,
+         * like the internal or protected ones, which cannot be called either.
+         */
+        private const val NOT_CONSTRUCTIBLE_MARKER = " private constructor()"
+
         private const val DEFAULT_COMPANION_NAME = "Companion"
 
         private const val DEFAULT_IMPLS = "DefaultImpls"
@@ -1253,6 +1261,12 @@ internal class DefaultKotlinIntrospector(
         val secondaryConstructors = kmClass.constructors.filter {
             it.isSecondary && it.visibility.isApiIn(scopes) && !foundClass.isHidden(it)
         }
+        // the always private constructor of an enum class is rendered only for its parameters
+        val primaryConstructorVisibility = renderedConstructor?.visibility?.takeUnless { isEnum } ?: Visibility.PUBLIC
+        // the kinds of classes which would read as having the implicit public constructor without parameters,
+        // unlike an object, an enum class, an interface, an annotation class,
+        // or a sealed class, whose constructors are never callable from the user code
+        val isConstructibleKind = kmClass.kind == ClassKind.CLASS && !isSealed
         // The properties declared by the parameters of the rendered constructor, by the parameter name
         val constructorProperties = renderedConstructor?.valueParameters.orEmpty().mapNotNull { param ->
             properties.firstOrNull { it.isDeclaredBy(param) }?.let { param.name to it }
@@ -1291,39 +1305,41 @@ internal class DefaultKotlinIntrospector(
                     defaultValue = { clazz?.let { formatAnnotationDefaultValue(it, param.name, contextPackage) } }
                 )
             }
-            // the implicit constructor without parameters is omitted, unless there are other constructors,
+            // the implicit public constructor without parameters is omitted, unless there are other constructors,
             // as `class Foo { constructor(x: Int) }` has no constructor without parameters
             renderedConstructor != null && (
-                renderedConstructor.valueParameters.isNotEmpty() || secondaryConstructors.isNotEmpty()
-            ) -> buildString {
-                // a protected constructor can be called only from a subclass
-                if (!isEnum && renderedConstructor.visibility != Visibility.PUBLIC) {
-                    +" "
-                    +formatVisibility(renderedConstructor.visibility)
-                    +"constructor"
-                }
-                +(renderedConstructor.valueParameters.joinToString(", ", "(", ")") { param ->
-                    // a parameter not declaring a property is still needed to call the constructor
-                    val prop = constructorProperties[param.name]
-                    if (prop == null) {
-                        formatValueParameter(param, contextPackage, typeParameters)
-                    } else {
-                        formatValueParameter(
-                            param,
-                            contextPackage,
-                            typeParameters,
-                            // never with a setter narrower than the property, which is declared in the class body
-                            prefix = if (
-                                renderedSetterVisibility(prop, prop.apiSetterVisibility(scopes, foundClass), isOverride(kmClass, prop)) != null
-                            ) "var " else "val ",
-                            // a constructor property is never abstract, but it can be open or final
-                            modifiers = formatVisibility(prop.visibility) + formatModalityModifiers(
-                                prop.modality, isOverride(kmClass, prop), inInterface = false, kmClass
-                            )
-                        )
-                    }
-                })
+                renderedConstructor.valueParameters.isNotEmpty() ||
+                    secondaryConstructors.isNotEmpty() ||
+                    primaryConstructorVisibility != Visibility.PUBLIC
+                ) -> formatConstructor(
+                renderedConstructor,
+                isPrimary = true,
+                visibility = primaryConstructorVisibility,
+                contextPackage,
+                typeParameters
+            ) { param ->
+                // a parameter not declaring a property is still needed to call the constructor
+                val prop = constructorProperties[param.name]
+                val isOverride = prop != null && isOverride(kmClass, prop)
+                formatValueParameter(
+                    param,
+                    contextPackage,
+                    typeParameters,
+                    prefix = when {
+                        prop == null -> ""
+                        // never with a setter narrower than the property, which is declared in the class body
+                        renderedSetterVisibility(prop, prop.apiSetterVisibility(scopes, foundClass), isOverride) != null -> "var "
+                        else -> "val "
+                    },
+                    // a constructor property is never abstract, but it can be open or final
+                    modifiers = if (prop == null) "" else formatVisibility(prop.visibility) + formatModalityModifiers(
+                        prop.modality, isOverride, inInterface = false, kmClass
+                    )
+                )
             }
+            // a class which can neither be instantiated, nor subclassed, from the user code
+            isConstructibleKind && renderedConstructor == null && secondaryConstructors.isEmpty() ->
+                NOT_CONSTRUCTIBLE_MARKER
             else -> ""
         }
 
@@ -1360,7 +1376,7 @@ internal class DefaultKotlinIntrospector(
 
             // Secondary constructors, in the conventional order, between the properties and the functions
             secondaryConstructors.forEach { constructor ->
-                add(ListingItem.Declaration(listOf(formatSecondaryConstructor(constructor, contextPackage, typeParameters))))
+                add(ListingItem.Declaration(listOf(formatConstructor(constructor, isPrimary = false, constructor.visibility, contextPackage, typeParameters))))
             }
 
             // Functions
@@ -1405,18 +1421,27 @@ internal class DefaultKotlinIntrospector(
     }
 
     /**
-     * A secondary constructor, like `constructor(name: String, vararg tags: String)`, without the delegation call.
+     * A constructor: a secondary one, like `constructor(name: String, vararg tags: String)`,
+     * without the delegation call, or the primary one, following the class name, like `(val id: Int)`,
+     * or ` protected constructor(val id: Int)`, as its keyword is required only with a modifier.
+     *
+     * @param visibility the visibility to render, omitted with the keyword for a public primary constructor.
+     * @param formatParameter renders a value parameter, like the one of the primary constructor declaring a property.
      */
-    private fun formatSecondaryConstructor(
+    private fun formatConstructor(
         constructor: KmConstructor,
+        isPrimary: Boolean,
+        visibility: Visibility,
         contextPackage: String,
-        typeParameters: Map<Int, String>
+        typeParameters: Map<Int, String>,
+        formatParameter: (KmValueParameter) -> String = { formatValueParameter(it, contextPackage, typeParameters) }
     ): String = buildString {
-        +formatVisibility(constructor.visibility)
-        +"constructor"
-        +constructor.valueParameters.joinToString(", ", "(", ")") { param ->
-            formatValueParameter(param, contextPackage, typeParameters)
+        if (!isPrimary || visibility != Visibility.PUBLIC) {
+            if (isPrimary) +" "
+            +formatVisibility(visibility)
+            +"constructor"
         }
+        +constructor.valueParameters.joinToString(", ", "(", ")", transform = formatParameter)
     }
 
     /**
