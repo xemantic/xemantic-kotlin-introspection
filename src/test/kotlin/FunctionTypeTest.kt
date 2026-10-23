@@ -37,6 +37,7 @@ import kotlin.reflect.KClass
 import kotlin.reflect.KType
 import kotlin.reflect.KTypeProjection
 import kotlin.reflect.full.declaredMemberFunctions
+import kotlin.reflect.typeOf
 import kotlin.test.Test
 
 /**
@@ -252,13 +253,41 @@ class FunctionTypeTest {
     @Test
     fun `should format raw function type with kotlin-reflect without suspend marker`() {
         // given - a Function0 without type arguments, having as many of them as its arity
-        val type = rawType(Function0::class)
+        val type = kotlinReflectType(Function0::class)
 
         // when
         val formatted = formatKTypeProjection(type)
 
         // then
         assert(formatted == "Function0")
+    }
+
+    @Test
+    fun `should format FunctionN with fewer type arguments than of a function type with kotlin-reflect as written`() {
+        // given - a FunctionN<String> written as such, not standing for a function type of more than 22 parameters
+        val type = kotlinReflectType(kotlin.jvm.functions.FunctionN::class, KTypeProjection.invariant(typeOf<String>()))
+
+        // when
+        val formatted = formatKTypeProjection(type)
+
+        // then
+        assert(formatted == "FunctionN<String>")
+    }
+
+    @Test
+    fun `should format undecodable FunctionN with kotlin-reflect without suspend marker`() {
+        // given - 23 type arguments, like of a suspend function type of 22 parameters, one of them star-projected
+        val type = kotlinReflectType(
+            kotlin.jvm.functions.FunctionN::class,
+            KTypeProjection.STAR,
+            *Array(22) { KTypeProjection.invariant(typeOf<Int>()) }
+        )
+
+        // when
+        val formatted = formatKTypeProjection(type)
+
+        // then
+        assert(formatted == "FunctionN<*, ${List(22) { "Int" }.joinToString(", ")}>")
     }
 
     @Test
@@ -318,11 +347,12 @@ private fun classType(
 }
 
 /**
- * Creates a kotlin-reflect type of the [classifier] without type arguments, like a raw type.
+ * Creates a kotlin-reflect type of the [classifier] with the given type [arguments],
+ * none for a raw type.
  */
-private fun rawType(classifier: KClass<*>): KType = object : KType {
+private fun kotlinReflectType(classifier: KClass<*>, vararg arguments: KTypeProjection): KType = object : KType {
     override val classifier = classifier
-    override val arguments = emptyList<KTypeProjection>()
+    override val arguments = arguments.toList()
     override val isMarkedNullable = false
     override val annotations = emptyList<Annotation>()
 }

@@ -2737,8 +2737,8 @@ private class MemberListing(override val items: List<ListingItem.MemberItem>) : 
  * so it is keyed as `kotlin.coroutines.SuspendFunction0` instead, not to be listed as an extension of `kotlin.Function1`.
  */
 internal fun receiverIndexKey(type: KmType): String = when (val classifier = type.classifier) {
-    is KmClassifier.Class -> type.decodeRuntimeFunctionType()
-        ?.takeIf { it.isSuspend }
+    is KmClassifier.Class -> type.takeIf { it.isSuspend }
+        ?.decodeRuntimeFunctionType()
         ?.let { "kotlin.coroutines.SuspendFunction${it.parameters.size}" }
         ?: classifier.name.replace('/', '.')
     is KmClassifier.TypeAlias -> classifier.name.replace('/', '.')

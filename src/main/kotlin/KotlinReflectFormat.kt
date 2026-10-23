@@ -19,6 +19,7 @@
 package com.xemantic.kotlin.introspection
 
 import com.xemantic.kotlin.core.text.unaryPlus
+import kotlin.jvm.functions.FunctionN
 import kotlin.reflect.KClass
 import kotlin.reflect.KClassifier
 import kotlin.reflect.KFunction
@@ -170,7 +171,9 @@ private object ReflectTypeNotation : TypeNotation<KType>() {
 
     override fun decodeFunctionType(type: KType): FunctionType<KType>? = type.decodeFunctionType()
 
-    override fun isMarkedSuspend(type: KType): Boolean = type.isSuspendFunctionType == true
+    // a FunctionN is only guessed to be a suspend function type, which an undecodable shape does not confirm
+    override fun isMarkedSuspend(type: KType): Boolean =
+        type.classifier != FunctionN::class && type.isSuspendFunctionType == true
 
     override fun isMarkedNullable(type: KType): Boolean = type.isMarkedNullable
 

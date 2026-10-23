@@ -607,7 +607,8 @@ internal class OverrideResolver(
         substitution: Map<Int, MemberType>,
         typeParameters: Map<Int, TypeParameterType>
     ): ClassType? {
-        val functionType = type.decodeRuntimeFunctionType()?.takeIf { it.isSuspend } ?: return null
+        if (!type.isSuspend) return null
+        val functionType = type.decodeRuntimeFunctionType() ?: return null
         return ClassType(
             name = "kotlin/SuspendFunction${functionType.parameters.size}",
             arguments = (functionType.parameters + functionType.returnType).map {

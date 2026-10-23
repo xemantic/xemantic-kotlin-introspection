@@ -141,13 +141,18 @@ internal fun KType.decodeFunctionType(): FunctionType<KType>? {
  * With 23 type arguments it is told to be a suspend function type of 22 parameters,
  * as the function type of 22 parameters is a `Function22`.
  * With more of them it cannot be told apart from a suspend function type, so it is taken as not suspend.
+ * With fewer of them it is not a function type.
  */
 internal val KType.isSuspendFunctionType: Boolean?
     get() {
         val kClass = classifier as? KClass<*> ?: return null
         // a raw function type, without the type arguments, is not decoded
         if (arguments.isEmpty()) return null
-        if (kClass == FunctionN::class) return arguments.size == 23
+        if (kClass == FunctionN::class) return when {
+            // a FunctionN written as such, like FunctionN<R>
+            arguments.size < 23 -> null
+            else -> arguments.size == 23
+        }
         val arity = functionArity(kClass.qualifiedName ?: return null, prefix = "kotlin.Function") ?: return null
         return when (arguments.size) {
             arity + 1 -> false
