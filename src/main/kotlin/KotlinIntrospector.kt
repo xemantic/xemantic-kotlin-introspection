@@ -30,10 +30,18 @@ public interface KotlinIntrospector {
     /**
      * Resolves metadata for a Kotlin declaration by its fully qualified name.
      *
-     * A class is paginated by items: its enum entries, its members, and its extensions, one item each.
+     * The result is paginated by items, and every page can be read on its own,
+     * as the headers the items are listed under, like the `// from` header of the package
+     * to import the extensions from, are repeated on every page.
+     *
+     * A class is paginated by its enum entries, its members, and its extensions, one item each.
      * A member is never split across pages, so a multi-line block, like a `companion object { … }`,
      * counts as a single item, and the [pageSize] does not bound the number of lines of a page.
-     * A large companion object can be paged through by resolving it directly, like `com.example.Outer.Companion`.
+     * A companion object having more members than a page is rendered with a hint to resolve it directly,
+     * like `com.example.Outer.Companion`, which pages through its members.
+     *
+     * A member, like `com.example.Outer.create`, is paginated by its signatures: the overloads,
+     * the ones of the companion object, rendered within its declaration, and the extensions, one item each.
      *
      * @param name fully qualified name (e.g., "kotlin.collections.List")
      * @param page 1-based page index, coerced into the range of the pages
@@ -52,7 +60,7 @@ public interface KotlinIntrospector {
      * Searches for Kotlin declarations matching the query.
      *
      * @param query search term (case-insensitive substring match against declaration names)
-     * @param page 1-based page index
+     * @param page 1-based page index, coerced into the range of the pages
      * @param pageSize number of items per page, must be positive
      * @return matching declarations as text, or `null` if none found
      * @throws IllegalArgumentException if the [pageSize] is not positive

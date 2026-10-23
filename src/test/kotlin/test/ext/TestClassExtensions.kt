@@ -19,6 +19,7 @@
 package com.xemantic.kotlin.introspection.test.ext
 
 import com.xemantic.kotlin.introspection.test.NoMembersTestClass
+import com.xemantic.kotlin.introspection.test.PagedMemberHolder
 import com.xemantic.kotlin.introspection.test.TestClass
 
 /**
@@ -36,3 +37,12 @@ val TestClass.uppercaseName: String
  * Extension function of a class without body members.
  */
 fun NoMembersTestClass.doubled(): Int = value * 2
+
+/**
+ * Extension functions of a class whose member lookup spans several pages.
+ */
+fun PagedMemberHolder.paged(x: Boolean): Boolean = x
+
+fun PagedMemberHolder.paged(x: Char): Char = x
+
+fun PagedMemberHolder.paged(x: Byte): Byte = x

@@ -34,3 +34,18 @@ class SameNamedPropertyAndFunction {
     fun size(x: Int): Int = x
     val size: Int = 0
 }
+
+// Class whose member lookup spans several pages: a property and functions of the same name,
+// overloads in the companion object, and extensions from two packages,
+// not named *TestClass, so that it does not shift the search results of the other tests
+class PagedMemberHolder {
+    val paged: Int = 0
+    fun paged(x: Int): Int = x
+    fun paged(x: String): String = x
+    companion object {
+        fun paged(): PagedMemberHolder = PagedMemberHolder()
+        fun paged(x: Long): PagedMemberHolder = PagedMemberHolder()
+    }
+}
+
+fun PagedMemberHolder.paged(x: Double): Double = x
