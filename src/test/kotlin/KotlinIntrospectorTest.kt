@@ -3417,6 +3417,32 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should escape where clause and inner class type named like hard keywords`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.KeywordPositionsSample"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.KeywordPositionsSample [page 1/1]
+            class KeywordPositionsSample<`is`> {
+                inner class `fun`
+                fun <`in`> bounded(value: `in`): `in` where `in` : CharSequence, `in` : Comparable<`in`>
+                fun inner(): KeywordPositionsSample<`is`>.`fun`
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should escape sealed subclass inner in other generic class named like hard keywords`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.KeywordSealedSample"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.KeywordSealedSample [page 1/1]
+            sealed interface KeywordSealedSample<`is`> {
+                inner class KeywordSealedOuter<`is`>.`as` : KeywordSealedSample<`is`>
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve class of package named like hard keyword by its unescaped name`() {
         // the types of the package of the class are referred to by their simple names,
         // while the package to import the extensions from is escaped, like in an import directive

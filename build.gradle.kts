@@ -150,11 +150,51 @@ tasks.test {
     systemProperty("java8TestFixtures", java8TestFixturesDirs.asPath)
 }
 
+// the rendered declarations of the whole test classpath parsed by the Kotlin compiler,
+// a separate suite, not to put the compiler on the classpath the other tests introspect
+testing {
+    suites {
+        register<JvmTestSuite>("parseTest") {
+            // the logging configured like for the other tests
+            sources.resources.srcDir("src/test/resources")
+            dependencies {
+                implementation(project())
+                implementation(libs.kotlin.test.junit5)
+                implementation(libs.xemantic.kotlin.test)
+                implementation(libs.kotlin.compiler.embeddable)
+                runtimeOnly(libs.logback.classic)
+            }
+            targets.configureEach {
+                testTask.configure {
+                    val introspectedClasspath = sourceSets.test.get().runtimeClasspath
+                    inputs.files(introspectedClasspath)
+                        .withPropertyName("introspectedClasspath")
+                        .withNormalizer(ClasspathNormalizer::class)
+                    jvmArgumentProviders.add(CommandLineArgumentProvider {
+                        listOf("-DintrospectedClasspath=${introspectedClasspath.asPath}")
+                    })
+                }
+            }
+        }
+    }
+}
+
+// reading the names of the built-in types, which the search does not find
+kotlin.target.compilations.matching { it.name == "parseTest" }.configureEach {
+    associateWith(kotlin.target.compilations.getByName("main"))
+}
+
+tasks.check {
+    dependsOn(testing.suites.named("parseTest"))
+}
+
 powerAssert {
     functions = listOf(
         "com.xemantic.kotlin.test.assert",
         "com.xemantic.kotlin.test.have"
     )
+    // only the test source set is included by default
+    includedSourceSets = listOf("test", "parseTest")
 }
 
 // https://kotlinlang.org/docs/dokka-migration.html#adjust-configuration-options

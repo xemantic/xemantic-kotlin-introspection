@@ -56,3 +56,18 @@ class KeywordPackageClient {
     fun sample(): com.xemantic.kotlin.introspection.test.`in`.KeywordPackageSample =
         com.xemantic.kotlin.introspection.test.`in`.KeywordPackageSample(42)
 }
+
+// Class with names like hard keywords in the remaining positions: a where clause, and the type of an inner class of a generic class
+class KeywordPositionsSample<`is`> {
+    inner class `fun`
+    fun <`in`> bounded(value: `in`): `in` where `in` : CharSequence, `in` : Comparable<`in`> = value
+    fun inner(): `fun` = `fun`()
+}
+
+// Sealed interface whose subclass is an inner class of another generic class,
+// listed qualified with the type parameters it refers to
+sealed interface KeywordSealedSample<`is`>
+
+class KeywordSealedOuter<`is`> {
+    inner class `as` : KeywordSealedSample<`is`>
+}
