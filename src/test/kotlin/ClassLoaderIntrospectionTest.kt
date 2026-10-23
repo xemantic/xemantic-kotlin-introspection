@@ -764,11 +764,13 @@ class ClassLoaderIntrospectionTest {
                 val visitor = super.visitMethod(access, name, descriptor, signature, exceptions)
                 if (name != "get") return visitor
                 val versions = ArrayDeque(listOf(major, minor, patch))
+                // the version numbers pushed as the constructor arguments of KotlinVersion, and nothing else
+                fun nextVersion(): Int = versions.removeFirstOrNull()
+                    ?: error("KotlinVersionCurrentValue.get() pushes more than the 3 version numbers, update the test")
                 return object : MethodVisitor(Opcodes.ASM9, visitor) {
-                    // the version numbers pushed as the constructor arguments of KotlinVersion
                     override fun visitInsn(opcode: Int) {
-                        if (opcode in Opcodes.ICONST_0..Opcodes.ICONST_5) {
-                            super.visitIntInsn(Opcodes.BIPUSH, versions.removeFirst())
+                        if (opcode in Opcodes.ICONST_M1..Opcodes.ICONST_5) {
+                            super.visitIntInsn(Opcodes.BIPUSH, nextVersion())
                         } else {
                             super.visitInsn(opcode)
                         }
@@ -776,10 +778,21 @@ class ClassLoaderIntrospectionTest {
 
                     override fun visitIntInsn(opcode: Int, operand: Int) {
                         if (opcode == Opcodes.BIPUSH || opcode == Opcodes.SIPUSH) {
-                            super.visitIntInsn(Opcodes.BIPUSH, versions.removeFirst())
+                            super.visitIntInsn(Opcodes.BIPUSH, nextVersion())
                         } else {
                             super.visitIntInsn(opcode, operand)
                         }
+                    }
+
+                    override fun visitLdcInsn(value: Any?) {
+                        if (value is Int) super.visitIntInsn(Opcodes.BIPUSH, nextVersion()) else super.visitLdcInsn(value)
+                    }
+
+                    override fun visitEnd() {
+                        check(versions.isEmpty()) {
+                            "KotlinVersionCurrentValue.get() pushes fewer than the 3 version numbers, update the test"
+                        }
+                        super.visitEnd()
                     }
                 }
             }

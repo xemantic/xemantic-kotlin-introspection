@@ -5392,13 +5392,50 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should not render annotation class property deprecated with hidden level`() {
+    fun `should resolve constructor var with setter deprecated with hidden level as val`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenSetterHolder.inConstructor"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenSetterHolder.inConstructor [page 1/1]
+            val inConstructor: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render annotation class property deprecated with hidden level as parameter only`() {
+        // @Deprecated cannot annotate the parameter, only the property is hidden, the argument can still be passed
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.HiddenDeprecationAnnotation"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.HiddenDeprecationAnnotation [page 1/1]
-            annotation class HiddenDeprecationAnnotation(val visible: Int = 0)
+            annotation class HiddenDeprecationAnnotation(val visible: Int = 0, hidden: Int = 1)
         """.trimIndent()
+    }
+
+    @Test
+    fun `should render annotation class property deprecated with hidden level without default value as parameter`() {
+        // the argument must still be passed, like @HiddenDeprecationAnnotationWithoutDefault(1, 2)
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenDeprecationAnnotationWithoutDefault"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenDeprecationAnnotationWithoutDefault [page 1/1]
+            annotation class HiddenDeprecationAnnotationWithoutDefault(val visible: Int, hidden: Int)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render annotation class with all properties deprecated with hidden level`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenDeprecationAnnotationAllHidden"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenDeprecationAnnotationAllHidden [page 1/1]
+            annotation class HiddenDeprecationAnnotationAllHidden(hidden: Int = 1)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve annotation class property deprecated with hidden level`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenDeprecationAnnotation.hidden") == null)
     }
 
 }

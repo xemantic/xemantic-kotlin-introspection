@@ -108,3 +108,15 @@ annotation class HiddenDeprecationAnnotation(
     @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
     val hidden: Int = 1
 )
+
+// only the property is hidden, the parameter without a default value must still be passed
+annotation class HiddenDeprecationAnnotationWithoutDefault(
+    val visible: Int,
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    val hidden: Int
+)
+
+annotation class HiddenDeprecationAnnotationAllHidden(
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    val hidden: Int = 1
+)
