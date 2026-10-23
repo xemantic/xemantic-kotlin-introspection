@@ -4075,6 +4075,55 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should not render constructor parameter as body property of the same name and type with private setter`() {
+        // the property cannot be assigned from the user code, so it is rendered as val
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ConstructorParameterShadowedByPrivateSetterProperty"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ConstructorParameterShadowedByPrivateSetterProperty [page 1/1]
+            class ConstructorParameterShadowedByPrivateSetterProperty(x: Int) {
+                val x: Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not render constructor parameter as delegated body property of the same name and type`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ConstructorParameterShadowedByDelegatedProperty"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ConstructorParameterShadowedByDelegatedProperty [page 1/1]
+            class ConstructorParameterShadowedByDelegatedProperty(x: Int) {
+                val x: Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not render constructor parameter as lateinit body property of the same name and type`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ConstructorParameterShadowedByLateinitProperty"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ConstructorParameterShadowedByLateinitProperty [page 1/1]
+            class ConstructorParameterShadowedByLateinitProperty(x: String) {
+                var x: String
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not render constructor parameter as property delegated to interface implementation`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ConstructorParameterShadowedByInterfaceDelegation"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ConstructorParameterShadowedByInterfaceDelegation [page 1/1]
+            class ConstructorParameterShadowedByInterfaceDelegation(x: Int, delegate: ConstructorParameterDelegate) : ConstructorParameterDelegate {
+                override val x: Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should render name of named companion object`() {
         // an LLM needs the name to qualify the companion object members, like NamedCompanionHolder.Factory.of()
         resolver.resolve(
@@ -4430,6 +4479,91 @@ class KotlinIntrospectorTest {
     fun `should not resolve extension of built-in type from outside of the standard library declared on its supertype`() {
         // CharSequence.charCount() of the test package is not listed with kotlin.String either
         assert(resolver.resolve("kotlin.String.charCount") == null)
+    }
+
+    // TestSetterVisibility tests
+
+    @Test
+    fun `should render var with setter not part of API as val`() {
+        // the property cannot be assigned from the user code, like the protected setter of a final class
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.NarrowedSetterHolder"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NarrowedSetterHolder [page 1/1]
+            class NarrowedSetterHolder {
+                val privateSetter: Int
+                val internalSetter: Int
+                val protectedSetter: Int
+                var publicSetter: Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            val NarrowedSetterHolder.extensionPrivateSetter: Int
+            // from com.xemantic.kotlin.introspection.test.NarrowedSetterExtensions
+            val NarrowedSetterHolder.objectExtensionPrivateSetter: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render protected setter of open class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.OpenNarrowedSetterHolder"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OpenNarrowedSetterHolder [page 1/1]
+            open class OpenNarrowedSetterHolder {
+                val privateSetter: Int
+                var protectedSetter: Int
+                    protected set
+                protected val protectedPropertyPrivateSetter: Int
+                protected var protectedProperty: Int
+                companion object {
+                    var companionProtectedSetter: Int
+                        protected set
+                }
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member with protected setter of open class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.OpenNarrowedSetterHolder.protectedSetter"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OpenNarrowedSetterHolder.protectedSetter [page 1/1]
+            var protectedSetter: Int
+                protected set
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member var with private setter as val`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.NarrowedSetterHolder.privateSetter"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NarrowedSetterHolder.privateSetter [page 1/1]
+            val privateSetter: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension var with private setter as val`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.NarrowedSetterHolder.extensionPrivateSetter"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NarrowedSetterHolder.extensionPrivateSetter [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            val NarrowedSetterHolder.extensionPrivateSetter: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve top-level var with private setter as val`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.TestSetterVisibilityKt.topLevelPrivateSetter"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.TestSetterVisibilityKt.topLevelPrivateSetter [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            val topLevelPrivateSetter: Int
+        """.trimIndent()
     }
 
     // TestOverloads tests
@@ -5229,6 +5363,41 @@ class KotlinIntrospectorTest {
             interface DefaultImplsHiddenProperties {
                 val visible: Int
             }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render var with setter deprecated with hidden level as val`() {
+        // the property can still be read, but it cannot be assigned from the source code
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenSetterHolder"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenSetterHolder [page 1/1]
+            class HiddenSetterHolder(val inConstructor: Int) {
+                val inBody: Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            val HiddenSetterHolder.hiddenSetterExtension: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member var with setter deprecated with hidden level as val`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenSetterHolder.inBody"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenSetterHolder.inBody [page 1/1]
+            val inBody: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not render annotation class property deprecated with hidden level`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenDeprecationAnnotation"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenDeprecationAnnotation [page 1/1]
+            annotation class HiddenDeprecationAnnotation(val visible: Int = 0)
         """.trimIndent()
     }
 

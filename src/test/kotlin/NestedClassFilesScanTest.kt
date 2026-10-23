@@ -108,6 +108,26 @@ class NestedClassFilesScanTest {
     }
 
     @Test
+    fun `search should not find synthetic nested class without class metadata even when reading it`() {
+        // given
+        val root = tempDir.resolve("classes")
+        nestedClassFiles.forEach { (path, file) ->
+            file.copyTo(root.resolve(path).toFile())
+        }
+        val whenMappings = nestedClassFiles.map { (path, _) -> path }.filter { it.endsWith("\$WhenMappings.class") }
+
+        // when
+        val introspector = DefaultKotlinIntrospector(classLoader(root), skipNonKotlinNestedClassFiles = false)
+
+        // then
+        assert(whenMappings == listOf("com/xemantic/kotlin/introspection/isolated/WhenMappingsHolder\$WhenMappings.class"))
+        introspector.search("WhenMappings") sameAs """
+            // search results for "WhenMappings" [page 1/1]
+            com.xemantic.kotlin.introspection.isolated.WhenMappingsHolder
+        """.trimIndent()
+    }
+
+    @Test
     fun `should skip nested class files of jar listing them before their outer class files`() {
         // given
         val jar = tempDir.resolve("nested-first.jar")

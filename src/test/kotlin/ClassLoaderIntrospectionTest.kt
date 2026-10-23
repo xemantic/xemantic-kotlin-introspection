@@ -699,6 +699,94 @@ class ClassLoaderIntrospectionTest {
         """.trimIndent()
     }
 
+    @Test
+    fun `should tell declarations hidden since a Kotlin version by the standard library of the class loader`() {
+        // given
+        val root = tempDir.resolve("olderStdlib")
+        isolatedTestFixtures.filter { it.exists() }.forEach { dir ->
+            dir.walkTopDown().filter { it.isFile }.forEach { file ->
+                val target = root.resolve(file.relativeTo(dir).path).toFile()
+                target.parentFile.mkdirs()
+                target.writeBytes(
+                    if (file.name == "HiddenSinceHolder.class") {
+                        hiddenSince(file.readBytes(), "hiddenSincePast" to "1.0", "hiddenSinceFuture" to "2.0")
+                    } else {
+                        file.readBytes()
+                    }
+                )
+            }
+        }
+        // the KotlinVersion of a standard library 1.9.0 in a directory, which has no manifest telling its version
+        listOf("KotlinVersion", "KotlinVersion\$Companion", "KotlinVersionCurrentValue").forEach { name ->
+            val bytes = KotlinVersion::class.java.getResourceAsStream("/kotlin/$name.class")!!.use { it.readBytes() }
+            val target = root.resolve("kotlin/$name.class").toFile()
+            target.parentFile.mkdirs()
+            target.writeBytes(if (name == "KotlinVersionCurrentValue") withKotlinVersion(bytes, 1, 9, 0) else bytes)
+        }
+        // the standard library of the root is preferred, like by the isolated class loader of a plugin
+        val classLoader = object : URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader) {
+            override fun loadClass(name: String, resolve: Boolean): Class<*> =
+                if (name.startsWith("kotlin.KotlinVersion")) {
+                    synchronized(getClassLoadingLock(name)) { findLoadedClass(name) ?: findClass(name) }
+                } else {
+                    super.loadClass(name, resolve)
+                }
+        }
+        val introspector = KotlinIntrospector(classLoader)
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.HiddenSinceHolder")
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.HiddenSinceHolder [page 1/1]
+            class HiddenSinceHolder {
+                val hiddenSinceProperty: Int
+                fun hiddenSinceFuture(): Int
+            }
+        """.trimIndent()
+    }
+
+    /**
+     * Replaces the version of the standard library, which the `KotlinVersionCurrentValue.get()`
+     * returns as `KotlinVersion.CURRENT`, by the [major], [minor] and [patch] one.
+     */
+    private fun withKotlinVersion(bytes: ByteArray, major: Int, minor: Int, patch: Int): ByteArray {
+        val writer = ClassWriter(0)
+        ClassReader(bytes).accept(object : ClassVisitor(Opcodes.ASM9, writer) {
+            override fun visitMethod(
+                access: Int,
+                name: String,
+                descriptor: String,
+                signature: String?,
+                exceptions: Array<out String>?
+            ): MethodVisitor {
+                val visitor = super.visitMethod(access, name, descriptor, signature, exceptions)
+                if (name != "get") return visitor
+                val versions = ArrayDeque(listOf(major, minor, patch))
+                return object : MethodVisitor(Opcodes.ASM9, visitor) {
+                    // the version numbers pushed as the constructor arguments of KotlinVersion
+                    override fun visitInsn(opcode: Int) {
+                        if (opcode in Opcodes.ICONST_0..Opcodes.ICONST_5) {
+                            super.visitIntInsn(Opcodes.BIPUSH, versions.removeFirst())
+                        } else {
+                            super.visitInsn(opcode)
+                        }
+                    }
+
+                    override fun visitIntInsn(opcode: Int, operand: Int) {
+                        if (opcode == Opcodes.BIPUSH || opcode == Opcodes.SIPUSH) {
+                            super.visitIntInsn(Opcodes.BIPUSH, versions.removeFirst())
+                        } else {
+                            super.visitIntInsn(opcode, operand)
+                        }
+                    }
+                }
+            }
+        }, 0)
+        return writer.toByteArray()
+    }
+
     /**
      * Annotates the methods of the class with `@DeprecatedSinceKotlin(hiddenSince = …)`,
      * which only the standard library can declare, by the method name.

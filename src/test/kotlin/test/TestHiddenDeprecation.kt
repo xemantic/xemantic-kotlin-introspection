@@ -91,3 +91,20 @@ interface HiddenDeprecationInterface {
     @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
     val hiddenWithGetter: Int get() = 1
 }
+
+// only the setter is hidden, so that the property can be read, but not assigned
+class HiddenSetterHolder(@set:Deprecated("replaced", level = DeprecationLevel.HIDDEN) var inConstructor: Int) {
+    @set:Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    var inBody: Int = 0
+}
+
+@set:Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+var HiddenSetterHolder.hiddenSetterExtension: Int
+    get() = inBody
+    set(@Suppress("unused") value) {}
+
+annotation class HiddenDeprecationAnnotation(
+    val visible: Int = 0,
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    val hidden: Int = 1
+)

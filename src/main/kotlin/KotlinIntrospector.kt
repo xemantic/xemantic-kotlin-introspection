@@ -43,6 +43,11 @@ public interface KotlinIntrospector {
      * A member, like `com.example.Outer.create`, is paginated by its signatures: the overloads,
      * the ones of the companion object, rendered within its declaration, and the extensions, one item each.
      *
+     * Only the declarations which can be used from the user code are rendered: neither the private,
+     * nor the internal ones, nor the ones deprecated as hidden, while the protected ones only of an open class.
+     * A `var` whose setter cannot be called, like with `private set`, is rendered as a `val`,
+     * while a setter narrower than its property, like `protected set`, is rendered on the line following it.
+     *
      * @param name fully qualified name (e.g., "kotlin.collections.List")
      * @param page 1-based page index, coerced into the range of the pages
      * @param pageSize number of items per page, must be positive
