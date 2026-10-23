@@ -3363,7 +3363,7 @@ class KotlinIntrospectorTest {
     @Test
     fun `should resolve standard library value class`() {
         resolver.resolve("kotlin.time.Duration", pageSize = 1) should {
-            have(lines()[1] == "@JvmInline value class Duration private constructor(rawValue: Long) : Comparable<Duration> {")
+            have(lines()[1] == "@JvmInline value class Duration private constructor(private val rawValue: Long) : Comparable<Duration> {")
         }
     }
 
@@ -3941,11 +3941,20 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should render parameters of data class constructor which cannot be called`() {
-        // a data class cannot be declared without parameters, the one of a private property is still rendered
+        // a data class cannot be declared without parameters, each declaring a property, also a private one
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.PrivateConstructorDataClass", pageSize = 1
         ) should {
-            have(lines()[1] == "data class PrivateConstructorDataClass private constructor(val a: Int, b: Int) {")
+            have(lines()[1] == "data class PrivateConstructorDataClass private constructor(val a: Int, private val b: Int) {")
+        }
+    }
+
+    @Test
+    fun `should render private property of data class constructor`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.PrivatePropertyDataClass", pageSize = 1
+        ) should {
+            have(lines()[1] == "data class PrivatePropertyDataClass(val a: Int, private val b: Int) {")
         }
     }
 
@@ -5521,6 +5530,18 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.test.DeprecatedConstructorEnum [page 1/1]
             enum class DeprecatedConstructorEnum(val v: Int) {
                 A
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render deprecation of property declared in primary constructor`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.DeprecatedConstructorProperty"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DeprecatedConstructorProperty [page 1/1]
+            class DeprecatedConstructorProperty(@Deprecated("Use baz", level = DeprecationLevel.ERROR) val bar: Int) {
+                val baz: Int
             }
         """.trimIndent()
     }

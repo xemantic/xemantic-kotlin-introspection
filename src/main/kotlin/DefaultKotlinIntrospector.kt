@@ -1331,7 +1331,7 @@ internal class DefaultKotlinIntrospector(
             isPrimaryConstructorCallable -> renderedConstructor.visibility
             else -> Visibility.PRIVATE
         }
-        val primaryConstructorDeprecation = renderedConstructor?.takeIf { !isEnum && isPrimaryConstructorCallable }
+        val primaryConstructorDeprecation = renderedConstructor?.takeIf { isPrimaryConstructorCallable }
             ?.let { foundClass.deprecation(it) }
         // whether the final modality of an override is not redundant, see mightBeSubclassed
         val isOpenForOverrides = mightBeSubclassed(kmClass, foundClass)
@@ -1339,9 +1339,12 @@ internal class DefaultKotlinIntrospector(
         // unlike an object, an enum class, an interface, an annotation class,
         // or a sealed class, whose constructors are never callable from the user code
         val isConstructibleKind = kmClass.kind == ClassKind.CLASS && !isSealed
-        // The properties declared by the parameters of the rendered constructor, by the parameter name
+        // The properties declared by the parameters of the rendered constructor, by the parameter name,
+        // also the ones which are not part of the API of a data class, or a value class,
+        // whose parameters must all declare properties, like `private val rawValue: Long`
+        val propertiesOfParameters = if (kmClass.isData || kmClass.isValue) kmClass.properties else properties
         val constructorProperties = renderedConstructor?.valueParameters.orEmpty().mapNotNull { param ->
-            properties.firstOrNull { it.isDeclaredBy(param) }?.let { param.name to it }
+            propertiesOfParameters.firstOrNull { it.isDeclaredBy(param) }?.let { param.name to it }
         }.toMap()
         val declaredInConstructor = constructorProperties.values.toSet()
 
@@ -1401,14 +1404,16 @@ internal class DefaultKotlinIntrospector(
                     typeParameters,
                     prefix = when {
                         prop == null -> ""
+                        // the property of a data class, or a value class, which is not part of the API, like a private one
+                        prop !in properties -> if (prop.isVar) "var " else "val "
                         // never with a setter narrower than the property, which is declared in the class body
                         renderedSetterVisibility(prop, prop.apiSetterVisibility(scopes, foundClass), isOverride) != null -> "var "
                         else -> "val "
                     },
                     // a constructor property is never abstract, but it can be open or final
-                    modifiers = if (prop == null) "" else formatVisibility(prop.visibility) + formatModalityModifiers(
-                        prop.modality, isOverride, inInterface = false, isOpenForOverrides
-                    )
+                    modifiers = if (prop == null) "" else formatDeprecation(foundClass.deprecation(prop)) +
+                        formatVisibility(prop.visibility) +
+                        formatModalityModifiers(prop.modality, isOverride, inInterface = false, isOpenForOverrides)
                 )
             }
             // a class which can neither be instantiated, nor subclassed, from the user code

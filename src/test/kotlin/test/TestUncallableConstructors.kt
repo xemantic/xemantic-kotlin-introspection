@@ -59,3 +59,6 @@ data class PrivateConstructorDataClass private constructor(val a: Int, private v
         fun of(a: Int): PrivateConstructorDataClass = PrivateConstructorDataClass(a, a)
     }
 }
+
+// a data class declares a property with every parameter of its primary constructor, also a private one
+data class PrivatePropertyDataClass(val a: Int, private val b: Int)

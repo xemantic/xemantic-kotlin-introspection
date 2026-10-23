@@ -101,3 +101,7 @@ class HiddenCompanionHolder {
 enum class DeprecatedConstructorEnum @Deprecated("Old") constructor(val v: Int) {
     A(1)
 }
+
+class DeprecatedConstructorProperty(@Deprecated("Use baz", level = DeprecationLevel.ERROR) val bar: Int) {
+    val baz: Int get() = bar
+}

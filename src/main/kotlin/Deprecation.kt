@@ -72,6 +72,7 @@ internal fun DeprecationAnnotations.deprecationOf(isSince: (version: String) -> 
             hiddenSince?.let(isSince) == true -> DeprecationLevel.HIDDEN
             errorSince?.let(isSince) == true -> DeprecationLevel.ERROR
             warningSince?.let(isSince) == true -> DeprecationLevel.WARNING
+            // not deprecated yet, intentionally cancelling an explicit level too, as the compiler does
             else -> return null
         }
         // an explicit level is not expected next to @DeprecatedSinceKotlin, which the compiler reports,
