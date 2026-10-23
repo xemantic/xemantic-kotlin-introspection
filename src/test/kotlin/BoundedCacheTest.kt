@@ -138,4 +138,20 @@ class BoundedCacheTest {
         assert(transient == "transient" && value == "computed")
     }
 
+    @Test
+    fun `should tell only cached values, without computing them`() {
+        // given
+        val cache = BoundedCache<String, String>(capacity = 1)
+        cache.getOrCompute("transient") { BoundedCache.Computed("transient", isCacheable = false) }
+
+        // when
+        val missing = cache.getIfCached("transient")
+        cache.put("key", "put")
+        val put = cache.getIfCached("key")
+        cache.put("other", "evicting")
+
+        // then
+        assert(missing == null && put == "put" && cache.getIfCached("key") == null)
+    }
+
 }

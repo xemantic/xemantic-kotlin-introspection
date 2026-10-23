@@ -526,10 +526,17 @@ internal class DefaultKotlinIntrospector(
 
         /**
          * The scope of the class, see [ApiClasses], where the usability of a class whose class file cannot be read
-         * is told by the metadata and the reflection of the class, see [isUsableClass] and [reflectedClassFile].
+         * is told by the metadata and the reflection of the class, see [isUsableClass] and [reflectedClassFile],
+         * told again after a failure to read the class file which might be transient, see [FinalOnce].
          */
-        val scope: ClassScope? by lazy {
-            kmClass?.let { classScope(it, isUsableClass(it, classFile ?: reflectedClassFile), this) }
+        val scope: ClassScope? get() = scopeRead.value
+
+        private val scopeRead = FinalOnce {
+            val classFile = classFileRead.outcome
+            TransientFailures.Outcome(
+                kmClass?.let { classScope(it, isUsableClass(it, classFile.value ?: reflectedClassFile), this) },
+                classFile.isFinal
+            )
         }
 
     }
@@ -542,16 +549,26 @@ internal class DefaultKotlinIntrospector(
      */
     private val apiClasses = ApiClasses(
         scopeOf = { name -> findClassByMetadataName(name)?.scope },
-        isAbsent = { name -> isAbsent(name) }
+        isAbsent = { name -> isAbsent(name) },
+        transientFailures = transientFailures
     )
 
     /**
      * Whether the class named like `com/example/Outer.Nested` is absent from the classpath:
      * neither found, see [findClassByMetadataName], nor its class file served, like when it is missing,
-     * unlike a class found without readable metadata, or one which cannot be loaded, without readable metadata either.
+     * unlike a class found without readable metadata, or one which cannot be loaded, without readable metadata either,
+     * or one whose class file cannot be read, maybe only for now, kept with the lookup, see [ClassLookup.isAbsent].
      */
-    private fun isAbsent(name: String): Boolean =
-        findClassByMetadataName(name) == null && classLoader.readClassBytes(binaryNameOf(name)) == null
+    private fun isAbsent(name: String): Boolean = lookUpClassByBinaryName(binaryNameOf(name)).isAbsent
+
+    /**
+     * Whether the class file of the class of this JVM [binaryName], which is not found, is absent from the classpath,
+     * not when it cannot be read, maybe only for now, see [readClassBytesOutcome].
+     */
+    private fun classFileAbsence(binaryName: String): FinalOnce<Boolean> = FinalOnce {
+        val bytes = readClassBytesOutcome(binaryName)
+        TransientFailures.Outcome(bytes.value == null && bytes.isFinal, bytes.isFinal)
+    }
 
     /**
      * The functions of a mutable built-in collection type which are part of the API.
@@ -652,13 +669,19 @@ internal class DefaultKotlinIntrospector(
      * @param isFinal whether the outcome is final, unlike after a failure which might be transient.
      * @param unloadableClassBytes the class file of a Java class which cannot be loaded, if read,
      *   kept for the [overrideResolver], see [OverrideResolver.Declaration].
+     * @param classFileAbsence whether the class file of a class which is not found is absent, see [isAbsent],
+     *   told only when needed, `null` when its class file is known to be there.
      */
     private class ClassLookup(
         val foundClass: FoundClass?,
         val isFinal: Boolean,
-        val unloadableClassBytes: ByteArray? = null
+        val unloadableClassBytes: ByteArray? = null,
+        private val classFileAbsence: FinalOnce<Boolean>? = null
     ) {
-        fun asFinal(): ClassLookup = if (isFinal) this else ClassLookup(foundClass, isFinal = true, unloadableClassBytes)
+        val isAbsent: Boolean get() = foundClass == null && classFileAbsence?.value == true
+
+        fun asFinal(): ClassLookup =
+            if (isFinal) this else ClassLookup(foundClass, isFinal = true, unloadableClassBytes, classFileAbsence)
     }
 
     /**
@@ -671,7 +694,11 @@ internal class DefaultKotlinIntrospector(
         ClassLookup(FoundClass(binaryName, clazz), isFinal = true)
     } catch (_: ClassNotFoundException) {
         // also thrown when the class file is there, but cannot be read, like by a URLClassLoader after an IOException
-        ClassLookup(null, isFinal = !isMissProbed || !classLoader.hasClassFile(binaryName))
+        ClassLookup(
+            null,
+            isFinal = !isMissProbed || !classLoader.hasClassFile(binaryName),
+            classFileAbsence = classFileAbsence(binaryName)
+        )
     } catch (e: LinkageError) {
         // the class file is there, but refers to a class which is not, like its supertype,
         // or is of a newer JVM version, or is malformed, while its declarations can still be read from its metadata;
@@ -683,7 +710,8 @@ internal class DefaultKotlinIntrospector(
         ClassLookup(
             classFile?.takeIf { it.metadata != null }?.let { FoundClass(binaryName, clazz = null, it) },
             isFinal = e.javaClass != LinkageError::class.java && (bytes != null || !classLoader.hasClassFile(binaryName)),
-            unloadableClassBytes = bytes?.takeIf { classFile?.metadata == null }
+            unloadableClassBytes = bytes?.takeIf { classFile?.metadata == null },
+            classFileAbsence = if (bytes == null) classFileAbsence(binaryName) else null
         )
     }
 

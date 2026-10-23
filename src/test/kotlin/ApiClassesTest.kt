@@ -86,6 +86,33 @@ class ApiClassesTest {
     }
 
     @Test
+    fun `should decide whether sealed class is open again after a transient failure`() {
+        // given
+        val transientFailures = TransientFailures()
+        var isSubclassRead = false
+        val apiClasses = ApiClasses(
+            scopeOf = { name ->
+                when (name) {
+                    "pkg/Sealed" -> scope(sealedSubclasses = listOf("pkg/Open"))
+                    // the subclass cannot be read the first time, maybe only for now
+                    "pkg/Open" -> if (isSubclassRead) scope(isSubclassable = true) else null.also { transientFailures.mark() }
+                    else -> null
+                }
+            },
+            isAbsent = { false },
+            transientFailures = transientFailures
+        )
+
+        // when
+        val isProtectedApiBefore = apiClasses.apiClass("pkg/Sealed")?.isApi(Visibility.PROTECTED)
+        isSubclassRead = true
+        val isProtectedApiAfter = apiClasses.apiClass("pkg/Sealed")?.isApi(Visibility.PROTECTED)
+
+        // then
+        assert(isProtectedApiBefore == false && isProtectedApiAfter == true)
+    }
+
+    @Test
     fun `should not tell class nested in unusable class as part of the API`() {
         // given
         val apiClasses = apiClasses(

@@ -121,12 +121,14 @@ internal class FinalOnce<T>(private val compute: () -> TransientFailures.Outcome
     @Volatile
     private var final: TransientFailures.Outcome<T>? = null
 
-    val value: T
+    val outcome: TransientFailures.Outcome<T>
         get() {
-            final?.let { return it.value }
+            final?.let { return it }
             val outcome = compute()
             if (outcome.isFinal) final = outcome
-            return outcome.value
+            return outcome
         }
+
+    val value: T get() = outcome.value
 
 }

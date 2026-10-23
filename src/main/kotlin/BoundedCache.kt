@@ -51,6 +51,25 @@ internal class BoundedCache<K : Any, V>(private val capacity: Int) {
     fun getOrPut(key: K, compute: () -> V): V = getOrCompute(key) { Computed(compute(), isCacheable = true) }.value
 
     /**
+     * The cached value of the [key], or `null` if it is not cached, or still being computed, never computing it,
+     * like for a computation which might request its own key, and so caches its value by itself, see [put].
+     */
+    fun getIfCached(key: K): V? = synchronized(entries) { entries[key] }
+        ?.takeIf { it.isInitialized() }
+        ?.value
+        ?.takeIf { it.isCacheable }
+        ?.value
+
+    /**
+     * Caches the [value] of the [key], replacing the one cached before.
+     */
+    fun put(key: K, value: V) {
+        synchronized(entries) {
+            entries[key] = lazyOf(Computed(value, isCacheable = true))
+        }
+    }
+
+    /**
      * The value of the [key], computed if absent, and then cached, unless it is not cacheable,
      * while the requests waiting for the same computation receive it anyway,
      * telling whether it is cacheable, so that they do not cache what they compute from it either.

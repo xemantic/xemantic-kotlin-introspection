@@ -795,6 +795,43 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should not assume enclosing class absent when reading its class file fails transiently`() {
+        // given
+        val outer = "com.xemantic.kotlin.introspection.test.InternalNestedHolder"
+        // the internal outer class cannot be loaded, and its class file cannot be read the first time
+        val classLoader = CountingClassLoader(
+            javaClass.classLoader,
+            unreadableOnce = setOf(outer),
+            failure = { ClassNotFoundException(it) }
+        )
+        classLoader.failing += outer
+        val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
+
+        // when
+        val signatures = List(2) { introspector.resolve("$outer.NestedInInternalClass") }
+
+        // then
+        // an absent enclosing class would be assumed public, while this one is there, only not read for now
+        assert(signatures == listOf(null, null))
+    }
+
+    @Test
+    fun `should tell class scope again after a transient IOException reading its class file`() {
+        // given
+        val target = "com.xemantic.kotlin.introspection.test.HiddenConstructorOpenClass"
+        val classLoader = CountingClassLoader(javaClass.classLoader, unreadableOnce = setOf(target))
+        val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
+
+        // when
+        val signatures = List(2) { introspector.resolve(target) }
+
+        // then
+        // the hidden constructor is not known while the class file cannot be read, so the class seems subclassable
+        assert(signatures[0] != null && "protected fun protectedMember()" in signatures[0]!!)
+        assert(signatures[1] != null && "protectedMember" !in signatures[1]!!)
+    }
+
+    @Test
     fun `should mark overrides of Java superclass again after its transient linkage error`() {
         // given
         val javaSuperclass = "com.xemantic.kotlin.introspection.test.other.JavaProcessorBase"

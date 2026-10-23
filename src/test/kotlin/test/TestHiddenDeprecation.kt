@@ -64,6 +64,14 @@ class HiddenOnlyConstructor private constructor(val a: Int) {
     constructor(s: String) : this(s.length)
 }
 
+// open, but cannot be subclassed, as its only constructor which is not private is hidden,
+// so that its protected members are not part of the API
+open class HiddenConstructorOpenClass private constructor(val a: Int) {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    constructor(s: String) : this(s.length)
+    protected fun protectedMember() {}
+}
+
 fun HiddenDeprecationTarget.extension(): Int = value
 
 @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
