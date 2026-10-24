@@ -1740,7 +1740,7 @@ internal class DefaultKotlinIntrospector(
         while (pending.isNotEmpty()) {
             for (supertype in pending.removeFirst().supertypes) {
                 val name = (supertype.classifier as? KmClassifier.Class)?.name ?: continue
-                if (name == kotlinClassName(COMPARABLE_CLASS_NAME)) {
+                if (name == COMPARABLE_METADATA_NAME) {
                     val argument = supertype.arguments.singleOrNull()?.type?.classifier as? KmClassifier.Class
                     if (argument != null && argument.name.replace('/', '.') in comparableTo) return true
                 } else if (!name.startsWith("kotlin/") && !name.startsWith("java/") && visited.add(name)) {
@@ -4245,6 +4245,8 @@ private fun packageSourceOf(binaryName: String): String = binaryName.substringBe
 private const val ANY_RECEIVER_KEY = "kotlin.Any"
 
 private const val COMPARABLE_CLASS_NAME = "kotlin.Comparable"
+
+private const val COMPARABLE_METADATA_NAME = "kotlin/Comparable"
 
 /**
  * The Kotlin name of the function type class compiled to the JVM interface named [className],
