@@ -926,6 +926,9 @@ internal class DefaultKotlinIntrospector(
      * @param isMissProbed whether a class which is not found is told apart from one whose class file is there,
      *   but cannot be loaded, maybe only for now, like after an `IOException`,
      *   which is worth a resource lookup only if the miss is cached.
+     *   A class loader hiding a class while serving its class file, like a filtering one of an OSGi bundle,
+     *   is then indistinguishable from a transient failure, so that such a miss costs a resource lookup,
+     *   and nothing depending on it is cached, until its failure is deemed final, see [TransientFailures].
      */
     private fun lookUpClass(binaryName: String, isMissProbed: Boolean): ClassLookup = try {
         val clazz = classLoader.loadClass(binaryName)

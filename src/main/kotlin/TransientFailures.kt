@@ -35,7 +35,8 @@ import java.util.concurrent.atomic.AtomicLong
  * so that concurrent resolves do not deem a failure final after one outage.
  * An attempt outside an operation is an operation of its own, so it always retries.
  *
- * @param capacity the number of the failing attempts remembered, the least recently used ones,
+ * @param capacity the number of the failing attempts remembered, the least recently used ones, each with its outcome,
+ *   like a class found only from its class file, kept until the key is attempted successfully, deemed final, or forgotten,
  *   so that with more failing keys a failure is forgotten, with its outcome, and its count, before it is deemed final,
  *   and then retried by each operation, like for an unbounded number of failing classes, which is not to be cached anyway.
  */
