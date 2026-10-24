@@ -56,3 +56,10 @@ interface DefaultImplsDeprecatedProperties {
     @get:Deprecated("Getter")
     val hiddenWithDeprecatedGetter: Int get() = 1
 }
+
+// the synthetic method for the annotations of the property is in the DefaultImpls, while the getter is in the interface
+interface DefaultImplsHiddenGetterVar {
+    @Deprecated("deprecated")
+    @get:Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    var deprecatedVar: Int
+}

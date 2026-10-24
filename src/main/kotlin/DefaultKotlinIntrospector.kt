@@ -85,7 +85,7 @@ internal data class IndexedExtensionProperty(
     val source: String,  // the package, or the object, to import it from
     val isObjectMember: Boolean,  // whether the source is an object
     val setterVisibility: Visibility?,  // when its setter can be called, see apiSetterVisibility
-    // never a hidden one, as the hidden extensions are not indexed, except a hidden getter, see Deprecation.isGetterOnly
+    // never a hidden one, as the hidden extensions are not indexed, but maybe hiding the getter, see Deprecation.hidesGetter
     val deprecation: Deprecation? = null,
     override val receiverBounds: Set<String> = emptySet()
 ) : ReceiverBounded
@@ -150,12 +150,12 @@ private fun Deprecations.isHidden(function: KmFunction): Boolean = deprecation(f
 private fun Deprecations.isHidden(constructor: KmConstructor): Boolean = deprecation(constructor)?.isHidden == true
 
 /**
- * Whether the [property] is hidden in the [scope], unless only its getter is, while its setter is part of the API,
- * so that it can still be assigned, see [Deprecation.isGetterOnly].
+ * Whether the [property] is hidden in the [scope], also when only its getter is, see [Deprecation.hidesGetter],
+ * unless its setter is part of the API, so that it can still be assigned.
  */
 private fun Deprecations.isHidden(property: KmProperty, scope: DeclarationScope): Boolean {
     val deprecation = deprecation(property) ?: return false
-    return deprecation.isHidden && !(deprecation.isGetterOnly && property.apiSetterVisibility(scope, this) != null)
+    return deprecation.isHidden || (deprecation.hidesGetter && property.apiSetterVisibility(scope, this) == null)
 }
 
 /**
@@ -1968,18 +1968,18 @@ internal class DefaultKotlinIntrospector(
      * except [withHidden], the only place being the property declared by a primary constructor parameter
      * of a data class, or a value class, which must declare a property, like
      * `data class Foo(@Deprecated("Replaced", level = DeprecationLevel.HIDDEN) val a: Int)`, telling it cannot be used,
-     * and the hidden getter of a `var` which can still be assigned, rendered as `@get:Deprecated`, see [Deprecation.isGetterOnly].
+     * and the hidden getter of a `var` which can still be assigned, rendered as `@get:Deprecated`, see [Deprecation.hidesGetter].
      * Only the first non-blank line of a multiline message is rendered, followed by `…`, to keep it compact,
      * and the expression of `ReplaceWith` without its imports.
      */
     private fun formatDeprecation(
         deprecation: Deprecation?,
         withHidden: Boolean = false
-    ): String = if (deprecation == null || (deprecation.isHidden && !withHidden && !deprecation.isGetterOnly)) "" else buildString {
+    ): String = if (deprecation == null || (deprecation.isHidden && !withHidden)) "" else buildString {
         val message = deprecation.message.trim()
         val firstLine = message.lineSequence().first().trimEnd()
         // telling that a var whose getter is hidden can only be assigned
-        +(if (deprecation.isGetterOnly) "@get:Deprecated(\"" else "@Deprecated(\"")
+        +(if (deprecation.target == Deprecation.Target.GETTER) "@get:Deprecated(\"" else "@Deprecated(\"")
         +firstLine.escapeKotlin('"')
         if (firstLine.length < message.length) +" …"
         +"\""
@@ -1990,6 +1990,7 @@ internal class DefaultKotlinIntrospector(
         }
         if (deprecation.level != DeprecationLevel.WARNING) +", level = DeprecationLevel.${deprecation.level.name}"
         +") "
+        +formatDeprecation(deprecation.hiddenGetter)
     }
 
     private fun formatSupertypes(
@@ -3208,7 +3209,7 @@ internal class DefaultKotlinIntrospector(
          * The annotation is found on the JVM method of a function or a constructor,
          * and on the synthetic method for the annotations of a property, or its getter, if annotated itself,
          * while only the setter is deprecated when annotated itself, which tells only whether it is hidden,
-         * and the hidden getter of a `var` whose setter can still be called hides only the reading, see [Deprecation.isGetterOnly].
+         * and the hidden getter of a `var` hides only the reading, see [Deprecation.hidesGetter].
          * The ACC_SYNTHETIC flag, which the compiler also sets on the hidden methods, is not relied on,
          * as @JvmSynthetic sets it on the declarations which are still callable from Kotlin,
          * while the field of a hidden @JvmField or const property does not have it.
@@ -3224,13 +3225,15 @@ internal class DefaultKotlinIntrospector(
         /**
          * The deprecation of the [property], whose own one, of the synthetic method for its annotations,
          * is the [annotationsDeprecation], combined with the one of its getter, see [highestOf],
-         * except a hidden getter of a `var` whose setter is not hidden, telling the property can still be assigned.
+         * except a hidden getter of a `var`, which might still be assigned, see [varDeprecationOf].
          */
         fun deprecation(property: KmProperty, annotationsDeprecation: Deprecation?): Deprecation? {
             val getterDeprecation = deprecation(property.getterSignature)
-            val isGetterOnlyHidden = getterDeprecation?.isHidden == true && annotationsDeprecation?.isHidden != true &&
-                property.isVar && !isSetterHidden(property)
-            return if (isGetterOnlyHidden) getterDeprecation.getterOnly() else highestOf(annotationsDeprecation, getterDeprecation)
+            return if (property.isVar) {
+                varDeprecationOf(annotationsDeprecation, getterDeprecation)
+            } else {
+                highestOf(annotationsDeprecation, getterDeprecation)
+            }
         }
 
         fun annotationsDeprecation(property: KmProperty): Deprecation? = deprecation(property.syntheticMethodForAnnotations)
