@@ -1033,7 +1033,7 @@ class ClassLoaderIntrospectionTest {
             if (name == blocked) {
                 if (requests.incrementAndGet() == 1) {
                     entered.countDown()
-                    release.await()
+                    awaitOrFail(release)
                     if (!isFirstRequestLoaded) throw ClassNotFoundException(name)
                 } else if (isHidden) {
                     throw ClassNotFoundException(name)
@@ -1047,14 +1047,6 @@ class ClassLoaderIntrospectionTest {
             if (name == blockedResource && isHidden) null else super.getResourceAsStream(name)
     }
 
-    /**
-     * Waits for the [threads], failing rather than hanging if they never finish.
-     */
-    private fun joinOrFail(vararg threads: Thread) {
-        threads.forEach { it.join(60_000) }
-        assert(threads.none { it.isAlive })
-    }
-
     @Test
     fun `should keep class found by name over miss cached by concurrent lookup meanwhile`() {
         // given
@@ -1064,11 +1056,16 @@ class ClassLoaderIntrospectionTest {
         val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
         var byNameSignature: String? = null
         val byName = kotlin.concurrent.thread { byNameSignature = introspector.resolve(outer) }
-        classLoader.entered.await()
-        introspector.resolve("$outer.Sorted")
+        awaitOrFail(classLoader.entered)
+        // on its own thread, as it would wait for the lookup by name, if it shared its cache entry
+        val lookup = kotlin.concurrent.thread { introspector.resolve("$outer.Sorted") }
+        try {
+            joinOrFail(lookup)
+        } finally {
+            classLoader.release.countDown()
+        }
 
         // when
-        classLoader.release.countDown()
         joinOrFail(byName)
         val signature = introspector.resolve(outer)
 
@@ -1085,7 +1082,7 @@ class ClassLoaderIntrospectionTest {
         val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
         // the outer class resolved by name, whose miss is not probed, failing after the lookup of the nested class waits
         val byName = kotlin.concurrent.thread { introspector.resolve(outer) }
-        classLoader.entered.await()
+        awaitOrFail(classLoader.entered)
         var nested: String? = null
         val lookup = kotlin.concurrent.thread { nested = introspector.resolve("$outer.Sorted") }
         // until the lookup of the nested class waits for the lookup of its outer class, if it does,

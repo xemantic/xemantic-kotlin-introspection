@@ -77,7 +77,7 @@ class TransientFailuresTest {
         val other = kotlin.concurrent.thread {
             failures.operation {
                 started.countDown()
-                failed.await()
+                awaitOrFail(failed)
                 overlapping = attempt()
             }
         }
@@ -85,10 +85,10 @@ class TransientFailuresTest {
         // when
         // the failure of the first operation happens while the other one is in progress, within the same outage
         val first = failures.operation {
-            started.await()
+            awaitOrFail(started)
             attempt().also { failed.countDown() }
         }
-        other.join()
+        joinOrFail(other)
         val later = failures.operation { attempt() }
 
         // then
@@ -110,12 +110,12 @@ class TransientFailuresTest {
                 failures.attempt("key") {
                     attempts.incrementAndGet()
                     entered.countDown()
-                    release.await()
+                    awaitOrFail(release)
                     TransientFailures.Outcome("failed", isFinal = false)
                 }
             }
         }
-        entered.await()
+        awaitOrFail(entered)
 
         // when
         val first = failures.operation {
@@ -129,7 +129,7 @@ class TransientFailuresTest {
             failures.attempt("key") {
                 attempts.incrementAndGet()
                 release.countDown()
-                slow.join()
+                joinOrFail(slow)
                 TransientFailures.Outcome("failed", isFinal = false)
             }
         }
@@ -147,7 +147,7 @@ class TransientFailuresTest {
         // when
         failures.mark()
         var otherCount = -1L
-        kotlin.concurrent.thread { otherCount = failures.count() }.join()
+        joinOrFail(kotlin.concurrent.thread { otherCount = failures.count() })
 
         // then
         assert(failures.count() == 1L && otherCount == 0L)
