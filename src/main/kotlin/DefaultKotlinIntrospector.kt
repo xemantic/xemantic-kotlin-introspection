@@ -1614,12 +1614,13 @@ internal class DefaultKotlinIntrospector(
             sealedSubclasses.listed.forEach { listed ->
                 add(ListingItem.Declaration(listOf(formatListedClassHeader(listed, contextPackage))))
             }
-            // still telling the sealed subclasses which cannot be listed, as a when expression has to cover them
+            // still telling the sealed subclasses which cannot be listed, as a when expression has to cover them,
+            // escaped like in the branch covering it
             sealedSubclasses.notFound.forEach { subclassName ->
-                add(ListingItem.Declaration(listOf("// sealed subclass not found: ${subclassName.replace('/', '.')}")))
+                add(ListingItem.Declaration(listOf("// sealed subclass not found: ${escapeQualifiedName(subclassName.replace('/', '.'))}")))
             }
             sealedSubclasses.notRead.forEach { subclassName ->
-                add(ListingItem.Declaration(listOf("// sealed subclass could not be read: ${subclassName.replace('/', '.')}")))
+                add(ListingItem.Declaration(listOf("// sealed subclass could not be read: ${escapeQualifiedName(subclassName.replace('/', '.'))}")))
             }
             if (sealedSubclasses.hasOmitted) {
                 add(ListingItem.Declaration(listOf(SEALED_SUBCLASSES_OMITTED)))
@@ -3501,7 +3502,8 @@ private fun List<ListingItem.Extension>.renderLines(): List<String> = buildList 
     var source: String? = null
     for (extension in this@renderLines) {
         if (extension.source != source) {
-            add("// from ${extension.source}")
+            // escaped like in an import directive, like `import com.example.`in`.*`
+            add("// from ${escapeQualifiedName(extension.source)}")
             source = extension.source
         }
         addAll(extension.lines)
