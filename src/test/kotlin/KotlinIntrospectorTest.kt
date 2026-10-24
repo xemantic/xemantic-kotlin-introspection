@@ -4328,20 +4328,62 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should not resolve stdlib extension on type parameter with multiple bounds shadowed by more specific overload`() {
-        // R.contains(element: T?) where R : ClosedRange<T>, R : Iterable<T> is shadowed by IntRange.contains(element: Int?)
+    fun `should resolve stdlib extension on type parameter with multiple bounds next to more specific overload`() {
+        // R.contains(element: T?) where R : ClosedRange<T>, R : Iterable<T> is not told to be shadowed
+        // by IntRange.contains(element: Int?), as T is not the receiver, whose type argument is not inferred
         resolver.resolve("kotlin.ranges.IntRange.contains") should {
             have("inline operator fun IntRange.contains(element: Int?): Boolean" in lines())
-            have(lines().none { "R.contains(" in it })
+            have(lines().count { "R.contains(" in it } == 2)
         }
     }
 
     @Test
-    fun `should resolve class with extensions on type parameters except the ones shadowed by more specific overloads`() {
-        // a member, or an extension on the class itself, of the same name and arity, is called instead,
-        // unless it cannot be called with the same syntax, like a function which is not infix
+    fun `should resolve built-in type member with stdlib extension on type parameter taking nullable parameters`() {
+        // 5.coerceIn(null, 10) calls the one for any Comparable, as Int.coerceIn(minimumValue: Int, maximumValue: Int) takes no null
+        resolver.resolve("kotlin.Int.coerceIn") should {
+            have("fun Int.coerceIn(minimumValue: Int, maximumValue: Int): Int" in lines())
+            have("fun <T : Comparable<T>> T.coerceIn(minimumValue: T?, maximumValue: T?): T" in lines())
+            have(lines().none { "T.coerceIn(range: ClosedRange<T>)" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve class with extension on type parameter next to extension on its supertype`() {
+        // BoundedReceiverCircle().describe() calls the one on the type parameter, more specific than the one on BoundedReceiverShape
         resolver.resolve(
-            "com.xemantic.kotlin.introspection.test.BoundedReceiverShadowing"
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverCircle"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverCircle [page 1/1]
+            class BoundedReceiverCircle : BoundedReceiverShape, BoundedReceiverNamed
+            // from com.xemantic.kotlin.introspection.test
+            val BoundedReceiverShape.label: String
+            val <T> T.label: String where T : BoundedReceiverShape, T : BoundedReceiverNamed
+            fun BoundedReceiverShape.describe(): String
+            fun <T> T.describe(): String where T : BoundedReceiverShape, T : BoundedReceiverNamed
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension on type parameter next to extension on supertype as member of class`() {
+        // like in the listing of BoundedReceiverCircle
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverCircle.describe"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverCircle.describe [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverShape.describe(): String
+            fun <T> T.describe(): String where T : BoundedReceiverShape, T : BoundedReceiverNamed
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extensions on type parameters except the ones shadowed by more specific overloads`() {
+        // a member, or an extension on the class itself, taking the same parameters, is called instead,
+        // unless it cannot be called the same way, like a function which is not infix,
+        // or for every call of the one on the type parameter, like with a vararg, a default value, or a nullable parameter
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverShadowing",
+            pageSize = 100
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.BoundedReceiverShadowing [page 1/1]
             class BoundedReceiverShadowing : BoundedReceiverD {
@@ -4349,10 +4391,20 @@ class KotlinIntrospectorTest {
                 fun shadowedByMember(): BoundedReceiverShadowing
                 fun notShadowedByNonInfix(other: BoundedReceiverShadowing): BoundedReceiverShadowing
                 fun notShadowedByOtherArity(): BoundedReceiverShadowing
+                fun notShadowedByVararg(value: Int)
+                fun notShadowedByDefault(value: Int)
+                fun notShadowedByOtherType(value: String)
+                fun notShadowedByNullable(value: BoundedReceiverShadowing)
+                fun String.notShadowedByMemberExtension()
             }
             // from com.xemantic.kotlin.introspection.test
+            fun <T : BoundedReceiverD> T.notShadowedByDefault(value: Int = …)
+            fun <T : BoundedReceiverD> T.notShadowedByMemberExtension()
             infix fun <T : BoundedReceiverD> T.notShadowedByNonInfix(other: T): T
+            fun <T : BoundedReceiverD> T.notShadowedByNullable(value: T?)
             fun <T : BoundedReceiverD> T.notShadowedByOtherArity(value: Int): T
+            fun <T : BoundedReceiverD> T.notShadowedByOtherType(value: T)
+            fun <T : BoundedReceiverD> T.notShadowedByVararg(vararg values: Int)
             fun BoundedReceiverShadowing.shadowedByExtension(value: BoundedReceiverShadowing): BoundedReceiverShadowing
         """.trimIndent()
     }
@@ -4366,8 +4418,13 @@ class KotlinIntrospectorTest {
             interface BoundedReceiverD
             // from com.xemantic.kotlin.introspection.test
             val <T : BoundedReceiverD> T.shadowedProperty: Int
+            fun <T : BoundedReceiverD> T.notShadowedByDefault(value: Int = …)
+            fun <T : BoundedReceiverD> T.notShadowedByMemberExtension()
             infix fun <T : BoundedReceiverD> T.notShadowedByNonInfix(other: T): T
+            fun <T : BoundedReceiverD> T.notShadowedByNullable(value: T?)
             fun <T : BoundedReceiverD> T.notShadowedByOtherArity(value: Int): T
+            fun <T : BoundedReceiverD> T.notShadowedByOtherType(value: T)
+            fun <T : BoundedReceiverD> T.notShadowedByVararg(vararg values: Int)
             fun <T : BoundedReceiverD> T.shadowedByExtension(value: T): T
             fun <T : BoundedReceiverD> T.shadowedByMember(): T
         """.trimIndent()

@@ -1396,6 +1396,7 @@ internal class DefaultKotlinIntrospector(
         }
         val builtinClass = declarations as? BuiltinClass
         return listed.withoutShadowed(
+            kmClass,
             memberFunctions = (kmClass.functions + builtinClass?.jvmOnlyFunctions.orEmpty()).inApi(apiClass, declarations),
             memberProperties = (kmClass.properties + builtinClass?.jvmOnlyProperties.orEmpty()).inApi(apiClass, declarations)
         )
@@ -1403,39 +1404,43 @@ internal class DefaultKotlinIntrospector(
 
     /**
      * These extensions without the ones on a type parameter, like `fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T)`,
-     * shadowed by a more specific overload, which is called instead,
+     * shadowed for the [kmClass] by a more specific overload, which is called instead for every call of the shadowed one,
      * like `fun Int.coerceAtLeast(minimumValue: Int)` for an `Int`,
-     * or its member `operator fun rangeTo(other: Int)` for `operator fun <T : Comparable<T>> T.rangeTo(that: T)`:
-     * one of the [memberFunctions], or of these extensions on a class type, of the same name,
-     * and the same number of the value parameters and of the context parameters,
-     * an operator, or infix, if the shadowed one is, as only then it is called with the same syntax.
-     * An extension property on a type parameter is shadowed by one of the [memberProperties],
-     * or of these extension properties on a class type, of the same name.
-     * The overloads are told apart only by the number of their parameters, not by their types,
-     * which would take inferring the type arguments of the shadowed one,
-     * like `Int` of `R.contains(element: T?)` where `R : ClosedRange<T>, R : Iterable<T>`,
-     * shadowed for an `IntRange` by `IntRange.contains(element: Int?)`.
+     * or its member `operator fun rangeTo(other: Int)` for `operator fun <T : Comparable<T>> T.rangeTo(that: T)`,
+     * see [shadows]: one of the [memberFunctions], other than a member extension,
+     * or of these extensions on the class itself, never the ones on its supertypes, which are less specific.
+     * An extension property on a non-nullable type parameter is shadowed by one of the [memberProperties],
+     * or of these extension properties on the class itself, of the same name.
+     * Whenever it cannot be told, the extension is listed, like `R.contains(element: T?)`
+     * where `R : ClosedRange<T>, R : Iterable<T>`, next to `IntRange.contains(element: Int?)`,
+     * as its parameter is not of the receiver type, but of its type argument.
      */
-    @OptIn(ExperimentalContextParameters::class)
     private fun ListedExtensions.withoutShadowed(
+        kmClass: KmClass,
         memberFunctions: List<KmFunction>,
         memberProperties: List<KmProperty>
     ): ListedExtensions {
-        val specificFunctions = (memberFunctions + functions.map { it.function }.filter { !it.hasTypeParameterReceiver })
-            .groupBy { it.name }
-        val specificPropertyNames = (memberProperties + properties.map { it.property }.filter { !it.hasTypeParameterReceiver })
-            .mapTo(HashSet()) { it.name }
-        fun KmFunction.shadows(function: KmFunction): Boolean =
-            valueParameters.size == function.valueParameters.size &&
-                contextParameters.size == function.contextParameters.size &&
-                (isOperator || !function.isOperator) &&
-                (isInfix || !function.isInfix)
+        fun isOnClass(receiver: KmType?): Boolean =
+            receiver != null && !receiver.isNullable && receiver.arguments.isEmpty() &&
+                (receiver.classifier as? KmClassifier.Class)?.name == kmClass.name
+        val specificFunctions = (
+            memberFunctions.filter { it.receiverParameterType == null } +
+                functions.map { it.function }.filter { isOnClass(it.receiverParameterType) }
+            ).groupBy { it.name }
+        val specificPropertyNames = (
+            memberProperties.filter { it.receiverParameterType == null } +
+                properties.map { it.property }.filter { isOnClass(it.receiverParameterType) }
+            ).mapTo(HashSet()) { it.name }
         return ListedExtensions(
             functions.filter { extension ->
                 val function = extension.function
-                !function.hasTypeParameterReceiver || specificFunctions[function.name].orEmpty().none { it.shadows(function) }
+                specificFunctions[function.name].orEmpty().none { it.shadows(function, kmClass.name) }
             },
-            properties.filter { !it.property.hasTypeParameterReceiver || it.property.name !in specificPropertyNames }
+            properties.filter { extension ->
+                val receiver = extension.property.receiverParameterType
+                val isOnTypeParameter = receiver?.classifier is KmClassifier.TypeParameter && !receiver.isNullable
+                !isOnTypeParameter || extension.property.name !in specificPropertyNames
+            }
         )
     }
 
@@ -1656,7 +1661,8 @@ internal class DefaultKotlinIntrospector(
 
     /**
      * The direct supertypes of the Java class of the given [metadataName], which has no Kotlin metadata,
-     * by their Kotlin names, like `kotlin.collections.MutableList` of `java.util.List`, see [kotlinNamesOfJavaClasses],
+     * by their Kotlin names, like `kotlin.collections.MutableList` of `java.util.List`,
+     * see [OverrideResolver.builtinNameOfJavaClass],
      * or `kotlin.Function1` of `kotlin.jvm.functions.Function1`, paired with their metadata names,
      * or none if the class cannot be loaded, like when its supertype is missing from the classpath.
      */
@@ -1664,30 +1670,14 @@ internal class DefaultKotlinIntrospector(
         val javaClass = findClassByMetadataName(metadataName)?.clazz ?: return emptyList()
         return try {
             (listOfNotNull(javaClass.superclass) + javaClass.interfaces).map { supertype ->
-                val kotlinName = kotlinNamesOfJavaClasses[supertype.name] ?: jvmFunctionTypeName(supertype.name)
-                if (kotlinName != null) {
-                    kotlinName to kotlinClassName(kotlinName)
-                } else {
-                    val supertypeMetadataName = kotlinClassName(supertype)
-                    supertypeMetadataName.replace('/', '.') to supertypeMetadataName
-                }
+                val supertypeMetadataName = overrideResolver.builtinNameOfJavaClass(supertype.name)
+                    ?: functionTypeOfJvmInterface(supertype.name.replace('.', '/'))
+                    ?: kotlinClassName(supertype)
+                supertypeMetadataName.replace('/', '.') to supertypeMetadataName
             }
         } catch (_: LinkageError) {
             emptyList()
         }
-    }
-
-    /**
-     * The Kotlin names of the built-in types by the names of their JVM classes,
-     * like `kotlin.Comparable` of `java.lang.Comparable`,
-     * the mutable collection types chosen, as the Java collections are mutable.
-     */
-    private val kotlinNamesOfJavaClasses: Map<String, String> by lazy {
-        builtinTypes.entries
-            .filter { (name, kClass) -> !kClass.java.isPrimitive && !kClass.java.isArray && kClass.java.name != name }
-            // the later ones win
-            .sortedBy { (name, _) -> name.substringAfterLast('.').startsWith("Mutable") }
-            .associate { (name, kClass) -> kClass.java.name to name }
     }
 
     /**
@@ -1732,6 +1722,8 @@ internal class DefaultKotlinIntrospector(
      * which are few and widely used, unlike the generic extensions on the other types of the standard library,
      * see [userSupertypes].
      * Told by the Kotlin metadata of the class and of its supertypes, not through a Java supertype.
+     * An enum class, comparable to itself through `kotlin.Enum`, is not told to be,
+     * as these extensions are rarely called on the enum entries, and would grow the listing of every enum class.
      */
     private fun isComparableToItself(kmClass: KmClass, className: String, userSupertypes: Set<String>): Boolean {
         val comparableTo = userSupertypes + className
@@ -4128,16 +4120,59 @@ private class MemberListing(
 }
 
 /**
- * Whether this extension function is on a type parameter, like `fun <T : Comparable<T>> T.coerceAtLeast(…)`.
+ * Whether this function, a member, or an extension on the class named [className], like `fun Int.coerceAtLeast(minimumValue: Int)`,
+ * is called instead of the extension [function] on a type parameter, like `fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T)`,
+ * for every call of it on the class, as it is more specific, telling it conservatively:
+ * the receiver of the [function] is a non-nullable type parameter, `T`,
+ * and its value parameters have neither a default value, nor a vararg, which this function could not be called with,
+ * while this function takes the same value parameters, of the types of the parameters of the [function],
+ * where `T` stands for the class, see [isSameType], without any type parameter of its own, or any context parameter,
+ * and it is not suspend, unless the [function] is, and it is an operator, or infix, if the [function] is,
+ * as only then it is called the same way.
  */
-private val KmFunction.hasTypeParameterReceiver: Boolean
-    get() = receiverParameterType?.classifier is KmClassifier.TypeParameter
+@OptIn(ExperimentalContextParameters::class)
+private fun KmFunction.shadows(function: KmFunction, className: String): Boolean {
+    val receiver = function.receiverParameterType ?: return false
+    val receiverTypeParameter = receiver.classifier as? KmClassifier.TypeParameter ?: return false
+    return !receiver.isNullable &&
+        function.valueParameters.none { it.declaresDefaultValue || it.varargElementType != null } &&
+        typeParameters.isEmpty() && contextParameters.isEmpty() &&
+        (!isSuspend || function.isSuspend) &&
+        (isOperator || !function.isOperator) &&
+        (isInfix || !function.isInfix) &&
+        valueParameters.size == function.valueParameters.size &&
+        valueParameters.zip(function.valueParameters).all { (parameter, shadowedParameter) ->
+            parameter.varargElementType == null &&
+                isSameType(shadowedParameter.type, parameter.type, receiverTypeParameter.id, className)
+        }
+}
 
 /**
- * Whether this extension property is on a type parameter, like `val <T : Any> T.javaClass`.
+ * Whether the [shadowedType] of a parameter of an extension on the type parameter of the [receiverTypeParameterId]
+ * is the [type], where the type parameter stands for the class named [className], with the same nullability,
+ * like `T` for `Int`, or `ClosedRange<T>` for `ClosedRange<Int>`, but not `T?` for `Int`,
+ * while any other type parameter is never told to be the same type.
  */
-private val KmProperty.hasTypeParameterReceiver: Boolean
-    get() = receiverParameterType?.classifier is KmClassifier.TypeParameter
+private fun isSameType(shadowedType: KmType, type: KmType, receiverTypeParameterId: Int, className: String): Boolean {
+    if (shadowedType.isNullable != type.isNullable) return false
+    val classifier = type.classifier as? KmClassifier.Class ?: return false
+    return when (val shadowedClassifier = shadowedType.classifier) {
+        is KmClassifier.TypeParameter ->
+            shadowedClassifier.id == receiverTypeParameterId && classifier.name == className && type.arguments.isEmpty()
+        is KmClassifier.Class ->
+            shadowedClassifier.name == classifier.name &&
+                shadowedType.arguments.size == type.arguments.size &&
+                shadowedType.arguments.zip(type.arguments).all { (shadowedArgument, argument) ->
+                    val shadowedArgumentType = shadowedArgument.type
+                    val argumentType = argument.type
+                    shadowedArgument.variance == argument.variance && when {
+                        shadowedArgumentType == null || argumentType == null -> shadowedArgumentType == argumentType
+                        else -> isSameType(shadowedArgumentType, argumentType, receiverTypeParameterId, className)
+                    }
+                }
+        is KmClassifier.TypeAlias -> false
+    }
+}
 
 /**
  * The keys of the extension index under which an extension with the given receiver [type] is listed,

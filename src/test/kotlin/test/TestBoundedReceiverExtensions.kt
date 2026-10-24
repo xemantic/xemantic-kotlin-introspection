@@ -95,12 +95,44 @@ fun <T : BoundedReceiverD> T.notShadowedByOtherArity(value: Int): T = this
 
 val <T : BoundedReceiverD> T.shadowedProperty: Int get() = 0
 
+fun <T : BoundedReceiverD> T.notShadowedByVararg(vararg values: Int) {}
+
+fun <T : BoundedReceiverD> T.notShadowedByDefault(value: Int = 0) {}
+
+fun <T : BoundedReceiverD> T.notShadowedByOtherType(value: T) {}
+
+fun <T : BoundedReceiverD> T.notShadowedByNullable(value: T?) {}
+
+fun <T : BoundedReceiverD> T.notShadowedByMemberExtension() {}
+
 class BoundedReceiverShadowing : BoundedReceiverD {
     val shadowedProperty: Int = 1
     fun shadowedByMember(): BoundedReceiverShadowing = this
     fun notShadowedByNonInfix(other: BoundedReceiverShadowing): BoundedReceiverShadowing = other
     fun notShadowedByOtherArity(): BoundedReceiverShadowing = this
+    fun notShadowedByVararg(value: Int) {}
+    fun notShadowedByDefault(value: Int) {}
+    fun notShadowedByOtherType(value: String) {}
+    fun notShadowedByNullable(value: BoundedReceiverShadowing) {}
+    fun String.notShadowedByMemberExtension() {}
 }
+
+// an extension on a supertype never shadows a more specific one on a type parameter
+interface BoundedReceiverShape
+
+interface BoundedReceiverNamed
+
+class BoundedReceiverCircle : BoundedReceiverShape, BoundedReceiverNamed
+
+fun BoundedReceiverShape.describe(): String = ""
+
+@JvmName("describeNamed")
+fun <T> T.describe(): String where T : BoundedReceiverShape, T : BoundedReceiverNamed = ""
+
+val BoundedReceiverShape.label: String get() = ""
+
+val <T> T.label: String where T : BoundedReceiverShape, T : BoundedReceiverNamed
+    @JvmName("getNamedLabel") get() = ""
 
 fun BoundedReceiverShadowing.shadowedByExtension(value: BoundedReceiverShadowing): BoundedReceiverShadowing = value
 

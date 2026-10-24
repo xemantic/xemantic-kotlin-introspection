@@ -353,21 +353,34 @@ class FunctionTypeTest {
     @Test
     fun `should not parse function type name with leading zero in arity`() {
         // like the compiler, which never synthesizes such a class
-        assert(parseFunctionTypeName("kotlin/reflect/KFunction01") == null)
-        assert(parseFunctionTypeName("kotlin/Function00") == null)
+
+        // when
+        val functionReference = parseFunctionTypeName("kotlin/reflect/KFunction01")
+        val function = parseFunctionTypeName("kotlin/Function00")
+
+        // then
+        assert(functionReference == null && function == null)
     }
 
     @Test
     fun `should not parse function type name mixing the packages of the kinds`() {
-        assert(parseFunctionTypeName("kotlin/KFunction1") == null)
-        assert(parseFunctionTypeName("kotlin/reflect/Function1") == null)
-        assert(parseFunctionTypeName("kotlin/reflect/SuspendFunction1") == null)
+        // when
+        val functionReference = parseFunctionTypeName("kotlin/KFunction1")
+        val function = parseFunctionTypeName("kotlin/reflect/Function1")
+        val suspendFunction = parseFunctionTypeName("kotlin/reflect/SuspendFunction1")
+
+        // then
+        assert(functionReference == null && function == null && suspendFunction == null)
     }
 
     @Test
     fun `should not parse function type name without arity`() {
-        assert(parseFunctionTypeName("kotlin/Function") == null)
-        assert(parseFunctionTypeName("kotlin/reflect/KFunction") == null)
+        // when
+        val function = parseFunctionTypeName("kotlin/Function")
+        val functionReference = parseFunctionTypeName("kotlin/reflect/KFunction")
+
+        // then
+        assert(function == null && functionReference == null)
     }
 
 }
