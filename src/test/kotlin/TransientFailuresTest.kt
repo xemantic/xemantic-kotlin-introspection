@@ -44,6 +44,60 @@ class TransientFailuresTest {
     }
 
     @Test
+    fun `should retry failing attempt every time outside an operation until its failure is final`() {
+        // given
+        val failures = TransientFailures(maxAttempts = 2)
+        var attempts = 0
+        fun attempt() = failures.attempt("key") {
+            attempts++
+            TransientFailures.Outcome("failed", isFinal = false)
+        }
+
+        // when
+        val outcomes = listOf(attempt(), attempt())
+
+        // then
+        // each attempt outside an operation is an operation of its own, never sharing the failure of another one
+        assert(attempts == 2)
+        assert(!outcomes[0].isFinal && outcomes[1].isFinal)
+    }
+
+    @Test
+    fun `should not count failing attempts of overlapping operations as separate ones`() {
+        // given
+        val failures = TransientFailures(maxAttempts = 2)
+        val attempts = java.util.concurrent.atomic.AtomicInteger()
+        fun attempt() = failures.attempt("key") {
+            attempts.incrementAndGet()
+            TransientFailures.Outcome("failed", isFinal = false)
+        }
+        val started = java.util.concurrent.CountDownLatch(1)
+        val failed = java.util.concurrent.CountDownLatch(1)
+        var overlapping: TransientFailures.Outcome<String>? = null
+        val other = kotlin.concurrent.thread {
+            failures.operation {
+                started.countDown()
+                failed.await()
+                overlapping = attempt()
+            }
+        }
+
+        // when
+        // the failure of the first operation happens while the other one is in progress, within the same outage
+        val first = failures.operation {
+            started.await()
+            attempt().also { failed.countDown() }
+        }
+        other.join()
+        val later = failures.operation { attempt() }
+
+        // then
+        // the overlapping operation shares the failure, the later one retries, and deems it final
+        assert(attempts.get() == 2)
+        assert(!first.isFinal && overlapping?.isFinal == false && later.isFinal)
+    }
+
+    @Test
     fun `should count transient failures per thread`() {
         // given
         val failures = TransientFailures()
