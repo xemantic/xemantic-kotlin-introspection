@@ -3989,7 +3989,7 @@ internal fun receiverIndexKeys(type: KmType, typeParameters: List<KmTypeParamete
 private fun classReceiverIndexKey(type: KmType): String = when (val classifier = type.classifier) {
     is KmClassifier.Class -> type.takeIf { it.isSuspend }
         ?.decodeRuntimeFunctionType()
-        ?.let { "$SUSPEND_FUNCTION_PREFIX${it.parameters.size}" }
+        ?.let { FunctionTypeKind.SUSPEND_FUNCTION.kotlinName(it.parameters.size) }
         ?: classifier.name.replace('/', '.')
     is KmClassifier.TypeAlias -> classifier.name.replace('/', '.')
     is KmClassifier.TypeParameter -> TYPE_PARAMETER_RECEIVER_KEY
@@ -4081,8 +4081,8 @@ private fun jvmFunctionTypeName(className: String): String? =
  * while the higher ones, compiled to `kotlin.jvm.functions.FunctionN`, can still be resolved.
  */
 internal val searchableFunctionTypeNames: List<String> =
-    (0..MAX_JVM_FUNCTION_INTERFACE_ARITY).map { "$FUNCTION_TYPE_PREFIX$it" } +
-        (0 until MAX_JVM_FUNCTION_INTERFACE_ARITY).map { "$SUSPEND_FUNCTION_PREFIX$it" }
+    (0..MAX_JVM_FUNCTION_INTERFACE_ARITY).map { FunctionTypeKind.FUNCTION.kotlinName(it) } +
+        (0 until MAX_JVM_FUNCTION_INTERFACE_ARITY).map { FunctionTypeKind.SUSPEND_FUNCTION.kotlinName(it) }
 
 /**
  * This class index, by the lowercase simple names, with the [searchableFunctionTypeNames] as well,
