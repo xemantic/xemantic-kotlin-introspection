@@ -1841,9 +1841,9 @@ internal class DefaultKotlinIntrospector(
     private fun formatJvmInline(isJvmInline: Boolean): String = if (isJvmInline) "@JvmInline " else ""
 
     /**
-     * The modifiers and the kind of the class, like `data class ` or `object `.
+     * The modifiers and the [kind] of the class, like `data class ` or `object `.
      */
-    private fun formatClassPrefix(kmClass: KmClass): String = buildString {
+    private fun formatClassPrefix(kmClass: KmClass, kind: ClassKind): String = buildString {
         val isInterface = kmClass.kind == ClassKind.INTERFACE
 
         // a value class with multiple underlying properties (-Xvalue-classes) is not annotated
@@ -1861,7 +1861,7 @@ internal class DefaultKotlinIntrospector(
         // a lambda can be passed for a fun interface, by SAM conversion
         if (kmClass.isFunInterface) +"fun "
 
-        +formatClassKind(kmClass.kind)
+        +formatClassKind(kind)
     }
 
     /**
@@ -2399,6 +2399,7 @@ internal class DefaultKotlinIntrospector(
      * @param typeParameters the names of the type parameters in scope, including the ones
      *   of the outer class of an inner class.
      * @param deprecation the deprecation of the class, see [formatDeprecation].
+     * @param kind the kind of the class to render, like the one of a listed companion object, see [formatListedClassHeader].
      */
     private fun formatClassHeader(
         kmClass: KmClass,
@@ -2406,11 +2407,12 @@ internal class DefaultKotlinIntrospector(
         contextPackage: String,
         typeParameters: Map<Int, String> = kmClass.typeParameters.namesById(),
         constructor: String = "",
-        deprecation: Deprecation? = null
+        deprecation: Deprecation? = null,
+        kind: ClassKind = kmClass.kind
     ): String = buildString {
         +formatDeprecation(deprecation)
         // the prefix ends with a space, like in `companion object `
-        +formatClassPrefix(kmClass).let { if (name.isEmpty()) it.trimEnd() else it + name }
+        +formatClassPrefix(kmClass, kind).let { if (name.isEmpty()) it.trimEnd() else it + name }
         +formatTypeParameters(kmClass.typeParameters, typeParameters, contextPackage)
         +constructor
         val supertypes = formatSupertypes(kmClass, contextPackage, typeParameters)
@@ -2422,12 +2424,15 @@ internal class DefaultKotlinIntrospector(
     }
 
     /**
-     * The header of a [listed] class, like a nested class, see [formatClassHeader], without its constructor.
+     * The header of a [listed] class, like a nested class, see [formatClassHeader], without its constructor,
+     * where the companion object of another class, listed as a sealed subclass, is referred to as an object,
+     * like `object Holder.Companion : Sealed`, as a companion object can only be declared in its own class.
      */
     private fun formatListedClassHeader(listed: ListedClass, contextPackage: String): String =
         formatClassHeader(
             listed.kmClass, formatListedClassName(listed), contextPackage, typeParametersInScope(listed.kmClass),
-            deprecation = listed.foundClass.classDeprecation
+            deprecation = listed.foundClass.classDeprecation,
+            kind = listed.kmClass.kind.takeUnless { it == ClassKind.COMPANION_OBJECT } ?: ClassKind.OBJECT
         )
 
     /**

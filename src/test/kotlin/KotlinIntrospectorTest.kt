@@ -6143,13 +6143,14 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should list companion object of another class as sealed subclass`() {
-        // the own companion object is rendered as such, while the one of another class is a branch of a when expression
+        // the own companion object is rendered as such, while the one of another class is a branch of a when expression,
+        // referred to as an object, as a companion object can only be declared in its own class
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.CompanionSealedHolder"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.CompanionSealedHolder [page 1/1]
             sealed class CompanionSealedHolder {
-                companion object CompanionSealedSubclassHolder.Companion : CompanionSealedHolder
+                object CompanionSealedSubclassHolder.Companion : CompanionSealedHolder
                 class Sub : CompanionSealedHolder
                 companion object : CompanionSealedHolder
             }

@@ -245,7 +245,8 @@ com.example.AnnotationTestClass
 * The sealed subclasses are listed in their sealed class first, sorted by their names,
   relative to the sealed class when nested in it, or else to their package,
   where an inner class declared in another generic class is qualified with the type parameters it refers to,
-  like `inner class Outer<T>.Sub : Sealed<T>`.
+  like `inner class Outer<T>.Sub : Sealed<T>`,
+  and the companion object of another class is referred to as an object, like `object Holder.Companion : Sealed`.
   So is an inner class of a generic class resolved directly,
   like `inner class Outer<T>.Inner : Comparable<T>`,
   as nothing else in its listing declares the type parameters of its outer classes.
