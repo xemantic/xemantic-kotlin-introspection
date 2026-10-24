@@ -82,6 +82,28 @@ fun <T> T.boundedByAAndSuspendFunction() where T : BoundedReceiverA, T : suspend
 
 class BoundedReceiverJavaFunction : JavaFunctionBase()
 
+// the extensions on a type parameter shadowed by a more specific overload, called instead
+interface BoundedReceiverD
+
+fun <T : BoundedReceiverD> T.shadowedByMember(): T = this
+
+fun <T : BoundedReceiverD> T.shadowedByExtension(value: T): T = this
+
+infix fun <T : BoundedReceiverD> T.notShadowedByNonInfix(other: T): T = this
+
+fun <T : BoundedReceiverD> T.notShadowedByOtherArity(value: Int): T = this
+
+val <T : BoundedReceiverD> T.shadowedProperty: Int get() = 0
+
+class BoundedReceiverShadowing : BoundedReceiverD {
+    val shadowedProperty: Int = 1
+    fun shadowedByMember(): BoundedReceiverShadowing = this
+    fun notShadowedByNonInfix(other: BoundedReceiverShadowing): BoundedReceiverShadowing = other
+    fun notShadowedByOtherArity(): BoundedReceiverShadowing = this
+}
+
+fun BoundedReceiverShadowing.shadowedByExtension(value: BoundedReceiverShadowing): BoundedReceiverShadowing = value
+
 // the bounds of the standard library satisfied by a class
 class BoundedReceiverRange(override val start: Int, override val endInclusive: Int) : ClosedRange<Int>, Iterable<Int> {
     override fun iterator(): Iterator<Int> = (start..endInclusive).iterator()

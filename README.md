@@ -138,6 +138,10 @@ com.example.AnnotationTestClass
   so that, e.g., a class implementing `CharSequence` is not flooded with the generic extensions of the standard library,
   unless the class satisfies all the multiple bounds,
   like of `R.contains(element: T?)` where `R : ClosedRange<T>, R : Iterable<T>`.
+  They are not listed for a type declaring a more specific overload, which is called instead,
+  a member, or an extension on the type itself, of the same name and number of parameters,
+  like `fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T): T` for `Int`,
+  which has its own `fun Int.coerceAtLeast(minimumValue: Int): Int`.
   The extensions on an unbounded type parameter, like `let` or `also`, are not listed for any type,
   as they would be listed for every one.
 * The types of the `kotlin.*` packages are rendered with simple names, as LLMs know them well,

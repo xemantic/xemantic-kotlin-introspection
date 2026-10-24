@@ -1078,7 +1078,7 @@ internal class DefaultKotlinIntrospector(
         }.orEmpty()
 
         // like in the listing of the class, also the extensions a built-in type lists in its body, with their receivers
-        val listedExtensions = listedExtensions(kmClass, className, isBuiltin)
+        val listedExtensions = listedExtensions(kmClass, className, apiClass, declarations, isBuiltin)
         val extensions = extensionSignatures(
             listedExtensions.functions.filter { it.function.name == memberName },
             listedExtensions.properties.filter { it.property.name == memberName },
@@ -1369,19 +1369,73 @@ internal class DefaultKotlinIntrospector(
      * For any other class, all of them, on the class and its [userSupertypes], see [extensionReceiverNames],
      * not to flood its listing with the generic extensions of the standard library.
      * Either way, the ones on a type parameter with multiple bounds only when the class satisfies all of them,
-     * see [receiverBoundsOf], also when none of them is among the [userSupertypes], see [listedFor].
+     * see [receiverBoundsOf], also when none of them is among the [userSupertypes], see [listedFor],
+     * and never the ones on a type parameter shadowed by a more specific overload, see [withoutShadowed].
+     *
+     * @param apiClass the [kmClass] as a class of the API.
+     * @param declarations the declarations of the [kmClass], telling its members, which shadow the extensions.
      */
-    private fun listedExtensions(kmClass: KmClass, className: String, isBuiltin: Boolean): ListedExtensions {
-        if (!isBuiltin) {
-            return extensionsListedFor(extensionReceiverNames(kmClass, className), satisfiedBoundsOf(kmClass, className))
+    private fun listedExtensions(
+        kmClass: KmClass,
+        className: String,
+        apiClass: ApiClass,
+        declarations: ClassDeclarations,
+        isBuiltin: Boolean
+    ): ListedExtensions {
+        val listed = if (isBuiltin) {
+            val supertypeNames = supertypeNames(kmClass, kmClassOf = { builtinClasses[it] ?: loadKmClass(it) }) {
+                it != "kotlin.Any"
+            }
+            val listed = extensionsListedFor(listOf(className) + supertypeNames, supertypeNames + className)
+            ListedExtensions(
+                listed.functions.filter { isPublicKotlinPackageSource(it.sourceClass) },
+                listed.properties.filter { isPublicKotlinPackageSource(it.sourceClass) }
+            )
+        } else {
+            extensionsListedFor(extensionReceiverNames(kmClass, className), satisfiedBoundsOf(kmClass, className))
         }
-        val supertypeNames = supertypeNames(kmClass, kmClassOf = { builtinClasses[it] ?: loadKmClass(it) }) {
-            it != "kotlin.Any"
-        }
-        val listed = extensionsListedFor(listOf(className) + supertypeNames, supertypeNames + className)
+        val builtinClass = declarations as? BuiltinClass
+        return listed.withoutShadowed(
+            memberFunctions = (kmClass.functions + builtinClass?.jvmOnlyFunctions.orEmpty()).inApi(apiClass, declarations),
+            memberProperties = (kmClass.properties + builtinClass?.jvmOnlyProperties.orEmpty()).inApi(apiClass, declarations)
+        )
+    }
+
+    /**
+     * These extensions without the ones on a type parameter, like `fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T)`,
+     * shadowed by a more specific overload, which is called instead,
+     * like `fun Int.coerceAtLeast(minimumValue: Int)` for an `Int`,
+     * or its member `operator fun rangeTo(other: Int)` for `operator fun <T : Comparable<T>> T.rangeTo(that: T)`:
+     * one of the [memberFunctions], or of these extensions on a class type, of the same name,
+     * and the same number of the value parameters and of the context parameters,
+     * an operator, or infix, if the shadowed one is, as only then it is called with the same syntax.
+     * An extension property on a type parameter is shadowed by one of the [memberProperties],
+     * or of these extension properties on a class type, of the same name.
+     * The overloads are told apart only by the number of their parameters, not by their types,
+     * which would take inferring the type arguments of the shadowed one,
+     * like `Int` of `R.contains(element: T?)` where `R : ClosedRange<T>, R : Iterable<T>`,
+     * shadowed for an `IntRange` by `IntRange.contains(element: Int?)`.
+     */
+    @OptIn(ExperimentalContextParameters::class)
+    private fun ListedExtensions.withoutShadowed(
+        memberFunctions: List<KmFunction>,
+        memberProperties: List<KmProperty>
+    ): ListedExtensions {
+        val specificFunctions = (memberFunctions + functions.map { it.function }.filter { !it.hasTypeParameterReceiver })
+            .groupBy { it.name }
+        val specificPropertyNames = (memberProperties + properties.map { it.property }.filter { !it.hasTypeParameterReceiver })
+            .mapTo(HashSet()) { it.name }
+        fun KmFunction.shadows(function: KmFunction): Boolean =
+            valueParameters.size == function.valueParameters.size &&
+                contextParameters.size == function.contextParameters.size &&
+                (isOperator || !function.isOperator) &&
+                (isInfix || !function.isInfix)
         return ListedExtensions(
-            listed.functions.filter { isPublicKotlinPackageSource(it.sourceClass) },
-            listed.properties.filter { isPublicKotlinPackageSource(it.sourceClass) }
+            functions.filter { extension ->
+                val function = extension.function
+                !function.hasTypeParameterReceiver || specificFunctions[function.name].orEmpty().none { it.shadows(function) }
+            },
+            properties.filter { !it.property.hasTypeParameterReceiver || it.property.name !in specificPropertyNames }
         )
     }
 
@@ -1857,7 +1911,7 @@ internal class DefaultKotlinIntrospector(
         // Extensions from the index on this type and its supertypes (shown after class body with source),
         // a JVM function interface, like kotlin.jvm.functions.Function1, has the ones of its function type,
         // while a built-in type lists the ones reading like its members in its body
-        val listedExtensions = listedExtensions(kmClass, className, isBuiltin)
+        val listedExtensions = listedExtensions(kmClass, className, apiClass, foundClass, isBuiltin)
         // the extensions of the companion object of a built-in type, like `String.Companion.format()`, are called on
         // the name of the type, which they are listed with, see listedExtensions, outside the body of the companion object
         val bodyExtensions = if (isBuiltin && kmClass.kind != ClassKind.COMPANION_OBJECT) {
@@ -4040,6 +4094,18 @@ private class MemberListing(
     }
 
 }
+
+/**
+ * Whether this extension function is on a type parameter, like `fun <T : Comparable<T>> T.coerceAtLeast(…)`.
+ */
+private val KmFunction.hasTypeParameterReceiver: Boolean
+    get() = receiverParameterType?.classifier is KmClassifier.TypeParameter
+
+/**
+ * Whether this extension property is on a type parameter, like `val <T : Any> T.javaClass`.
+ */
+private val KmProperty.hasTypeParameterReceiver: Boolean
+    get() = receiverParameterType?.classifier is KmClassifier.TypeParameter
 
 /**
  * The keys of the extension index under which an extension with the given receiver [type] is listed,
