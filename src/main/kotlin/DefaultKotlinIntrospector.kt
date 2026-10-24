@@ -3306,11 +3306,17 @@ internal class DefaultKotlinIntrospector(
         val propIndex = scanner.propIndex
         val classes = scanner.classes
 
-        // the same classes of the API as the ones resolved, see the apiClasses of the introspector
+        // the same classes of the API as the ones resolved, see the apiClasses of the introspector,
+        // where every class file of the classpath is read, or skipped, see ClasspathScanner.scan, before deciding it,
+        // while an enclosing class might still be served by the class loader from elsewhere, read then on its own
+        val outsideScopes = HashMap<String, ClassScope?>()
         val apiClasses = ApiClasses(
-            scopeOf = { name -> classes[name]?.scope },
-            // every class file of the classpath is read, or skipped, see ClasspathScanner.scan, before deciding it
-            isAbsent = { name -> !scanner.isScanned(binaryNameOf(name)) }
+            scopeOf = { name ->
+                classes[name]?.scope ?: if (scanner.isScanned(binaryNameOf(name))) null else {
+                    outsideScopes.computeIfAbsent(name) { readClassScope(binaryNameOf(it)) }
+                }
+            },
+            isAbsent = { name -> !scanner.isScanned(binaryNameOf(name)) && !classLoader.hasClassFile(binaryNameOf(name)) }
         )
         val classesOfApi = classes.values.mapNotNull { indexedClass ->
             apiClasses.apiClass(indexedClass.name)?.let { indexedClass to it }
@@ -3440,19 +3446,22 @@ internal class DefaultKotlinIntrospector(
                     if (collectSkippedClassFiles) skippedClassFiles += classFile.name
                 } else {
                     readClassFileCount++
-                    indexClass(classFile.read(), nestedClassFiles)
+                    indexClass(classFile.name, classFile.read(), nestedClassFiles)
                 }
             }
         }
 
         /**
-         * Indexes the class read from the [bytes], unless a class of the same name is already indexed,
-         * telling the [nestedClassFiles], if any, about its nested classes.
+         * Indexes the class read from the [bytes] of the class file of the [path], unless a class of the same name
+         * is already indexed, telling the [nestedClassFiles], if any, about its nested classes.
+         * A class file which cannot be parsed still shadows the class of the same name in the next roots,
+         * and is not absent from the classpath, like when resolving its nested classes, see [isAbsent].
          */
-        private fun indexClass(bytes: ByteArray, nestedClassFiles: NestedClassFiles?) {
+        private fun indexClass(path: String, bytes: ByteArray, nestedClassFiles: NestedClassFiles?) {
             val reader = try {
                 ClassReader(bytes)
             } catch (_: Exception) {
+                indexedClasses.add(path.replace('/', '.'))
                 return
             }
             val className = reader.className.replace('/', '.')
@@ -3510,6 +3519,16 @@ internal class DefaultKotlinIntrospector(
             )
         }
 
+    }
+
+    /**
+     * The scope of the class of this JVM [binaryName], read from its class file served by the [classLoader],
+     * like one outside the classpath roots, see [scanClasspath], or `null` if it cannot be read, see [ClassScope].
+     */
+    private fun readClassScope(binaryName: String): ClassScope? {
+        val classFile = readClassFile(binaryName, classLoader.readClassBytes(binaryName)) ?: return null
+        val kmClass = (classFile.metadata?.let(::parseMetadata) as? KotlinClassMetadata.Class)?.kmClass ?: return null
+        return classScope(kmClass, isUsableClass(kmClass, classFile), classFile)
     }
 
     /**

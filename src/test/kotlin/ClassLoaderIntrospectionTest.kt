@@ -32,6 +32,7 @@ import org.objectweb.asm.Opcodes
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
+import java.net.URL
 import java.net.URLClassLoader
 import java.nio.file.Path
 import java.util.Collections
@@ -577,6 +578,54 @@ class ClassLoaderIntrospectionTest {
 
         // then
         // the outer class might be private, as its class file is there, but cannot be read
+        assert(signature == null)
+        assert(searchResult?.contains("StrippedOuter") != true)
+    }
+
+    @Test
+    fun `should neither resolve nor find nested class of outer class whose class file cannot be parsed`() {
+        // given
+        val root = isolatedTestFixturesCopy("corruptOuter") { fileName, bytes ->
+            if (fileName == "MissingOuter.class") bytes.copyOf(16) else bytes
+        }
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.MissingOuter.Nested")
+        val searchResult = introspector.search("Nested", pageSize = 1000)
+
+        // then
+        // the outer class might be private, as its class file is there, but cannot be read, also by the classpath scan
+        assert(signature == null)
+        assert(searchResult?.contains("MissingOuter") != true)
+    }
+
+    @Test
+    fun `should neither resolve nor find nested class of private outer class served outside the classpath roots`() {
+        // given
+        val root = isolatedTestFixturesCopy("withoutPrivateOuter", "StrippedOuter.class")
+        val outside = isolatedTestFixturesCopy("privateOuterOnly", isAbsent = { it != "StrippedOuter.class" })
+        val outsideLoader = URLClassLoader(arrayOf(outside.toUri().toURL()), null)
+        // like a class loader serving some classes from elsewhere than its classpath roots, which the scan cannot list
+        val classLoader = object : URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader) {
+            override fun findResource(name: String): URL? = super.findResource(name) ?: outsideLoader.findResource(name)
+
+            override fun findClass(name: String): Class<*> = try {
+                super.findClass(name)
+            } catch (e: ClassNotFoundException) {
+                val bytes = outsideLoader.getResourceAsStream(name.replace('.', '/') + ".class")?.use { it.readBytes() }
+                    ?: throw e
+                defineClass(name, bytes, 0, bytes.size)
+            }
+        }
+        val introspector = KotlinIntrospector(classLoader)
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.StrippedOuter.Nested")
+        val searchResult = introspector.search("Nested", pageSize = 1000)
+
+        // then
+        // the outer class is private, as both the resolve and the classpath scan tell, by its class file
         assert(signature == null)
         assert(searchResult?.contains("StrippedOuter") != true)
     }
