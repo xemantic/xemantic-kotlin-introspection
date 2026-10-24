@@ -1016,20 +1016,65 @@ class ClassLoaderIntrospectionTest {
     /**
      * A class loader blocking the first request of the class [blocked] until [release]d,
      * and then failing it with a `ClassNotFoundException`, like a transient failure,
-     * while its class file is still served.
+     * while its class file is still served, unless [isFirstRequestLoaded],
+     * when it is loaded instead, while every other request fails meanwhile, without the class file served.
      */
-    private class BlockingClassLoader(parent: ClassLoader, private val blocked: String) : ClassLoader(parent) {
+    private class BlockingClassLoader(
+        parent: ClassLoader,
+        private val blocked: String,
+        private val isFirstRequestLoaded: Boolean = false
+    ) : ClassLoader(parent) {
         val entered = java.util.concurrent.CountDownLatch(1)
         val release = java.util.concurrent.CountDownLatch(1)
         private val requests = java.util.concurrent.atomic.AtomicInteger()
+        private val blockedResource = blocked.replace('.', '/') + ".class"
+        private val isHidden get() = isFirstRequestLoaded && release.count > 0
         override fun loadClass(name: String, resolve: Boolean): Class<*> {
-            if (name == blocked && requests.incrementAndGet() == 1) {
-                entered.countDown()
-                release.await()
-                throw ClassNotFoundException(name)
+            if (name == blocked) {
+                if (requests.incrementAndGet() == 1) {
+                    entered.countDown()
+                    release.await()
+                    if (!isFirstRequestLoaded) throw ClassNotFoundException(name)
+                } else if (isHidden) {
+                    throw ClassNotFoundException(name)
+                }
             }
             return super.loadClass(name, resolve)
         }
+        override fun getResource(name: String): java.net.URL? =
+            if (name == blockedResource && isHidden) null else super.getResource(name)
+        override fun getResourceAsStream(name: String): InputStream? =
+            if (name == blockedResource && isHidden) null else super.getResourceAsStream(name)
+    }
+
+    /**
+     * Waits for the [threads], failing rather than hanging if they never finish.
+     */
+    private fun joinOrFail(vararg threads: Thread) {
+        threads.forEach { it.join(60_000) }
+        assert(threads.none { it.isAlive })
+    }
+
+    @Test
+    fun `should keep class found by name over miss cached by concurrent lookup meanwhile`() {
+        // given
+        val outer = "com.xemantic.kotlin.introspection.test.TypeParametersNestedHolder"
+        // the outer class found by name, after the lookup of the nested class has cached the outer class as missing
+        val classLoader = BlockingClassLoader(javaClass.classLoader, blocked = outer, isFirstRequestLoaded = true)
+        val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
+        var byNameSignature: String? = null
+        val byName = kotlin.concurrent.thread { byNameSignature = introspector.resolve(outer) }
+        classLoader.entered.await()
+        introspector.resolve("$outer.Sorted")
+
+        // when
+        classLoader.release.countDown()
+        joinOrFail(byName)
+        val signature = introspector.resolve(outer)
+
+        // then
+        assert(byNameSignature != null && "class TypeParametersNestedHolder" in byNameSignature!!)
+        assert(signature != null && "class TypeParametersNestedHolder" in signature)
     }
 
     @Test
@@ -1043,8 +1088,10 @@ class ClassLoaderIntrospectionTest {
         classLoader.entered.await()
         var nested: String? = null
         val lookup = kotlin.concurrent.thread { nested = introspector.resolve("$outer.Sorted") }
-        // until the lookup of the nested class waits for the lookup of its outer class, if it does
-        while (lookup.isAlive && !(
+        // until the lookup of the nested class waits for the lookup of its outer class, if it does,
+        // bounded, as it might wait for something else instead
+        var polls = 0
+        while (lookup.isAlive && polls++ < 60_000 && !(
                 lookup.state == Thread.State.BLOCKED &&
                     lookup.stackTrace.any { "Lazy" in it.className }
                 )
@@ -1052,8 +1099,7 @@ class ClassLoaderIntrospectionTest {
 
         // when
         classLoader.release.countDown()
-        byName.join()
-        lookup.join()
+        joinOrFail(byName, lookup)
 
         // then
         // the outer class is looked up on its own, and found, rather than assumed missing after a miss not probed

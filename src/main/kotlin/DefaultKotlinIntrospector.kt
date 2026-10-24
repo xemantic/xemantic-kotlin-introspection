@@ -854,34 +854,37 @@ internal class DefaultKotlinIntrospector(
     private fun lookUpClassByBinaryName(binaryName: String, isMissCached: Boolean = true): ClassLookup {
         if (!isMissCached) return lookUpClassUnlessCachedMiss(binaryName)
         val computed = foundClasses.getOrCompute(binaryName) {
-            val outcome = transientFailures.attempt("class $binaryName") {
-                val lookup = lookUpClass(binaryName, isMissProbed = true)
-                TransientFailures.Outcome(lookup, lookup.isFinal)
-            }
-            val lookup = if (outcome.isFinal) outcome.value.asFinal() else outcome.value
+            val lookup = attemptLookUpClass("class $binaryName", binaryName, isMissProbed = true)
             BoundedCache.Computed(lookup, isCacheable = lookup.isFinal)
         }
         // also when computed by another thread
-        if (!computed.value.isFinal) transientFailures.mark()
-        return computed.value
+        return computed.value.markedUnlessFinal()
     }
 
     private fun lookUpClassUnlessCachedMiss(binaryName: String): ClassLookup {
         foundClasses.getIfCached(binaryName)?.let { return it }
-        val outcome = transientFailures.attempt("unprobed class $binaryName") {
-            val lookup = lookUpClass(binaryName, isMissProbed = false)
+        val lookup = attemptLookUpClass("unprobed class $binaryName", binaryName, isMissProbed = false)
+        if (!lookup.isFinal || lookup.foundClass == null) return lookup.markedUnlessFinal()
+        // the class cached meanwhile by another thread, if any, so that a class is found once
+        val cached = foundClasses.getOrCompute(binaryName) { BoundedCache.Computed(lookup, isCacheable = true) }
+        if (cached.isCacheable && cached.value.foundClass != null) return cached.value
+        // rather than a miss cached meanwhile by a concurrent lookup, like after a transient failure, deemed final
+        foundClasses.put(binaryName, lookup)
+        return lookup
+    }
+
+    /**
+     * The [lookUpClass] of the class, as the attempt of the [key], see [TransientFailures.attempt].
+     */
+    private fun attemptLookUpClass(key: String, binaryName: String, isMissProbed: Boolean): ClassLookup {
+        val outcome = transientFailures.attempt(key) {
+            val lookup = lookUpClass(binaryName, isMissProbed)
             TransientFailures.Outcome(lookup, lookup.isFinal)
         }
-        val lookup = if (outcome.isFinal) outcome.value.asFinal() else outcome.value
-        if (!lookup.isFinal) {
-            transientFailures.mark()
-            return lookup
-        }
-        if (lookup.foundClass == null) return lookup
-        // the lookup cached meanwhile by another thread, if any, so that a class is found once
-        val cached = foundClasses.getOrCompute(binaryName) { BoundedCache.Computed(lookup, isCacheable = true) }
-        return if (cached.isCacheable) cached.value else lookup
+        return if (outcome.isFinal) outcome.value.asFinal() else outcome.value
     }
+
+    private fun ClassLookup.markedUnlessFinal(): ClassLookup = also { if (!isFinal) transientFailures.mark() }
 
     /**
      * Finds a class by its metadata name, like `com/example/Outer.Nested`.
