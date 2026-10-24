@@ -121,7 +121,8 @@ com.example.AnnotationTestClass
   which `kotlin-reflect` cannot tell apart from their read-only counterparts.
 * The function types are resolved by their Kotlin names, like `kotlin.Function1` of `(P1) -> R`,
   or `kotlin.coroutines.SuspendFunction0` of `suspend () -> R`, listing the extensions on the function types,
-  like `(suspend () -> T).startCoroutine(…)`.
+  like `(suspend () -> T).startCoroutine(…)`,
+  of any library, like `(() -> T).asFlow()` of kotlinx-coroutines, unlike for a built-in type, as there are few of them.
   The compiler synthesizes these classes, so they are rendered like declared in the standard library sources,
   like `interface Function1<in P1, out R> : Function<R> { operator fun invoke(p1: P1): R }`.
   A function type with a receiver, or with context parameters, is of the same class,

@@ -1395,22 +1395,23 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve function type by its Kotlin name with its extensions`() {
-        // the extensions of the supertype kotlin.Function are listed as well
+        // the extensions of the supertype kotlin.Function are listed as well, and the ones of any library,
+        // unlike for a built-in type, like the ones of the test package, or of kotlinx-coroutines, if on the classpath
         resolver.resolve(
-            "kotlin.Function0"
-        ) sameAsKotlin """
-            // kotlin.Function0 [page 1/1]
-            interface Function0<out R> : Function<R> {
-                operator fun invoke(): R
-            }
-            // from com.xemantic.kotlin.introspection.test
-            val (() -> Unit).repeatCount: Int
-            fun (() -> Unit).repeat()
-            // from kotlin.reflect.jvm
-            fun <R> Function<R>.reflect(): KFunction<R>?
-            // from kotlinx.coroutines.flow
-            fun <T> (() -> T).asFlow(): kotlinx.coroutines.flow.Flow<T>
-        """.trimIndent()
+            "kotlin.Function0",
+            pageSize = 1000
+        ) should {
+            have(lines().take(5) == listOf(
+                "// kotlin.Function0 [page 1/1]",
+                "interface Function0<out R> : Function<R> {",
+                "    operator fun invoke(): R",
+                "}",
+                "// from com.xemantic.kotlin.introspection.test"
+            ))
+            have("val (() -> Unit).repeatCount: Int" in lines())
+            have("fun (() -> Unit).repeat()" in lines())
+            have("fun <R> Function<R>.reflect(): KFunction<R>?" in lines())
+        }
     }
 
     @Test
@@ -1537,21 +1538,22 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve JVM function interface with the extensions of its function type`() {
+        // like kotlin.Function0
         resolver.resolve(
-            "kotlin.jvm.functions.Function0"
-        ) sameAsKotlin """
-            // kotlin.jvm.functions.Function0 [page 1/1]
-            interface Function0<out R> : Function<R> {
-                operator fun invoke(): R
-            }
-            // from com.xemantic.kotlin.introspection.test
-            val (() -> Unit).repeatCount: Int
-            fun (() -> Unit).repeat()
-            // from kotlin.reflect.jvm
-            fun <R> Function<R>.reflect(): KFunction<R>?
-            // from kotlinx.coroutines.flow
-            fun <T> (() -> T).asFlow(): kotlinx.coroutines.flow.Flow<T>
-        """.trimIndent()
+            "kotlin.jvm.functions.Function0",
+            pageSize = 1000
+        ) should {
+            have(lines().take(5) == listOf(
+                "// kotlin.jvm.functions.Function0 [page 1/1]",
+                "interface Function0<out R> : Function<R> {",
+                "    operator fun invoke(): R",
+                "}",
+                "// from com.xemantic.kotlin.introspection.test"
+            ))
+            have("val (() -> Unit).repeatCount: Int" in lines())
+            have("fun (() -> Unit).repeat()" in lines())
+            have("fun <R> Function<R>.reflect(): KFunction<R>?" in lines())
+        }
     }
 
     @Test
