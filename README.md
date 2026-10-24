@@ -90,12 +90,27 @@ com.example.AnnotationTestClass
   which finds everything of that name the listing of the class shows:
   its members, the members of its companion object, and the extensions of the class and its supertypes,
   paged by signatures, one item each.
+  The members a class inherits from its supertypes, without redeclaring them, are neither listed, nor resolved by its name,
+  like `kotlin.collections.MutableList.get`, declared by `kotlin.collections.List`.
 * The Kotlin built-in types, like `kotlin.String` or `kotlin.collections.List`,
-  which are mapped to the JVM types and have no Kotlin metadata, are resolved through `kotlin-reflect`.
-  The mutable collection types, like `kotlin.collections.MutableList`,
-  sharing the JVM type with their read-only counterparts,
-  are resolved from the `.kotlin_builtins` metadata of the standard library instead,
-  and so are the companion objects of the built-in types, like `kotlin.Int.Companion`.
+  which are mapped to the JVM types and have no class files of their own,
+  are rendered like any other class from their declarations in the `.kotlin_builtins` metadata of the standard library,
+  like `class Int private constructor() : Number, Comparable<Int>`, or `object Unit`,
+  together with their companion objects, like the one of `kotlin.Int`, whose members also resolve by the name of the type,
+  like `kotlin.Int.MAX_VALUE`.
+  The ones with Kotlin metadata of their own, like `kotlin.UInt`, are rendered from it.
+  `kotlin-reflect` only tells the deprecations of their members, which the `.kotlin_builtins` metadata does not carry,
+  and the members of their JVM types only, like `String.chars()`,
+  listed when the names of their parameters are known, which the JDK is compiled without.
+  The body of a built-in type also lists the extensions of the standard library reading like its members,
+  without their receivers, like `fun fill(value: E)` of `fun <T> MutableList<T>.fill(value: T)` in `interface MutableList<E>`,
+  sorted by name together with its members, while the other ones are listed after it, with their receivers,
+  like `fun String?.orEmpty()`, callable also on `null`, or `fun Iterable<Int>.sum()`.
+  Only the extensions of the public `kotlin.*` packages are listed for the built-in types.
+  When the `.kotlin_builtins` resources cannot be read, like when the standard library is a named module,
+  whose resources are encapsulated, a warning is logged, and the built-in types are described by `kotlin-reflect` instead,
+  approximately, from their JVM types, without their companion objects, and without the mutable collection types,
+  which `kotlin-reflect` cannot tell apart from their read-only counterparts.
 * The function types are resolved by their Kotlin names, like `kotlin.Function1` of `(P1) -> R`,
   or `kotlin.coroutines.SuspendFunction0` of `suspend () -> R`, listing the extensions on the function types,
   like `(suspend () -> T).startCoroutine(…)`.
@@ -183,9 +198,7 @@ com.example.AnnotationTestClass
   like `@JvmInline value class Duration private constructor(private val rawValue: Long)`.
   An object, an enum class, a sealed class, an interface, or an annotation class is not marked,
   as its kind already tells how it can be created, if at all.
-  The built-in types rendered through `kotlin-reflect`, like `kotlin.Int`, do not follow this rule yet,
-  and are rendered without constructors.
-  Neither do the headers of the nested classes and the sealed subclasses listed in their outer class,
+  Neither are the headers of the nested classes and the sealed subclasses listed in their outer class,
   which are only references, rendered without constructors,
   while resolving such a class by its own name renders its constructors.
 * The sealed subclasses are listed in their sealed class first, sorted by their names,

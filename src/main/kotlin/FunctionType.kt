@@ -30,8 +30,8 @@ import kotlin.reflect.KType
 
 /**
  * A function type, like `suspend context(Ctx) Foo.(id: Int) -> String`,
- * decoded from its runtime representation, either a [KmType] of the Kotlin metadata,
- * or a [KType] of kotlin-reflect.
+ * decoded from its runtime representation, a [KmType] of the Kotlin metadata,
+ * also of a type described by kotlin-reflect, see [toKmType].
  */
 internal class FunctionType<T>(
     val isSuspend: Boolean,
@@ -109,33 +109,11 @@ internal fun KmType.decodeFunctionType(): FunctionType<KmType>? {
 }
 
 /**
- * Decodes this function type from its runtime representation in kotlin-reflect.
- *
- * Like in the Kotlin metadata, a function type is a `FunctionN<…, R>`,
- * with the context parameters and the receiver given by the `@ContextFunctionTypeParams`
- * and `@ExtensionFunctionType` type annotations,
- * but a suspend function type is not marked as such in the public API,
- * and kotlin-reflect replaces its trailing `Continuation<R>, Any?` type arguments with `R`,
- * thus it is told by the type arguments being one short of `N + 1`, see [KType.isSuspendFunctionType].
- *
- * @return the decoded function type, or `null` if this type is not a function type,
- * or does not have the expected shape, like a star-projected type argument.
- */
-internal fun KType.decodeFunctionType(): FunctionType<KType>? {
-    val isSuspend = isSuspendFunctionType ?: return null
-    val arguments = arguments.map { it.type ?: return null }
-    return decodeParameters(
-        isSuspend = isSuspend,
-        parameters = arguments.dropLast(1),
-        returnType = arguments.last(),
-        contextParameterCount = annotations.contextParameterCount ?: return null,
-        hasReceiver = annotations.any { it is ExtensionFunctionType }
-    )
-}
-
-/**
- * Tells if this `FunctionN` type is a suspend function type, see [KType.decodeFunctionType],
+ * Tells if this `FunctionN` type of kotlin-reflect is a suspend function type,
  * or `null` if it is not a function type of the expected shape.
+ * A suspend function type is not marked as such in the public API of kotlin-reflect,
+ * which replaces its trailing `Continuation<R>, Any?` type arguments with `R`,
+ * thus it is told by the type arguments being one short of `N + 1`.
  *
  * A function type of more than 22 runtime parameters is a `kotlin.jvm.functions.FunctionN`, not telling its arity.
  * With 23 type arguments it is told to be a suspend function type of 22 parameters,
@@ -306,13 +284,6 @@ private val List<KmAnnotation>.contextParameterCount: Int?
         return count.takeIf { it >= 0 }
     }
 
-@get:JvmName("reflectContextParameterCount")
-private val List<Annotation>.contextParameterCount: Int?
-    get() {
-        val annotation = filterIsInstance<ContextFunctionTypeParams>().firstOrNull() ?: return 0
-        return annotation.count.takeIf { it >= 0 }
-    }
-
 /**
  * The name of a function type parameter, like `id` in `(id: Int) -> Unit`,
  * given by the `@ParameterName` type annotation of this parameter type.
@@ -322,15 +293,7 @@ internal val KmType.parameterName: String?
         ?.let { (it.arguments["name"] as? KmAnnotationArgument.StringValue)?.value }
 
 /**
- * The name of a function type parameter, like `id` in `(id: Int) -> Unit`,
- * given by the `@ParameterName` type annotation of this parameter type.
- */
-internal val KType.parameterName: String?
-    get() = annotations.filterIsInstance<ParameterName>().firstOrNull()?.name
-
-/**
- * The notation of the types of one runtime representation, either a [KmType] of the Kotlin metadata,
- * or a [KType] of kotlin-reflect,
+ * The notation of the types of a runtime representation, like a [KmType] of the Kotlin metadata,
  * writing a function type in its special syntax, like `suspend context(Ctx) Foo.(id: Int) -> String`,
  * and any other type as a class type, like `List<String>`.
  */

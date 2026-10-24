@@ -49,7 +49,8 @@ class KotlinBuiltinsTest {
     @Test
     fun `should find no deprecated built-in collection declarations`() {
         // the introspector cannot tell whether a member of a mutable collection type is deprecated as hidden,
-        // see inMutableBuiltinApi, as the annotations of the built-ins are not read into their metadata,
+        // see BuiltinClass, as the annotations of the built-ins are not read into their metadata,
+        // and kotlin-reflect describes the read-only counterpart, sharing the same JVM type, instead,
         // so a standard library deprecating one has to be supported first;
         // the names of the annotations would be in the string table of the resource
 
