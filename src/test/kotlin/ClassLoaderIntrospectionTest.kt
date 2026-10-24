@@ -612,6 +612,26 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should declare type parameters of inner class whose outer class has no class file`() {
+        // given
+        val introspector = introspectorWithoutAbsentClass("MissingGenericOuter.class")
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.MissingGenericOuter.Inner"
+        )
+
+        // then
+        // the names of the type parameters of the outer class are not known, only the ones the inner class refers to
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.MissingGenericOuter.Inner [page 1/1]
+            inner class MissingGenericOuter<T0>.Inner : Comparable<T0> {
+                override operator fun compareTo(other: T0): Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve nested class which cannot be loaded, as read from its class file`() {
         // given
         val introspector = introspectorWithoutAbsentClass()

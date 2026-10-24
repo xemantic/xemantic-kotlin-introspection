@@ -2085,7 +2085,7 @@ internal class DefaultKotlinIntrospector(
             kmClass.kind == ClassKind.COMPANION_OBJECT && it == DEFAULT_COMPANION_NAME
         } ?: ""
         val header = formatClassHeader(
-            kmClass, escapeIdentifier(name), contextPackage, typeParameters, constructorDeclaration,
+            kmClass, formatResolvedClassName(kmClass, name), contextPackage, typeParameters, constructorDeclaration,
             foundClass.classDeprecation
         )
 
@@ -2433,21 +2433,113 @@ internal class DefaultKotlinIntrospector(
     /**
      * The name of a [listed] class, escaped, where the outer classes qualifying an inner class are rendered
      * with the type parameters it can refer to, like `Outer<T>.Inner`, the way Kotlin writes its type,
-     * as the listing class does not declare them, like for a sealed subclass declared in another class.
+     * as the listing class does not declare them, like for a sealed subclass declared in another class,
+     * see [outerTypeParametersOf].
      */
     private fun formatListedClassName(listed: ListedClass): String {
         val segments = listed.name.split('.')
         val typeArguments = arrayOfNulls<String>(segments.size)
-        var current = listed.kmClass
-        var index = segments.lastIndex - 1
-        while (index >= 0 && current.isInner) {
-            val outer = enclosingClassNames(current.name).lastOrNull()?.let { loadKmClass(it) } ?: break
-            typeArguments[index] = outer.typeParameters.takeIf { it.isNotEmpty() }
-                ?.joinToString(", ", "<", ">") { escapeIdentifier(it.name) }
-            current = outer
-            index--
+        outerTypeParametersOf(listed.kmClass).forEachIndexed { index, outer ->
+            val segment = segments.lastIndex - 1 - index
+            if (segment >= 0) typeArguments[segment] = outer.formatTypeArguments()
         }
         return segments.indices.joinToString(".") { escapeIdentifier(segments[it]) + typeArguments[it].orEmpty() }
+    }
+
+    /**
+     * The [name] of the [kmClass] resolved directly, escaped, qualified, when it is an inner class,
+     * with its outer classes declaring the type parameters it can refer to, like `Outer<T>.Inner`,
+     * up to the outermost one declaring any, like a listed class, see [formatListedClassName],
+     * as nothing else declares them, also for the classes listed in it, like `inner class Leaf : Map.Entry<A, B>`
+     * of `inner class Holder<A>.Mid<B>`.
+     */
+    private fun formatResolvedClassName(kmClass: KmClass, name: String): String {
+        val outers = outerTypeParametersOf(kmClass)
+        val qualifying = outers.take(outers.indexOfLast { it.typeParameters.isNotEmpty() } + 1).asReversed()
+        return (qualifying.map { escapeIdentifier(simpleClassName(it.name)) + it.formatTypeArguments().orEmpty() } +
+            escapeIdentifier(name)).joinToString(".")
+    }
+
+    /**
+     * An outer class of an inner class, by its metadata [name], with the names of its [typeParameters] by their ids,
+     * which the inner class can refer to.
+     */
+    private class OuterTypeParameters(val name: String, val typeParameters: Map<Int, String>) {
+
+        /**
+         * The type parameters as the type arguments qualifying the inner class, like `<T>` of `Outer<T>.Inner`,
+         * or `null` if there are none.
+         */
+        fun formatTypeArguments(): String? =
+            typeParameters.values.takeIf { it.isNotEmpty() }?.joinToString(", ", "<", ">") { escapeIdentifier(it) }
+
+    }
+
+    /**
+     * The outer classes of the [kmClass], from the innermost one, as long as the class enclosed by each is inner,
+     * and can therefore refer to its type parameters, see [OuterTypeParameters].
+     * The names of the type parameters of an outer class whose declaration cannot be read,
+     * like when its class file is absent from the classpath, are not known, nor the ones of its own outer classes,
+     * so that the ones the [kmClass] refers to, which are not of the outer classes read, are given to it,
+     * named by their ids, like `T0`, see [referencedTypeParameterIds].
+     */
+    private fun outerTypeParametersOf(kmClass: KmClass): List<OuterTypeParameters> {
+        val outers = mutableListOf<OuterTypeParameters>()
+        var current = kmClass
+        while (current.isInner) {
+            val outerName = enclosingClassNames(current.name).lastOrNull() ?: break
+            val outer = loadKmClass(outerName)
+            if (outer == null) {
+                val known = kmClass.typeParameters.mapTo(HashSet()) { it.id } + outers.flatMap { it.typeParameters.keys }
+                val unknown = (referencedTypeParameterIds(kmClass) - known).sorted()
+                outers += OuterTypeParameters(outerName, unknown.associateWith { "T$it" })
+                break
+            }
+            outers += OuterTypeParameters(outerName, outer.typeParameters.namesById())
+            current = outer
+        }
+        return outers
+    }
+
+    /**
+     * The ids of the type parameters which the types of the [kmClass] refer to, in its header, and in its members.
+     */
+    @OptIn(ExperimentalContextParameters::class)
+    private fun referencedTypeParameterIds(kmClass: KmClass): Set<Int> {
+        val ids = HashSet<Int>()
+        fun visitType(type: KmType?) {
+            if (type == null) return
+            (type.classifier as? KmClassifier.TypeParameter)?.let { ids += it.id }
+            type.arguments.forEach { visitType(it.type) }
+            visitType(type.outerType)
+        }
+        fun visitTypeParameters(typeParameters: List<KmTypeParameter>) =
+            typeParameters.forEach { typeParameter -> typeParameter.upperBounds.forEach(::visitType) }
+        fun visitValueParameters(parameters: List<KmValueParameter>) =
+            parameters.forEach { visitType(it.type); visitType(it.varargElementType) }
+        fun visitCallable(
+            typeParameters: List<KmTypeParameter>,
+            receiver: KmType?,
+            contextParameters: List<KmValueParameter>,
+            valueParameters: List<KmValueParameter>,
+            returnType: KmType
+        ) {
+            visitTypeParameters(typeParameters)
+            visitType(receiver)
+            visitValueParameters(contextParameters)
+            visitValueParameters(valueParameters)
+            visitType(returnType)
+        }
+        visitTypeParameters(kmClass.typeParameters)
+        kmClass.supertypes.forEach(::visitType)
+        kmClass.constructors.forEach { visitValueParameters(it.valueParameters) }
+        kmClass.functions.forEach {
+            visitCallable(it.typeParameters, it.receiverParameterType, it.contextParameters, it.valueParameters, it.returnType)
+        }
+        kmClass.properties.forEach {
+            visitCallable(it.typeParameters, it.receiverParameterType, it.contextParameters, emptyList(), it.returnType)
+        }
+        return ids
     }
 
     /**
@@ -2939,13 +3031,12 @@ internal class DefaultKotlinIntrospector(
 
     /**
      * The names of the type parameters which the [kmClass] can refer to, by their ids,
-     * including the ones of its outer classes when it is an inner class,
+     * including the ones of its outer classes when it is an inner class, see [outerTypeParametersOf],
      * which can be declared in a class other than the one listing it, like a sealed subclass.
      */
-    private fun typeParametersInScope(kmClass: KmClass): Map<Int, String> {
-        val outerClass = if (kmClass.isInner) enclosingClassNames(kmClass.name).lastOrNull()?.let { loadKmClass(it) } else null
-        return outerClass?.let { typeParametersInScope(it) }.orEmpty() + kmClass.typeParameters.namesById()
-    }
+    private fun typeParametersInScope(kmClass: KmClass): Map<Int, String> =
+        outerTypeParametersOf(kmClass).flatMap { it.typeParameters.entries }.associate { it.key to it.value } +
+            kmClass.typeParameters.namesById()
 
     private fun KmType.isNullableAny(): Boolean =
         (classifier as? KmClassifier.Class)?.name == "kotlin/Any" && isNullable

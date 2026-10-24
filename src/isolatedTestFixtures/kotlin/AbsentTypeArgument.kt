@@ -193,6 +193,13 @@ class MissingOuter {
     }
 }
 
+// tests leave the class file of the generic outer class out, so that the names of its type parameters are not known
+class MissingGenericOuter<T> {
+    inner class Inner : Comparable<T> {
+        override fun compareTo(other: T): Int = 0
+    }
+}
+
 // the Java superclass cannot be loaded, so that its members and its generic supertypes are read from its class file
 abstract class AbsentGenericJavaLeaf : AbsentGenericJavaMid<String>() {
     override fun process(item: String) {}

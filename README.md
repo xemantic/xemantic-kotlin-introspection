@@ -246,6 +246,12 @@ com.example.AnnotationTestClass
   relative to the sealed class when nested in it, or else to their package,
   where an inner class declared in another generic class is qualified with the type parameters it refers to,
   like `inner class Outer<T>.Sub : Sealed<T>`.
+  So is an inner class of a generic class resolved directly,
+  like `inner class Outer<T>.Inner : Comparable<T>`,
+  as nothing else in its listing declares the type parameters of its outer classes.
+  When the class file of such an outer class is absent from the classpath,
+  the names of its type parameters are not known,
+  and the ones the inner class refers to are named by their ids in the metadata, like `Outer<T0>.Inner`.
   A sealed subclass which cannot be listed is still told with a comment following them,
   as a `when` expression has to cover it:
   `// sealed subclass not found: com.example.Sub` when its class file is missing from the classpath,

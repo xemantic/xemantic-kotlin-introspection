@@ -4092,11 +4092,12 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve inner class with type parameters of the outer class`() {
+        // qualified with the outer class declaring them, like an inner class listed in another class
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.TypeParametersNestedHolder.Cursor"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.TypeParametersNestedHolder.Cursor [page 1/1]
-            inner class Cursor : Iterator<K> {
+            inner class TypeParametersNestedHolder<K>.Cursor : Iterator<K> {
                 override operator fun hasNext(): Boolean
                 override operator fun next(): K
             }
@@ -6103,9 +6104,28 @@ class KotlinIntrospectorTest {
     fun `should resolve inner class of inner class with outer type parameters`() {
         resolver.resolve("com.xemantic.kotlin.introspection.test.InnerOfInnerHolder.Mid.Leaf") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.InnerOfInnerHolder.Mid.Leaf [page 1/1]
-            inner class Leaf(override val key: A, override val value: B) : Map.Entry<A, B> {
+            inner class InnerOfInnerHolder<A>.Mid<B>.Leaf(override val key: A, override val value: B) : Map.Entry<A, B> {
                 fun pair(): Pair<A, B>
             }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve inner class qualified with outer type parameters of its listed inner class`() {
+        // the type parameter of the outermost class, which the listed inner class refers to, is declared by the header
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InnerOfInnerHolder.Mid") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InnerOfInnerHolder.Mid [page 1/1]
+            inner class InnerOfInnerHolder<A>.Mid<B> {
+                inner class Leaf : Map.Entry<A, B>
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve inner sealed subclass qualified with type parameters of its outer class`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.GenericSealedOuter.Sub") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GenericSealedOuter.Sub [page 1/1]
+            inner class GenericSealedOuter<T>.Sub : GenericSealedHolder<T>
         """.trimIndent()
     }
 
