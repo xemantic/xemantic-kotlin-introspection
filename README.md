@@ -170,6 +170,11 @@ com.example.AnnotationTestClass
   or its deprecation, like `@Deprecated("Replaced", level = DeprecationLevel.HIDDEN) val a: Int`.
   An open class with only private constructors is assumed not to be subclassed,
   even though an open class nested in it might subclass it.
+  Likewise, the `open` modifier of a member, and the `final` one of an override,
+  are rendered only in a class which the user code can subclass,
+  as all the members of any other class are final to it,
+  like the ones of a sealed class without such a subclass,
+  or of an enum class, even when its entries override them.
   The same rule applies to the setter of a `var`:
   when it cannot be called, like with `private set`, or `@set:Deprecated(level = HIDDEN)`,
   the property is rendered as a `val`,

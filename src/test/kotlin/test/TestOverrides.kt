@@ -707,6 +707,25 @@ abstract class FinalConstructorOverride(final override val u: UInt) : HasU
 // An open property declared in the primary constructor
 open class OpenConstructorProperty(open val a: Int, val b: Int)
 
+// An open class whose only constructor is private cannot be subclassed by the user code,
+// so that it can override neither its open members, nor its overrides, and cannot use its protected members
+open class PrivateConstructorModality private constructor() : ModalityBase() {
+    open fun f() {}
+    protected open fun g() {}
+    final override fun finalized() {}
+}
+
+// A sealed class can be subclassed by the user code only through an open subclass
+sealed class ClosedSealedModality {
+    open fun f() {}
+    class Sub : ClosedSealedModality()
+}
+
+sealed class OpenSealedModality {
+    open fun f() {}
+    open class Sub : OpenSealedModality()
+}
+
 // Enum classes, whose entries can override their members
 interface EnumOverridable {
     fun f(): Int

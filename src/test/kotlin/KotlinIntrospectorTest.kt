@@ -2184,8 +2184,8 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should keep final modality of override in enum class with entry bodies`() {
-        // an enum class is final in the metadata, even when its entries subclass it
+    fun `should not mark override in enum class with entry bodies as final`() {
+        // its entries can override its members, but the user code cannot subclass it
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.EntryBodiesEnum"
         ) sameAsKotlin """
@@ -2194,7 +2194,55 @@ class KotlinIntrospectorTest {
                 A,
                 B;
                 override fun f(): Int
-                final override fun g()
+                override fun g()
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark neither open member nor final override of open class with only private constructor`() {
+        // like its protected members, which are not listed, as the user code cannot subclass it
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.PrivateConstructorModality"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PrivateConstructorModality [page 1/1]
+            open class PrivateConstructorModality private constructor() : ModalityBase {
+                fun f()
+                override fun finalized()
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve open member of open class with only private constructor without open modifier`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.PrivateConstructorModality.f") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PrivateConstructorModality.f [page 1/1]
+            fun f()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not mark open member of sealed class without open subclass as open`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ClosedSealedModality"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ClosedSealedModality [page 1/1]
+            sealed class ClosedSealedModality {
+                class Sub : ClosedSealedModality
+                fun f()
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark open member of sealed class with open subclass as open`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.OpenSealedModality"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OpenSealedModality [page 1/1]
+            sealed class OpenSealedModality {
+                open class Sub : OpenSealedModality
+                open fun f()
             }
         """.trimIndent()
     }
@@ -2254,14 +2302,15 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should keep abstract and final modality of override in sealed class`() {
+    fun `should keep abstract modality of override in sealed class, but not final one, without open subclass`() {
+        // the user code cannot subclass it
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.SealedModalityOverrides"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.SealedModalityOverrides [page 1/1]
             sealed class SealedModalityOverrides : ModalityBase {
                 abstract override fun abstracted()
-                final override fun finalized()
+                override fun finalized()
                 override fun reopened()
             }
         """.trimIndent()

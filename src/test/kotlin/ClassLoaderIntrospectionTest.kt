@@ -1518,11 +1518,11 @@ class ClassLoaderIntrospectionTest {
 
         // then
         // only the method of the mismatched signature is matched by its descriptor, erasing T to Object,
-        // so its override, implicitly open, is not told
+        // so its override is not told, rendered like any other member of the final class
         signature sameAsKotlin """
             // com.xemantic.kotlin.introspection.isolated.AbsentJavaSubclass [page 1/1]
             class AbsentJavaSubclass : AbsentJavaBase<String> {
-                open fun process(item: String)
+                fun process(item: String)
                 fun process(item: Int)
                 override fun run()
                 fun run(times: Int)
@@ -1670,7 +1670,7 @@ class ClassLoaderIntrospectionTest {
         friendModule sameAsKotlin """
             // com.xemantic.kotlin.introspection.friendmodule.UnreflectableFriendModuleSubclass [page 1/1]
             class UnreflectableFriendModuleSubclass : com.xemantic.kotlin.introspection.othermodule.InternalBase {
-                open val state: Int
+                val state: Int
                 fun take(marker: com.xemantic.kotlin.introspection.othermodule.OtherModuleMarker)
             }
         """.trimIndent()
@@ -1760,18 +1760,18 @@ class ClassLoaderIntrospectionTest {
 
         // then
         // the methods of the superclass are unknown, so the overrides cannot be told,
-        // and are rendered as open, as an override is implicitly open
+        // and are rendered like any other member of the final class
         signature sameAsKotlin """
             // com.xemantic.kotlin.introspection.isolated.AbsentJavaSubclass [page 1/1]
             class AbsentJavaSubclass : AbsentJavaBase<String> {
-                open fun process(item: String)
+                fun process(item: String)
                 fun process(item: Int)
-                open fun run()
+                fun run()
                 fun run(times: Int)
                 fun prim(x: Int?)
-                open fun <S : String> bounded(x: S)
+                fun <S : String> bounded(x: S)
                 fun <S : Number> bounded(x: S)
-                open fun take(nested: DollarHolder.`Dollar${'$'}Nested`)
+                fun take(nested: DollarHolder.`Dollar${'$'}Nested`)
             }
         """.trimIndent()
     }
@@ -1986,13 +1986,14 @@ class ClassLoaderIntrospectionTest {
 
         // then
         // the method of the malformed signature is matched by its descriptor, erasing T to Object,
-        // and the method of the malformed descriptor is unknown, so their overrides, implicitly open, are not told
+        // and the method of the malformed descriptor is unknown, so their overrides are not told,
+        // rendered like any other member of the final class
         signature sameAsKotlin """
             // com.xemantic.kotlin.introspection.isolated.AbsentJavaSubclass [page 1/1]
             class AbsentJavaSubclass : AbsentJavaBase<String> {
-                open fun process(item: String)
+                fun process(item: String)
                 fun process(item: Int)
-                open fun run()
+                fun run()
                 fun run(times: Int)
                 fun prim(x: Int?)
                 override fun <S : String> bounded(x: S)

@@ -187,7 +187,8 @@ private fun KmProperty.apiSetterVisibility(scope: DeclarationScope, deprecation:
 private val KmProperty.declaredSetterVisibility: Visibility? get() = if (isVar) setter?.visibility ?: visibility else null
 
 /**
- * Whether the [owner] of a member might be subclassed, unless told otherwise, see `mightBeSubclassed`.
+ * Whether the user code might override the members of the [owner], unless told otherwise, see [ApiClass.isOpen],
+ * never for a final one, like an object.
  */
 private fun isOpenForOverridesByDefault(owner: KmClass?): Boolean = owner != null && owner.modality != Modality.FINAL
 
@@ -511,11 +512,6 @@ internal class DefaultKotlinIntrospector(
         val clazz: Class<*>?
 
         /**
-         * The class file, if read, telling whether an enum class is final.
-         */
-        val classFile: ClassFile?
-
-        /**
          * The deprecation of the class itself.
          */
         val classDeprecation: Deprecation?
@@ -543,7 +539,7 @@ internal class DefaultKotlinIntrospector(
          * and for the deprecations of the declarations, see [deprecation],
          * read again after a failure which might be transient, see [FinalOnce].
          */
-        override val classFile: ClassFile? get() = classFileRead.value
+        val classFile: ClassFile? get() = classFileRead.value
 
         private val classFileRead = FinalOnce {
             if (readFile != null) TransientFailures.Outcome(readFile, isFinal = true) else readClassFile(binaryName)
@@ -650,8 +646,6 @@ internal class DefaultKotlinIntrospector(
         private val kClass: KClass<*>? by lazy { reflectedBuiltinClass(name) }
 
         override val clazz: Class<*>? get() = null
-
-        override val classFile: ClassFile? get() = null
 
         override val classDeprecation: Deprecation? get() = null
 
@@ -1114,7 +1108,7 @@ internal class DefaultKotlinIntrospector(
         apiClass: ApiClass,
         contextPackage: String
     ): List<List<String>> {
-        val isOpenForOverrides = mightBeSubclassed(kmClass, declarations)
+        val isOpenForOverrides = apiClass.isOpen
         return apiMembersNamed(kmClass, declarations, memberName, apiClass).map { member ->
             formatMember(member, kmClass, declarations, apiClass, contextPackage, isOpenForOverrides)
         }
@@ -1223,7 +1217,7 @@ internal class DefaultKotlinIntrospector(
      * or the first one, when they are equally specific, while all of them are inherited when they cannot be compared.
      * The members are rendered as declared in the supertype, with its own type parameters, like `fun get(index: Int): E`
      * of `kotlin.collections.List`, the type arguments of the supertype not substituted,
-     * and, inherited by a class which cannot be subclassed, see [mightBeSubclassed], neither `open`, nor `final`,
+     * and, inherited by a class which the user code cannot subclass, see [ApiClass.isOpen], neither `open`, nor `final`,
      * like its own members.
      * A Java supertype, which is not rendered, is walked through to its supertypes,
      * like `java.util.List`, seen in Kotlin as the built-in `kotlin.collections.MutableList`.
@@ -1306,14 +1300,14 @@ internal class DefaultKotlinIntrospector(
             }
         }
 
-        val isOpenForOverrides = mightBeSubclassed(kmClass, declarations)
+        val isOpenForOverrides = scope.isOpen
         return inherited.map { candidate ->
             ListingItem.InheritedMember(
                 candidate.kmClass.name.replace('/', '.'),
                 formatMember(
                     candidate.member, candidate.kmClass, candidate.declarations, scope, contextPackage,
                     isOwnerOpenForOverrides = isOpenForOverrides,
-                    // unlike an own member of a final class, whose open modifier tells an override which cannot be told
+                    // also the open member of an interface, which an own member of an interface is rendered with
                     isInheritedByFinalClass = !isOpenForOverrides
                 )
             )
@@ -1996,8 +1990,8 @@ internal class DefaultKotlinIntrospector(
         val constructors = constructorsOf(kmClass, apiClass, foundClass)
         val declaredConstructor = constructors.header as? HeaderConstructor.Declared
         val secondaryConstructors = constructors.secondary
-        // whether the final modality of an override is not redundant, see mightBeSubclassed
-        val isOpenForOverrides = mightBeSubclassed(kmClass, foundClass)
+        // whether the user code can override the members, see formatModalityModifiers
+        val isOpenForOverrides = apiClass.isOpen
         // The properties declared by the parameters of the rendered constructor, by the parameter name,
         // also the ones which are not part of the API of a data class, or a value class,
         // whose parameters must all declare properties, like `private val rawValue: Long`
@@ -2272,7 +2266,7 @@ internal class DefaultKotlinIntrospector(
         val isInterface = kmClass.kind == ClassKind.INTERFACE
         val typeParameters = typeParametersInScope(kmClass)
         val contextPackage = contextPackageOf(declarations, kmClass)
-        val isOpenForOverrides = mightBeSubclassed(kmClass, declarations)
+        val isOpenForOverrides = apiClass.isOpen
         val builtinClass = declarations as? BuiltinClass
         val jvmOnlyProperties = builtinClass?.jvmOnlyProperties.orEmpty().inApi(apiClass, declarations).map { property ->
             property.name to formatApiProperty(
@@ -2809,8 +2803,8 @@ internal class DefaultKotlinIntrospector(
      * @param bodyReceiverSubstitution the substitution of an extension listed in the body of its receiver class,
      *   rendered without its receiver, see [bodyReceiverSubstitution], or `null` to render the receiver.
      * @param deprecation the deprecation of the [function], see [formatDeprecation].
-     * @param isOwnerOpenForOverrides whether the [owner] might be subclassed, see [mightBeSubclassed],
-     *   by default unless final, which an enum class is in the metadata, even when its entries subclass it.
+     * @param isOwnerOpenForOverrides whether the user code might override the members of the [owner],
+     *   see [formatModalityModifiers], by default unless final.
      */
     @OptIn(ExperimentalContextParameters::class)
     private fun formatFunction(
@@ -2951,7 +2945,7 @@ internal class DefaultKotlinIntrospector(
      * @param bodyReceiverSubstitution the substitution of an extension listed in the body of its receiver class,
      *   like for [formatFunction].
      * @param deprecation the deprecation of the [property], see [formatDeprecation].
-     * @param isOwnerOpenForOverrides whether the [owner] might be subclassed, like for [formatFunction].
+     * @param isOwnerOpenForOverrides whether the user code might override the members of the [owner], like for [formatFunction].
      */
     @OptIn(ExperimentalContextParameters::class)
     private fun formatProperty(
@@ -3214,8 +3208,10 @@ internal class DefaultKotlinIntrospector(
      * Format the modality and `override` modifiers of a member, like `abstract override `,
      * in the order of the Kotlin coding conventions.
      *
-     * An override is implicitly open, therefore its `final` is rendered,
-     * unless the owner class cannot be subclassed, see [mightBeSubclassed], which makes all its members final.
+     * An override is implicitly open, therefore its `final` is rendered, and so is the `open` of any other member,
+     * only when the user code can subclass the owner class, see [ApiClass.isOpen], like its protected members,
+     * as all its members are final to the user code otherwise,
+     * like the ones of a sealed class without an open subclass, or of an enum class, even when its entries override them.
      * The members of an interface are implicitly abstract, so the ones with a default body are rendered as open,
      * also when overriding, like `open override fun f()`, telling it apart from an abstract `override fun f()`,
      * which might make abstract again the `f()` with a default body of a superinterface.
@@ -3231,20 +3227,12 @@ internal class DefaultKotlinIntrospector(
     ): String = buildString {
         when (modality) {
             Modality.ABSTRACT -> if (!inInterface) +"abstract "
-            Modality.OPEN -> if ((!isOverride || inInterface) && !isInheritedByFinalClass) +"open "
+            Modality.OPEN -> if (((!isOverride && isOwnerOpenForOverrides) || inInterface) && !isInheritedByFinalClass) +"open "
             Modality.FINAL -> if (isOverride && isOwnerOpenForOverrides) +"final "
             Modality.SEALED -> {}
         }
         if (isOverride) +"override "
     }
-
-    /**
-     * Whether the [kmClass] might be subclassed, unless final, except for an enum class, final in the metadata
-     * even when its entries have bodies subclassing it, which only its JVM class tells, final without them,
-     * which they are assumed to have when its class file cannot be read.
-     */
-    private fun mightBeSubclassed(kmClass: KmClass, foundClass: ClassDeclarations): Boolean =
-        kmClass.modality != Modality.FINAL || (kmClass.kind == ClassKind.ENUM_CLASS && foundClass.classFile?.isFinal != true)
 
     /**
      * Whether this property might be declared by the constructor [parameter], like `class Foo(val x: Int)`.
@@ -3794,7 +3782,6 @@ internal class DefaultKotlinIntrospector(
         return ClassFile(
             metadata = metadata,
             isSynthetic = reader.access and Opcodes.ACC_SYNTHETIC != 0,
-            isFinal = reader.access and Opcodes.ACC_FINAL != 0,
             isInterface = isInterface,
             classDeprecation = classAnnotations?.deprecationOf(::isSince),
             nesting = memberClasses?.let { members ->
@@ -3823,8 +3810,6 @@ internal class DefaultKotlinIntrospector(
     /**
      * What is read from a class file, without loading the class.
      *
-     * @property isFinal whether the JVM class is final, which, unlike the metadata, tells that an enum class
-     *   has no entries with bodies, compiled to its subclasses.
      * @property classDeprecation the deprecation of the class itself.
      * @property nesting what the class file tells about the classes nested in this class,
      *   read only by the classpath scan, see [NestedClassFiles].
@@ -3838,7 +3823,6 @@ internal class DefaultKotlinIntrospector(
     private class ClassFile(
         val metadata: Metadata?,
         val isSynthetic: Boolean,
-        val isFinal: Boolean = false,
         val isInterface: Boolean = false,
         val classDeprecation: Deprecation? = null,
         val nesting: Nesting? = null,
