@@ -142,6 +142,9 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // kotlin.String [page 42/42]
             // from kotlin.text
+            fun CharSequence.windowed(size: Int, step: Int = …, partialWindows: Boolean = …): List<String>
+            fun <R> CharSequence.windowed(size: Int, step: Int = …, partialWindows: Boolean = …, transform: (CharSequence) -> R): List<R>
+            fun CharSequence.windowedSequence(size: Int, step: Int = …, partialWindows: Boolean = …): Sequence<String>
             fun <R> CharSequence.windowedSequence(size: Int, step: Int = …, partialWindows: Boolean = …, transform: (CharSequence) -> R): Sequence<R>
             fun CharSequence.withIndex(): Iterable<IndexedValue<Char>>
             infix fun CharSequence.zip(other: CharSequence): List<Pair<Char, Char>>
@@ -347,6 +350,7 @@ class KotlinIntrospectorTest {
             operator fun <T : Comparable<T>> T.rangeTo(that: T): ClosedRange<T>
             operator fun <T : Comparable<T>> T.rangeUntil(that: T): OpenEndRange<T>
             // from kotlin.text
+            val String.Companion.CASE_INSENSITIVE_ORDER: java.util.Comparator<String>
             val CharSequence.indices: IntRange
             val CharSequence.lastIndex: Int
             inline fun CharSequence.all(predicate: (Char) -> Boolean): Boolean
@@ -411,6 +415,8 @@ class KotlinIntrospectorTest {
             inline fun <R> CharSequence.foldRightIndexed(initial: R, operation: (index: Int, Char, acc: R) -> R): R
             inline fun CharSequence.forEach(action: (Char) -> Unit)
             inline fun CharSequence.forEachIndexed(action: (index: Int, Char) -> Unit)
+            inline fun String.Companion.format(format: String, vararg args: Any?): String
+            inline fun String.Companion.format(locale: java.util.Locale?, format: String, vararg args: Any?): String
             inline fun CharSequence.getOrElse(index: Int, defaultValue: (Int) -> Char): Char
             fun CharSequence.getOrNull(index: Int): Char?
             inline fun <K> CharSequence.groupBy(keySelector: (Char) -> K): Map<K, List<Char>>
@@ -981,6 +987,72 @@ class KotlinIntrospectorTest {
             companion object {
                 fun create(): NestedCompanionTestClass.Inner
             }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should list extensions of companion object with the extensions of the class`() {
+        // called on the name of the class, like CompanionExtensionHolder.parse("…"), rendered with their receiver
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.CompanionExtensionHolder"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.CompanionExtensionHolder [page 1/1]
+            class CompanionExtensionHolder {
+                companion object {
+                    fun create(): CompanionExtensionHolder
+                }
+            }
+            // from com.xemantic.kotlin.introspection.test
+            val CompanionExtensionHolder.Companion.default: CompanionExtensionHolder
+            fun CompanionExtensionHolder.describe(): String
+            fun CompanionExtensionHolder.Companion.parse(text: String): CompanionExtensionHolder
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension of companion object as class member`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.CompanionExtensionHolder.parse"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.CompanionExtensionHolder.parse [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            fun CompanionExtensionHolder.Companion.parse(text: String): CompanionExtensionHolder
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension of named companion object as class member`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.NamedCompanionExtensionHolder.of"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NamedCompanionExtensionHolder.of [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            fun NamedCompanionExtensionHolder.Factory.of(): NamedCompanionExtensionHolder
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension of companion object of built-in type as its member`() {
+        // String.format("%d", 42), next to the extensions on the instances, like "%d".format(42)
+        resolver.resolve("kotlin.String.format") sameAsKotlin """
+            // kotlin.String.format [page 1/1]
+            // from kotlin.text
+            inline fun String.format(vararg args: Any?): String
+            inline fun String.format(locale: java.util.Locale?, vararg args: Any?): String
+            inline fun String.Companion.format(format: String, vararg args: Any?): String
+            inline fun String.Companion.format(locale: java.util.Locale?, format: String, vararg args: Any?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve class nested in companion object through outer class name`() {
+        // Kotlin does not resolve CompanionNestedClassesHolder.Builder, only CompanionNestedClassesHolder.Companion.Builder
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.CompanionNestedClassesHolder.Builder") == null)
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.CompanionNestedClassesHolder.Companion.Factory"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.CompanionNestedClassesHolder.Companion.Factory [page 1/1]
+            interface Factory
         """.trimIndent()
     }
 

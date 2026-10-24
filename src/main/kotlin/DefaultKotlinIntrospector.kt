@@ -1369,11 +1369,11 @@ internal class DefaultKotlinIntrospector(
      * For any other class, all of them, on the class and its [userSupertypes], see [extensionReceiverNames],
      * not to flood its listing with the generic extensions of the standard library.
      * Either way, the ones on a type parameter with multiple bounds only when the class satisfies all of them,
-     * see [receiverBoundsOf].
+     * see [receiverBoundsOf], and also the ones on its companion object, see [companionReceiverNames].
      */
     private fun listedExtensions(kmClass: KmClass, className: String, isBuiltin: Boolean): ListedExtensions {
         if (!isBuiltin) {
-            val receiverNames = extensionReceiverNames(kmClass, className)
+            val receiverNames = extensionReceiverNames(kmClass, className) + companionReceiverNames(kmClass, className)
             val satisfiedBounds = satisfiedBoundsOf(kmClass, className)
             return ListedExtensions(
                 extensionIndex.listedFor(receiverNames, satisfiedBounds),
@@ -1383,13 +1383,23 @@ internal class DefaultKotlinIntrospector(
         val supertypeNames = supertypeNames(kmClass, kmClassOf = { builtinClasses[it] ?: loadKmClass(it) }) {
             it != "kotlin.Any"
         }
-        val receiverNames = listOf(className) + supertypeNames
+        val receiverNames = listOf(className) + supertypeNames + companionReceiverNames(kmClass, className)
         val satisfiedBounds = lazyOf(supertypeNames + className)
         return ListedExtensions(
             extensionIndex.listedFor(receiverNames, satisfiedBounds).filter { isPublicKotlinPackageSource(it.sourceClass) },
             extensionPropertyIndex.listedFor(receiverNames, satisfiedBounds).filter { isPublicKotlinPackageSource(it.sourceClass) }
         )
     }
+
+    /**
+     * The receiver name of the extensions on the companion object of the [kmClass], named [className],
+     * like `fun Foo.Companion.parse()`, called on the name of the class, like `Foo.parse()`.
+     * The companion object is not loaded to tell whether it is part of the API, as an indexed extension is public,
+     * and so is then its receiver, unless it is deprecated as hidden, which is not told apart.
+     * The ones on the supertypes of the companion object are not listed, not to flood the listing of the class.
+     */
+    private fun companionReceiverNames(kmClass: KmClass, className: String): List<String> =
+        listOfNotNull(kmClass.companionObject?.let { "$className.$it" })
 
     /**
      * The comment telling the outermost protected class enclosing the declarations of the class named [name],
