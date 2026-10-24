@@ -940,18 +940,29 @@ internal class DefaultKotlinIntrospector(
     } catch (e: LinkageError) {
         // the class file is there, but refers to a class which is not, like its supertype,
         // or is of a newer JVM version, or is malformed, while its declarations can still be read from its metadata;
-        // the class is to be loaded again only after a plain linkage error, like of two threads defining it at once,
+        // the class is to be loaded again only after a linkage error which might be transient, see isTransientLinkageError,
         // or when its class file is there, but cannot be read, maybe only for now,
         // unlike one which is not served at all, like by an in-memory class loader
         val bytes = classLoader.readClassBytes(binaryName)
         val classFile = bytes?.let { readClassFile(binaryName, it) }
         ClassLookup(
             classFile?.takeIf { it.metadata != null }?.let { FoundClass(binaryName, clazz = null, it) },
-            isFinal = e.javaClass != LinkageError::class.java && (bytes != null || !classLoader.hasClassFile(binaryName)),
+            isFinal = !isTransientLinkageError(e) && (bytes != null || !classLoader.hasClassFile(binaryName)),
             unloadableClassBytes = bytes?.takeIf { classFile?.metadata == null },
             classFileAbsence = if (bytes == null) classFileAbsence(binaryName) else null
         )
     }
+
+    /**
+     * Whether the linkage error [e] of loading a class might not happen again, so that the class is loaded again:
+     * a plain [LinkageError], like of two threads defining the same class at once,
+     * and a [ClassCircularityError], which is spurious when the classes are loaded in parallel,
+     * while a genuine one is deemed final after a few attempts anyway, see [TransientFailures].
+     * Any other one, like a [NoClassDefFoundError] of a missing supertype, an [UnsupportedClassVersionError],
+     * a [ClassFormatError], or an [IncompatibleClassChangeError], is told by the class file itself, so it is final.
+     */
+    private fun isTransientLinkageError(e: LinkageError): Boolean =
+        e.javaClass == LinkageError::class.java || e is ClassCircularityError
 
     /**
      * Reads the class file of a class by its JVM [binaryName] for the [overrideResolver],

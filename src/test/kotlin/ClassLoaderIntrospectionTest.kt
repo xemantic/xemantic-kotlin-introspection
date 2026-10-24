@@ -769,6 +769,28 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should load nested class again after ClassCircularityError`() {
+        // given
+        val nested = "com.xemantic.kotlin.introspection.test.TypeParametersNestedHolder\$Sorted"
+        // which might be spurious, when the classes are loaded in parallel
+        val classLoader = CountingClassLoader(
+            javaClass.classLoader,
+            failingOnce = setOf(nested),
+            failure = { ClassCircularityError(it) }
+        )
+        val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
+
+        // when
+        val signatures = List(2) {
+            introspector.resolve("com.xemantic.kotlin.introspection.test.TypeParametersNestedHolder")
+        }
+
+        // then
+        assert(signatures.all { it != null && "class Sorted<T>" in it })
+        assert(classLoader.loads[nested] == 2)
+    }
+
+    @Test
     fun `should look up nested class again after ClassNotFoundException when its class file is there`() {
         // given
         val nested = "com.xemantic.kotlin.introspection.test.TypeParametersNestedHolder\$Sorted"
