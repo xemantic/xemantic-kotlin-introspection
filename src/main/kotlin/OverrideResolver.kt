@@ -200,6 +200,7 @@ internal class OverrideResolver(
      * @param isJava whether the member is a Java method, matched by the erasure of its parameter types.
      * @param declaresDefaultValues the indices of the value parameters declaring a default value,
      *   which only a Kotlin function can.
+     * @param key the key of a member of a Kotlin supertype, see [memberKey], telling which one is overridden.
      */
     private class Overridable(
         val contexts: List<MemberType> = emptyList(),
@@ -208,7 +209,8 @@ internal class OverrideResolver(
         val typeParameterCount: Int,
         val isJava: Boolean,
         val visibility: MemberVisibility = MemberVisibility.Visible,
-        val declaresDefaultValues: Set<Int> = emptySet()
+        val declaresDefaultValues: Set<Int> = emptySet(),
+        val key: String? = null
     )
 
     /**
@@ -397,6 +399,54 @@ internal class OverrideResolver(
         return matchingKnownTypes.ifEmpty { overridden }.flatMapTo(HashSet()) { it.declaresDefaultValues }
     }
 
+    /**
+     * The keys, see [memberKey], of the functions of the Kotlin supertypes of the [owner] which its [function] overrides,
+     * or would override, if it is not declared as an override, along the whole supertype hierarchy,
+     * the ones matching on the known types, if there are any, see [inheritedDefaultValues].
+     */
+    fun overriddenMembers(owner: KmClass, function: KmFunction): Set<String> {
+        val overridables = overridables(owner)
+        val candidates = overridables.functions[function.name] ?: return emptySet()
+        val signature = overridables.signature(function)
+        val overridden = candidates.filter { it.key != null && it.matches(signature) && overridables.isVisible(it) }
+        // an unknown type matches any type, so a sibling overload, which is not overridden, might be matched too,
+        // like for the inheritedDefaultValues, the ones matching on the known types are taken, if there are any
+        val matchingKnownTypes = if (overridden.size <= 1) overridden else overridden.filter {
+            it.matches(signature, onlyKnownTypes = true)
+        }
+        return matchingKnownTypes.ifEmpty { overridden }.mapTo(HashSet()) { it.key!! }
+    }
+
+    /**
+     * The keys of the properties of the Kotlin supertypes of the [owner] which its [property] overrides,
+     * like the [overriddenMembers] of a function.
+     */
+    fun overriddenMembers(owner: KmClass, property: KmProperty): Set<String> {
+        val overridables = overridables(owner)
+        return overriddenProperties(overridables, property).filter { it.key != null }.mapTo(HashSet()) { it.key!! }
+    }
+
+    private fun overriddenProperties(overridables: Overridables, property: KmProperty): List<Overridable> {
+        val typeParameters = memberTypeParameters(property.typeParameters)
+        val contexts = property.contextParameters.map {
+            kotlinType(it.type, overridables.substitution, typeParameters)
+        }
+        val receiver = property.receiverParameterType?.let {
+            kotlinType(it, overridables.substitution, typeParameters)
+        }
+        return overridables.properties[property.name].orEmpty().filter {
+            it.matches(contexts, receiver, emptyList(), property.typeParameters.size, isSuspend = false) &&
+                overridables.isVisible(it)
+        }
+    }
+
+    /**
+     * The Kotlin class name of the built-in type which the JVM class named like `java.util.List` is mapped to,
+     * like `kotlin/collections/MutableList`, the mutable collection types chosen, as Java collections are mutable,
+     * or `null` if it is not mapped.
+     */
+    fun builtinNameOfJavaClass(javaName: String): String? = javaToKotlinNames[javaName]
+
     fun isOverride(owner: KmClass, property: KmProperty): Boolean {
         val overridables = overridables(owner)
         val typeParameters = memberTypeParameters(property.typeParameters)
@@ -407,10 +457,7 @@ internal class OverrideResolver(
             kotlinType(it, overridables.substitution, typeParameters)
         }
         val candidates = overridables.properties[property.name].orEmpty()
-        val overridesProperty = candidates.any {
-            it.matches(contexts, receiver, emptyList(), property.typeParameters.size, isSuspend = false) &&
-                overridables.isVisible(it)
-        }
+        val overridesProperty = overriddenProperties(overridables, property).isNotEmpty()
         // a property of a Kotlin supertype without metadata is known only by its JVM getter,
         // which a private or a @JvmField property does not have, and which might be renamed or mangled
         val getter = property.getterSignature?.takeIf { property.visibility.isOverridable }
@@ -554,7 +601,8 @@ internal class OverrideResolver(
                         visibility = memberVisibility,
                         declaresDefaultValues = function.valueParameters.indices.filter {
                             function.valueParameters[it].declaresDefaultValue
-                        }.toSet()
+                        }.toSet(),
+                        key = memberKey(kmClass, function)
                     )
                 }
                 kmClass.properties.filter { it.visibility.isOverridable }.forEach { property ->
@@ -570,7 +618,8 @@ internal class OverrideResolver(
                         parameters = emptyList(),
                         typeParameterCount = property.typeParameters.size,
                         isJava = false,
-                        visibility = memberVisibility
+                        visibility = memberVisibility,
+                        key = memberKey(kmClass, property)
                     )
                 }
                 kmClass.supertypes.forEach { type ->
@@ -1805,3 +1854,60 @@ internal fun kotlinClassName(javaClass: Class<*>): String =
  */
 internal fun kotlinClassName(packageName: String, name: String): String =
     if (packageName.isEmpty()) name else "${packageName.replace('.', '/')}/$name"
+
+/**
+ * The key of a [function] of the [owner] class, like `kotlin/collections/List#context() fun get(kotlin/Int)`,
+ * telling it apart from the other members of the class, its overloads, by its parameter types, see [memberKeyType],
+ * a type parameter by its name, the same for the declaration of the class read from its class file,
+ * and the one of a built-in type in the `.kotlin_builtins` resources.
+ */
+@OptIn(ExperimentalContextParameters::class)
+internal fun memberKey(owner: KmClass, function: KmFunction): String {
+    val typeParameters = keyTypeParameters(owner, function.typeParameters)
+    val contexts = function.contextParameters.joinToString(",") { it.type.memberKeyType(typeParameters) }
+    val receiver = function.receiverParameterType?.let { "${it.memberKeyType(typeParameters)}." }.orEmpty()
+    val parameters = function.valueParameters.joinToString(",") { it.type.memberKeyType(typeParameters) }
+    return "${owner.name}#context($contexts) fun $receiver${function.name}($parameters)"
+}
+
+/**
+ * The key of a [property] of the [owner] class, like `kotlin/collections/List#val size`, see [memberKey] of a function.
+ */
+internal fun memberKey(owner: KmClass, property: KmProperty): String {
+    val typeParameters = keyTypeParameters(owner, property.typeParameters)
+    val receiver = property.receiverParameterType?.let { "${it.memberKeyType(typeParameters)}." }.orEmpty()
+    return "${owner.name}#val $receiver${property.name}"
+}
+
+/**
+ * The names of the type parameters of the [owner] class, and of its member, the [memberTypeParameters], by their ids.
+ */
+private fun keyTypeParameters(owner: KmClass, memberTypeParameters: List<KmTypeParameter>): Map<Int, String> =
+    owner.typeParameters.associate { it.id to it.name } + memberTypeParameters.associate { it.id to it.name }
+
+/**
+ * This type in a member key, see [memberKey], like `kotlin/collections/List<T>?`:
+ * its classifier, a type parameter by its name, with its type arguments and its nullability,
+ * as overloads might differ only by them, like `f(x: Int)` and `f(x: Int?)`.
+ */
+private fun KmType.memberKeyType(typeParameters: Map<Int, String>): String = buildString {
+    append(
+        when (val classifier = classifier) {
+            is KmClassifier.Class -> classifier.name
+            is KmClassifier.TypeAlias -> classifier.name
+            is KmClassifier.TypeParameter -> typeParameters[classifier.id] ?: "?"
+        }
+    )
+    if (arguments.isNotEmpty()) {
+        append(arguments.joinToString(",", "<", ">") { argument ->
+            val type = argument.type ?: return@joinToString "*"
+            val variance = when (argument.variance) {
+                KmVariance.IN -> "in "
+                KmVariance.OUT -> "out "
+                else -> ""
+            }
+            variance + type.memberKeyType(typeParameters)
+        })
+    }
+    if (isNullable) append('?')
+}
