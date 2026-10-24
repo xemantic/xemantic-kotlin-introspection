@@ -3294,6 +3294,46 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve overloads inherited from superclass next to override of another overload`() {
+        // InheritedOverloadMiddle overrides only greet(String), greet(String, Int) is still inherited from the base
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedOverloadLeaf.greet"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedOverloadLeaf.greet [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.InheritedOverloadMiddle
+            override fun greet(name: String): String
+            // inherited from com.xemantic.kotlin.introspection.test.InheritedOverloadBase
+            fun greet(name: String, times: Int): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve overloads inherited from unrelated supertypes`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedBothFoo.foo"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedBothFoo.foo [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.InheritedIntFoo
+            fun foo(x: Int)
+            // inherited from com.xemantic.kotlin.introspection.test.InheritedStringFoo
+            fun foo(x: String)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve inherited member before extension of the same name`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedWithExtension.extended"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedWithExtension.extended [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.InheritedWithExtensionBase
+            fun extended(): Int
+            // from com.xemantic.kotlin.introspection.test
+            fun InheritedWithExtension.extended(times: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve member inherited from superclass of superclass`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.InheritedLeaf.baseValue"
@@ -3359,13 +3399,25 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should resolve member of Any inherited by class`() {
+    fun `should resolve member of Any inherited by open class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.OpenInheritedLeaf.toString"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OpenInheritedLeaf.toString [page 1/1]
+            // inherited from kotlin.Any
+            open fun toString(): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve open member of Any inherited by final class as final`() {
+        // like the own members of a final class, none of its members can be overridden
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.InheritedLeaf.toString"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.InheritedLeaf.toString [page 1/1]
             // inherited from kotlin.Any
-            open fun toString(): String
+            fun toString(): String
         """.trimIndent()
     }
 
@@ -4457,24 +4509,40 @@ class KotlinIntrospectorTest {
             kClass.members.mapTo(sortedSetOf()) { it.name }
         }
 
+        // the listing of each type, as the trimmed lines, and the class header, the first line declaring the class,
+        // telling the properties declared in the primary constructor, like `open val cause: Throwable?` of Throwable
+        class Listing(val lines: Set<String>, val header: String) {
+            fun shows(line: String) = line in lines || "($line, " in header || ", $line)" in header || "($line)" in header
+        }
+        val listings = HashMap<String, Listing>()
+        fun listingOf(type: String) = listings.getOrPut(type) {
+            val lines = resolver.resolve(type, pageSize = 100_000).orEmpty().lines().drop(1)
+            Listing(lines.mapTo(HashSet()) { it.trim() }, lines.firstOrNull { !it.startsWith("//") }.orEmpty())
+        }
+        // an inherited member of a class which cannot be subclassed is rendered without the open modifier
+        fun withoutModality(line: String) = line.removePrefix("open ")
+
         // when
         val unlisted = memberNames.flatMap { (type, names) ->
             names.flatMap { name ->
                 // the members and the companion object members, followed by the extensions under their `// from` headers,
                 // which a built-in type can list in its body without their receivers,
-                // or else the members inherited from a supertype, which its own listing shows
-                val lines = resolver.resolve("$type.$name", pageSize = 100_000)?.lines().orEmpty()
-                val listedType = lines.getOrNull(1)?.removePrefix("// inherited from ")?.takeIf { it != lines[1] } ?: type
-                val listing = resolver.resolve(listedType, pageSize = 100_000).orEmpty().lines()
-                val listed = listing.mapTo(HashSet()) { it.trim() }
-                // the properties declared in the primary constructor, like `open val cause: Throwable?` of Throwable
-                val header = listing.getOrElse(1) { "" }
-                lines
+                // and the members inherited from the supertypes, each under its `// inherited from` header,
+                // which the listing of that supertype shows
+                var listedType = type
+                resolver.resolve("$type.$name", pageSize = 100_000)?.lines().orEmpty()
+                    .drop(1)
                     .takeWhile { !it.startsWith("// from ") }
                     .map { it.trim() }
-                    .filter { !it.startsWith("//") && it != "companion object {" && it != "}" }
-                    .filter { it !in listed && "($it, " !in header && ", $it)" !in header && "($it)" !in header }
-                    .map { "$type.$name: $it" }
+                    .mapNotNull { line ->
+                        if (line.startsWith("// inherited from ")) listedType = line.removePrefix("// inherited from ")
+                        (listedType to line).takeIf { !line.startsWith("//") && line != "companion object {" && line != "}" }
+                    }
+                    .filter { (listedType, line) ->
+                        val listing = listingOf(listedType)
+                        !listing.shows(line) && listing.lines.none { withoutModality(it) == line }
+                    }
+                    .map { (_, line) -> "$type.$name: $line" }
             }
         }
 
@@ -7078,6 +7146,28 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve inherited member of the most specific return type among unrelated supertypes`() {
+        // both List.iterator() and MutableCollection.iterator() override Collection.iterator(),
+        // the one of MutableCollection returns the more specific MutableIterator, like the intersection override
+        resolver.resolve(
+            "kotlin.collections.MutableList.iterator"
+        ) sameAsKotlin """
+            // kotlin.collections.MutableList.iterator [page 1/1]
+            // inherited from kotlin.collections.MutableCollection
+            override operator fun iterator(): MutableIterator<E>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve inherited member of built-in type before its extensions of the same name`() {
+        resolver.resolve("kotlin.collections.MutableList.contains", pageSize = 10000) should {
+            have(lines()[1] == "// inherited from kotlin.collections.List")
+            have(lines()[2] == "override operator fun contains(element: E): Boolean")
+            have(lines().any { it.startsWith("// from ") })
+        }
+    }
+
+    @Test
     fun `should resolve member of built-in type inherited from its supertype of another type parameter`() {
         resolver.resolve(
             "kotlin.collections.MutableIterator.next"
@@ -7095,7 +7185,7 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // kotlin.String.hashCode [page 1/1]
             // inherited from kotlin.Any
-            open fun hashCode(): Int
+            fun hashCode(): Int
         """.trimIndent()
     }
 

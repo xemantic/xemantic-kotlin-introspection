@@ -64,3 +64,35 @@ interface InheritedSquareShape : InheritedShape {
 abstract class InheritedSquareBase : InheritedSquareShape
 
 abstract class InheritedSquare : InheritedShape, InheritedSquareBase()
+
+// Overloads of a superclass, one of them overridden by an intermediate class
+open class InheritedOverloadBase {
+    open fun greet(name: String): String = name
+    fun greet(name: String, times: Int): String = name.repeat(times)
+}
+
+open class InheritedOverloadMiddle : InheritedOverloadBase() {
+    override fun greet(name: String): String = name
+}
+
+class InheritedOverloadLeaf : InheritedOverloadMiddle()
+
+// Overloads declared by unrelated supertypes
+interface InheritedIntFoo {
+    fun foo(x: Int)
+}
+
+interface InheritedStringFoo {
+    fun foo(x: String)
+}
+
+abstract class InheritedBothFoo : InheritedIntFoo, InheritedStringFoo
+
+// A member inherited by a class whose extension of the same name is found as well
+open class InheritedWithExtensionBase {
+    fun extended(): Int = 0
+}
+
+class InheritedWithExtension : InheritedWithExtensionBase()
+
+fun InheritedWithExtension.extended(times: Int): Int = times
