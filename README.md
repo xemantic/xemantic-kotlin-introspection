@@ -137,7 +137,9 @@ com.example.AnnotationTestClass
   but not for the other classes when the bound is a `kotlin.*` or `java.*` type,
   so that, e.g., a class implementing `CharSequence` is not flooded with the generic extensions of the standard library,
   unless the class satisfies all the multiple bounds,
-  like of `R.contains(element: T?)` where `R : ClosedRange<T>, R : Iterable<T>`.
+  like of `R.contains(element: T?)` where `R : ClosedRange<T>, R : Iterable<T>`,
+  or the bound is `Comparable`, whose few extensions are listed for a class comparable to itself,
+  like `class Version : Comparable<Version>`, as told by the Kotlin metadata.
   They are not listed for a type declaring a more specific overload, which is called instead,
   a member, or an extension on the type itself, of the same name and number of parameters,
   like `fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T): T` for `Int`,

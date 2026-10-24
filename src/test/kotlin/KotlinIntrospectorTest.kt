@@ -1685,7 +1685,8 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve class with override modifier`() {
-        // compareTo from Comparable is an operator function
+        // compareTo from Comparable is an operator function,
+        // with the extensions on Comparable, as the class is comparable to itself
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.OverrideTestClass"
         ) sameAsKotlin """
@@ -1693,6 +1694,16 @@ class KotlinIntrospectorTest {
             class OverrideTestClass : Comparable<OverrideTestClass> {
                 override operator fun compareTo(other: OverrideTestClass): Int
             }
+            // from kotlin
+            inline infix fun <T> Comparable<T>.compareTo(other: T): Int
+            // from kotlin.ranges
+            fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T): T
+            fun <T : Comparable<T>> T.coerceAtMost(maximumValue: T): T
+            fun <T : Comparable<T>> T.coerceIn(minimumValue: T?, maximumValue: T?): T
+            fun <T : Comparable<T>> T.coerceIn(range: ClosedFloatingPointRange<T>): T
+            fun <T : Comparable<T>> T.coerceIn(range: ClosedRange<T>): T
+            operator fun <T : Comparable<T>> T.rangeTo(that: T): ClosedRange<T>
+            operator fun <T : Comparable<T>> T.rangeUntil(that: T): OpenEndRange<T>
         """.trimIndent()
     }
 
@@ -1895,8 +1906,10 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should mark override of value class member with value class parameter`() {
+        // with the extensions on Comparable, as the class is comparable to itself
         resolver.resolve(
-            "com.xemantic.kotlin.introspection.test.ValueComparable"
+            "com.xemantic.kotlin.introspection.test.ValueComparable",
+            pageSize = 100
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.ValueComparable [page 1/1]
             @JvmInline value class ValueComparable(val x: Int) : Comparable<ValueComparable> {
@@ -1905,6 +1918,16 @@ class KotlinIntrospectorTest {
                 override fun hashCode(): Int
                 override fun toString(): String
             }
+            // from kotlin
+            inline infix fun <T> Comparable<T>.compareTo(other: T): Int
+            // from kotlin.ranges
+            fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T): T
+            fun <T : Comparable<T>> T.coerceAtMost(maximumValue: T): T
+            fun <T : Comparable<T>> T.coerceIn(minimumValue: T?, maximumValue: T?): T
+            fun <T : Comparable<T>> T.coerceIn(range: ClosedFloatingPointRange<T>): T
+            fun <T : Comparable<T>> T.coerceIn(range: ClosedRange<T>): T
+            operator fun <T : Comparable<T>> T.rangeTo(that: T): ClosedRange<T>
+            operator fun <T : Comparable<T>> T.rangeUntil(that: T): OpenEndRange<T>
         """.trimIndent()
     }
 
@@ -4493,6 +4516,64 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.test.BoundedReceiverSuspendHandler.boundedByAAndSuspendFunction [page 1/1]
             // from com.xemantic.kotlin.introspection.test
             fun <T> T.boundedByAAndSuspendFunction() where T : BoundedReceiverA, T : suspend () -> Unit
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class comparable to itself with stdlib extensions on Comparable`() {
+        // unlike the other generic extensions of the standard library, few and widely used
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverVersion"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverVersion [page 1/1]
+            class BoundedReceiverVersion(val major: Int) : Comparable<BoundedReceiverVersion> {
+                override operator fun compareTo(other: BoundedReceiverVersion): Int
+            }
+            // from kotlin
+            inline infix fun <T> Comparable<T>.compareTo(other: T): Int
+            // from kotlin.ranges
+            fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T): T
+            fun <T : Comparable<T>> T.coerceAtMost(maximumValue: T): T
+            fun <T : Comparable<T>> T.coerceIn(minimumValue: T?, maximumValue: T?): T
+            fun <T : Comparable<T>> T.coerceIn(range: ClosedFloatingPointRange<T>): T
+            fun <T : Comparable<T>> T.coerceIn(range: ClosedRange<T>): T
+            operator fun <T : Comparable<T>> T.rangeTo(that: T): ClosedRange<T>
+            operator fun <T : Comparable<T>> T.rangeUntil(that: T): OpenEndRange<T>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve stdlib extension on Comparable as member of class comparable to itself`() {
+        // like in the listing of BoundedReceiverVersion
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverVersion.coerceAtLeast"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverVersion.coerceAtLeast [page 1/1]
+            // from kotlin.ranges
+            fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T): T
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class comparable to its supertype with stdlib extensions on Comparable`() {
+        // T is inferred as BoundedReceiverVersionBase
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverPatchVersion"
+        ) should {
+            have("fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T): T" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve class comparable to another type without stdlib extensions on Comparable`() {
+        // BoundedReceiverComparableToOther does not satisfy T : Comparable<T>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverComparableToOther"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverComparableToOther [page 1/1]
+            class BoundedReceiverComparableToOther : Comparable<BoundedReceiverVersion> {
+                override operator fun compareTo(other: BoundedReceiverVersion): Int
+            }
         """.trimIndent()
     }
 

@@ -104,6 +104,21 @@ class BoundedReceiverShadowing : BoundedReceiverD {
 
 fun BoundedReceiverShadowing.shadowedByExtension(value: BoundedReceiverShadowing): BoundedReceiverShadowing = value
 
+// the classes comparable to themselves, satisfying the bound T : Comparable<T>, or not
+class BoundedReceiverVersion(val major: Int) : Comparable<BoundedReceiverVersion> {
+    override fun compareTo(other: BoundedReceiverVersion): Int = major.compareTo(other.major)
+}
+
+open class BoundedReceiverVersionBase : Comparable<BoundedReceiverVersionBase> {
+    override fun compareTo(other: BoundedReceiverVersionBase): Int = 0
+}
+
+class BoundedReceiverPatchVersion : BoundedReceiverVersionBase()
+
+class BoundedReceiverComparableToOther : Comparable<BoundedReceiverVersion> {
+    override fun compareTo(other: BoundedReceiverVersion): Int = 0
+}
+
 // the bounds of the standard library satisfied by a class
 class BoundedReceiverRange(override val start: Int, override val endInclusive: Int) : ClosedRange<Int>, Iterable<Int> {
     override fun iterator(): Iterator<Int> = (start..endInclusive).iterator()

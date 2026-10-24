@@ -1715,10 +1715,40 @@ internal class DefaultKotlinIntrospector(
             supertypeNames(kmClass, kmClassOf = { builtinClasses[it] ?: loadKmClass(it) })
 
     /**
-     * The receiver names of the extensions listed for a class, the class and its [userSupertypes].
+     * The receiver names of the extensions listed for a class, the class and its [userSupertypes],
+     * and `kotlin.Comparable`, if the class is comparable to itself, see [isComparableToItself].
      */
-    private fun extensionReceiverNames(kmClass: KmClass, className: String): List<String> =
-        ownExtensionReceiverNames(className) + userSupertypes(kmClass)
+    private fun extensionReceiverNames(kmClass: KmClass, className: String): List<String> {
+        val userSupertypes = userSupertypes(kmClass)
+        val comparable = COMPARABLE_CLASS_NAME.takeIf { isComparableToItself(kmClass, className, userSupertypes) }
+        return ownExtensionReceiverNames(className) + userSupertypes + listOfNotNull(comparable)
+    }
+
+    /**
+     * Whether the [kmClass], named [className], is comparable to itself, or to one of its [userSupertypes],
+     * like `class Version : Comparable<Version>`, satisfying the bound `T : Comparable<T>`
+     * of the extensions of the standard library on `Comparable`, like `coerceAtLeast`,
+     * which are few and widely used, unlike the generic extensions on the other types of the standard library,
+     * see [userSupertypes].
+     * Told by the Kotlin metadata of the class and of its supertypes, not through a Java supertype.
+     */
+    private fun isComparableToItself(kmClass: KmClass, className: String, userSupertypes: Set<String>): Boolean {
+        val comparableTo = userSupertypes + className
+        val visited = mutableSetOf<String>()
+        val pending = ArrayDeque(listOf(kmClass))
+        while (pending.isNotEmpty()) {
+            for (supertype in pending.removeFirst().supertypes) {
+                val name = (supertype.classifier as? KmClassifier.Class)?.name ?: continue
+                if (name == kotlinClassName(COMPARABLE_CLASS_NAME)) {
+                    val argument = supertype.arguments.singleOrNull()?.type?.classifier as? KmClassifier.Class
+                    if (argument != null && argument.name.replace('/', '.') in comparableTo) return true
+                } else if (!name.startsWith("kotlin/") && !name.startsWith("java/") && visited.add(name)) {
+                    loadKmClass(name)?.let { pending += it }
+                }
+            }
+        }
+        return false
+    }
 
     /**
      * The receiver names of the extensions on the class itself, the [className],
@@ -4211,6 +4241,8 @@ private const val TYPE_PARAMETER_RECEIVER_KEY = "[type parameter]"
 private fun packageSourceOf(binaryName: String): String = binaryName.substringBeforeLast('.')
 
 private const val ANY_RECEIVER_KEY = "kotlin.Any"
+
+private const val COMPARABLE_CLASS_NAME = "kotlin.Comparable"
 
 /**
  * The Kotlin name of the function type class compiled to the JVM interface named [className],
