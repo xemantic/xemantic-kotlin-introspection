@@ -6785,6 +6785,31 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should not list named companion object and nested class deprecated with hidden level`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenNamedCompanionHolder"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenNamedCompanionHolder [page 1/1]
+            class HiddenNamedCompanionHolder {
+                fun f()
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve named companion object deprecated with hidden level`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenNamedCompanionHolder.Factory") == null)
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenNamedCompanionHolder.Factory.create") == null)
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenNamedCompanionHolder.create") == null)
+    }
+
+    @Test
+    fun `should not resolve nested class deprecated with hidden level`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenNamedCompanionHolder.HiddenNested") == null)
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenNamedCompanionHolder.HiddenNested.g") == null)
+    }
+
+    @Test
     fun `should not render deprecation of enum class constructor`() {
         // it is always private, called only by the entries
         resolver.resolve(

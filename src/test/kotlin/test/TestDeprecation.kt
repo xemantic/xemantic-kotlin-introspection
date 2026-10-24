@@ -97,6 +97,19 @@ class HiddenCompanionHolder {
     }
 }
 
+// the same for a named companion object, and a nested class, in a class which is not hidden itself
+class HiddenNamedCompanionHolder {
+    fun f() {}
+    @Deprecated("Replaced", level = DeprecationLevel.HIDDEN)
+    class HiddenNested {
+        fun g() {}
+    }
+    @Deprecated("Replaced", level = DeprecationLevel.HIDDEN)
+    companion object Factory {
+        fun create(): HiddenNamedCompanionHolder = HiddenNamedCompanionHolder()
+    }
+}
+
 // a deprecated companion object, declared with each of its members found by a member lookup on the outer class
 class DeprecatedCompanionHolder {
     @Deprecated("Use the constructor")
