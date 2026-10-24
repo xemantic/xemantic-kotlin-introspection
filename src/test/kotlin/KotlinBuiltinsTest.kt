@@ -19,6 +19,7 @@
 package com.xemantic.kotlin.introspection
 
 import com.xemantic.kotlin.test.assert
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.io.TempDir
 import java.net.JarURLConnection
 import java.net.URI
@@ -98,6 +99,44 @@ class KotlinBuiltinsTest {
 
         // then
         assert(found == resources.sorted())
+    }
+
+    @Test
+    fun `should find kotlin_builtins resources of standard library in a module of a runtime image`() {
+        // given
+        // the runtime image linked with the standard library of the tests, as its own module
+        val stdlib = Path.of(KotlinVersion::class.java.protectionDomain.codeSource.location.toURI())
+        val image = tempDir.resolve("image")
+        // skipped rather than failed when the JDK of the tests cannot link, like a JRE, or one without jmods
+        val jlink = java.util.spi.ToolProvider.findFirst("jlink").orElse(null)
+        assumeTrue(jlink != null, "jlink is not available")
+        val output = java.io.StringWriter()
+        val exitCode = java.io.PrintWriter(output).use { writer ->
+            jlink.run(
+                writer,
+                writer,
+                "--module-path", stdlib.toString(),
+                "--add-modules", "kotlin.stdlib",
+                "--no-header-files", "--no-man-pages", "--strip-debug",
+                "--output", image.toString()
+            )
+        }
+        assumeTrue(exitCode == 0) { "jlink cannot link the standard library: $output" }
+        // the jrt file system of that image, rather than the one of the running JVM
+        val found = java.nio.file.FileSystems.newFileSystem(
+            URI("jrt:/"),
+            mapOf("java.home" to image.toString())
+        ).use { jrt ->
+            val anchor = jrt.getPath("/modules/kotlin.stdlib/kotlin/kotlin.kotlin_builtins")
+
+            // when
+            pathBuiltinsResources(anchor)
+        }
+
+        // then
+        // the resources relative to the root of the module, like the ones listed in the jar of the standard library
+        assert("kotlin/Unit.class" in found)
+        assert(found.filter { it.endsWith(".kotlin_builtins") }.sorted() == kotlinBuiltinsResources())
     }
 
     @Test

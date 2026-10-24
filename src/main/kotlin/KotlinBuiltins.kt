@@ -112,7 +112,11 @@ internal fun kotlinBuiltinsResources(
     }
     var failure: Exception? = null
     val resources = try {
-        val resources = if (anchor.protocol == "jar") jarBuiltinsResources(anchor) else pathBuiltinsResources(anchor)
+        val resources = if (anchor.protocol == "jar") {
+            jarBuiltinsResources(anchor)
+        } else {
+            pathBuiltinsResources(Path.of(anchor.toURI()))
+        }
         resources.filter { it.startsWith("kotlin/") && it.endsWith(BUILTINS_EXTENSION) }.sorted()
     } catch (e: Exception) {
         failure = e
@@ -165,11 +169,11 @@ internal fun URL.toFile(): File? {
 }
 
 /**
- * Lists the resources of a directory, or of a module of the runtime image (the `jrt` file system).
+ * Lists the resources of a directory, or of a module of the runtime image (the `jrt` file system),
+ * containing the [anchor], relative to its root, see [kotlinBuiltinsResources].
  */
-private fun pathBuiltinsResources(anchor: URL): List<String> {
-    val path = Path.of(anchor.toURI())
-    val kotlinPackage = path.parent
+internal fun pathBuiltinsResources(anchor: Path): List<String> {
+    val kotlinPackage = anchor.parent
     val root = kotlinPackage.parent
     return Files.walk(kotlinPackage).use { paths ->
         paths.asSequence()

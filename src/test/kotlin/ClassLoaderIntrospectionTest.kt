@@ -769,6 +769,28 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should load nested class again after ClassCircularityError`() {
+        // given
+        val nested = "com.xemantic.kotlin.introspection.test.TypeParametersNestedHolder\$Sorted"
+        // which might be spurious, when the classes are loaded in parallel
+        val classLoader = CountingClassLoader(
+            javaClass.classLoader,
+            failingOnce = setOf(nested),
+            failure = { ClassCircularityError(it) }
+        )
+        val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
+
+        // when
+        val signatures = List(2) {
+            introspector.resolve("com.xemantic.kotlin.introspection.test.TypeParametersNestedHolder")
+        }
+
+        // then
+        assert(signatures.all { it != null && "class Sorted<T>" in it })
+        assert(classLoader.loads[nested] == 2)
+    }
+
+    @Test
     fun `should look up nested class again after ClassNotFoundException when its class file is there`() {
         // given
         val nested = "com.xemantic.kotlin.introspection.test.TypeParametersNestedHolder\$Sorted"
@@ -962,6 +984,125 @@ class ClassLoaderIntrospectionTest {
         // then
         assert(signatures.all { it != null })
         assert(classLoader.loads[javaSuperclass] == 2)
+    }
+
+    @Test
+    fun `should deem failure of class lookup final also when the class is resolved by name meanwhile`() {
+        // given
+        val javaSuperclass = "com.xemantic.kotlin.introspection.test.other.JavaProcessorBase"
+        // like a class loader serving the class file of a class it refuses to define
+        val classLoader = CountingClassLoader(
+            javaClass.classLoader,
+            failure = { ClassNotFoundException(it) }
+        )
+        classLoader.failing += javaSuperclass
+        val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
+
+        // when
+        val signatures = List(3) {
+            introspector.resolve("com.xemantic.kotlin.introspection.test.JavaProcessor").also {
+                // a name given to resolve, whose miss is neither probed, nor cached, as it comes from the user input
+                introspector.resolve(javaSuperclass)
+            }
+        }
+
+        // then
+        assert(signatures.all { it != null })
+        // retried by the first two resolves, and by the first resolve by name, until deemed final, and cached,
+        // also for the resolves by name, rather than retried for good, as each miss by name reset the failure
+        assert(classLoader.loads[javaSuperclass] == 3)
+    }
+
+    /**
+     * A class loader blocking the first request of the class [blocked] until [release]d,
+     * and then failing it with a `ClassNotFoundException`, like a transient failure,
+     * while its class file is still served, unless [isFirstRequestLoaded],
+     * when it is loaded instead, while every other request fails meanwhile, without the class file served.
+     */
+    private class BlockingClassLoader(
+        parent: ClassLoader,
+        private val blocked: String,
+        private val isFirstRequestLoaded: Boolean = false
+    ) : ClassLoader(parent) {
+        val entered = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        private val requests = java.util.concurrent.atomic.AtomicInteger()
+        private val blockedResource = blocked.replace('.', '/') + ".class"
+        private val isHidden get() = isFirstRequestLoaded && release.count > 0
+        override fun loadClass(name: String, resolve: Boolean): Class<*> {
+            if (name == blocked) {
+                if (requests.incrementAndGet() == 1) {
+                    entered.countDown()
+                    awaitOrFail(release)
+                    if (!isFirstRequestLoaded) throw ClassNotFoundException(name)
+                } else if (isHidden) {
+                    throw ClassNotFoundException(name)
+                }
+            }
+            return super.loadClass(name, resolve)
+        }
+        override fun getResource(name: String): java.net.URL? =
+            if (name == blockedResource && isHidden) null else super.getResource(name)
+        override fun getResourceAsStream(name: String): InputStream? =
+            if (name == blockedResource && isHidden) null else super.getResourceAsStream(name)
+    }
+
+    @Test
+    fun `should keep class found by name over miss cached by concurrent lookup meanwhile`() {
+        // given
+        val outer = "com.xemantic.kotlin.introspection.test.TypeParametersNestedHolder"
+        // the outer class found by name, after the lookup of the nested class has cached the outer class as missing
+        val classLoader = BlockingClassLoader(javaClass.classLoader, blocked = outer, isFirstRequestLoaded = true)
+        val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
+        var byNameSignature: String? = null
+        val byName = testThread { byNameSignature = introspector.resolve(outer) }
+        awaitOrFail(classLoader.entered)
+        // on its own thread, as it would wait for the lookup by name, if it shared its cache entry
+        val lookup = testThread { introspector.resolve("$outer.Sorted") }
+        try {
+            joinOrFail(lookup)
+        } finally {
+            classLoader.release.countDown()
+        }
+
+        // when
+        joinOrFail(byName)
+        val signature = introspector.resolve(outer)
+
+        // then
+        assert(byNameSignature != null && "class TypeParametersNestedHolder" in byNameSignature!!)
+        assert(signature != null && "class TypeParametersNestedHolder" in signature)
+    }
+
+    @Test
+    fun `should not share miss of class resolved by name with concurrent lookup of the same class`() {
+        // given
+        val outer = "com.xemantic.kotlin.introspection.test.TypeParametersNestedHolder"
+        val classLoader = BlockingClassLoader(javaClass.classLoader, blocked = outer)
+        val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
+        // the outer class resolved by name, whose miss is not probed, failing after the lookup of the nested class waits
+        val byName = testThread { introspector.resolve(outer) }
+        awaitOrFail(classLoader.entered)
+        var nested: String? = null
+        val lookup = testThread { nested = introspector.resolve("$outer.Sorted") }
+
+        // when
+        try {
+            // until the lookup of the nested class waits for the lookup of its outer class, if it does,
+            // bounded, as it might wait for something else instead
+            pollUntil {
+                !lookup.isAlive || (
+                    lookup.state == Thread.State.BLOCKED && lookup.stackTrace.any { "Lazy" in it.className }
+                    )
+            }
+        } finally {
+            classLoader.release.countDown()
+        }
+        joinOrFail(byName, lookup)
+
+        // then
+        // the outer class is looked up on its own, and found, rather than assumed missing after a miss not probed
+        assert(nested != null && "class Sorted<T>" in nested!!)
     }
 
     @Test

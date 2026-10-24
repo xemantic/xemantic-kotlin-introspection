@@ -30,8 +30,15 @@ import java.util.concurrent.atomic.AtomicLong
  * A failing attempt, see [attempt], is retried at most once per [operation], like a resolve,
  * so that a resolve looking a failing class up for every member checked does not retry it every time,
  * and its failure is deemed final after [maxAttempts] failing attempts, so that it is cached after all.
+ * An operation started before the last failing attempt, like a resolve overlapping it on another thread,
+ * is within the same outage, so it neither retries, nor counts as another failing attempt,
+ * so that concurrent resolves do not deem a failure final after one outage.
+ * An attempt outside an operation is an operation of its own, so it always retries.
  *
- * @param capacity the number of the failing attempts remembered, the least recently used ones.
+ * @param capacity the number of the failing attempts remembered, the least recently used ones, each with its outcome,
+ *   like a class found only from its class file, kept until the key is attempted successfully, deemed final, or forgotten,
+ *   so that with more failing keys a failure is forgotten, with its outcome, and its count, before it is deemed final,
+ *   and then retried by each operation, like for an unbounded number of failing classes, which is not to be cached anyway.
  */
 internal class TransientFailures(private val maxAttempts: Int = 2, private val capacity: Int = 1024) {
 
@@ -44,12 +51,18 @@ internal class TransientFailures(private val maxAttempts: Int = 2, private val c
      */
     class Outcome<T>(val value: T, val isFinal: Boolean)
 
-    private class Failure(val value: Any?, val attempts: Int, val operation: Long)
+    /**
+     * @param since the last operation started when the failure happened, see [operationIds],
+     *   so that the operations up to it are within the same outage.
+     */
+    private class Failure(val value: Any?, val attempts: Int, val since: Long)
 
     private val counts = ThreadLocal.withInitial { longArrayOf(0) }
 
-    private val operations = ThreadLocal.withInitial { longArrayOf(0) }
+    // the operation in progress on the current thread, if any, see NO_OPERATION
+    private val operations = ThreadLocal.withInitial { longArrayOf(NO_OPERATION) }
 
+    // the ids of the operations, increasing in the order they start
     private val operationIds = AtomicLong()
 
     private val failures = object : LinkedHashMap<String, Failure>(16, 0.75f, true) {
@@ -83,15 +96,16 @@ internal class TransientFailures(private val maxAttempts: Int = 2, private val c
     }
 
     /**
-     * The outcome of the [attempt] of the [key], or the transient one of the failing attempt of the same operation.
+     * The outcome of the [attempt] of the [key], or the transient one of the failing attempt of the same outage,
+     * see [TransientFailures].
      * A transient outcome is final after [maxAttempts] failing attempts.
      * Neither marks a transient failure, which is up to the receiver of the outcome, see [mark].
      */
     fun <T> attempt(key: String, attempt: () -> Outcome<T>): Outcome<T> {
-        val operation = operations.get()[0]
+        val operation = operations.get()[0].takeIf { it != NO_OPERATION } ?: operationIds.incrementAndGet()
         synchronized(failures) { failures[key] }?.let { failure ->
             @Suppress("UNCHECKED_CAST")
-            if (failure.operation == operation) return Outcome(failure.value as T, isFinal = false)
+            if (operation <= failure.since) return Outcome(failure.value as T, isFinal = false)
         }
         val outcome = attempt()
         synchronized(failures) {
@@ -99,14 +113,25 @@ internal class TransientFailures(private val maxAttempts: Int = 2, private val c
                 failures.remove(key)
                 return outcome
             }
-            val attempts = (failures[key]?.attempts ?: 0) + 1
+            val previous = failures[key]
+            // like an attempt of an overlapping operation, failing at the same time, which neither counts,
+            // nor extends the outage to the operations started meanwhile, so that their attempts still count
+            if (previous != null && operation <= previous.since) return outcome
+            val attempts = (previous?.attempts ?: 0) + 1
             if (attempts >= maxAttempts) {
                 failures.remove(key)
                 return Outcome(outcome.value, isFinal = true)
             }
-            failures[key] = Failure(outcome.value, attempts, operation)
+            failures[key] = Failure(outcome.value, attempts, since = operationIds.get())
         }
         return outcome
+    }
+
+    private companion object {
+
+        // the operation of a thread outside any operation, never started, see operationIds
+        const val NO_OPERATION = 0L
+
     }
 
 }
