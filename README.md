@@ -158,6 +158,10 @@ com.example.AnnotationTestClass
   An override of a `var` is the exception, as a `val` cannot override a `var`:
   it stays a `var`, with its setter rendered with its actual visibility,
   like `protected set` in a final class, even though the setter cannot be called there.
+  Conversely, a `var` whose getter only is hidden, like with `@get:Deprecated(level = HIDDEN)`,
+  can still be assigned, but not read,
+  so it is rendered with that annotation, like `@get:Deprecated("Replaced", level = DeprecationLevel.HIDDEN) var a: Int`,
+  unless its setter cannot be called either.
 * The same rule applies to the classes, which are neither listed, nor resolved, nor found,
   together with everything declared within them,
   also when they cannot be used for another reason, like the synthetic ones,
@@ -179,6 +183,11 @@ com.example.AnnotationTestClass
   The level is the one in effect for the standard library of the class loader,
   also when told by `@DeprecatedSinceKotlin`, as for the declarations of the standard library,
   and it is rendered unless it is the default `WARNING`.
+  The user code is assumed to be compiled with the API version of that standard library:
+  a lower `-api-version`, which the class loader does not tell,
+  might still allow a declaration which is rendered with a higher level, or not rendered at all as hidden.
+  When this library is shaded with a relocated `kotlin` package,
+  the version of the standard library bundled with it is assumed instead.
   To keep the signature compact,
   only the first line of the message is rendered, followed by `…` if there are more,
   and only the expression of `ReplaceWith`, without its imports.

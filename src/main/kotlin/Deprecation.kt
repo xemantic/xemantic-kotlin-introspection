@@ -25,17 +25,26 @@ package com.xemantic.kotlin.introspection
  * @property message the message of the `@Deprecated` annotation.
  * @property replaceWith the expression of its `ReplaceWith`, if any, without the imports.
  * @property level the level in effect, see [deprecationOf].
+ * @property isGetterOnly whether only the getter of a `var` is deprecated, like with `@get:Deprecated`,
+ *   while its setter is not hidden, set only for a hidden getter, see [getterOnly].
  */
 internal class Deprecation(
     val message: String,
     val replaceWith: String?,
-    val level: DeprecationLevel
+    val level: DeprecationLevel,
+    val isGetterOnly: Boolean = false
 ) {
 
     /**
-     * Whether the declaration cannot be used in the source code at all, and therefore is not rendered.
+     * Whether the declaration cannot be used in the source code at all, and therefore is not rendered,
+     * except a `var` whose getter only is hidden, which can still be assigned, see [isGetterOnly].
      */
     val isHidden: Boolean get() = level == DeprecationLevel.HIDDEN
+
+    /**
+     * This deprecation, of the getter, as the one of a `var` which can still be assigned, see [isGetterOnly].
+     */
+    fun getterOnly(): Deprecation = Deprecation(message, replaceWith, level, isGetterOnly = true)
 
 }
 

@@ -84,13 +84,11 @@ internal data class IndexedExtensionProperty(
     val sourceClass: String,  // fully qualified class name where it's defined
     val source: String,  // the package, or the object, to import it from
     val isObjectMember: Boolean,  // whether the source is an object
-    val isAssignable: Boolean,  // whether its setter can be called, see apiSetterVisibility
-    val deprecation: Deprecation? = null,  // never a hidden one, as the hidden extensions are not indexed
+    val setterVisibility: Visibility?,  // when its setter can be called, see apiSetterVisibility
+    // never a hidden one, as the hidden extensions are not indexed, except a hidden getter, see Deprecation.isGetterOnly
+    val deprecation: Deprecation? = null,
     override val receiverBounds: Set<String> = emptySet()
-) : ReceiverBounded {
-    // the setter of an extension is public, as only the public extensions are indexed
-    val setterVisibility: Visibility? get() = if (isAssignable) Visibility.PUBLIC else null
-}
+) : ReceiverBounded
 
 /**
  * A Kotlin class found on the classpath, by its metadata name, like `com/example/Outer.Nested`,
@@ -151,7 +149,14 @@ private fun Deprecations.isHidden(function: KmFunction): Boolean = deprecation(f
 
 private fun Deprecations.isHidden(constructor: KmConstructor): Boolean = deprecation(constructor)?.isHidden == true
 
-private fun Deprecations.isHidden(property: KmProperty): Boolean = deprecation(property)?.isHidden == true
+/**
+ * Whether the [property] is hidden in the [scope], unless only its getter is, while its setter is part of the API,
+ * so that it can still be assigned, see [Deprecation.isGetterOnly].
+ */
+private fun Deprecations.isHidden(property: KmProperty, scope: DeclarationScope): Boolean {
+    val deprecation = deprecation(property) ?: return false
+    return deprecation.isHidden && !(deprecation.isGetterOnly && property.apiSetterVisibility(scope, this) != null)
+}
 
 /**
  * The functions which are part of the API in the [scope], see [DeclarationScope.isApi], unless hidden,
@@ -166,7 +171,7 @@ private fun List<KmFunction>.inApi(scope: DeclarationScope, deprecations: Deprec
  */
 @JvmName("apiProperties")
 private fun List<KmProperty>.inApi(scope: DeclarationScope, deprecations: Deprecations?): List<KmProperty> =
-    filter { scope.isApi(it.visibility) && deprecations?.isHidden(it) != true }
+    filter { scope.isApi(it.visibility) && deprecations?.isHidden(it, scope) != true }
 
 /**
  * The visibility of the setter of this property, when it is a `var` whose setter is part of the API,
@@ -563,13 +568,9 @@ internal class DefaultKotlinIntrospector(
 
         override fun deprecation(property: KmProperty): Deprecation? {
             val classFile = classFile ?: return null
-            val deprecation = classFile.deprecation(property)
             // the synthetic method for the annotations of an interface property is rather in its DefaultImpls
-            val annotationsMethod = property.syntheticMethodForAnnotations ?: return deprecation
-            val kind = kmClass?.kind
-            return if (
-                (kind == ClassKind.INTERFACE || kind == ClassKind.ANNOTATION_CLASS) && !classFile.declares(annotationsMethod)
-            ) highestOf(deprecation, defaultImplsFile?.deprecation(property)) else deprecation
+            val annotationsFile = if (classFile.hasAnnotationsInDefaultImpls(property)) defaultImplsFile else classFile
+            return classFile.deprecation(property, annotationsDeprecation = annotationsFile?.annotationsDeprecation(property))
         }
 
         override fun isSetterHidden(property: KmProperty): Boolean = classFile?.isSetterHidden(property) == true
@@ -1966,17 +1967,19 @@ internal class DefaultKotlinIntrospector(
      * A hidden deprecation, of a declaration which is not listed, but might still be resolved, like a class, is not rendered,
      * except [withHidden], the only place being the property declared by a primary constructor parameter
      * of a data class, or a value class, which must declare a property, like
-     * `data class Foo(@Deprecated("Replaced", level = DeprecationLevel.HIDDEN) val a: Int)`, telling it cannot be used.
+     * `data class Foo(@Deprecated("Replaced", level = DeprecationLevel.HIDDEN) val a: Int)`, telling it cannot be used,
+     * and the hidden getter of a `var` which can still be assigned, rendered as `@get:Deprecated`, see [Deprecation.isGetterOnly].
      * Only the first non-blank line of a multiline message is rendered, followed by `…`, to keep it compact,
      * and the expression of `ReplaceWith` without its imports.
      */
     private fun formatDeprecation(
         deprecation: Deprecation?,
         withHidden: Boolean = false
-    ): String = if (deprecation == null || (deprecation.isHidden && !withHidden)) "" else buildString {
+    ): String = if (deprecation == null || (deprecation.isHidden && !withHidden && !deprecation.isGetterOnly)) "" else buildString {
         val message = deprecation.message.trim()
         val firstLine = message.lineSequence().first().trimEnd()
-        +"@Deprecated(\""
+        // telling that a var whose getter is hidden can only be assigned
+        +(if (deprecation.isGetterOnly) "@get:Deprecated(\"" else "@Deprecated(\"")
         +firstLine.escapeKotlin('"')
         if (firstLine.length < message.length) +" …"
         +"\""
@@ -2979,7 +2982,7 @@ internal class DefaultKotlinIntrospector(
         .map {
             IndexedExtensionProperty(
                 it, className, source, isObjectMember,
-                isAssignable = it.apiSetterVisibility(TopLevel, classFile) != null,
+                setterVisibility = it.apiSetterVisibility(TopLevel, classFile),
                 deprecation = classFile.deprecation(it)
             )
         }
@@ -3143,6 +3146,7 @@ internal class DefaultKotlinIntrospector(
             metadata = metadata,
             isSynthetic = reader.access and Opcodes.ACC_SYNTHETIC != 0,
             isFinal = reader.access and Opcodes.ACC_FINAL != 0,
+            isInterface = isInterface,
             classDeprecation = classAnnotations?.deprecationOf(::isSince),
             nesting = memberClasses?.let { members ->
                 Nesting(memberClasses = members, nestMembers = nestMembers.orEmpty())
@@ -3177,14 +3181,16 @@ internal class DefaultKotlinIntrospector(
      *   read only by the classpath scan, see [NestedClassFiles].
      * @property deprecatedMethods the deprecations of the methods, by their JVM signatures,
      *   like `max(Ljava/lang/CharSequence;)Ljava/lang/Character;`, see [deprecationVisitor].
+     * @property isInterface whether the JVM class is an interface, like the one of a Kotlin interface, or an annotation class.
      * @property annotationsMethods the JVM signatures of the synthetic methods for the annotations of the properties,
-     *   like `getName${'$'}annotations()V`, only of an interface, or an annotation class, being one on the JVM,
-     *   as only for them these methods might be in the `DefaultImpls` class instead, see [FoundClass.deprecation].
+     *   like `getName${'$'}annotations()V`, only of an interface, as only for it these methods might be in
+     *   the `DefaultImpls` class instead, see [hasAnnotationsInDefaultImpls].
      */
     private class ClassFile(
         val metadata: Metadata?,
         val isSynthetic: Boolean,
         val isFinal: Boolean = false,
+        val isInterface: Boolean = false,
         val classDeprecation: Deprecation? = null,
         val nesting: Nesting? = null,
         val deprecatedMethods: Map<String, Deprecation> = emptyMap(),
@@ -3201,7 +3207,8 @@ internal class DefaultKotlinIntrospector(
          * kept only for the binary compatibility, which the metadata does not tell.
          * The annotation is found on the JVM method of a function or a constructor,
          * and on the synthetic method for the annotations of a property, or its getter, if annotated itself,
-         * while only the setter is deprecated when annotated itself, which tells only whether it is hidden.
+         * while only the setter is deprecated when annotated itself, which tells only whether it is hidden,
+         * and the hidden getter of a `var` whose setter can still be called hides only the reading, see [Deprecation.isGetterOnly].
          * The ACC_SYNTHETIC flag, which the compiler also sets on the hidden methods, is not relied on,
          * as @JvmSynthetic sets it on the declarations which are still callable from Kotlin,
          * while the field of a hidden @JvmField or const property does not have it.
@@ -3212,15 +3219,32 @@ internal class DefaultKotlinIntrospector(
         override fun deprecation(constructor: KmConstructor): Deprecation? = deprecation(constructor.signature)
 
         override fun deprecation(property: KmProperty): Deprecation? =
-            highestOf(deprecation(property.syntheticMethodForAnnotations), deprecation(property.getterSignature))
+            deprecation(property, annotationsDeprecation(property))
+
+        /**
+         * The deprecation of the [property], whose own one, of the synthetic method for its annotations,
+         * is the [annotationsDeprecation], combined with the one of its getter, see [highestOf],
+         * except a hidden getter of a `var` whose setter is not hidden, telling the property can still be assigned.
+         */
+        fun deprecation(property: KmProperty, annotationsDeprecation: Deprecation?): Deprecation? {
+            val getterDeprecation = deprecation(property.getterSignature)
+            val isGetterOnlyHidden = getterDeprecation?.isHidden == true && annotationsDeprecation?.isHidden != true &&
+                property.isVar && !isSetterHidden(property)
+            return if (isGetterOnlyHidden) getterDeprecation.getterOnly() else highestOf(annotationsDeprecation, getterDeprecation)
+        }
+
+        fun annotationsDeprecation(property: KmProperty): Deprecation? = deprecation(property.syntheticMethodForAnnotations)
 
         override fun isSetterHidden(property: KmProperty): Boolean = deprecation(property.setterSignature)?.isHidden == true
 
         /**
-         * Whether the interface, or the annotation class, declares the synthetic method for the annotations
-         * of a property, by its [signature].
+         * Whether the synthetic method for the annotations of the [property] is rather in the `DefaultImpls` class,
+         * as it is for an interface, or an annotation class, which does not declare it itself.
          */
-        fun declares(signature: JvmMethodSignature): Boolean = signature.toString() in annotationsMethods
+        fun hasAnnotationsInDefaultImpls(property: KmProperty): Boolean {
+            val annotationsMethod = property.syntheticMethodForAnnotations ?: return false
+            return isInterface && annotationsMethod.toString() !in annotationsMethods
+        }
 
         // most classes have no deprecated methods, so that no signature is rendered to a string for them
         private fun deprecation(signature: JvmMethodSignature?): Deprecation? =

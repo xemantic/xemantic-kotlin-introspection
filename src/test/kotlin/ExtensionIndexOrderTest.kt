@@ -40,7 +40,7 @@ class ExtensionIndexOrderTest {
         sourceClass = sourceClass,
         source = sourceClass.substringBeforeLast('.'),
         isObjectMember = false,
-        isAssignable = false
+        setterVisibility = null
     )
 
     @Test
