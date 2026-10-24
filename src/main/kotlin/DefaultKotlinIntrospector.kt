@@ -339,7 +339,7 @@ internal class DefaultKotlinIntrospector(
          * Marks a parameter declaring a default value, which is not present in the metadata,
          * telling that the argument can be omitted.
          */
-        internal const val DEFAULT_VALUE_MARKER = "…"
+        private const val DEFAULT_VALUE_MARKER = "…"
 
         /**
          * Follows the name of a class without any constructor callable from the user code,
@@ -674,13 +674,29 @@ internal class DefaultKotlinIntrospector(
                 }
         }
 
-        /**
-         * The functions of the JVM class only, not declared in the [kmClass], like `String.chars()`,
-         * sorted by their signatures, as kotlin-reflect does not guarantee their order.
-         */
-        val jvmOnlyFunctions: List<ReflectedFunction> by lazy {
+        // the functions of the JVM class only, not declared in the kmClass, sorted by their signatures,
+        // as kotlin-reflect does not guarantee their order
+        private val reflectedJvmOnlyFunctions: List<ReflectedFunction> by lazy {
             val declared = kmClass.functions.mapTo(HashSet()) { signatureOf(it) }
             reflectedFunctions.filterKeys { it !in declared }.toSortedMap().values.toList()
+        }
+
+        /**
+         * The functions of the JVM class only, not declared in the [kmClass], like `String.chars()`,
+         * also the Java-only ones, whose parameter names are not known, see [hasSyntheticParameterNames],
+         * which are not members of the built-in type, see [jvmOnlyFunctions],
+         * but still shadow the extensions of the same signature, see [bodyExtensionsOf].
+         */
+        val allJvmOnlyFunctions: List<KmFunction> by lazy { reflectedJvmOnlyFunctions.map { it.kmFunction } }
+
+        /**
+         * The functions of the JVM class only which are members of the built-in type, like `String.chars()`:
+         * the ones whose parameter names are known, see [hasSyntheticParameterNames],
+         * both listed and resolved, so that a lookup never returns a member which the listing leaves out,
+         * like `String.indent(arg0: Int)`, telling nothing about its parameter.
+         */
+        val jvmOnlyFunctions: List<KmFunction> by lazy {
+            reflectedJvmOnlyFunctions.filter { !hasSyntheticParameterNames(it.kFunction) }.map { it.kmFunction }
         }
 
         /**
@@ -985,7 +1001,7 @@ internal class DefaultKotlinIntrospector(
      * A member of a class which only the subclasses of an enclosing class can use, like a protected companion object,
      * follows the context telling it, see [protectedContext].
      * The JVM-only members of a built-in type, like `String.chars()`, follow its functions, see [BuiltinClass],
-     * also the ones whose parameter names are not known, which its listing leaves out, see [hasSyntheticParameterNames].
+     * but the ones whose parameter names are not known, which its listing leaves out too, see [BuiltinClass.jvmOnlyFunctions].
      *
      * @param apiClass the [kmClass] as a class of the API.
      * @param isBuiltin whether the class is a built-in type, or its companion object, see [listedExtensions].
@@ -1008,7 +1024,7 @@ internal class DefaultKotlinIntrospector(
         val properties = kmClass.properties.filter { it.name == memberName } +
             builtinClass?.jvmOnlyProperties.orEmpty().filter { it.name == memberName }
         val functions = kmClass.functions.filter { it.name == memberName } +
-            builtinClass?.jvmOnlyFunctions.orEmpty().map { it.kmFunction }.filter { it.name == memberName }
+            builtinClass?.jvmOnlyFunctions.orEmpty().filter { it.name == memberName }
 
         val members = properties.inApi(apiClass, declarations).map { property ->
             formatProperty(
@@ -1725,7 +1741,7 @@ internal class DefaultKotlinIntrospector(
         listedExtensions: ListedExtensions
     ): ListedExtensions {
         val builtinClass = declarations as? BuiltinClass
-        val memberFunctionSignatures = (kmClass.functions + builtinClass?.jvmOnlyFunctions.orEmpty().map { it.kmFunction })
+        val memberFunctionSignatures = (kmClass.functions + builtinClass?.allJvmOnlyFunctions.orEmpty())
             .mapTo(HashSet()) { overloadSignature(it, typeParameters) }
         val memberPropertyNames = (kmClass.properties + builtinClass?.jvmOnlyProperties.orEmpty()).mapTo(HashSet()) { it.name }
         val signatures = listedExtensions.functions.filter { !it.isObjectMember }.associateWith { extension ->
@@ -1745,7 +1761,7 @@ internal class DefaultKotlinIntrospector(
 
     /**
      * The declarations a built-in type lists in its body, besides its own properties and functions, each with its name:
-     * its JVM-only members, see [BuiltinClass], whose parameter names are known, see [hasSyntheticParameterNames],
+     * its JVM-only members, see [BuiltinClass], whose parameter names are known, see [BuiltinClass.jvmOnlyFunctions],
      * and its [bodyExtensions], see [bodyExtensionsOf].
      */
     private fun builtinBodyItems(
@@ -1767,8 +1783,6 @@ internal class DefaultKotlinIntrospector(
             )
         }
         val jvmOnlyFunctions = builtinClass?.jvmOnlyFunctions.orEmpty()
-            .filter { !hasSyntheticParameterNames(it.kFunction) }
-            .map { it.kmFunction }
             .inApi(apiClass, declarations)
             .map { function ->
                 function.name to listOf(

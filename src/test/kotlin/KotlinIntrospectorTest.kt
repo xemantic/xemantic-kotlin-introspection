@@ -22,12 +22,22 @@ package com.xemantic.kotlin.introspection
 import com.xemantic.kotlin.test.assert
 import com.xemantic.kotlin.test.have
 import com.xemantic.kotlin.test.should
+import org.junit.jupiter.api.Assumptions.assumeFalse
+import java.lang.reflect.Method
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
 
 // we keep this dependency statically initialized, so that classpath scanning happens only once
 // given
 val resolver = KotlinIntrospector()
+
+/**
+ * Skips a test assuming that the Java [method] has no parameter names,
+ * like the methods of the JDK, unless it is built with the `-parameters` option.
+ */
+internal fun assumeNoParameterNames(method: Method) {
+    assumeFalse(method.parameters.any { it.isNamePresent }, "$method has parameter names")
+}
 
 class KotlinIntrospectorTest {
 
@@ -4149,6 +4159,65 @@ class KotlinIntrospectorTest {
     @Test
     fun `should not resolve non-public extension of built-in type as its member`() {
         assert(resolver.resolve("kotlin.String.internalStringHelper") == null)
+    }
+
+    @Test
+    fun `should not resolve Java-only member of built-in type which its listing leaves out`() {
+        // the JDK is compiled without parameter names, so String.indent(arg0: Int) tells nothing about its parameter
+        assumeNoParameterNames(String::class.java.getMethod("indent", Int::class.java))
+        assert(resolver.resolve("kotlin.String.indent") == null)
+    }
+
+    @Test
+    fun `should resolve extension of built-in type without Java-only member of the same name`() {
+        // not with the addSuppressed(arg0: Throwable) of java.lang.Throwable, which the listing leaves out
+        assumeNoParameterNames(Throwable::class.java.getMethod("addSuppressed", Throwable::class.java))
+        resolver.resolve("kotlin.Throwable.addSuppressed") sameAsKotlin """
+            // kotlin.Throwable.addSuppressed [page 1/1]
+            // from kotlin
+            fun Throwable.addSuppressed(exception: Throwable)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should list no member of built-in type with synthetic parameter names`() {
+        // when
+        val listings = DefaultKotlinIntrospector.builtinTypes.keys.associateWith { type ->
+            resolver.resolve(type, pageSize = 100_000).orEmpty()
+        }
+
+        // then
+        val synthetic = listings.filterValues { listing -> listing.lines().any { "(arg0: " in it || "(vararg arg0: " in it } }
+        assert(synthetic.keys.isEmpty())
+    }
+
+    @Test
+    fun `should resolve only the members of built-in type which its listing shows`() {
+        // given - the names of the members of the JVM class, like String.indent, too
+        val memberNames = DefaultKotlinIntrospector.builtinTypes.mapValues { (_, kClass) ->
+            kClass.members.mapTo(sortedSetOf()) { it.name }
+        }
+
+        // when
+        val unlisted = memberNames.flatMap { (type, names) ->
+            val listing = resolver.resolve(type, pageSize = 100_000).orEmpty().lines()
+            val listed = listing.mapTo(HashSet()) { it.trim() }
+            // the properties declared in the primary constructor, like `open val cause: Throwable?` of Throwable
+            val header = listing.getOrElse(1) { "" }
+            names.flatMap { name ->
+                // the members and the companion object members, followed by the extensions under their `// from` headers,
+                // which a built-in type can list in its body without their receivers
+                resolver.resolve("$type.$name", pageSize = 100_000)?.lines().orEmpty()
+                    .takeWhile { !it.startsWith("// from ") }
+                    .map { it.trim() }
+                    .filter { !it.startsWith("//") && it != "companion object {" && it != "}" }
+                    .filter { it !in listed && "($it, " !in header && ", $it)" !in header && "($it)" !in header }
+                    .map { "$type.$name: $it" }
+            }
+        }
+
+        // then
+        assert(unlisted.isEmpty())
     }
 
     @Test

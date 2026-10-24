@@ -34,6 +34,8 @@ import kotlin.reflect.KVariance
 import kotlin.reflect.KVisibility
 import kotlin.reflect.full.declaredMemberFunctions
 import kotlin.reflect.full.declaredMemberProperties
+import kotlin.reflect.full.isSubtypeOf
+import kotlin.reflect.typeOf
 
 /*
  * The declarations of the members of the built-in types described by kotlin-reflect, like the JVM-only ones,
@@ -227,18 +229,41 @@ private val primitiveArrayElementTypes: Map<String, String> = listOf(
     "Boolean", "Char", "Byte", "Short", "Int", "Long", "Float", "Double", "UByte", "UShort", "UInt", "ULong"
 ).associate { "kotlin/${it}Array" to "kotlin/$it" }
 
+/**
+ * The element type of a vararg parameter typed as the [arrayType], like `T` of `Array<out T>`, or `Int` of `IntArray`,
+ * or else the [arrayType] itself, not to fail the whole class, should a future standard library declare another array type.
+ */
+internal fun varargElementType(arrayType: KmType): KmType =
+    arrayType.arguments.singleOrNull()?.type
+        ?: primitiveArrayElementTypes[(arrayType.classifier as? KmClassifier.Class)?.name]?.let { classType(it) }
+        ?: arrayType
+
 private fun KParameter.toKmValueParameter(position: Int, scope: ReflectedTypeParameters): KmValueParameter =
     KmValueParameter(name ?: "arg$position").also { parameter ->
         val type = type.toKmType(scope)
         parameter.type = type
         // a vararg parameter is typed as an array, like Array<out T> or IntArray, of its element type
         if (isVararg) {
-            parameter.varargElementType = type.arguments.singleOrNull()?.type
-                ?: primitiveArrayElementTypes[(type.classifier as? KmClassifier.Class)?.name]?.let { classType(it) }
-                ?: error("Unexpected type of vararg parameter: ${this.type}")
+            val platformElementType = this.type.arguments.singleOrNull()?.type?.takeIf { it.isPlatformNullable }
+            parameter.varargElementType = if (platformElementType != null) {
+                // the element type of a Java vararg, like Any! of Object..., accepts null elements,
+                // converted anew, not to change the element type of the array type, telling the signature
+                platformElementType.toKmType(scope).also { it.isNullable = true }
+            } else {
+                varargElementType(type)
+            }
         }
         parameter.declaresDefaultValue = isOptional
     }
+
+/**
+ * Whether this type is a platform type of Java, like `Any!`, accepting `null`, though not marked nullable,
+ * which kotlin-reflect tells only by `Nothing?` being its subtype.
+ */
+private val KType.isPlatformNullable: Boolean
+    get() = !isMarkedNullable && nullableNothing.isSubtypeOf(this)
+
+private val nullableNothing: KType = typeOf<Nothing?>()
 
 private fun classType(name: String, nullable: Boolean = false): KmType = KmType().also {
     it.classifier = KmClassifier.Class(name)

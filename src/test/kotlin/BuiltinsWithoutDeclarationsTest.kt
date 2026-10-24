@@ -70,6 +70,18 @@ class BuiltinsWithoutDeclarationsTest {
     }
 
     @Test
+    fun `should not resolve Java-only member described by kotlin-reflect which the listing leaves out`() {
+        // given - the JDK is compiled without parameter names, so String.indent(arg0: Int) is not listed
+        assumeNoParameterNames(String::class.java.getMethod("indent", Int::class.java))
+
+        // when
+        val signatures = introspector.resolve("kotlin.String.indent")
+
+        // then
+        assert(signatures == null)
+    }
+
+    @Test
     fun `should not resolve mutable collection type which kotlin-reflect cannot tell apart from the read-only one`() {
         // when
         val listing = introspector.resolve("kotlin.collections.MutableList")
