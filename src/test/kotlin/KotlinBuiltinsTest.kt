@@ -19,6 +19,7 @@
 package com.xemantic.kotlin.introspection
 
 import com.xemantic.kotlin.test.assert
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.io.TempDir
 import java.net.JarURLConnection
 import java.net.URI
@@ -106,16 +107,21 @@ class KotlinBuiltinsTest {
         // the runtime image linked with the standard library of the tests, as its own module
         val stdlib = Path.of(KotlinVersion::class.java.protectionDomain.codeSource.location.toURI())
         val image = tempDir.resolve("image")
-        val jlink = java.util.spi.ToolProvider.findFirst("jlink").orElseThrow()
-        val exitCode = jlink.run(
-            System.out,
-            System.err,
-            "--module-path", stdlib.toString(),
-            "--add-modules", "kotlin.stdlib",
-            "--no-header-files", "--no-man-pages", "--strip-debug",
-            "--output", image.toString()
-        )
-        assert(exitCode == 0)
+        // skipped rather than failed when the JDK of the tests cannot link, like a JRE, or one without jmods
+        val jlink = java.util.spi.ToolProvider.findFirst("jlink").orElse(null)
+        assumeTrue(jlink != null, "jlink is not available")
+        val output = java.io.StringWriter()
+        val exitCode = java.io.PrintWriter(output).use { writer ->
+            jlink.run(
+                writer,
+                writer,
+                "--module-path", stdlib.toString(),
+                "--add-modules", "kotlin.stdlib",
+                "--no-header-files", "--no-man-pages", "--strip-debug",
+                "--output", image.toString()
+            )
+        }
+        assumeTrue(exitCode == 0) { "jlink cannot link the standard library: $output" }
         // the jrt file system of that image, rather than the one of the running JVM
         val found = java.nio.file.FileSystems.newFileSystem(
             URI("jrt:/"),
