@@ -70,19 +70,23 @@ internal class Deprecation(
         return (listOf(this) + accessors)
             .filter { it.target != Target.SETTER }
             .map { it.targeting(Target.DECLARATION) }
-            .reduceOrNull { first, second -> if (second.level > first.level) second else first }
+            .reduceOrNull(::highestOf)
     }
 
+    /**
+     * This deprecation of the [target], with the [accessors].
+     */
     fun targeting(target: Target, accessors: List<Deprecation> = emptyList()): Deprecation =
         Deprecation(message, replaceWith, level, target, accessors)
 
 }
 
 /**
- * The deprecation of a `var` property, whose own one, of the property itself, is the [propertyDeprecation],
- * and the ones of its accessors are the [getterDeprecation] and the [setterDeprecation]:
- * each kept apart, targeting its accessor, as reading and assigning are deprecated apart, see [Deprecation.accessors],
- * unless the property itself is hidden, and so are both its accessors.
+ * The deprecation of a `var` property, as reading and assigning it are deprecated apart:
+ * its own one, the [propertyDeprecation], followed by the ones of its accessors,
+ * the [getterDeprecation] and the [setterDeprecation], each targeting its accessor, see [Deprecation.accessors],
+ * the first one present telling the others, which is the one of an accessor, when the property itself is not deprecated.
+ * A hidden property is hidden as a whole, whatever the deprecations of its accessors.
  */
 internal fun varDeprecationOf(
     propertyDeprecation: Deprecation?,

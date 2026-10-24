@@ -6799,13 +6799,25 @@ class KotlinIntrospectorTest {
     @Test
     fun `should not resolve named companion object deprecated with hidden level`() {
         assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenNamedCompanionHolder.Factory") == null)
+    }
+
+    @Test
+    fun `should not resolve member of named companion object deprecated with hidden level`() {
         assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenNamedCompanionHolder.Factory.create") == null)
+    }
+
+    @Test
+    fun `should not resolve member of named companion object deprecated with hidden level through outer class`() {
         assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenNamedCompanionHolder.create") == null)
     }
 
     @Test
     fun `should not resolve nested class deprecated with hidden level`() {
         assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenNamedCompanionHolder.HiddenNested") == null)
+    }
+
+    @Test
+    fun `should not resolve member of nested class deprecated with hidden level`() {
         assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenNamedCompanionHolder.HiddenNested.g") == null)
     }
 
@@ -7378,6 +7390,19 @@ class KotlinIntrospectorTest {
             }
             // from com.xemantic.kotlin.introspection.test
             val HiddenSetterHolder.hiddenSetterExtension: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render override of var with setter deprecated with hidden level as var with its deprecation`() {
+        // a val cannot override a var, so the annotation tells it cannot be assigned
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenSetterOverride"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenSetterOverride [page 1/1]
+            class HiddenSetterOverride : HiddenSetterOverrideBase {
+                @set:Deprecated("replaced", level = DeprecationLevel.HIDDEN) override var value: Int
+            }
         """.trimIndent()
     }
 
