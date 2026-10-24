@@ -214,16 +214,16 @@ internal class OverrideResolver(
     /**
      * @param readOwnerJvmMethods reads the JVM methods of the owner class, as names followed by descriptors,
      *   or `null` if they can be neither read nor reflected;
-     *   only needed to tell a shrunk member or a friend module, so read lazily, and cached on their own,
-     *   as they might fail transiently after the overridables are cached.
+     *   only needed to tell a shrunk member or a friend module, so read lazily, once, see [FinalOnce],
+     *   and again after a transient failure, which might happen after the overridables are cached.
      */
     private class Overridables(
         val substitution: Map<Int, MemberType>,
         val functions: Map<String, List<Overridable>>,
         val properties: Map<String, List<Overridable>>,
-        private val readOwnerJvmMethods: () -> Set<String>?
+        private val readOwnerJvmMethods: FinalOnce<Set<String>?>
     ) {
-        val ownerJvmMethods: Set<String>? get() = readOwnerJvmMethods()
+        val ownerJvmMethods: Set<String>? get() = readOwnerJvmMethods.value
     }
 
     /**
@@ -268,9 +268,6 @@ internal class OverrideResolver(
 
     // the declarations of the supertypes of the recently resolved classes, shared between their hierarchies
     private val declarationCache = BoundedCache<String, Declaration>(capacity = 1024)
-
-    // the JVM methods of the owners of the overridables, see Overridables.ownerJvmMethods
-    private val jvmMethodsCache = BoundedCache<String, Set<String>?>(capacity = 256)
 
     /**
      * The cached value of the [key], computed and cached unless a transient failure happens meanwhile on this thread,
@@ -607,9 +604,12 @@ internal class OverrideResolver(
         // only the name and the kind are captured, as the overridables are cached
         val ownerName = owner.name
         val isInterface = owner.kind == ClassKind.INTERFACE
-        return Overridables(ownerSubstitution, functions, properties) {
-            jvmMethodsCache.getOrPutUnlessTransient(ownerName) { jvmMethods(ownerName, isInterface) }
-        }
+        return Overridables(ownerSubstitution, functions, properties, FinalOnce {
+            // a transient failure is marked on this thread by the lookup failing, telling the caller not to cache
+            val failureCount = transientFailures.count()
+            val jvmMethods = jvmMethods(ownerName, isInterface)
+            TransientFailures.Outcome(jvmMethods, isFinal = transientFailures.count() == failureCount)
+        })
     }
 
     /**
