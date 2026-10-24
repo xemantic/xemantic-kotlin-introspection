@@ -183,6 +183,12 @@ private fun KmProperty.apiSetterVisibility(scope: DeclarationScope, deprecations
     return setterVisibility.takeIf { scope.isApi(it) && deprecations?.deprecation(this)?.hidesSetter != true }
 }
 
+/**
+ * Whether this is a data class, or a value class, which cannot be declared without a property for each parameter
+ * of its primary constructor, never a data object, which cannot have a constructor.
+ */
+private val KmClass.isDataOrValueClass: Boolean get() = kind == ClassKind.CLASS && (isData || isValue)
+
 internal class DefaultKotlinIntrospector(
     private val classLoader: ClassLoader = Thread.currentThread().contextClassLoader,
     scanEntireClasspath: Boolean = true,
@@ -1713,6 +1719,84 @@ internal class DefaultKotlinIntrospector(
     }
 
     /**
+     * How the primary constructor of a class is declared in its header, see [constructorsOf].
+     */
+    private sealed interface HeaderConstructor {
+
+        /**
+         * Not declared: the implicit public constructor without parameters, like in `class Foo`,
+         * or none, as the kind of the class already tells how it can be created, if at all, like for an object.
+         */
+        data object Implicit : HeaderConstructor
+
+        /**
+         * Marked with ` private constructor()`, whatever the actual constructors, see [NOT_CONSTRUCTIBLE_MARKER],
+         * as the class can neither be instantiated, nor subclassed, from the user code.
+         */
+        data object NotConstructible : HeaderConstructor
+
+        /**
+         * Declared with its parameters, and with the [visibility] and the [deprecation], unless public and not deprecated,
+         * like `class Foo(val a: Int)`, or `open class Foo protected constructor()`.
+         */
+        class Declared(val constructor: KmConstructor, val visibility: Visibility, val deprecation: Deprecation?) : HeaderConstructor
+
+    }
+
+    /**
+     * The constructors of a class rendered: the [header] one, and the [secondary] ones, listed in the class body.
+     */
+    private class Constructors(val header: HeaderConstructor, val secondary: List<KmConstructor>)
+
+    /**
+     * The constructors of the [kmClass] to render, decided in this one place, see [formatClass]:
+     * the ones which can be called from the user code, unless hidden,
+     * and the primary one of an enum class, whose constructor is always private,
+     * while its parameters are the idiomatic way of declaring the properties of the entries,
+     * and of a data class, or a value class, which cannot be declared without its primary constructor and its parameters,
+     * rendered as private then, like a class without any constructor which can be called, see [HeaderConstructor.NotConstructible].
+     */
+    private fun constructorsOf(kmClass: KmClass, apiClass: ApiClass, foundClass: ClassDeclarations): Constructors {
+        val isEnum = kmClass.kind == ClassKind.ENUM_CLASS
+        // the constructor of kotlin.Enum is called only by the enum classes, which no class can extend directly
+        val isCallable = { constructor: KmConstructor ->
+            kmClass.name != ENUM_CLASS_NAME && apiClass.isConstructorApi(constructor.visibility) && !foundClass.isHidden(constructor)
+        }
+        // never of an enum class, as they are private, nor of an annotation class, which cannot have any
+        val secondary = kmClass.constructors.filter { it.isSecondary && isCallable(it) }
+        val primary = kmClass.constructors.firstOrNull { !it.isSecondary }
+        val isPrimaryCallable = primary != null && isCallable(primary)
+        val header = when {
+            primary != null && (isEnum || isPrimaryCallable || kmClass.isDataOrValueClass) -> {
+                // the always private constructor of an enum class is rendered only for its parameters
+                val visibility = when {
+                    isEnum -> Visibility.PUBLIC
+                    isPrimaryCallable -> primary.visibility
+                    else -> Visibility.PRIVATE
+                }
+                val deprecation = if (isPrimaryCallable) foundClass.deprecation(primary) else null
+                // the implicit public constructor without parameters is omitted, unless there are other constructors,
+                // as `class Foo { constructor(x: Int) }` has no constructor without parameters
+                if (
+                    primary.valueParameters.isNotEmpty() || secondary.isNotEmpty() ||
+                    visibility != Visibility.PUBLIC || deprecation != null
+                ) {
+                    HeaderConstructor.Declared(primary, visibility, deprecation)
+                } else {
+                    HeaderConstructor.Implicit
+                }
+            }
+            // the kinds of classes which would read as having the implicit public constructor without parameters,
+            // unlike an object, an enum class, an interface, an annotation class,
+            // or a sealed class, whose constructors are never callable from the user code
+            kmClass.kind == ClassKind.CLASS && kmClass.modality != Modality.SEALED && secondary.isEmpty() ->
+                HeaderConstructor.NotConstructible
+            else -> HeaderConstructor.Implicit
+        }
+        return Constructors(header, secondary)
+    }
+
+    /**
      * Lists a class: its header, see [formatClassHeader], and its body, with the nested classes, the properties,
      * the secondary constructors, the functions, and the companion object, followed by its extensions,
      * see [listedExtensions].
@@ -1748,45 +1832,17 @@ internal class DefaultKotlinIntrospector(
         val properties = kmClass.properties.inApi(apiClass, foundClass)
         val functions = kmClass.functions.inApi(apiClass, foundClass)
 
-        // Find primary constructor and its parameter names
-        val primaryConstructor = kmClass.constructors.firstOrNull { !it.isSecondary }
-        // The parameters of a constructor which cannot be called are not rendered, while the properties
-        // they declare still are, in the class body. Except for an enum class, whose constructor is always private,
-        // while its parameters are the idiomatic way of declaring the properties of the entries.
-        // A data class, or a value class, cannot be declared without its primary constructor and its parameters,
-        // which is therefore rendered as private, like a class without any constructor which can be called.
-        // never a data object, which cannot have a constructor
-        val isDataOrValueClass = kmClass.kind == ClassKind.CLASS && (kmClass.isData || kmClass.isValue)
-        // the constructor of kotlin.Enum is called only by the enum classes, which no class can extend directly
-        val isConstructorCallable = { constructor: KmConstructor ->
-            kmClass.name != ENUM_CLASS_NAME && apiClass.isConstructorApi(constructor.visibility) && !foundClass.isHidden(constructor)
-        }
-        val isPrimaryConstructorCallable = primaryConstructor != null && isConstructorCallable(primaryConstructor)
-        val renderedConstructor = primaryConstructor?.takeIf {
-            isEnum || isPrimaryConstructorCallable || isDataOrValueClass
-        }
-        // The other ways of creating the class, never of an enum class, as they are private,
-        // nor of an annotation class, which cannot have any
-        val secondaryConstructors = kmClass.constructors.filter { it.isSecondary && isConstructorCallable(it) }
-        // the always private constructor of an enum class is rendered only for its parameters
-        val primaryConstructorVisibility = when {
-            isEnum || renderedConstructor == null -> Visibility.PUBLIC
-            isPrimaryConstructorCallable -> renderedConstructor.visibility
-            else -> Visibility.PRIVATE
-        }
-        val primaryConstructorDeprecation = renderedConstructor?.takeIf { isPrimaryConstructorCallable }
-            ?.let { foundClass.deprecation(it) }
+        // the primary constructor declared in the header, if any, and the secondary ones, see constructorsOf
+        val constructors = constructorsOf(kmClass, apiClass, foundClass)
+        val declaredConstructor = constructors.header as? HeaderConstructor.Declared
+        val secondaryConstructors = constructors.secondary
         // whether the final modality of an override is not redundant, see mightBeSubclassed
         val isOpenForOverrides = mightBeSubclassed(kmClass, foundClass)
-        // the kinds of classes which would read as having the implicit public constructor without parameters,
-        // unlike an object, an enum class, an interface, an annotation class,
-        // or a sealed class, whose constructors are never callable from the user code
-        val isConstructibleKind = kmClass.kind == ClassKind.CLASS && !isSealed
         // The properties declared by the parameters of the rendered constructor, by the parameter name,
         // also the ones which are not part of the API of a data class, or a value class,
         // whose parameters must all declare properties, like `private val rawValue: Long`
-        val propertiesOfParameters = if (isDataOrValueClass) kmClass.properties else properties
-        val constructorProperties = renderedConstructor?.valueParameters.orEmpty().mapNotNull { param ->
+        val propertiesOfParameters = if (kmClass.isDataOrValueClass) kmClass.properties else properties
+        val constructorProperties = declaredConstructor?.constructor?.valueParameters.orEmpty().mapNotNull { param ->
             propertiesOfParameters.firstOrNull { it.isDeclaredBy(param) }?.let { param.name to it }
         }.toMap()
         val declaredInConstructor = constructorProperties.values.toSet()
@@ -1806,7 +1862,7 @@ internal class DefaultKotlinIntrospector(
         val extensionProperties = listedExtensions.properties - bodyExtensions.properties.toSet()
 
         // For annotation classes, the parameters are shown inline, without body
-        val annotationParameters = primaryConstructor?.valueParameters
+        val annotationParameters = kmClass.constructors.firstOrNull { !it.isSecondary }?.valueParameters
             ?.takeIf { isAnnotation && it.isNotEmpty() }
 
         val constructorDeclaration = when {
@@ -1821,18 +1877,11 @@ internal class DefaultKotlinIntrospector(
                     defaultValue = { clazz?.let { formatAnnotationDefaultValue(it, param.name, contextPackage) } }
                 )
             }
-            // the implicit public constructor without parameters is omitted, unless there are other constructors,
-            // as `class Foo { constructor(x: Int) }` has no constructor without parameters
-            renderedConstructor != null && (
-                renderedConstructor.valueParameters.isNotEmpty() ||
-                    secondaryConstructors.isNotEmpty() ||
-                    primaryConstructorVisibility != Visibility.PUBLIC ||
-                    primaryConstructorDeprecation != null
-                ) -> formatConstructor(
-                renderedConstructor,
+            declaredConstructor != null -> formatConstructor(
+                declaredConstructor.constructor,
                 isPrimary = true,
-                visibility = primaryConstructorVisibility,
-                primaryConstructorDeprecation,
+                visibility = declaredConstructor.visibility,
+                declaredConstructor.deprecation,
                 contextPackage,
                 typeParameters
             ) { param ->
@@ -1864,9 +1913,7 @@ internal class DefaultKotlinIntrospector(
                         formatModalityModifiers(prop.modality, isOverride, inInterface = false, isOpenForOverrides)
                 )
             }
-            // a class which can neither be instantiated, nor subclassed, from the user code
-            isConstructibleKind && renderedConstructor == null && secondaryConstructors.isEmpty() ->
-                NOT_CONSTRUCTIBLE_MARKER
+            constructors.header == HeaderConstructor.NotConstructible -> NOT_CONSTRUCTIBLE_MARKER
             else -> ""
         }
 
