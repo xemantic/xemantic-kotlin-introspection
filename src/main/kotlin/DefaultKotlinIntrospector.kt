@@ -311,6 +311,17 @@ internal class DefaultKotlinIntrospector(
             it.substringAfterLast('.').startsWith("Mutable")
         }.toSet()
 
+        /**
+         * The metadata names of the built-in types, like `kotlin/collections/MutableList`, by the names of their JVM classes,
+         * like `java.util.List`, the mutable collection types chosen, as Java collections are mutable.
+         */
+        private val javaBuiltinNames: Map<String, String> = builtinTypes.entries
+            .filter { (name, kClass) -> !kClass.java.isArray && kClass.java.name != name && name != "kotlin.Nothing" }
+            .sortedBy { (name, _) -> name in mutableBuiltinTypes }
+            .associate { (name, kClass) -> kClass.java.name to kotlinClassName(name) }
+
+        private const val ANY_CLASS_NAME = "kotlin/Any"
+
         private const val METADATA_DESCRIPTOR = "Lkotlin/Metadata;"
 
         private const val DEPRECATED_DESCRIPTOR = "Lkotlin/Deprecated;"
@@ -1002,6 +1013,8 @@ internal class DefaultKotlinIntrospector(
      * follows the context telling it, see [protectedContext].
      * The JVM-only members of a built-in type, like `String.chars()`, follow its functions, see [BuiltinClass],
      * but the ones whose parameter names are not known, which its listing leaves out too, see [BuiltinClass.jvmOnlyFunctions].
+     * When none of them is found, the members inherited from the most specific supertype declaring any, see [inheritedMembers],
+     * which the listing leaves out, not to be flooded with them.
      *
      * @param apiClass the [kmClass] as a class of the API.
      * @param isBuiltin whether the class is a built-in type, or its companion object, see [listedExtensions].
@@ -1014,33 +1027,8 @@ internal class DefaultKotlinIntrospector(
         memberName: String,
         isBuiltin: Boolean = false
     ): MemberListing? {
-        val isInterface = kmClass.kind == ClassKind.INTERFACE
-        val typeParameters = typeParametersInScope(kmClass)
         val contextPackage = contextPackageOf(declarations, kmClass)
-
-        val isOpenForOverrides = mightBeSubclassed(kmClass, declarations)
-
-        val builtinClass = declarations as? BuiltinClass
-        val properties = kmClass.properties.filter { it.name == memberName } +
-            builtinClass?.jvmOnlyProperties.orEmpty().filter { it.name == memberName }
-        val functions = kmClass.functions.filter { it.name == memberName } +
-            builtinClass?.jvmOnlyFunctions.orEmpty().filter { it.name == memberName }
-
-        val members = properties.inApi(apiClass, declarations).map { property ->
-            formatProperty(
-                property, property.apiSetterVisibility(apiClass, declarations),
-                inInterface = isInterface, owner = kmClass, contextPackage = contextPackage, classTypeParameters = typeParameters,
-                deprecation = declarations.deprecation(property), isOwnerOpenForOverrides = isOpenForOverrides
-            )
-        } + functions.inApi(apiClass, declarations).map { function ->
-            listOf(
-                formatFunction(
-                    function, inInterface = isInterface, owner = kmClass, contextPackage = contextPackage,
-                    classTypeParameters = typeParameters, deprecation = declarations.deprecation(function),
-                    isOwnerOpenForOverrides = isOpenForOverrides
-                )
-            )
-        }
+        val members = declaredMembers(kmClass, declarations, memberName, apiClass, contextPackage)
 
         val companionMembers = apiCompanionOf(kmClass)?.let { companion ->
             val signatures = companion.propertiesNamed(memberName).map {
@@ -1061,10 +1049,124 @@ internal class DefaultKotlinIntrospector(
             contextPackage
         )
 
+        val found = members.map { ListingItem.Declaration(it) } + companionMembers + extensions
         return MemberListing.of(
-            members.map { ListingItem.Declaration(it) } + companionMembers + extensions,
+            found.ifEmpty { inheritedMembers(kmClass, declarations, memberName, apiClass, contextPackage) },
             context = protectedContext(kmClass.name, apiClass, includingClass = true)
         )
+    }
+
+    /**
+     * The members named [memberName] which the [kmClass] declares, each on its lines, like in its listing:
+     * the properties, and the functions, followed by the JVM-only members of a built-in type, see [BuiltinClass].
+     *
+     * @param scope the class of the API telling which of the members are part of it, see [inApi],
+     *   the [kmClass] itself, or its subclass inheriting them, see [inheritedMembers].
+     */
+    private fun declaredMembers(
+        kmClass: KmClass,
+        declarations: ClassDeclarations,
+        memberName: String,
+        scope: ApiClass,
+        contextPackage: String
+    ): List<List<String>> {
+        val isInterface = kmClass.kind == ClassKind.INTERFACE
+        val typeParameters = typeParametersInScope(kmClass)
+        val isOpenForOverrides = mightBeSubclassed(kmClass, declarations)
+
+        val builtinClass = declarations as? BuiltinClass
+        val properties = kmClass.properties.filter { it.name == memberName } +
+            builtinClass?.jvmOnlyProperties.orEmpty().filter { it.name == memberName }
+        val functions = kmClass.functions.filter { it.name == memberName } +
+            builtinClass?.jvmOnlyFunctions.orEmpty().filter { it.name == memberName }
+
+        return properties.inApi(scope, declarations).map { property ->
+            formatProperty(
+                property, property.apiSetterVisibility(scope, declarations),
+                inInterface = isInterface, owner = kmClass, contextPackage = contextPackage, classTypeParameters = typeParameters,
+                deprecation = declarations.deprecation(property), isOwnerOpenForOverrides = isOpenForOverrides
+            )
+        } + functions.inApi(scope, declarations).map { function ->
+            listOf(
+                formatFunction(
+                    function, inInterface = isInterface, owner = kmClass, contextPackage = contextPackage,
+                    classTypeParameters = typeParameters, deprecation = declarations.deprecation(function),
+                    isOwnerOpenForOverrides = isOpenForOverrides
+                )
+            )
+        }
+    }
+
+    /**
+     * The members named [memberName] which the [kmClass] inherits, see [declaredMembers],
+     * as declared by its most specific supertype declaring any, one which no other supertype declaring any is a subtype of,
+     * so that an override wins over the member it overrides, also when the override is reached deeper,
+     * like in an interface implemented by the superclass, which extends a direct supertype,
+     * rendered under the `// inherited from …` header of that supertype, or none.
+     * The supertypes are walked breadth-first through their cached declarations,
+     * the first of the most specific ones winning, like `List` over `MutableCollection` for `MutableList.iterator`,
+     * and `kotlin.Any`, the supertype of every class, last, also when it is reached only through Java interfaces.
+     * The members are rendered as declared in the supertype, with its own type parameters, like `fun get(index: Int): E`
+     * of `kotlin.collections.List`, the type arguments of the supertype not substituted.
+     * A Java supertype, which is not rendered, is walked through to its supertypes,
+     * like `java.util.List`, seen in Kotlin as the built-in `kotlin.collections.MutableList`.
+     * A supertype which is not part of the API, see [ApiClasses], is walked through too.
+     * Which members are part of the API is decided by the inheriting class, the [scope],
+     * like a protected member, inherited by a final class, which is not.
+     */
+    private fun inheritedMembers(
+        kmClass: KmClass,
+        declarations: ClassDeclarations,
+        memberName: String,
+        scope: ApiClass,
+        contextPackage: String
+    ): List<ListingItem.InheritedMember> {
+        // the direct supertypes of each supertype, in the breadth-first order, but kotlin.Any, looked up only at last
+        val supertypes = LinkedHashMap<String, List<String>>()
+        val members = HashMap<String, List<List<String>>>()
+        val pending = ArrayDeque(supertypeMetadataNames(kmClass, declarations))
+        while (pending.isNotEmpty()) {
+            val name = pending.removeFirst()
+            if (name == kmClass.name || name == ANY_CLASS_NAME || name in supertypes) continue
+            val supertype = classDeclarations(name)
+            val superKmClass = supertype?.kmClass
+            val direct = supertype?.let { supertypeMetadataNames(superKmClass, it) }.orEmpty()
+            supertypes[name] = direct
+            pending.addAll(direct)
+            if (superKmClass != null && apiClasses.apiClass(superKmClass.name) != null) {
+                declaredMembers(superKmClass, supertype, memberName, scope, contextPackage)
+                    .takeIf { it.isNotEmpty() }
+                    ?.let { members[name] = it }
+            }
+        }
+        if (members.isEmpty()) {
+            if (kmClass.name == ANY_CLASS_NAME) return emptyList()
+            val any = classDeclarations(ANY_CLASS_NAME)
+            val anyKmClass = any?.kmClass ?: return emptyList()
+            return declaredMembers(anyKmClass, any, memberName, scope, contextPackage)
+                .map { ListingItem.InheritedMember(ANY_CLASS_NAME.replace('/', '.'), it) }
+        }
+        // the transitive supertypes of the supertypes declaring the members, which their declarations override
+        val overridden = HashSet<String>()
+        fun addSupertypesOf(name: String) {
+            supertypes[name].orEmpty().forEach { if (overridden.add(it)) addSupertypesOf(it) }
+        }
+        members.keys.forEach(::addSupertypesOf)
+        val nearest = supertypes.keys.first { it in members && it !in overridden }
+        return members.getValue(nearest).map { ListingItem.InheritedMember(nearest.replace('/', '.'), it) }
+    }
+
+    /**
+     * The metadata names of the direct supertypes of a class, like `kotlin/collections/List`:
+     * the ones of its [kmClass], or, of a Java class, without one, the ones its JVM class, if loaded, declares,
+     * mapped to the built-in types, like `java.util.List` to `kotlin/collections/MutableList`, see [javaBuiltinNames].
+     */
+    private fun supertypeMetadataNames(kmClass: KmClass?, declarations: ClassDeclarations): List<String> {
+        if (kmClass != null) return kmClass.supertypes.mapNotNull { (it.classifier as? KmClassifier.Class)?.name }
+        val clazz = declarations.clazz ?: return emptyList()
+        return reflectedValue(default = emptyList()) {
+            (listOfNotNull(clazz.superclass) + clazz.interfaces).map { javaBuiltinNames[it.name] ?: kotlinClassName(it) }
+        }
     }
 
     /**
@@ -3493,6 +3595,13 @@ private sealed interface ListingItem {
      */
     class Extension(val source: String, val lines: List<String>) : ClassItem, MemberItem
 
+    /**
+     * A member inherited from a supertype found by a [MemberListing], when the class declares none of the name,
+     * listed under the `// inherited from` header of the supertype, the [source], repeated on every page,
+     * rendered on its [lines], see [Declaration].
+     */
+    class InheritedMember(val source: String, val lines: List<String>) : MemberItem
+
 }
 
 /**
@@ -3599,7 +3708,8 @@ private class ClassListing(
 /**
  * The declarations found by a member name, like the overloads of a function, one signature per item:
  * the members, see [ListingItem.Declaration], then the members of the companion object,
- * see [ListingItem.CompanionMember], and then the extensions, see [ListingItem.Extension].
+ * see [ListingItem.CompanionMember], and then the extensions, see [ListingItem.Extension],
+ * or else the members inherited from a supertype, see [ListingItem.InheritedMember].
  */
 private class MemberListing(
     override val items: List<ListingItem.MemberItem>,
@@ -3609,6 +3719,10 @@ private class MemberListing(
     override fun renderPage(page: Page<ListingItem.MemberItem>): List<String> = buildList {
         if (context != null && page.items.any { it !is ListingItem.Extension }) add(context)
         page.items.filterIsInstance<ListingItem.Declaration>().forEach { addAll(it.lines) }
+        page.items.filterIsInstance<ListingItem.InheritedMember>().groupBy { it.source }.forEach { (source, members) ->
+            add("// inherited from ${escapeQualifiedName(source)}")
+            members.forEach { addAll(it.lines) }
+        }
         page.items.filterIsInstance<ListingItem.CompanionMember>().groupBy { it.header }.forEach { (header, members) ->
             add("$header {")
             members.forEach { member -> member.lines.forEach { add("    $it") } }

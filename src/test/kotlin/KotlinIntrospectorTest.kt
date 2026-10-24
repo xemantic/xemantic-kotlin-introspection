@@ -3245,6 +3245,166 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve members inherited from superclass`() {
+        // StringProcessor declares both overloads, its override of Processor.process(T) being the nearest declaration
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.IntermediateProcessor.process"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.IntermediateProcessor.process [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.StringProcessor
+            override fun process(item: String)
+            fun process(item: Int)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should repeat inherited header on every page`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.IntermediateProcessor.process",
+            page = 2,
+            pageSize = 1
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.IntermediateProcessor.process [page 2/2]
+            // inherited from com.xemantic.kotlin.introspection.test.StringProcessor
+            fun process(item: Int)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve inherited member overridden by the nearest superclass`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedLeaf.greet"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedLeaf.greet [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.InheritedMiddle
+            override fun greet(name: String): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve inherited member overridden by subtype of direct supertype reached deeper`() {
+        // InheritedShape is a direct supertype, but InheritedSquareShape, a supertype of the superclass, overrides its area()
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedSquare.area"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedSquare.area [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.InheritedSquareShape
+            open override fun area(): Double
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member inherited from superclass of superclass`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedLeaf.baseValue"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedLeaf.baseValue [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.InheritedBase
+            val baseValue: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve protected member inherited by open class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.OpenInheritedLeaf.protectedHelper"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OpenInheritedLeaf.protectedHelper [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.InheritedBase
+            protected fun protectedHelper()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve protected member inherited by final class`() {
+        // no subclass of the final class can call it
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedLeaf.protectedHelper") == null)
+    }
+
+    @Test
+    fun `should not resolve internal member inherited from superclass`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedLeaf.internalHelper") == null)
+    }
+
+    @Test
+    fun `should not resolve hidden member inherited from superclass`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedLeaf.hiddenHelper") == null)
+    }
+
+    @Test
+    fun `should not resolve member declared by no supertype`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedLeaf.noSuchMember") == null)
+    }
+
+    @Test
+    fun `should resolve member inherited from generic interface as declared there`() {
+        // the type argument String of the supertype is not substituted, T is rendered under the header naming its class
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedStringContainer.take"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedStringContainer.take [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.InheritedContainer
+            fun take(): T
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve declared override rather than inherited member`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedStringContainer.put"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedStringContainer.put [page 1/1]
+            override fun put(item: String)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of Any inherited by class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedLeaf.toString"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedLeaf.toString [page 1/1]
+            // inherited from kotlin.Any
+            open fun toString(): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of Any inherited by interface extending Java interface`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaRunnable.hashCode"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaRunnable.hashCode [page 1/1]
+            // inherited from kotlin.Any
+            open fun hashCode(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of mapped built-in type inherited through Java superclass`() {
+        // java.util.AbstractList is not rendered, but it implements java.util.List, seen in Kotlin as MutableList
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaList.get"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaList.get [page 1/1]
+            // inherited from kotlin.collections.List
+            operator fun get(index: Int): E
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not list inherited members of class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedStringContainer"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedStringContainer [page 1/1]
+            abstract class InheritedStringContainer : InheritedContainer<String> {
+                override fun put(item: String)
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve member of nested class`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.SealedTestClass.SubClass1.name"
@@ -4299,14 +4459,17 @@ class KotlinIntrospectorTest {
 
         // when
         val unlisted = memberNames.flatMap { (type, names) ->
-            val listing = resolver.resolve(type, pageSize = 100_000).orEmpty().lines()
-            val listed = listing.mapTo(HashSet()) { it.trim() }
-            // the properties declared in the primary constructor, like `open val cause: Throwable?` of Throwable
-            val header = listing.getOrElse(1) { "" }
             names.flatMap { name ->
                 // the members and the companion object members, followed by the extensions under their `// from` headers,
-                // which a built-in type can list in its body without their receivers
-                resolver.resolve("$type.$name", pageSize = 100_000)?.lines().orEmpty()
+                // which a built-in type can list in its body without their receivers,
+                // or else the members inherited from a supertype, which its own listing shows
+                val lines = resolver.resolve("$type.$name", pageSize = 100_000)?.lines().orEmpty()
+                val listedType = lines.getOrNull(1)?.removePrefix("// inherited from ")?.takeIf { it != lines[1] } ?: type
+                val listing = resolver.resolve(listedType, pageSize = 100_000).orEmpty().lines()
+                val listed = listing.mapTo(HashSet()) { it.trim() }
+                // the properties declared in the primary constructor, like `open val cause: Throwable?` of Throwable
+                val header = listing.getOrElse(1) { "" }
+                lines
                     .takeWhile { !it.startsWith("// from ") }
                     .map { it.trim() }
                     .filter { !it.startsWith("//") && it != "companion object {" && it != "}" }
@@ -6903,9 +7066,56 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should not resolve member of built-in type inherited from its supertype`() {
-        // like the members of any class, the inherited ones are neither listed, nor resolved, MutableList.get is List.get
-        assert(resolver.resolve("kotlin.collections.MutableList.get") == null)
+    fun `should resolve member of built-in type inherited from its supertype`() {
+        // MutableList.get is List.get, rendered as declared there, with the type parameter of List
+        resolver.resolve(
+            "kotlin.collections.MutableList.get"
+        ) sameAsKotlin """
+            // kotlin.collections.MutableList.get [page 1/1]
+            // inherited from kotlin.collections.List
+            operator fun get(index: Int): E
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of built-in type inherited from its supertype of another type parameter`() {
+        resolver.resolve(
+            "kotlin.collections.MutableIterator.next"
+        ) sameAsKotlin """
+            // kotlin.collections.MutableIterator.next [page 1/1]
+            // inherited from kotlin.collections.Iterator
+            operator fun next(): T
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of Any inherited by built-in type`() {
+        resolver.resolve(
+            "kotlin.String.hashCode"
+        ) sameAsKotlin """
+            // kotlin.String.hashCode [page 1/1]
+            // inherited from kotlin.Any
+            open fun hashCode(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not list inherited members of built-in type`() {
+        resolver.resolve("kotlin.collections.MutableList", pageSize = 10000) should {
+            have("operator fun get(index: Int): E" !in lines().map { it.trim() })
+        }
+    }
+
+    @Test
+    fun `should resolve member of built-in companion object through the outer type`() {
+        resolver.resolve(
+            "kotlin.Int.MAX_VALUE"
+        ) sameAsKotlin """
+            // kotlin.Int.MAX_VALUE [page 1/1]
+            companion object {
+                const val MAX_VALUE: Int
+            }
+        """.trimIndent()
     }
 
     @Test
