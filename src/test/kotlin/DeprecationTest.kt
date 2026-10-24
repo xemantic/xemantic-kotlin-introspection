@@ -146,4 +146,47 @@ class DeprecationTest {
         assert(deprecation == null)
     }
 
+
+    @Test
+    fun `should not hide var whose getter only is hidden`() {
+        // given
+        val getterDeprecation = Deprecation("replaced", replaceWith = null, DeprecationLevel.HIDDEN)
+
+        // when
+        val deprecation = varDeprecationOf(propertyDeprecation = null, getterDeprecation)
+
+        // then
+        assert(deprecation != null && !deprecation.isHidden && deprecation.hidesGetter)
+        assert(deprecation.target == Deprecation.Target.GETTER)
+    }
+
+    @Test
+    fun `should keep deprecation of var next to its hidden getter`() {
+        // given
+        val propertyDeprecation = Deprecation("deprecated", replaceWith = null, DeprecationLevel.WARNING)
+        val getterDeprecation = Deprecation("replaced", replaceWith = null, DeprecationLevel.HIDDEN)
+
+        // when
+        val deprecation = varDeprecationOf(propertyDeprecation, getterDeprecation)
+
+        // then
+        assert(deprecation != null && !deprecation.isHidden && deprecation.hidesGetter)
+        assert(deprecation.message == "deprecated" && deprecation.target == Deprecation.Target.DECLARATION)
+        assert(deprecation.hiddenGetter?.message == "replaced")
+        assert(deprecation.hiddenGetter?.target == Deprecation.Target.GETTER)
+    }
+
+    @Test
+    fun `should hide var which is hidden itself regardless of its getter`() {
+        // given
+        val propertyDeprecation = Deprecation("hidden", replaceWith = null, DeprecationLevel.HIDDEN)
+        val getterDeprecation = Deprecation("replaced", replaceWith = null, DeprecationLevel.HIDDEN)
+
+        // when
+        val deprecation = varDeprecationOf(propertyDeprecation, getterDeprecation)
+
+        // then
+        assert(deprecation?.isHidden == true && deprecation.hiddenGetter == null)
+    }
+
 }

@@ -111,6 +111,55 @@ var HiddenSetterHolder.hiddenSetterExtension: Int
     get() = inBody
     set(@Suppress("unused") value) {}
 
+// only the getter is hidden, so that the property can be assigned, but not read
+class HiddenGetterVarHolder(@get:Deprecated("replaced", level = DeprecationLevel.HIDDEN) var inConstructor: Int) {
+    @get:Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    var inBody: Int = 0
+    // neither read, nor assigned from the outside
+    @get:Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    var withPrivateSetter: Int = 0
+        private set
+    @get:Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    @set:Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    var withHiddenSetter: Int = 0
+    @get:Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    val hiddenGetterVal: Int = 0
+    // deprecated itself too, with a level other than HIDDEN
+    @Deprecated("deprecated")
+    @get:Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    var deprecatedWithHiddenGetter: Int = 0
+}
+
+// the protected setter can be called by the subclasses
+open class HiddenGetterVarOpenHolder {
+    @get:Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    var withProtectedSetter: Int = 0
+        protected set
+}
+
+interface HiddenGetterVarInterface {
+    @get:Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    var abstractVar: Int
+    @Deprecated("deprecated")
+    @get:Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    var deprecatedVar: Int
+}
+
+@get:Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+var HiddenGetterVarHolder.hiddenGetterExtension: Int
+    get() = 0
+    set(@Suppress("unused") value) {}
+
+// compiles, as the setters can still be called
+@Suppress("unused")
+private fun assignHiddenGetterVars(holder: HiddenGetterVarHolder) {
+    holder.inConstructor = 1
+    holder.inBody = 1
+    holder.hiddenGetterExtension = 1
+    @Suppress("DEPRECATION")
+    holder.deprecatedWithHiddenGetter = 1
+}
+
 annotation class HiddenDeprecationAnnotation(
     val visible: Int = 0,
     @Deprecated("replaced", level = DeprecationLevel.HIDDEN)

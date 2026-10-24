@@ -7014,6 +7014,97 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should render var with getter deprecated with hidden level as assignable only`() {
+        // the property cannot be read, but it can still be assigned from the source code, like holder.inBody = 1,
+        // unless its setter is not part of the API, or hidden too
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenGetterVarHolder"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenGetterVarHolder [page 1/1]
+            class HiddenGetterVarHolder(@get:Deprecated("replaced", level = DeprecationLevel.HIDDEN) var inConstructor: Int) {
+                @get:Deprecated("replaced", level = DeprecationLevel.HIDDEN) var inBody: Int
+                @Deprecated("deprecated") @get:Deprecated("replaced", level = DeprecationLevel.HIDDEN) var deprecatedWithHiddenGetter: Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            @get:Deprecated("replaced", level = DeprecationLevel.HIDDEN) var HiddenGetterVarHolder.hiddenGetterExtension: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member var with getter deprecated with hidden level`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenGetterVarHolder.inBody"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenGetterVarHolder.inBody [page 1/1]
+            @get:Deprecated("replaced", level = DeprecationLevel.HIDDEN) var inBody: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve var deprecated itself and with getter deprecated with hidden level`() {
+        // both annotations are rendered, as they are declared
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenGetterVarHolder.deprecatedWithHiddenGetter"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenGetterVarHolder.deprecatedWithHiddenGetter [page 1/1]
+            @Deprecated("deprecated") @get:Deprecated("replaced", level = DeprecationLevel.HIDDEN) var deprecatedWithHiddenGetter: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render var with getter deprecated with hidden level and protected setter of open class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenGetterVarOpenHolder"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenGetterVarOpenHolder [page 1/1]
+            open class HiddenGetterVarOpenHolder {
+                @get:Deprecated("replaced", level = DeprecationLevel.HIDDEN) var withProtectedSetter: Int
+                    protected set
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render interface var with getter deprecated with hidden level`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenGetterVarInterface"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenGetterVarInterface [page 1/1]
+            interface HiddenGetterVarInterface {
+                @get:Deprecated("replaced", level = DeprecationLevel.HIDDEN) var abstractVar: Int
+                @Deprecated("deprecated") @get:Deprecated("replaced", level = DeprecationLevel.HIDDEN) var deprecatedVar: Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render interface var with getter deprecated with hidden level compiled without jvm default`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsHiddenGetterVar"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsHiddenGetterVar [page 1/1]
+            interface DefaultImplsHiddenGetterVar {
+                @Deprecated("deprecated") @get:Deprecated("replaced", level = DeprecationLevel.HIDDEN) var deprecatedVar: Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve var with getter deprecated with hidden level and private setter`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenGetterVarHolder.withPrivateSetter") == null)
+    }
+
+    @Test
+    fun `should not resolve var with getter and setter deprecated with hidden level`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenGetterVarHolder.withHiddenSetter") == null)
+    }
+
+    @Test
+    fun `should not resolve val with getter deprecated with hidden level`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenGetterVarHolder.hiddenGetterVal") == null)
+    }
+
+    @Test
     fun `should render annotation class property deprecated with hidden level as parameter only`() {
         // @Deprecated cannot annotate the parameter, only the property is hidden, the argument can still be passed
         resolver.resolve(

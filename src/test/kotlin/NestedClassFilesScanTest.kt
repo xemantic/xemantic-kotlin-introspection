@@ -307,7 +307,7 @@ private fun DefaultKotlinIntrospector.ClasspathScan.indexDump(withClasses: Boole
         extensions.forEach {
             add(
                 "val $receiver.${it.property.name} in ${it.sourceClass} from ${it.source} " +
-                    "object=${it.isObjectMember} assignable=${it.isAssignable}"
+                    "object=${it.isObjectMember} assignable=${it.setterVisibility != null}"
             )
         }
     }
