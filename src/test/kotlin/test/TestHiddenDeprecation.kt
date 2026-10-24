@@ -128,6 +128,10 @@ class HiddenGetterVarHolder(@get:Deprecated("replaced", level = DeprecationLevel
     @Deprecated("deprecated")
     @get:Deprecated("replaced", level = DeprecationLevel.HIDDEN)
     var deprecatedWithHiddenGetter: Int = 0
+    // can be referred to, but neither read, nor assigned
+    @get:Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    @set:Deprecated("Assign y", level = DeprecationLevel.ERROR)
+    var withErrorSetter: Int = 0
 }
 
 // the protected setter can be called by the subclasses

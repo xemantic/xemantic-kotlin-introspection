@@ -26,23 +26,23 @@ package com.xemantic.kotlin.introspection
  * @property replaceWith the expression of its `ReplaceWith`, if any, without the imports.
  * @property level the level in effect, see [deprecationOf].
  * @property target what is deprecated: the declaration itself,
- *   or only the getter of a `var`, which can still be assigned, rendered as `@get:Deprecated`, see [hiddenGetter].
- * @property hiddenGetter the hidden deprecation of only the getter of a `var`, whose own deprecation is this one,
- *   when it is not hidden, so that both are rendered, like `@Deprecated("…") @get:Deprecated("…", level = HIDDEN) var a: Int`.
+ *   or only an accessor of a `var`, rendered as `@get:Deprecated`, or `@set:Deprecated`, see [varDeprecationOf].
+ * @property accessors the deprecations of the accessors of a `var`, deprecated apart from this one, each targeting its accessor,
+ *   so that all of them are rendered, like `@Deprecated("…") @set:Deprecated("…", level = DeprecationLevel.ERROR) var a: Int`.
  */
 internal class Deprecation(
     val message: String,
     val replaceWith: String?,
     val level: DeprecationLevel,
     val target: Target = Target.DECLARATION,
-    val hiddenGetter: Deprecation? = null
+    val accessors: List<Deprecation> = emptyList()
 ) {
 
-    enum class Target { DECLARATION, GETTER }
+    enum class Target { DECLARATION, GETTER, SETTER }
 
     /**
      * Whether the declaration cannot be used in the source code at all, and therefore is not rendered,
-     * never when only the getter of a `var` is hidden, see [hidesGetter].
+     * never when only an accessor of a `var` is hidden, see [hidesGetter] and [hidesSetter].
      */
     val isHidden: Boolean get() = level == DeprecationLevel.HIDDEN && target == Target.DECLARATION
 
@@ -50,22 +50,54 @@ internal class Deprecation(
      * Whether the getter of a `var` is hidden, while the property itself is not,
      * so that it is part of the API only when its setter is, as it can still be assigned, but not read.
      */
-    val hidesGetter: Boolean get() = (level == DeprecationLevel.HIDDEN && target == Target.GETTER) || hiddenGetter != null
+    val hidesGetter: Boolean get() = hides(Target.GETTER)
+
+    /**
+     * Whether the setter of a `var` is hidden, so that it can still be read, but not assigned, rendered as a `val`.
+     */
+    val hidesSetter: Boolean get() = hides(Target.SETTER)
+
+    private fun hides(accessor: Target): Boolean =
+        (target == accessor && level == DeprecationLevel.HIDDEN) || accessors.any { it.hides(accessor) }
+
+    /**
+     * The deprecation of reading the property, rendered as a `val`, as its setter cannot be called:
+     * the higher one of the property itself and of its getter, targeting the declaration,
+     * or `null`, when only its setter is deprecated.
+     */
+    fun ofReading(): Deprecation? {
+        if (target == Target.DECLARATION && accessors.isEmpty()) return this
+        return (listOf(this) + accessors)
+            .filter { it.target != Target.SETTER }
+            .map { it.targeting(Target.DECLARATION) }
+            .reduceOrNull { first, second -> if (second.level > first.level) second else first }
+    }
+
+    fun targeting(target: Target, accessors: List<Deprecation> = emptyList()): Deprecation =
+        Deprecation(message, replaceWith, level, target, accessors)
 
 }
 
 /**
  * The deprecation of a `var` property, whose own one, of the property itself, is the [propertyDeprecation],
- * and the one of its getter is the [getterDeprecation]: when only the getter is hidden, it is kept apart,
- * see [Deprecation.hidesGetter], otherwise the higher of the two, see [highestOf].
+ * and the ones of its accessors are the [getterDeprecation] and the [setterDeprecation]:
+ * each kept apart, targeting its accessor, as reading and assigning are deprecated apart, see [Deprecation.accessors],
+ * unless the property itself is hidden, and so are both its accessors.
  */
-internal fun varDeprecationOf(propertyDeprecation: Deprecation?, getterDeprecation: Deprecation?): Deprecation? =
-    if (getterDeprecation?.isHidden == true && propertyDeprecation?.isHidden != true) {
-        val hiddenGetter = getterDeprecation.run { Deprecation(message, replaceWith, level, Deprecation.Target.GETTER) }
-        propertyDeprecation?.run { Deprecation(message, replaceWith, level, target, hiddenGetter) } ?: hiddenGetter
-    } else {
-        highestOf(propertyDeprecation, getterDeprecation)
-    }
+internal fun varDeprecationOf(
+    propertyDeprecation: Deprecation?,
+    getterDeprecation: Deprecation?,
+    setterDeprecation: Deprecation?
+): Deprecation? {
+    if (propertyDeprecation?.isHidden == true) return propertyDeprecation
+    val deprecations = listOfNotNull(
+        propertyDeprecation,
+        getterDeprecation?.targeting(Deprecation.Target.GETTER),
+        setterDeprecation?.targeting(Deprecation.Target.SETTER)
+    )
+    val first = deprecations.firstOrNull() ?: return null
+    return if (deprecations.size == 1) first else first.targeting(first.target, accessors = deprecations.drop(1))
+}
 
 /**
  * The attributes of the `@Deprecated` and `@DeprecatedSinceKotlin` annotations of a declaration,

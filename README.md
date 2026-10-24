@@ -188,6 +188,10 @@ com.example.AnnotationTestClass
   @Deprecated("Use uppercase() instead.", ReplaceWith("uppercase(Locale.getDefault())"), level = DeprecationLevel.ERROR) inline fun String.toUpperCase(): String
   ```
 
+  The accessors of a `var` deprecated on their own keep their targets,
+  as only the reading, or only the assigning, is deprecated,
+  like `@set:Deprecated("Assign y", level = DeprecationLevel.ERROR) var x: Int`,
+  while a `var` rendered as a `val` is deprecated as a whole by the higher of the deprecations of the property and its getter.
   The level is the one in effect for the standard library of the class loader,
   also when told by `@DeprecatedSinceKotlin`, as for the declarations of the standard library,
   and it is rendered unless it is the default `WARNING`.

@@ -136,12 +136,11 @@ private interface Deprecations {
 
     fun deprecation(constructor: KmConstructor): Deprecation?
 
-    fun deprecation(property: KmProperty): Deprecation?
-
     /**
-     * Whether only the setter of a `var` [property] is hidden, like with `@set:Deprecated(level = HIDDEN)`.
+     * The deprecation of the [property], also of its accessors, like with `@set:Deprecated(level = HIDDEN)`,
+     * see [Deprecation.accessors].
      */
-    fun isSetterHidden(property: KmProperty): Boolean
+    fun deprecation(property: KmProperty): Deprecation?
 
 }
 
@@ -181,7 +180,7 @@ private fun List<KmProperty>.inApi(scope: DeclarationScope, deprecations: Deprec
 private fun KmProperty.apiSetterVisibility(scope: DeclarationScope, deprecations: Deprecations?): Visibility? {
     if (!isVar) return null
     val setterVisibility = setter?.visibility ?: visibility
-    return setterVisibility.takeIf { scope.isApi(it) && deprecations?.isSetterHidden(this) != true }
+    return setterVisibility.takeIf { scope.isApi(it) && deprecations?.deprecation(this)?.hidesSetter != true }
 }
 
 internal class DefaultKotlinIntrospector(
@@ -575,8 +574,6 @@ internal class DefaultKotlinIntrospector(
             return classFile.deprecation(property, annotationsDeprecation = annotationsFile?.annotationsDeprecation(property))
         }
 
-        override fun isSetterHidden(property: KmProperty): Boolean = classFile?.isSetterHidden(property) == true
-
         /**
          * The scope of the class, see [ApiClasses], where the usability of a class whose class file cannot be read
          * is told by the metadata and the reflection of the class, see [isUsableClass] and [reflectedClassFile],
@@ -731,8 +728,6 @@ internal class DefaultKotlinIntrospector(
 
         override fun deprecation(property: KmProperty): Deprecation? =
             reflectedProperties[property.name]?.let { builtinDeprecation(it.kProperty) }
-
-        override fun isSetterHidden(property: KmProperty): Boolean = false
 
     }
 
@@ -1844,21 +1839,27 @@ internal class DefaultKotlinIntrospector(
                 // a parameter not declaring a property is still needed to call the constructor
                 val prop = constructorProperties[param.name]
                 val isOverride = prop != null && isOverride(kmClass, prop)
+                val isVar = when {
+                    prop == null -> false
+                    // the property of a data class, or a value class, which is not part of the API, like a private one
+                    prop !in properties -> prop.isVar
+                    // never with a setter narrower than the property, which is declared in the class body
+                    else -> renderedSetterVisibility(prop, prop.apiSetterVisibility(apiClass, foundClass), isOverride) != null
+                }
+                // only reading a val is deprecated, like in formatProperty
+                val deprecation = prop?.let { foundClass.deprecation(it) }?.let { if (isVar) it else it.ofReading() }
                 formatValueParameter(
                     param,
                     contextPackage,
                     typeParameters,
                     prefix = when {
                         prop == null -> ""
-                        // the property of a data class, or a value class, which is not part of the API, like a private one
-                        prop !in properties -> if (prop.isVar) "var " else "val "
-                        // never with a setter narrower than the property, which is declared in the class body
-                        renderedSetterVisibility(prop, prop.apiSetterVisibility(apiClass, foundClass), isOverride) != null -> "var "
+                        isVar -> "var "
                         else -> "val "
                     },
                     // a constructor property is never abstract, but it can be open or final
                     // the hidden property of a data class, or a value class, is still declared, see formatDeprecation
-                    modifiers = if (prop == null) "" else formatDeprecation(foundClass.deprecation(prop), withHidden = prop !in properties) +
+                    modifiers = if (prop == null) "" else formatDeprecation(deprecation, withHidden = prop !in properties) +
                         formatVisibility(prop.visibility) +
                         formatModalityModifiers(prop.modality, isOverride, inInterface = false, isOpenForOverrides)
                 )
@@ -2254,7 +2255,8 @@ internal class DefaultKotlinIntrospector(
      * except [withHidden], the only place being the property declared by a primary constructor parameter
      * of a data class, or a value class, which must declare a property, like
      * `data class Foo(@Deprecated("Replaced", level = DeprecationLevel.HIDDEN) val a: Int)`, telling it cannot be used,
-     * and the hidden getter of a `var` which can still be assigned, rendered as `@get:Deprecated`, see [Deprecation.hidesGetter].
+     * and the deprecations of the accessors of a `var`, also a hidden one, rendered as `@get:Deprecated`, or `@set:Deprecated`,
+     * see [Deprecation.accessors], when it is rendered as a `var`, otherwise only the [one of reading it][Deprecation.ofReading].
      * Only the first non-blank line of a multiline message is rendered, followed by `…`, to keep it compact,
      * and the expression of `ReplaceWith` without its imports.
      */
@@ -2264,8 +2266,12 @@ internal class DefaultKotlinIntrospector(
     ): String = if (deprecation == null || (deprecation.isHidden && !withHidden)) "" else buildString {
         val message = deprecation.message.trim()
         val firstLine = message.lineSequence().first().trimEnd()
-        // telling that a var whose getter is hidden can only be assigned
-        +(if (deprecation.target == Deprecation.Target.GETTER) "@get:Deprecated(\"" else "@Deprecated(\"")
+        // telling that only the reading, or the assigning, of a var is deprecated
+        +when (deprecation.target) {
+            Deprecation.Target.DECLARATION -> "@Deprecated(\""
+            Deprecation.Target.GETTER -> "@get:Deprecated(\""
+            Deprecation.Target.SETTER -> "@set:Deprecated(\""
+        }
         +firstLine.escapeKotlin('"')
         if (firstLine.length < message.length) +" …"
         +"\""
@@ -2276,7 +2282,7 @@ internal class DefaultKotlinIntrospector(
         }
         if (deprecation.level != DeprecationLevel.WARNING) +", level = DeprecationLevel.${deprecation.level.name}"
         +") "
-        +formatDeprecation(deprecation.hiddenGetter)
+        deprecation.accessors.forEach { +formatDeprecation(it) }
     }
 
     private fun formatSupertypes(
@@ -2636,7 +2642,8 @@ internal class DefaultKotlinIntrospector(
         val isOverride = isOverride(owner, property)
         val renderedSetterVisibility = renderedSetterVisibility(property, setterVisibility, isOverride)
         add(buildString {
-            +formatDeprecation(deprecation)
+            // only reading a val is deprecated
+            +formatDeprecation(if (renderedSetterVisibility != null) deprecation else deprecation?.ofReading())
             +formatContextParameters(property.contextParameters, contextPackage, typeParameters)
             +formatVisibility(property.visibility)
 
@@ -3499,8 +3506,7 @@ internal class DefaultKotlinIntrospector(
          * kept only for the binary compatibility, which the metadata does not tell.
          * The annotation is found on the JVM method of a function or a constructor,
          * and on the synthetic method for the annotations of a property, or its getter, if annotated itself,
-         * while only the setter is deprecated when annotated itself, which tells only whether it is hidden,
-         * and the hidden getter of a `var` hides only the reading, see [Deprecation.hidesGetter].
+         * while the accessors of a `var`, when annotated themselves, are deprecated apart, see [varDeprecationOf].
          * The ACC_SYNTHETIC flag, which the compiler also sets on the hidden methods, is not relied on,
          * as @JvmSynthetic sets it on the declarations which are still callable from Kotlin,
          * while the field of a hidden @JvmField or const property does not have it.
@@ -3516,20 +3522,18 @@ internal class DefaultKotlinIntrospector(
         /**
          * The deprecation of the [property], whose own one, of the synthetic method for its annotations,
          * is the [annotationsDeprecation], combined with the one of its getter, see [highestOf],
-         * except a hidden getter of a `var`, which might still be assigned, see [varDeprecationOf].
+         * except for a `var`, whose accessors are deprecated apart, as it can be read, and assigned, see [varDeprecationOf].
          */
         fun deprecation(property: KmProperty, annotationsDeprecation: Deprecation?): Deprecation? {
             val getterDeprecation = deprecation(property.getterSignature)
             return if (property.isVar) {
-                varDeprecationOf(annotationsDeprecation, getterDeprecation)
+                varDeprecationOf(annotationsDeprecation, getterDeprecation, deprecation(property.setterSignature))
             } else {
                 highestOf(annotationsDeprecation, getterDeprecation)
             }
         }
 
         fun annotationsDeprecation(property: KmProperty): Deprecation? = deprecation(property.syntheticMethodForAnnotations)
-
-        override fun isSetterHidden(property: KmProperty): Boolean = deprecation(property.setterSignature)?.isHidden == true
 
         /**
          * Whether the synthetic method for the annotations of the [property] is rather in the `DefaultImpls` class,

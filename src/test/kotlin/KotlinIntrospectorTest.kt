@@ -7387,9 +7387,53 @@ class KotlinIntrospectorTest {
             class HiddenGetterVarHolder(@get:Deprecated("replaced", level = DeprecationLevel.HIDDEN) var inConstructor: Int) {
                 @get:Deprecated("replaced", level = DeprecationLevel.HIDDEN) var inBody: Int
                 @Deprecated("deprecated") @get:Deprecated("replaced", level = DeprecationLevel.HIDDEN) var deprecatedWithHiddenGetter: Int
+                @get:Deprecated("replaced", level = DeprecationLevel.HIDDEN) @set:Deprecated("Assign y", level = DeprecationLevel.ERROR) var withErrorSetter: Int
             }
             // from com.xemantic.kotlin.introspection.test
             @get:Deprecated("replaced", level = DeprecationLevel.HIDDEN) var HiddenGetterVarHolder.hiddenGetterExtension: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve var with getter deprecated with hidden level and setter deprecated with error level`() {
+        // still listed, like any declaration deprecated with the ERROR level, which can be referred to, but not called
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenGetterVarHolder.withErrorSetter"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenGetterVarHolder.withErrorSetter [page 1/1]
+            @get:Deprecated("replaced", level = DeprecationLevel.HIDDEN) @set:Deprecated("Assign y", level = DeprecationLevel.ERROR) var withErrorSetter: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render deprecation of accessors of var apart from property`() {
+        // only the reading, or only the assigning, is deprecated, while a var which cannot be assigned
+        // from the outside reads as a val, whose reading is deprecated as a whole
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.AccessorDeprecationHolder"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.AccessorDeprecationHolder [page 1/1]
+            class AccessorDeprecationHolder(@get:Deprecated("Read y", level = DeprecationLevel.ERROR) var inConstructor: Int) {
+                @get:Deprecated("Read y", level = DeprecationLevel.ERROR) var errorGetter: Int
+                @get:Deprecated("Read y") var warningGetter: Int
+                @set:Deprecated("Assign y") var warningSetter: Int
+                @set:Deprecated("Assign y", level = DeprecationLevel.ERROR) var errorSetter: Int
+                @get:Deprecated("Read y") @set:Deprecated("Assign y", level = DeprecationLevel.ERROR) var bothAccessors: Int
+                @Deprecated("Use y") @set:Deprecated("Assign y", level = DeprecationLevel.ERROR) var deprecatedWithErrorSetter: Int
+                @Deprecated("Read y", level = DeprecationLevel.ERROR) val withPrivateSetter: Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            @set:Deprecated("Assign y", level = DeprecationLevel.ERROR) var AccessorDeprecationHolder.errorSetterExtension: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve var with setter deprecated with error level`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.AccessorDeprecationHolder.errorSetter"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.AccessorDeprecationHolder.errorSetter [page 1/1]
+            @set:Deprecated("Assign y", level = DeprecationLevel.ERROR) var errorSetter: Int
         """.trimIndent()
     }
 
