@@ -1369,25 +1369,19 @@ internal class DefaultKotlinIntrospector(
      * For any other class, all of them, on the class and its [userSupertypes], see [extensionReceiverNames],
      * not to flood its listing with the generic extensions of the standard library.
      * Either way, the ones on a type parameter with multiple bounds only when the class satisfies all of them,
-     * see [receiverBoundsOf].
+     * see [receiverBoundsOf], also when none of them is among the [userSupertypes], see [listedFor].
      */
     private fun listedExtensions(kmClass: KmClass, className: String, isBuiltin: Boolean): ListedExtensions {
         if (!isBuiltin) {
-            val receiverNames = extensionReceiverNames(kmClass, className)
-            val satisfiedBounds = satisfiedBoundsOf(kmClass, className)
-            return ListedExtensions(
-                extensionIndex.listedFor(receiverNames, satisfiedBounds),
-                extensionPropertyIndex.listedFor(receiverNames, satisfiedBounds)
-            )
+            return extensionsListedFor(extensionReceiverNames(kmClass, className), satisfiedBoundsOf(kmClass, className))
         }
         val supertypeNames = supertypeNames(kmClass, kmClassOf = { builtinClasses[it] ?: loadKmClass(it) }) {
             it != "kotlin.Any"
         }
-        val receiverNames = listOf(className) + supertypeNames
-        val satisfiedBounds = lazyOf(supertypeNames + className)
+        val listed = extensionsListedFor(listOf(className) + supertypeNames, supertypeNames + className)
         return ListedExtensions(
-            extensionIndex.listedFor(receiverNames, satisfiedBounds).filter { isPublicKotlinPackageSource(it.sourceClass) },
-            extensionPropertyIndex.listedFor(receiverNames, satisfiedBounds).filter { isPublicKotlinPackageSource(it.sourceClass) }
+            listed.functions.filter { isPublicKotlinPackageSource(it.sourceClass) },
+            listed.properties.filter { isPublicKotlinPackageSource(it.sourceClass) }
         )
     }
 
@@ -1565,7 +1559,10 @@ internal class DefaultKotlinIntrospector(
 
     /**
      * The names of the supertypes of the [kmClass], walked breadth-first, like `kotlin.collections.Collection`,
-     * the [included] ones, traversed further through their declarations, given by [kmClassOf] their metadata names.
+     * the [included] ones, traversed further through their declarations, given by [kmClassOf] their metadata names,
+     * or else through their Java classes, see [javaSupertypeNames].
+     * A function type, like `suspend () -> Unit`, is named by its function type class,
+     * like `kotlin.coroutines.SuspendFunction0`, see [receiverIndexKeys], and has the supertype `kotlin.Function`.
      */
     private fun supertypeNames(
         kmClass: KmClass,
@@ -1573,36 +1570,95 @@ internal class DefaultKotlinIntrospector(
         included: (name: String) -> Boolean = { true }
     ): Set<String> {
         val supertypeNames = linkedSetOf<String>()
-        val pending = ArrayDeque(listOf(kmClass))
+        // the metadata names of the supertypes to traverse
+        val pending = ArrayDeque<String>()
+        fun visit(name: String, metadataName: String) {
+            if (FunctionTypeClass.of(name) != null) {
+                if (included(name)) supertypeNames += name
+                visit(FUNCTION_CLASS_NAME, kotlinClassName(FUNCTION_CLASS_NAME))
+            } else if (included(name) && supertypeNames.add(name)) {
+                pending += metadataName
+            }
+        }
+        fun visitSupertypes(supertypes: List<KmType>) {
+            for (supertype in supertypes) {
+                val classifier = supertype.classifier as? KmClassifier.Class ?: continue
+                visit(receiverIndexKeys(supertype).single(), classifier.name)
+            }
+        }
+        visitSupertypes(kmClass.supertypes)
         while (pending.isNotEmpty()) {
-            for (supertype in pending.removeFirst().supertypes) {
-                val metadataName = (supertype.classifier as? KmClassifier.Class)?.name ?: continue
-                val name = metadataName.replace('/', '.')
-                if (!included(name) || !supertypeNames.add(name)) continue
-                kmClassOf(metadataName)?.let { pending.add(it) }
+            val metadataName = pending.removeFirst()
+            val supertypeKmClass = kmClassOf(metadataName)
+            if (supertypeKmClass != null) {
+                visitSupertypes(supertypeKmClass.supertypes)
+            } else {
+                javaSupertypeNames(metadataName).forEach { (name, supertypeMetadataName) -> visit(name, supertypeMetadataName) }
             }
         }
         return supertypeNames
     }
 
     /**
+     * The direct supertypes of the Java class of the given [metadataName], which has no Kotlin metadata,
+     * by their Kotlin names, like `kotlin.collections.MutableList` of `java.util.List`, see [kotlinNamesOfJavaClasses],
+     * or `kotlin.Function1` of `kotlin.jvm.functions.Function1`, paired with their metadata names,
+     * or none if the class cannot be loaded, like when its supertype is missing from the classpath.
+     */
+    private fun javaSupertypeNames(metadataName: String): List<Pair<String, String>> {
+        val javaClass = findClassByMetadataName(metadataName)?.clazz ?: return emptyList()
+        return try {
+            (listOfNotNull(javaClass.superclass) + javaClass.interfaces).map { supertype ->
+                val kotlinName = kotlinNamesOfJavaClasses[supertype.name] ?: jvmFunctionTypeName(supertype.name)
+                if (kotlinName != null) {
+                    kotlinName to kotlinClassName(kotlinName)
+                } else {
+                    val supertypeMetadataName = kotlinClassName(supertype)
+                    supertypeMetadataName.replace('/', '.') to supertypeMetadataName
+                }
+            }
+        } catch (_: LinkageError) {
+            emptyList()
+        }
+    }
+
+    /**
+     * The Kotlin names of the built-in types by the names of their JVM classes,
+     * like `kotlin.Comparable` of `java.lang.Comparable`,
+     * the mutable collection types chosen, as the Java collections are mutable.
+     */
+    private val kotlinNamesOfJavaClasses: Map<String, String> by lazy {
+        builtinTypes.entries
+            .filter { (name, kClass) -> !kClass.java.isPrimitive && !kClass.java.isArray && kClass.java.name != name }
+            // the later ones win
+            .sortedBy { (name, _) -> name.substringAfterLast('.').startsWith("Mutable") }
+            .associate { (name, kClass) -> kClass.java.name to name }
+    }
+
+    /**
      * All the supertypes of a class, excluding the ones from `kotlin.*` and `java.*` packages,
-     * which are not traversed further, so that a class implementing, e.g., `Comparable`
-     * is not flooded with the generic extensions of the standard library.
+     * which are not traversed further, so that a class implementing, e.g., `CharSequence`
+     * is not flooded with the generic extensions of the standard library,
+     * except the function types, like `(String) -> Unit`, and their supertype `kotlin.Function`,
+     * whose extensions are listed for a class implementing them, like for a function type class,
+     * see [functionTypeReceiverNames].
+     * Also the ones reached through a Java supertype, see [supertypeNames].
      */
     private fun userSupertypes(kmClass: KmClass): Set<String> =
-        supertypeNames(kmClass, kmClassOf = ::loadKmClass) { !it.startsWith("kotlin.") && !it.startsWith("java.") }
+        supertypeNames(kmClass, kmClassOf = ::loadKmClass) {
+            (!it.startsWith("kotlin.") && !it.startsWith("java.")) ||
+                it == FUNCTION_CLASS_NAME ||
+                FunctionTypeClass.of(it) != null
+        }
 
     /**
      * The names of the class and all its supertypes, also the ones from `kotlin.*` and `java.*` packages,
      * unlike the [userSupertypes], telling whether the class satisfies the multiple bounds of a type parameter receiver,
-     * see [receiverBoundsOf], computed only when needed.
-     * The supertypes of a Java supertype are not known, as it has no Kotlin metadata.
+     * see [receiverBoundsOf].
      */
-    private fun satisfiedBoundsOf(kmClass: KmClass, className: String): Lazy<Set<String>> = lazy {
+    private fun satisfiedBoundsOf(kmClass: KmClass, className: String): Set<String> =
         ownExtensionReceiverNames(className).toSet() +
             supertypeNames(kmClass, kmClassOf = { builtinClasses[it] ?: loadKmClass(it) })
-    }
 
     /**
      * The receiver names of the extensions listed for a class, the class and its [userSupertypes].
@@ -1629,17 +1685,20 @@ internal class DefaultKotlinIntrospector(
      * and the extensions on its function types and on their supertype `kotlin.Function`.
      */
     private fun formatFunctionTypeClass(functionTypeClass: FunctionTypeClass, className: String): ClassListing {
-        val receiverNames = functionTypeReceiverNames(className)
-        val supertypeNames = lazyOf(receiverNames.toSet())
+        val extensions = functionTypeExtensions(className)
         return ClassListing.of(
             header = functionTypeClass.header,
             members = listOf(ListingItem.Declaration(listOf(functionTypeClass.invoke))),
-            extensions = extensionSignatures(
-                extensionIndex.listedFor(receiverNames, supertypeNames),
-                extensionPropertyIndex.listedFor(receiverNames, supertypeNames),
-                contextPackage = null
-            )
+            extensions = extensionSignatures(extensions.functions, extensions.properties, contextPackage = null)
         )
+    }
+
+    /**
+     * The extensions listed for the function type class named [className], see [functionTypeReceiverNames].
+     */
+    private fun functionTypeExtensions(className: String): ListedExtensions {
+        val receiverNames = functionTypeReceiverNames(className)
+        return extensionsListedFor(receiverNames, receiverNames.toSet())
     }
 
     /**
@@ -1652,11 +1711,10 @@ internal class DefaultKotlinIntrospector(
     ): MemberListing? {
         val members = if (memberName == "invoke") listOf(functionTypeClass.invoke) else emptyList()
         // like in the listing of the function type class
-        val receiverNames = functionTypeReceiverNames(className)
-        val supertypeNames = lazyOf(receiverNames.toSet())
+        val listedExtensions = functionTypeExtensions(className)
         val extensions = extensionSignatures(
-            extensionIndex.listedFor(receiverNames, supertypeNames).filter { it.function.name == memberName },
-            extensionPropertyIndex.listedFor(receiverNames, supertypeNames).filter { it.property.name == memberName },
+            listedExtensions.functions.filter { it.function.name == memberName },
+            listedExtensions.properties.filter { it.property.name == memberName },
             contextPackage = null
         )
         return MemberListing.of(members.map { ListingItem.Declaration(listOf(it)) } + extensions)
@@ -3669,16 +3727,37 @@ internal class DefaultKotlinIntrospector(
     }
 
     /**
+     * The extensions listed for a class, the ones on any of the [receiverNames], like the class and its supertypes,
+     * see [listedFor].
+     */
+    private fun extensionsListedFor(receiverNames: Collection<String>, supertypeNames: Set<String>): ListedExtensions =
+        ListedExtensions(
+            extensionIndex.listedFor(receiverNames, supertypeNames),
+            extensionPropertyIndex.listedFor(receiverNames, supertypeNames)
+        )
+
+    /**
      * The extensions of this index listed for a class, the ones on any of the [receiverNames], like the class
      * and its supertypes, each one once, skipping the ones on a type parameter with multiple bounds,
-     * like `where T : A, T : B`, unless the class is a subtype of all of them, among the [supertypeNames].
+     * like `where T : A, T : B`, unless the class is a subtype of all of them, among the [supertypeNames],
+     * which are then listed also when indexed under none of the [receiverNames],
+     * like `R.contains(element)` where `R : ClosedRange<T>, R : Iterable<T>` for a class implementing both,
+     * which does not list the generic extensions of the standard library on any of these bounds alone,
+     * see [userSupertypes].
      */
     private fun <E : ReceiverBounded> Map<String, List<E>>.listedFor(
         receiverNames: Collection<String>,
-        supertypeNames: Lazy<Set<String>>
-    ): List<E> = receiverNames.flatMap { this[it].orEmpty() }
-        .filter { extension -> extension.receiverBounds.all { it in supertypeNames.value } }
-        .distinct()
+        supertypeNames: Set<String>
+    ): List<E> {
+        fun E.isSatisfied() = receiverBounds.all { it in supertypeNames }
+        val listed = receiverNames.flatMap { this[it].orEmpty() }.filter { it.receiverBounds.isEmpty() || it.isSatisfied() }
+        val receiverNameSet = receiverNames.toSet()
+        val boundedBySupertypesOnly = supertypeNames
+            .filter { it !in receiverNameSet }
+            .flatMap { this[it].orEmpty() }
+            .filter { it.receiverBounds.isNotEmpty() && it.isSatisfied() }
+        return (listed + boundedBySupertypesOnly).distinct()
+    }
 
     private fun requirePositivePageSize(pageSize: Int) {
         require(pageSize > 0) { "pageSize must be positive, but was: $pageSize" }

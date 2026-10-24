@@ -2801,6 +2801,7 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should mark override of invoke of function type supertype`() {
+        // with the extensions of the function type, like the ones of kotlin.Function1, whatever its type arguments
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.FunctionTypeImpl"
         ) sameAsKotlin """
@@ -2809,11 +2810,17 @@ class KotlinIntrospectorTest {
                 override operator fun invoke(p1: String): Int
                 fun invoke(p1: Int): Int
             }
+            // from com.xemantic.kotlin.introspection.test
+            fun <P, R> ((P) -> R).handleAll(events: List<P>): List<R>
+            fun (context(String) () -> Unit).runInContext()
+            // from kotlin.reflect.jvm
+            fun <R> Function<R>.reflect(): KFunction<R>?
         """.trimIndent()
     }
 
     @Test
     fun `should mark override of invoke of suspend function type supertype`() {
+        // with the extensions of the suspend function type, like the ones of kotlin.coroutines.SuspendFunction1
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.SuspendFunctionTypeImpl"
         ) sameAsKotlin """
@@ -2822,6 +2829,14 @@ class KotlinIntrospectorTest {
                 override suspend operator fun invoke(p1: String): Int
                 fun invoke(p1: String, p2: Int): Int
             }
+            // from kotlin.coroutines
+            fun <R, T> (suspend R.() -> T).createCoroutine(receiver: R, completion: Continuation<T>): Continuation<Unit>
+            fun <R, T> (suspend R.() -> T).startCoroutine(receiver: R, completion: Continuation<T>)
+            // from kotlin.coroutines.intrinsics
+            fun <R, T> (suspend R.() -> T).createCoroutineUnintercepted(receiver: R, completion: Continuation<T>): Continuation<Unit>
+            inline fun <R, T> (suspend R.() -> T).startCoroutineUninterceptedOrReturn(receiver: R, completion: Continuation<T>): Any?
+            // from kotlin.reflect.jvm
+            fun <R> Function<R>.reflect(): KFunction<R>?
         """.trimIndent()
     }
 
@@ -4247,6 +4262,156 @@ class KotlinIntrospectorTest {
                 context(log: com.xemantic.kotlin.introspection.test.Logger) fun ((Int, Int, Int, Int, Int, Int, Int, Int, Int) -> Unit).invokeInContext()
             """.trimIndent()
         }
+    }
+
+    @Test
+    fun `should resolve class with extension on type parameter with multiple bounds satisfied through Java superclass`() {
+        // java.io.Closeable is implemented by java.io.FilterInputStream, a Java class without the Kotlin metadata
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverStream"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverStream [page 1/1]
+            class BoundedReceiverStream : java.io.FilterInputStream, BoundedReceiverA
+            // from com.xemantic.kotlin.introspection.test
+            val <T : BoundedReceiverA> T.boundedPropertyOfA: Int
+            fun <T : BoundedReceiverA> T.boundedByA(): T
+            fun <T> T.boundedByAAndCloseable() where T : BoundedReceiverA, T : java.io.Closeable
+            fun <U : BoundedReceiverA, T : U> T.boundedByTypeParameter()
+            fun <T : BoundedReceiverA?> T.nullableBoundedByA()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension on type parameter with multiple bounds satisfied through Java superclass as member`() {
+        // like in the listing of BoundedReceiverStream
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverStream.boundedByAAndCloseable"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverStream.boundedByAAndCloseable [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            fun <T> T.boundedByAAndCloseable() where T : BoundedReceiverA, T : java.io.Closeable
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extensions on type parameters bounded by Kotlin interfaces of its Java superclass`() {
+        // BoundedReceiverB and BoundedReceiverC are implemented only by the Java class JavaBoundedReceiverBase
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverThroughJava"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverThroughJava [page 1/1]
+            class BoundedReceiverThroughJava : com.xemantic.kotlin.introspection.test.other.JavaBoundedReceiverBase, BoundedReceiverA
+            // from com.xemantic.kotlin.introspection.test
+            val <T : BoundedReceiverA> T.boundedPropertyOfA: Int
+            fun <T : BoundedReceiverA> T.boundedByA(): T
+            fun <T> T.boundedByBoth() where T : BoundedReceiverA, T : BoundedReceiverB
+            fun <U : BoundedReceiverA, T : U> T.boundedByTypeParameter()
+            @Deprecated("Use boundedByA") context(log: Logger) fun <T : BoundedReceiverC> T.deprecatedInContext()
+            fun <T : BoundedReceiverA?> T.nullableBoundedByA()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension on type parameter bounded by Kotlin interface of Java superclass as member`() {
+        // like in the listing of BoundedReceiverThroughJava
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverThroughJava.boundedByBoth"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverThroughJava.boundedByBoth [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            fun <T> T.boundedByBoth() where T : BoundedReceiverA, T : BoundedReceiverB
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class implementing function type with the extensions of the function type`() {
+        // like kotlin.jvm.functions.Function1, also with the ones of kotlin.Function
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverHandler",
+            pageSize = 1000
+        ) should {
+            have(lines()[1] == "class BoundedReceiverHandler : (String) -> Unit {")
+            have("fun <P, R> ((P) -> R).handleAll(events: List<P>): List<R>" in lines())
+            have("fun (context(String) () -> Unit).runInContext()" in lines())
+            have("fun <R> Function<R>.reflect(): KFunction<R>?" in lines())
+            have("fun (() -> Unit).repeat()" !in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve class with the extensions of function type implemented by its Java superclass`() {
+        // JavaFunctionBase implements kotlin.jvm.functions.Function0, which is () -> Unit in Kotlin
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverJavaFunction",
+            pageSize = 1000
+        ) should {
+            have("fun (() -> Unit).repeat()" in lines())
+            have("fun <R> Function<R>.reflect(): KFunction<R>?" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve extension of function type as member of class implementing it`() {
+        // like in the listing of BoundedReceiverHandler
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverHandler.handleAll"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverHandler.handleAll [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            fun <P, R> ((P) -> R).handleAll(events: List<P>): List<R>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class implementing suspend function type with extension on type parameter bounded by it`() {
+        // suspend () -> Unit is stored in the metadata as Function1<Continuation<Unit>, Any?>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverSuspendHandler",
+            pageSize = 1000
+        ) should {
+            have(lines()[1] == "class BoundedReceiverSuspendHandler : BoundedReceiverA, suspend () -> Unit {")
+            have("fun <T> T.boundedByAAndSuspendFunction() where T : BoundedReceiverA, T : suspend () -> Unit" in lines())
+            have("fun (suspend () -> Unit).retry()" in lines())
+            have("fun <R> Function<R>.reflect(): KFunction<R>?" in lines())
+            have("fun (context(String) () -> Unit).runInContext()" !in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve extension on type parameter bounded by suspend function type as member of class implementing it`() {
+        // like in the listing of BoundedReceiverSuspendHandler
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverSuspendHandler.boundedByAAndSuspendFunction"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverSuspendHandler.boundedByAAndSuspendFunction [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            fun <T> T.boundedByAAndSuspendFunction() where T : BoundedReceiverA, T : suspend () -> Unit
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with stdlib extension on type parameter with multiple bounds of the standard library satisfied by it`() {
+        // the generic extensions on a single bound of the standard library are not listed for a user class,
+        // unlike the ones on multiple bounds satisfied by the class, which are not generic in the same way
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverRange",
+            pageSize = 1000
+        ) should {
+            have(lines().count { "R.contains(" in it } == 1)
+            have(lines().none { "Iterable<T>." in it })
+        }
+    }
+
+    @Test
+    fun `should resolve stdlib extension on type parameter with multiple bounds of the standard library as member of class satisfying them`() {
+        // like in the listing of BoundedReceiverRange, the member contains(value: Int) is inherited from ClosedRange
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverRange.contains"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverRange.contains [page 1/1]
+            // from kotlin.ranges
+            inline operator fun <T : Comparable<T>, R> R.contains(element: T?): Boolean where R : ClosedRange<T>, R : Iterable<T>
+        """.trimIndent()
     }
 
     @Test

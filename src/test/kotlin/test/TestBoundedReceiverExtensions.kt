@@ -18,6 +18,9 @@
 
 package com.xemantic.kotlin.introspection.test
 
+import com.xemantic.kotlin.introspection.test.other.JavaBoundedReceiverBase
+import com.xemantic.kotlin.introspection.test.other.JavaFunctionBase
+
 // Extensions on type parameter receivers, listed for the classes satisfying their bounds,
 // names avoid the "TestClass" suffix to keep search result tests stable
 interface BoundedReceiverA
@@ -56,3 +59,30 @@ fun <T : BoundedReceiverC> T.deprecatedInContext() {}
 
 context(log: Logger)
 fun ((Int, Int, Int, Int, Int, Int, Int, Int, Int) -> Unit).invokeInContext() {}
+
+// the bounds satisfied through a Java supertype
+class BoundedReceiverStream : java.io.FilterInputStream(null), BoundedReceiverA
+
+fun <T> T.boundedByAAndCloseable() where T : BoundedReceiverA, T : java.io.Closeable {}
+
+class BoundedReceiverThroughJava : JavaBoundedReceiverBase(), BoundedReceiverA
+
+// the function type supertypes
+class BoundedReceiverHandler : (String) -> Unit {
+    override fun invoke(p1: String) {}
+}
+
+fun <P, R> ((P) -> R).handleAll(events: List<P>): List<R> = events.map(this)
+
+class BoundedReceiverSuspendHandler : BoundedReceiverA, suspend () -> Unit {
+    override suspend fun invoke() {}
+}
+
+fun <T> T.boundedByAAndSuspendFunction() where T : BoundedReceiverA, T : suspend () -> Unit {}
+
+class BoundedReceiverJavaFunction : JavaFunctionBase()
+
+// the bounds of the standard library satisfied by a class
+class BoundedReceiverRange(override val start: Int, override val endInclusive: Int) : ClosedRange<Int>, Iterable<Int> {
+    override fun iterator(): Iterator<Int> = (start..endInclusive).iterator()
+}
