@@ -865,7 +865,7 @@ internal class DefaultKotlinIntrospector(
         foundClasses.getIfCached(binaryName)?.let { return it }
         val lookup = attemptLookUpClass("unprobed class $binaryName", binaryName, isMissProbed = false)
         if (!lookup.isFinal || lookup.foundClass == null) return lookup.markedUnlessFinal()
-        // the class cached meanwhile by another thread, if any, so that the lookups share the class found
+        // the class cached meanwhile by another thread, if any, which is then shared, unlike a miss, see below
         val cached = foundClasses.getOrCompute(binaryName) { BoundedCache.Computed(lookup, isCacheable = true) }
         if (cached.isCacheable && cached.value.foundClass != null) return cached.value
         // rather than a miss cached meanwhile by a concurrent lookup, like after a transient failure, deemed final,

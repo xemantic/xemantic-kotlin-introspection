@@ -22,23 +22,67 @@ import com.xemantic.kotlin.test.assert
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
-// The waits of the concurrency tests, bounded, so that a regression fails the test rather than hanging it,
+// The threads and the waits of the concurrency tests, bounded, so that a regression fails the test rather than hanging it,
 // never telling anything about the time it takes otherwise.
 
-private const val WAIT_SECONDS = 60L
+private val WAIT_NANOS = TimeUnit.SECONDS.toNanos(60)
 
 /**
- * Waits for the [threads], failing rather than hanging if they never finish.
+ * A thread of a concurrency test, started by [testThread], keeping the [failure] of its block, if any,
+ * rethrown by [joinOrFail], rather than only printed, so that it fails the test.
  */
-internal fun joinOrFail(vararg threads: Thread) {
-    threads.forEach { it.join(TimeUnit.SECONDS.toMillis(WAIT_SECONDS)) }
+internal class TestThread(private val block: () -> Unit) : Thread() {
+
+    @Volatile
+    var failure: Throwable? = null
+        private set
+
+    override fun run() {
+        try {
+            block()
+        } catch (e: Throwable) {
+            failure = e
+        }
+    }
+
+}
+
+/**
+ * Starts a [TestThread] running the [block].
+ */
+internal fun testThread(block: () -> Unit): TestThread = TestThread(block).apply { start() }
+
+/**
+ * Waits for the [threads], all within one deadline, failing rather than hanging if they never finish,
+ * and rethrowing the first failure of their blocks, if any.
+ */
+internal fun joinOrFail(vararg threads: TestThread) {
+    val deadline = System.nanoTime() + WAIT_NANOS
+    threads.forEach { thread ->
+        // at least a millisecond, as 0 waits forever
+        thread.join(TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime()).coerceAtLeast(1))
+    }
     assert(threads.none { it.isAlive })
+    threads.firstNotNullOfOrNull { it.failure }?.let { throw it }
 }
 
 /**
  * Waits for the [latch], failing rather than hanging if it is never counted down.
  */
 internal fun awaitOrFail(latch: CountDownLatch) {
-    val isCountedDown = latch.await(WAIT_SECONDS, TimeUnit.SECONDS)
+    val isCountedDown = latch.await(WAIT_NANOS, TimeUnit.NANOSECONDS)
     assert(isCountedDown)
+}
+
+/**
+ * Polls the [condition] until it holds, or the wait is over, without failing then,
+ * like for a state which a thread might never reach, telling whether it holds.
+ */
+internal fun pollUntil(condition: () -> Boolean): Boolean {
+    val deadline = System.nanoTime() + WAIT_NANOS
+    while (!condition()) {
+        if (System.nanoTime() - deadline >= 0) return false
+        Thread.sleep(1)
+    }
+    return true
 }

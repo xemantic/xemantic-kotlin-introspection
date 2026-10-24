@@ -1055,10 +1055,10 @@ class ClassLoaderIntrospectionTest {
         val classLoader = BlockingClassLoader(javaClass.classLoader, blocked = outer, isFirstRequestLoaded = true)
         val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
         var byNameSignature: String? = null
-        val byName = kotlin.concurrent.thread { byNameSignature = introspector.resolve(outer) }
+        val byName = testThread { byNameSignature = introspector.resolve(outer) }
         awaitOrFail(classLoader.entered)
         // on its own thread, as it would wait for the lookup by name, if it shared its cache entry
-        val lookup = kotlin.concurrent.thread { introspector.resolve("$outer.Sorted") }
+        val lookup = testThread { introspector.resolve("$outer.Sorted") }
         try {
             joinOrFail(lookup)
         } finally {
@@ -1081,21 +1081,23 @@ class ClassLoaderIntrospectionTest {
         val classLoader = BlockingClassLoader(javaClass.classLoader, blocked = outer)
         val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
         // the outer class resolved by name, whose miss is not probed, failing after the lookup of the nested class waits
-        val byName = kotlin.concurrent.thread { introspector.resolve(outer) }
+        val byName = testThread { introspector.resolve(outer) }
         awaitOrFail(classLoader.entered)
         var nested: String? = null
-        val lookup = kotlin.concurrent.thread { nested = introspector.resolve("$outer.Sorted") }
-        // until the lookup of the nested class waits for the lookup of its outer class, if it does,
-        // bounded, as it might wait for something else instead
-        var polls = 0
-        while (lookup.isAlive && polls++ < 60_000 && !(
-                lookup.state == Thread.State.BLOCKED &&
-                    lookup.stackTrace.any { "Lazy" in it.className }
-                )
-        ) Thread.sleep(1)
+        val lookup = testThread { nested = introspector.resolve("$outer.Sorted") }
 
         // when
-        classLoader.release.countDown()
+        try {
+            // until the lookup of the nested class waits for the lookup of its outer class, if it does,
+            // bounded, as it might wait for something else instead
+            pollUntil {
+                !lookup.isAlive || (
+                    lookup.state == Thread.State.BLOCKED && lookup.stackTrace.any { "Lazy" in it.className }
+                    )
+            }
+        } finally {
+            classLoader.release.countDown()
+        }
         joinOrFail(byName, lookup)
 
         // then

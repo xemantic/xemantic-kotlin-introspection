@@ -74,7 +74,7 @@ class TransientFailuresTest {
         val started = java.util.concurrent.CountDownLatch(1)
         val failed = java.util.concurrent.CountDownLatch(1)
         var overlapping: TransientFailures.Outcome<String>? = null
-        val other = kotlin.concurrent.thread {
+        val other = testThread {
             failures.operation {
                 started.countDown()
                 awaitOrFail(failed)
@@ -105,7 +105,7 @@ class TransientFailuresTest {
         val entered = java.util.concurrent.CountDownLatch(1)
         val release = java.util.concurrent.CountDownLatch(1)
         // a slow attempt of an operation started before the first failure, failing only after a later attempt began
-        val slow = kotlin.concurrent.thread {
+        val slow = testThread {
             failures.operation {
                 failures.attempt("key") {
                     attempts.incrementAndGet()
@@ -147,7 +147,7 @@ class TransientFailuresTest {
         // when
         failures.mark()
         var otherCount = -1L
-        joinOrFail(kotlin.concurrent.thread { otherCount = failures.count() })
+        joinOrFail(testThread { otherCount = failures.count() })
 
         // then
         assert(failures.count() == 1L && otherCount == 0L)
