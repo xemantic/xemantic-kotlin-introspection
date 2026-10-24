@@ -110,3 +110,12 @@ open class InheritedNullableOverloadMiddle : InheritedNullableOverloadBase() {
 }
 
 class InheritedNullableOverloadMiddleLeaf : InheritedNullableOverloadMiddle()
+
+// An overload declared with a type parameter named like the one of the supertype, which it does not override
+open class InheritedNumberHolder<T : Number> {
+    fun h(x: T) {}
+}
+
+class InheritedAnyHolder<T> : InheritedNumberHolder<Int>() {
+    fun h(x: T) {}
+}

@@ -1218,25 +1218,31 @@ internal class DefaultKotlinIntrospector(
         if (kmClass.name != ANY_CLASS_NAME) collect(ANY_CLASS_NAME)
         if (candidates.isEmpty()) return emptyList()
 
-        // the declared members override the inherited ones, matched by the overridden keys, or by the same signature
-        val declared = apiMembersNamed(kmClass, declarations, memberName, scope)
-        val declaredSignatures = declared.mapTo(HashSet()) { member ->
-            when (member) {
-                is Member.Property -> memberKey(kmClass, member.property)
-                is Member.Function -> memberKey(kmClass, member.function)
-            }.substringAfter('#')
-        }
+        // the declared members override the inherited ones, matched by the overridden keys,
+        // or else, for a declared override whose overridden Kotlin members are not told, like of a Java supertype,
+        // by the same signature, compared as written, without substituting the type arguments of the supertypes
         val overridden = candidates.flatMapTo(HashSet()) { it.overridden }
-        declared.forEach { member ->
-            overridden += when (member) {
-                is Member.Property -> overrideResolver.overriddenMembers(kmClass, member.property)
-                is Member.Function -> overrideResolver.overriddenMembers(kmClass, member.function)
+        val declaredSignatures = HashSet<String>()
+        apiMembersNamed(kmClass, declarations, memberName, scope).forEach { member ->
+            val (keys, isOverride) = when (member) {
+                is Member.Property -> overrideResolver.overriddenMembers(kmClass, member.property) to
+                    { isOverride(kmClass, member.property) }
+                is Member.Function -> overrideResolver.overriddenMembers(kmClass, member.function) to
+                    { isOverride(kmClass, member.function) }
+            }
+            overridden += keys
+            if (keys.isEmpty() && isOverride()) {
+                declaredSignatures += when (member) {
+                    is Member.Property -> memberKey(kmClass, member.property)
+                    is Member.Function -> memberKey(kmClass, member.function)
+                }.substringAfter('#')
             }
         }
         val survivors = candidates.filter { it.key !in overridden && it.signature !in declaredSignatures }
         val inherited = survivors.filterIndexed { index, candidate ->
             survivors.withIndex().none { (rivalIndex, rival) ->
-                rivalIndex != index &&
+                // the members of the same supertype are its overloads, never competing
+                rivalIndex != index && rival.kmClass.name != candidate.kmClass.name &&
                     (rival.member is Member.Property) == (candidate.member is Member.Property) &&
                     (rival.signature == candidate.signature || rival.overridden.any { it in candidate.overridden }) &&
                     when (val specificity = compareSpecificity(rival.returnType, candidate.returnType)) {
@@ -3735,7 +3741,7 @@ private sealed interface ListingItem {
     class Extension(val source: String, val lines: List<String>) : ClassItem, MemberItem
 
     /**
-     * A member inherited from a supertype found by a [MemberListing], when the class declares none of the name,
+     * A member inherited from a supertype found by a [MemberListing], which the class does not override,
      * listed under the `// inherited from` header of the supertype, the [source], repeated on every page,
      * rendered on its [lines], see [Declaration].
      */
@@ -3846,9 +3852,9 @@ private class ClassListing(
 
 /**
  * The declarations found by a member name, like the overloads of a function, one signature per item:
- * the members, see [ListingItem.Declaration], then the members of the companion object,
- * see [ListingItem.CompanionMember], and then the extensions, see [ListingItem.Extension],
- * or else the members inherited from a supertype, see [ListingItem.InheritedMember].
+ * the members, see [ListingItem.Declaration], then the members inherited from the supertypes,
+ * see [ListingItem.InheritedMember], then the members of the companion object,
+ * see [ListingItem.CompanionMember], and then the extensions, see [ListingItem.Extension].
  */
 private class MemberListing(
     override val items: List<ListingItem.MemberItem>,

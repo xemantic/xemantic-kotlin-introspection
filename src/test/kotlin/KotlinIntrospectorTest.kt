@@ -3346,6 +3346,19 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve inherited overload next to declared overload of type parameter named like the one of supertype`() {
+        // h(x: T) of InheritedAnyHolder does not override h(x: T) of InheritedNumberHolder<Int>, which takes an Int
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedAnyHolder.h"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedAnyHolder.h [page 1/1]
+            fun h(x: T)
+            // inherited from com.xemantic.kotlin.introspection.test.InheritedNumberHolder
+            fun h(x: T)
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve overloads inherited from unrelated supertypes`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.InheritedBothFoo.foo"
@@ -4574,6 +4587,8 @@ class KotlinIntrospectorTest {
                     .map { it.trim() }
                     .mapNotNull { line ->
                         if (line.startsWith("// inherited from ")) listedType = line.removePrefix("// inherited from ")
+                        // the companion object members, following the inherited ones, are listed by the type itself
+                        if (line == "companion object {") listedType = type
                         (listedType to line).takeIf { !line.startsWith("//") && line != "companion object {" && line != "}" }
                     }
                     .filter { (listedType, line) ->
