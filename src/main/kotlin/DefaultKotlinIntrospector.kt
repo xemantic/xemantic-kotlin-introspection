@@ -1627,9 +1627,10 @@ internal class DefaultKotlinIntrospector(
         // the metadata names of the supertypes to traverse
         val pending = ArrayDeque<String>()
         fun visit(name: String, metadataName: String) {
-            if (FunctionTypeClass.of(name) != null) {
+            val functionTypeClass = FunctionTypeClass.of(name)
+            if (functionTypeClass != null) {
                 if (included(name)) supertypeNames += name
-                visit(FUNCTION_CLASS_NAME, kotlinClassName(FUNCTION_CLASS_NAME))
+                functionTypeClass.supertypeNames.forEach { visit(it, kotlinClassName(it)) }
             } else if (included(name) && supertypeNames.add(name)) {
                 pending += metadataName
             }
@@ -1759,10 +1760,11 @@ internal class DefaultKotlinIntrospector(
 
     /**
      * The receiver names of the extensions listed for a function type class named [functionTypeName],
-     * like `kotlin.Function1`, the ones on its function types, and on their supertype `kotlin.Function`.
+     * like `kotlin.Function1`, the ones on its function types, and on its supertypes, like `kotlin.Function`,
+     * see [FunctionTypeClass.supertypeNames].
      */
     private fun functionTypeReceiverNames(functionTypeName: String): List<String> =
-        listOf(functionTypeName, FUNCTION_CLASS_NAME)
+        listOf(functionTypeName) + FunctionTypeClass.of(functionTypeName)?.supertypeNames.orEmpty()
 
     /**
      * Lists a function type class, see [FunctionTypeClass], with its `invoke` operator,
@@ -4255,11 +4257,13 @@ private fun jvmFunctionTypeName(className: String): String? =
  * The names of the function type classes found by the [KotlinIntrospector.search], the ones compiled to
  * their own JVM interfaces, like `kotlin.Function22`, and `kotlin.coroutines.SuspendFunction21`,
  * whose continuation is the last runtime parameter of `kotlin.jvm.functions.Function22`,
- * while the higher ones, compiled to `kotlin.jvm.functions.FunctionN`, can still be resolved.
+ * while the higher ones, compiled to `kotlin.jvm.functions.FunctionN`, can still be resolved,
+ * and the function reference types of the same arities, like `kotlin.reflect.KFunction22`.
  */
-internal val searchableFunctionTypeNames: List<String> =
-    (0..MAX_JVM_FUNCTION_INTERFACE_ARITY).map { FunctionTypeKind.FUNCTION.kotlinName(it) } +
-        (0 until MAX_JVM_FUNCTION_INTERFACE_ARITY).map { FunctionTypeKind.SUSPEND_FUNCTION.kotlinName(it) }
+internal val searchableFunctionTypeNames: List<String> = FunctionTypeKind.entries.flatMap { kind ->
+    val maxArity = if (kind.isSuspend) MAX_JVM_FUNCTION_INTERFACE_ARITY - 1 else MAX_JVM_FUNCTION_INTERFACE_ARITY
+    (0..maxArity).map { kind.kotlinName(it) }
+}
 
 /**
  * This class index, by the lowercase simple names, with the [searchableFunctionTypeNames] as well,

@@ -1599,6 +1599,73 @@ class KotlinIntrospectorTest {
         }
     }
 
+    // function reference types, resolved by their Kotlin names
+
+    @Test
+    fun `should resolve function reference type by its Kotlin name with its extensions`() {
+        // the extensions of its function type, like of kotlin.Function1, and the ones of KFunction
+        resolver.resolve(
+            "kotlin.reflect.KFunction1",
+            pageSize = 1000
+        ) should {
+            have(lines()[1] == "interface KFunction1<in P1, out R> : KFunction<R>, Function1<P1, R> {")
+            have(lines()[2] == "    operator fun invoke(p1: P1): R")
+            have("val KFunction<*>.javaMethod: java.lang.reflect.Method?" in lines())
+            have("fun <P, R> ((P) -> R).handleAll(events: List<P>): List<R>" in lines())
+            have("fun <R> Function<R>.reflect(): KFunction<R>?" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve suspend function reference type by its Kotlin name with its extensions`() {
+        resolver.resolve(
+            "kotlin.reflect.KSuspendFunction0",
+            pageSize = 1000
+        ) should {
+            have(lines()[1] == "interface KSuspendFunction0<out R> : KFunction<R>, SuspendFunction0<R> {")
+            have(lines()[2] == "    suspend operator fun invoke(): R")
+            have("val KFunction<*>.javaMethod: java.lang.reflect.Method?" in lines())
+            have("fun (suspend () -> Unit).retry()" in lines())
+            have("fun (() -> Unit).repeat()" !in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve extension of KFunction as member of function reference type`() {
+        // like in the listing of kotlin.reflect.KFunction1
+        resolver.resolve(
+            "kotlin.reflect.KFunction1.javaMethod"
+        ) sameAsKotlin """
+            // kotlin.reflect.KFunction1.javaMethod [page 1/1]
+            // from kotlin.reflect.jvm
+            val KFunction<*>.javaMethod: java.lang.reflect.Method?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve invoke of function reference type`() {
+        resolver.resolve(
+            "kotlin.reflect.KFunction2.invoke"
+        ) sameAsKotlin """
+            // kotlin.reflect.KFunction2.invoke [page 1/1]
+            operator fun invoke(p1: P1, p2: P2): R
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve function reference type name with leading zero in arity`() {
+        assert(resolver.resolve("kotlin.reflect.KFunction01") == null)
+    }
+
+    @Test
+    fun `should find function reference types like their function types`() {
+        resolver.search("Function2", pageSize = 1000) should {
+            have("kotlin.reflect.KFunction22" in lines())
+            have("kotlin.reflect.KSuspendFunction21" in lines())
+            have("kotlin.reflect.KSuspendFunction22" !in lines())
+        }
+    }
+
     @Test
     fun `should resolve class with property modifiers`() {
         resolver.resolve(

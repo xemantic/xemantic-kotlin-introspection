@@ -129,6 +129,9 @@ com.example.AnnotationTestClass
   like `String.() -> Unit` and `context(String) () -> Unit` are both `kotlin.Function1`.
   A class implementing a function type, like `class Handler : (Event) -> Unit`,
   lists the extensions of its function type class as well, whatever their type arguments.
+  The function reference types, like `kotlin.reflect.KFunction1`, are resolved the same way,
+  like `interface KFunction1<in P1, out R> : KFunction<R>, Function1<P1, R>`,
+  listing also the extensions on `KFunction`, like `KFunction<*>.javaMethod`.
 * The extensions on a type parameter bounded by a type,
   like `fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T): T`,
   are listed among the extensions of the bound,
