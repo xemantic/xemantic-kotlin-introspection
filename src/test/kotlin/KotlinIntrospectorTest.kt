@@ -3308,6 +3308,44 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve inherited overloads told apart by nullability`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedNullableOverloadLeaf.f"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedNullableOverloadLeaf.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.InheritedNullableOverloadBase
+            fun f(x: Int)
+            fun f(x: Int?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve inherited overload told apart by nullability from overridden one`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedNullableOverloadMiddleLeaf.f"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedNullableOverloadMiddleLeaf.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.InheritedNullableOverloadMiddle
+            override fun f(x: Int)
+            // inherited from com.xemantic.kotlin.introspection.test.InheritedNullableOverloadBase
+            fun f(x: Int?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve inherited overloads next to declared override of another overload`() {
+        // InheritedOverloadMiddle declares only the override of greet(String), greet(String, Int) is inherited
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedOverloadMiddle.greet"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedOverloadMiddle.greet [page 1/1]
+            override fun greet(name: String): String
+            // inherited from com.xemantic.kotlin.introspection.test.InheritedOverloadBase
+            fun greet(name: String, times: Int): String
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve overloads inherited from unrelated supertypes`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.InheritedBothFoo.foo"
@@ -7156,6 +7194,16 @@ class KotlinIntrospectorTest {
             // inherited from kotlin.collections.MutableCollection
             override operator fun iterator(): MutableIterator<E>
         """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve inherited overload next to declared overload of standard library class`() {
+        // AbstractMutableList declares add(index, element), add(element) is inherited from MutableList
+        resolver.resolve("kotlin.collections.AbstractMutableList.add", pageSize = 10000) should {
+            have("abstract override fun add(index: Int, element: E)" in lines())
+            have("// inherited from kotlin.collections.MutableList" in lines())
+            have("override fun add(element: E): Boolean" in lines())
+        }
     }
 
     @Test

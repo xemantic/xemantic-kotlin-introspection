@@ -96,3 +96,17 @@ open class InheritedWithExtensionBase {
 class InheritedWithExtension : InheritedWithExtensionBase()
 
 fun InheritedWithExtension.extended(times: Int): Int = times
+
+// Overloads told apart only by the nullability of their parameter types
+open class InheritedNullableOverloadBase {
+    open fun f(x: Int) {}
+    fun f(x: Int?) {}
+}
+
+class InheritedNullableOverloadLeaf : InheritedNullableOverloadBase()
+
+open class InheritedNullableOverloadMiddle : InheritedNullableOverloadBase() {
+    override fun f(x: Int) {}
+}
+
+class InheritedNullableOverloadMiddleLeaf : InheritedNullableOverloadMiddle()

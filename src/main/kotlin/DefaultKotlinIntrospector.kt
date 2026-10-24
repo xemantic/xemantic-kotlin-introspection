@@ -1004,7 +1004,7 @@ internal class DefaultKotlinIntrospector(
      * follows the context telling it, see [protectedContext].
      * The JVM-only members of a built-in type, like `String.chars()`, follow its functions, see [BuiltinClass],
      * but the ones whose parameter names are not known, which its listing leaves out too, see [BuiltinClass.jvmOnlyFunctions].
-     * When the class declares none of them, the members it inherits from its supertypes, see [inheritedMembers],
+     * Then the members it inherits from its supertypes, and does not override, see [inheritedMembers],
      * which its listing leaves out, not to be flooded with them, rendered before the companion object members, and the extensions.
      *
      * @param apiClass the [kmClass] as a class of the API.
@@ -1040,11 +1040,9 @@ internal class DefaultKotlinIntrospector(
             contextPackage
         )
 
-        // a member of the class always wins over an extension, so the inherited members are looked up whenever
-        // the class declares none of the name, not only when neither an extension, nor a companion object member, is found
-        val inherited = if (members.isEmpty()) {
-            inheritedMembers(kmClass, declarations, memberName, apiClass, contextPackage)
-        } else emptyList()
+        // a member always wins over an extension, so the inherited members are looked up also when an extension,
+        // or a companion object member, is found, and the inherited overloads also next to the declared ones
+        val inherited = inheritedMembers(kmClass, declarations, memberName, apiClass, contextPackage)
         return MemberListing.of(
             members.map { ListingItem.Declaration(it) } + inherited + companionMembers + extensions,
             context = protectedContext(kmClass.name, apiClass, includingClass = true)
@@ -1157,7 +1155,7 @@ internal class DefaultKotlinIntrospector(
     }
 
     /**
-     * The members named [memberName] which the [kmClass] inherits from its supertypes,
+     * The members named [memberName] which the [kmClass] inherits from its supertypes, and does not override,
      * each under the `// inherited from …` header of the supertype declaring it, or none.
      *
      * The supertypes are walked breadth-first through their cached declarations, and `kotlin.Any`, the supertype of every class,
@@ -1179,6 +1177,9 @@ internal class DefaultKotlinIntrospector(
      * A supertype which is not part of the API, see [ApiClasses], is walked through too.
      * Which members are part of the API is decided by the inheriting class, the [scope],
      * like a protected member, inherited by a final class, which is not.
+     * The members which the [kmClass] declares, see [apiMembersNamed], override the ones they match like any other override,
+     * so that only the inherited overloads are listed next to them, like `add(element: E)` of `MutableList`
+     * next to the `add(index: Int, element: E)` which `AbstractMutableList` declares.
      * A qualified [memberName], like `Nested.member`, names no member, so the supertypes are not walked then.
      */
     private fun inheritedMembers(
@@ -1215,9 +1216,24 @@ internal class DefaultKotlinIntrospector(
             if (visited.add(name)) collect(name)
         }
         if (kmClass.name != ANY_CLASS_NAME) collect(ANY_CLASS_NAME)
+        if (candidates.isEmpty()) return emptyList()
 
+        // the declared members override the inherited ones, matched by the overridden keys, or by the same signature
+        val declared = apiMembersNamed(kmClass, declarations, memberName, scope)
+        val declaredSignatures = declared.mapTo(HashSet()) { member ->
+            when (member) {
+                is Member.Property -> memberKey(kmClass, member.property)
+                is Member.Function -> memberKey(kmClass, member.function)
+            }.substringAfter('#')
+        }
         val overridden = candidates.flatMapTo(HashSet()) { it.overridden }
-        val survivors = candidates.filter { it.key !in overridden }
+        declared.forEach { member ->
+            overridden += when (member) {
+                is Member.Property -> overrideResolver.overriddenMembers(kmClass, member.property)
+                is Member.Function -> overrideResolver.overriddenMembers(kmClass, member.function)
+            }
+        }
+        val survivors = candidates.filter { it.key !in overridden && it.signature !in declaredSignatures }
         val inherited = survivors.filterIndexed { index, candidate ->
             survivors.withIndex().none { (rivalIndex, rival) ->
                 rivalIndex != index &&
@@ -1237,7 +1253,8 @@ internal class DefaultKotlinIntrospector(
                 candidate.kmClass.name.replace('/', '.'),
                 formatMember(
                     candidate.member, candidate.kmClass, candidate.declarations, scope, contextPackage,
-                    isOwnerOpenForOverrides = isOpenForOverrides && mightBeSubclassed(candidate.kmClass, candidate.declarations),
+                    isOwnerOpenForOverrides = isOpenForOverrides,
+                    // unlike an own member of a final class, whose open modifier tells an override which cannot be told
                     isInheritedByFinalClass = !isOpenForOverrides
                 )
             )

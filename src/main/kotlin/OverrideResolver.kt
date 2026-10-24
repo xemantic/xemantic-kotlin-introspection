@@ -404,14 +404,20 @@ internal class OverrideResolver(
 
     /**
      * The keys, see [memberKey], of the functions of the Kotlin supertypes of the [owner] which its [function] overrides,
-     * or would override, if it is not declared as an override, along the whole supertype hierarchy.
+     * or would override, if it is not declared as an override, along the whole supertype hierarchy,
+     * the ones matching on the known types, if there are any, see [inheritedDefaultValues].
      */
     fun overriddenMembers(owner: KmClass, function: KmFunction): Set<String> {
         val overridables = overridables(owner)
         val candidates = overridables.functions[function.name] ?: return emptySet()
         val signature = overridables.signature(function)
-        return candidates.filter { it.key != null && it.matches(signature) && overridables.isVisible(it) }
-            .mapTo(HashSet()) { it.key!! }
+        val overridden = candidates.filter { it.key != null && it.matches(signature) && overridables.isVisible(it) }
+        // an unknown type matches any type, so a sibling overload, which is not overridden, might be matched too,
+        // like for the inheritedDefaultValues, the ones matching on the known types are taken, if there are any
+        val matchingKnownTypes = if (overridden.size <= 1) overridden else overridden.filter {
+            it.matches(signature, onlyKnownTypes = true)
+        }
+        return matchingKnownTypes.ifEmpty { overridden }.mapTo(HashSet()) { it.key!! }
     }
 
     /**
@@ -1850,37 +1856,58 @@ internal fun kotlinClassName(packageName: String, name: String): String =
     if (packageName.isEmpty()) name else "${packageName.replace('.', '/')}/$name"
 
 /**
- * The key of a [function] of the [owner] class, like `kotlin/collections/List#fun get(kotlin/Int)`,
- * telling it apart from the other members of the class, its overloads, by the classifiers of its parameter types,
+ * The key of a [function] of the [owner] class, like `kotlin/collections/List#context() fun get(kotlin/Int)`,
+ * telling it apart from the other members of the class, its overloads, by its parameter types, see [memberKeyType],
  * a type parameter by its name, the same for the declaration of the class read from its class file,
  * and the one of a built-in type in the `.kotlin_builtins` resources.
  */
 @OptIn(ExperimentalContextParameters::class)
 internal fun memberKey(owner: KmClass, function: KmFunction): String {
-    val typeParameters = owner.typeParameters.associate { it.id to it.name } +
-        function.typeParameters.associate { it.id to it.name }
-    fun KmType.key(): String = when (val classifier = classifier) {
-        is KmClassifier.Class -> classifier.name
-        is KmClassifier.TypeAlias -> classifier.name
-        is KmClassifier.TypeParameter -> typeParameters[classifier.id] ?: "?"
-    }
-    val contexts = function.contextParameters.joinToString(",") { it.type.key() }
-    val receiver = function.receiverParameterType?.key()?.let { "$it." }.orEmpty()
-    return "${owner.name}#context($contexts) fun $receiver${function.name}(${function.valueParameters.joinToString(",") { it.type.key() }})"
+    val typeParameters = keyTypeParameters(owner, function.typeParameters)
+    val contexts = function.contextParameters.joinToString(",") { it.type.memberKeyType(typeParameters) }
+    val receiver = function.receiverParameterType?.let { "${it.memberKeyType(typeParameters)}." }.orEmpty()
+    val parameters = function.valueParameters.joinToString(",") { it.type.memberKeyType(typeParameters) }
+    return "${owner.name}#context($contexts) fun $receiver${function.name}($parameters)"
 }
 
 /**
  * The key of a [property] of the [owner] class, like `kotlin/collections/List#val size`, see [memberKey] of a function.
  */
 internal fun memberKey(owner: KmClass, property: KmProperty): String {
-    val typeParameters = owner.typeParameters.associate { it.id to it.name } +
-        property.typeParameters.associate { it.id to it.name }
-    val receiver = property.receiverParameterType?.let { type ->
-        when (val classifier = type.classifier) {
+    val typeParameters = keyTypeParameters(owner, property.typeParameters)
+    val receiver = property.receiverParameterType?.let { "${it.memberKeyType(typeParameters)}." }.orEmpty()
+    return "${owner.name}#val $receiver${property.name}"
+}
+
+/**
+ * The names of the type parameters of the [owner] class, and of its member, the [memberTypeParameters], by their ids.
+ */
+private fun keyTypeParameters(owner: KmClass, memberTypeParameters: List<KmTypeParameter>): Map<Int, String> =
+    owner.typeParameters.associate { it.id to it.name } + memberTypeParameters.associate { it.id to it.name }
+
+/**
+ * This type in a member key, see [memberKey], like `kotlin/collections/List<T>?`:
+ * its classifier, a type parameter by its name, with its type arguments and its nullability,
+ * as overloads might differ only by them, like `f(x: Int)` and `f(x: Int?)`.
+ */
+private fun KmType.memberKeyType(typeParameters: Map<Int, String>): String = buildString {
+    append(
+        when (val classifier = classifier) {
             is KmClassifier.Class -> classifier.name
             is KmClassifier.TypeAlias -> classifier.name
             is KmClassifier.TypeParameter -> typeParameters[classifier.id] ?: "?"
-        } + "."
-    }.orEmpty()
-    return "${owner.name}#val $receiver${property.name}"
+        }
+    )
+    if (arguments.isNotEmpty()) {
+        append(arguments.joinToString(",", "<", ">") { argument ->
+            val type = argument.type ?: return@joinToString "*"
+            val variance = when (argument.variance) {
+                KmVariance.IN -> "in "
+                KmVariance.OUT -> "out "
+                else -> ""
+            }
+            variance + type.memberKeyType(typeParameters)
+        })
+    }
+    if (isNullable) append('?')
 }

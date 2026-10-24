@@ -91,13 +91,15 @@ com.example.AnnotationTestClass
   its members, the members of its companion object, and the extensions of the class and its supertypes,
   paged by signatures, one item each.
   The members a class inherits from its supertypes, without redeclaring them, are not listed, not to bloat the listing,
-  but when the class declares nothing of the name, they are resolved by its name, before the extensions,
+  but they are resolved by its name, after the members it declares, which override them, and before the extensions,
   each as declared by the nearest supertype declaring it, under its `// inherited from` header,
   like `kotlin.collections.MutableList.get`, rendered as `operator fun get(index: Int): E` of `kotlin.collections.List`,
   the type arguments of the supertype not substituted.
   An override wins over the member it overrides, while the overloads it does not override are inherited too,
   and of the members of the same signature of unrelated supertypes, the one of the most specific return type wins,
   like `MutableCollection.iterator(): MutableIterator<E>` over `List.iterator(): Iterator<E>` for `MutableList`.
+  A typealias to a Java class, like `kotlin.collections.ArrayList`, `kotlin.collections.HashMap`, or `kotlin.text.StringBuilder`,
+  is not resolved yet.
 * The Kotlin built-in types, like `kotlin.String` or `kotlin.collections.List`,
   which are mapped to the JVM types and have no class files of their own,
   are rendered like any other class from their declarations in the `.kotlin_builtins` metadata of the standard library,
