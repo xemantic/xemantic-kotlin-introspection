@@ -63,7 +63,6 @@ internal class TransientFailures(private val maxAttempts: Int = 2, private val c
     private val operations = ThreadLocal.withInitial { longArrayOf(NO_OPERATION) }
 
     // the ids of the operations, increasing in the order they start
-
     private val operationIds = AtomicLong()
 
     private val failures = object : LinkedHashMap<String, Failure>(16, 0.75f, true) {
@@ -115,9 +114,10 @@ internal class TransientFailures(private val maxAttempts: Int = 2, private val c
                 return outcome
             }
             val previous = failures[key]
-            // like an attempt of an overlapping operation, failing at the same time
-            val isSameOutage = previous != null && operation <= previous.since
-            val attempts = if (isSameOutage) previous.attempts else (previous?.attempts ?: 0) + 1
+            // like an attempt of an overlapping operation, failing at the same time, which neither counts,
+            // nor extends the outage to the operations started meanwhile, so that their attempts still count
+            if (previous != null && operation <= previous.since) return outcome
+            val attempts = (previous?.attempts ?: 0) + 1
             if (attempts >= maxAttempts) {
                 failures.remove(key)
                 return Outcome(outcome.value, isFinal = true)

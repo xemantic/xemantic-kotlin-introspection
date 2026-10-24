@@ -98,6 +98,48 @@ class TransientFailuresTest {
     }
 
     @Test
+    fun `should deem failure final when failing attempts of overlapping operations interleave with later ones`() {
+        // given
+        val failures = TransientFailures(maxAttempts = 2)
+        val attempts = java.util.concurrent.atomic.AtomicInteger()
+        val entered = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        // a slow attempt of an operation started before the first failure, failing only after a later attempt began
+        val slow = kotlin.concurrent.thread {
+            failures.operation {
+                failures.attempt("key") {
+                    attempts.incrementAndGet()
+                    entered.countDown()
+                    release.await()
+                    TransientFailures.Outcome("failed", isFinal = false)
+                }
+            }
+        }
+        entered.await()
+
+        // when
+        val first = failures.operation {
+            failures.attempt("key") {
+                attempts.incrementAndGet()
+                TransientFailures.Outcome("failed", isFinal = false)
+            }
+        }
+        // started after the first failure, so counted, while the slow attempt fails meanwhile, within the first outage
+        val later = failures.operation {
+            failures.attempt("key") {
+                attempts.incrementAndGet()
+                release.countDown()
+                slow.join()
+                TransientFailures.Outcome("failed", isFinal = false)
+            }
+        }
+
+        // then
+        assert(attempts.get() == 3)
+        assert(!first.isFinal && later.isFinal)
+    }
+
+    @Test
     fun `should count transient failures per thread`() {
         // given
         val failures = TransientFailures()
