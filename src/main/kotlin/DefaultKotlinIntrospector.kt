@@ -458,8 +458,10 @@ internal class DefaultKotlinIntrospector(
                 is KotlinClassMetadata.Class -> {
                     val kmClass = metadata.kmClass
                     // neither a class which is not part of the API, nor anything declared within it, is resolved,
-                    // while its name might still be a member of the outer class, like an extension property
-                    val apiClass = apiClasses.apiClass(kmClass.name) ?: continue
+                    // while its name might still be a member of the outer class, like an extension property,
+                    // the class told by its own scope, as its binary name might not be the one of its metadata name,
+                    // like when relocated by shading
+                    val apiClass = foundClass.scope?.let { apiClasses.apiClass(kmClass.name, it) } ?: continue
                     if (memberName != null) {
                         resolveMember(kmClass, apiClass, className, foundClass, memberName)
                     } else {
@@ -3329,8 +3331,10 @@ internal class DefaultKotlinIntrospector(
             .map { (indexedClass, _) -> indexedClass }
             .filter { !it.scope.isCompanion }
             .forEach { indexedClass ->
-                // the Kotlin name, like com.example.Outer.Nested, which can be resolved
-                val kotlinName = indexedClass.name.replace('/', '.')
+                // the Kotlin name, like com.example.Outer.Nested, which can be resolved, in the package of its binary name,
+                // which might not be the one of its metadata name, like when relocated by shading
+                val packagePrefix = indexedClass.binaryName.substringBeforeLast('.', "").let { if (it.isEmpty()) "" else "$it." }
+                val kotlinName = packagePrefix + indexedClass.name.substringAfterLast('/')
                 val simpleName = kotlinName.substringAfterLast('.').lowercase()
                 clsIndex.getOrPut(simpleName) { mutableListOf() }.add(kotlinName)
             }

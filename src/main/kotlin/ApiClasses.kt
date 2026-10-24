@@ -156,26 +156,48 @@ internal class ApiClasses(
     fun apiClass(name: String): ApiClass? = apiClass(name, inProgress = emptySet())
 
     /**
+     * The class named like `com/example/Outer.Nested` in its metadata, whose own [scope] is already known,
+     * like the one of a class found by its binary name, which might not be the one of its metadata name,
+     * like after relocating the class by shading, which does not rewrite its metadata.
+     */
+    fun apiClass(name: String, scope: ClassScope): ApiClass? = apiClass(name, inProgress = emptySet(), scope)
+
+    /**
+     * The class named like `com/example/Outer.Nested` nested in the [outer] class, which is its enclosing class,
+     * derived from it, without deciding again whether the classes enclosing it are part of the API.
+     */
+    fun nestedApiClass(outer: ApiClass, name: String): ApiClass? =
+        enclosed(outer, name, scopeOf(name) ?: return null, inProgress = emptySet())
+
+    /**
      * @param inProgress the sealed classes whose openness is being decided, assumed not to be open meanwhile,
      *   as a class nested in a sealed class, like its subclass, might be part of the API only if the sealed class is open.
+     * @param scope the scope of the class itself, if already known.
      */
-    private fun apiClass(name: String, inProgress: Set<String>): ApiClass? {
+    private fun apiClass(name: String, inProgress: Set<String>, scope: ClassScope? = null): ApiClass? {
         // local and anonymous classes have names starting with '.'
         if (name.startsWith('.')) return null
         var apiClass: ApiClass? = null
-        for (className in enclosingClassNames(name) + name) {
-            val scope = scopeOf(className)
-                ?: if (className != name && isAbsent(className)) ABSENT_ENCLOSING_CLASS else return null
-            if (!scope.isUsable || !(apiClass ?: TopLevel).isApi(scope.visibility)) return null
-            val apiScope = ApiScope(
-                visibility = scope.visibility,
-                isOpen = lazy { isOpen(className, scope, inProgress) },
-                isSubclassable = scope.isSubclassable,
-                isCompanion = scope.isCompanion
-            )
-            apiClass = apiClass?.plus(apiScope) ?: ApiClass(listOf(apiScope))
+        for (className in enclosingClassNames(name)) {
+            val enclosingScope = scopeOf(className) ?: if (isAbsent(className)) ABSENT_ENCLOSING_CLASS else return null
+            apiClass = enclosed(apiClass, className, enclosingScope, inProgress) ?: return null
         }
-        return apiClass
+        return enclosed(apiClass, name, scope ?: scopeOf(name) ?: return null, inProgress)
+    }
+
+    /**
+     * The class named [name], of the [scope], enclosed by the [outer] class, or a top-level one, if `null`,
+     * if it is part of the API, or else `null`.
+     */
+    private fun enclosed(outer: ApiClass?, name: String, scope: ClassScope, inProgress: Set<String>): ApiClass? {
+        if (!scope.isUsable || !(outer ?: TopLevel).isApi(scope.visibility)) return null
+        val apiScope = ApiScope(
+            visibility = scope.visibility,
+            isOpen = lazy { isOpen(name, scope, inProgress) },
+            isSubclassable = scope.isSubclassable,
+            isCompanion = scope.isCompanion
+        )
+        return outer?.plus(apiScope) ?: ApiClass(listOf(apiScope))
     }
 
     /**

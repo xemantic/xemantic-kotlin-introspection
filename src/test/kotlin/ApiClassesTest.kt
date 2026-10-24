@@ -63,6 +63,24 @@ class ApiClassesTest {
     }
 
     @Test
+    fun `should tell class of the API by its own scope when it is not found by its metadata name`() {
+        // given
+        // like a class relocated by shading, found by its binary name, while its metadata name is the original one
+        val apiClasses = apiClasses(mapOf("pkg/Outer" to scope(Visibility.PRIVATE)))
+
+        // when
+        val byName = apiClasses.apiClass("pkg/Relocated")
+        val byScope = apiClasses.apiClass("pkg/Relocated", scope())
+        val nestedInPrivate = apiClasses.apiClass("pkg/Outer.Relocated", scope())
+
+        // then
+        assert(byName == null)
+        assert(byScope?.isApi(Visibility.PUBLIC) == true)
+        // still not part of the API within a class which is not
+        assert(nestedInPrivate == null)
+    }
+
+    @Test
     fun `should not decide whether sealed class is open until its protected members are queried`() {
         // given
         val requested = mutableListOf<String>()

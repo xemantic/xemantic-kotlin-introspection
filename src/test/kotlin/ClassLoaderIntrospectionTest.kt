@@ -42,6 +42,7 @@ import java.util.jar.JarOutputStream
 import java.util.jar.Manifest
 import kotlin.io.path.createDirectories
 import kotlin.io.path.outputStream
+import kotlin.io.path.writeBytes
 import kotlin.test.Test
 
 /**
@@ -129,6 +130,57 @@ class ClassLoaderIntrospectionTest {
             }
         }
         return root
+    }
+
+    @Test
+    fun `should resolve and find class relocated without its metadata`() {
+        // given
+        // like by shading, relocating the binary name of the class, but not its name in the Kotlin metadata
+        val root = isolatedTestFixturesCopy("relocated", "IsolatedTestClass.class")
+        val original = isolatedTestFixtures
+            .map { it.resolve("com/xemantic/kotlin/introspection/isolated/IsolatedTestClass.class") }
+            .single { it.exists() }
+        val relocatedName = "shaded/com/xemantic/kotlin/introspection/isolated/IsolatedTestClass"
+        val relocated = root.resolve("$relocatedName.class")
+        relocated.parent.createDirectories()
+        relocated.writeBytes(withClassName(original.readBytes(), relocatedName))
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("shaded.com.xemantic.kotlin.introspection.isolated.IsolatedTestClass")
+        val searchResult = introspector.search("IsolatedTestClass")
+
+        // then
+        signature sameAsKotlin """
+            // shaded.com.xemantic.kotlin.introspection.isolated.IsolatedTestClass [page 1/1]
+            class IsolatedTestClass(val value: Int)
+        """.trimIndent()
+        // found by the name it is resolved by
+        searchResult sameAs """
+            // search results for "IsolatedTestClass" [page 1/1]
+            shaded.com.xemantic.kotlin.introspection.isolated.IsolatedTestClass
+        """.trimIndent()
+    }
+
+    /**
+     * The class bytes with the class renamed to the [internalName], like `com/example/Foo`,
+     * referring to the other classes as they are.
+     */
+    private fun withClassName(bytes: ByteArray, internalName: String): ByteArray {
+        val writer = ClassWriter(0)
+        ClassReader(bytes).accept(object : ClassVisitor(Opcodes.ASM9, writer) {
+            override fun visit(
+                version: Int,
+                access: Int,
+                name: String,
+                signature: String?,
+                superName: String?,
+                interfaces: Array<out String>?
+            ) {
+                super.visit(version, access, internalName, signature, superName, interfaces)
+            }
+        }, 0)
+        return writer.toByteArray()
     }
 
     /**
