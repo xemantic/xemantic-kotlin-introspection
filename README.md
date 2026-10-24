@@ -144,14 +144,13 @@ com.example.AnnotationTestClass
   like of `R.contains(element: T?)` where `R : ClosedRange<T>, R : Iterable<T>`,
   or the bound is `Comparable`, whose few extensions are listed for a class comparable to itself,
   like `class Version : Comparable<Version>`, as told by the Kotlin metadata, but not for an enum class.
-  They are not listed for a type declaring a more specific overload, called instead for every call of them,
-  a member, or an extension on the type itself, never on its supertype,
-  taking the same parameters, where the type parameter stands for the type,
-  like `fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T): T` for `Int`,
-  which has its own `fun Int.coerceAtLeast(minimumValue: Int): Int`,
-  unlike `fun <T : Comparable<T>> T.coerceIn(minimumValue: T?, maximumValue: T?): T`,
-  called for `5.coerceIn(null, 10)`.
-  When it cannot be told, like with a vararg, or a default value, they are listed.
+  The ones on `T : Comparable<T>` are not listed for a final type comparable only to itself, which pins `T` to it,
+  like `Int`, when it declares a more specific overload, a member, or an extension on the type itself,
+  taking the same parameters, of the same names, where `T` stands for the type,
+  like `fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T): T` next to `fun Int.coerceAtLeast(minimumValue: Int): Int`,
+  called instead, unless the type argument is given explicitly, like `5.coerceAtLeast<Int>(3)`.
+  Any other one is listed, as its type parameter can be inferred as a supertype,
+  or it can be called with other arguments, like `5.coerceIn(null, 10)`, or `5.rangeTo(that = 6)`.
   The extensions on an unbounded type parameter, like `let` or `also`, are not listed for any type,
   as they would be listed for every one.
 * The types of the `kotlin.*` packages are rendered with simple names, as LLMs know them well,

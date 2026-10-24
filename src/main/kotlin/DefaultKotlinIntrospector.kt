@@ -1395,53 +1395,75 @@ internal class DefaultKotlinIntrospector(
             extensionsListedFor(extensionReceiverNames(kmClass, className), satisfiedBoundsOf(kmClass, className))
         }
         val builtinClass = declarations as? BuiltinClass
-        return listed.withoutShadowed(
-            kmClass,
-            memberFunctions = (kmClass.functions + builtinClass?.jvmOnlyFunctions.orEmpty()).inApi(apiClass, declarations),
-            memberProperties = (kmClass.properties + builtinClass?.jvmOnlyProperties.orEmpty()).inApi(apiClass, declarations)
-        )
+        return listed.withoutShadowed(kmClass) { names ->
+            (kmClass.functions + builtinClass?.jvmOnlyFunctions.orEmpty())
+                .filter { it.name in names && it.receiverParameterType == null }
+                .inApi(apiClass, declarations)
+        }
     }
 
     /**
-     * These extensions without the ones on a type parameter, like `fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T)`,
-     * shadowed for the [kmClass] by a more specific overload, which is called instead for every call of the shadowed one,
-     * like `fun Int.coerceAtLeast(minimumValue: Int)` for an `Int`,
-     * or its member `operator fun rangeTo(other: Int)` for `operator fun <T : Comparable<T>> T.rangeTo(that: T)`,
-     * see [shadows]: one of the [memberFunctions], other than a member extension,
-     * or of these extensions on the class itself, never the ones on its supertypes, which are less specific.
-     * An extension property on a non-nullable type parameter is shadowed by one of the [memberProperties],
-     * or of these extension properties on the class itself, of the same name.
-     * Whenever it cannot be told, the extension is listed, like `R.contains(element: T?)`
-     * where `R : ClosedRange<T>, R : Iterable<T>`, next to `IntRange.contains(element: Int?)`,
-     * as its parameter is not of the receiver type, but of its type argument.
+     * These extensions without the ones on a type parameter pinned to the [kmClass],
+     * like `fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T)` for `Int`, see [isComparableOnlyToItself],
+     * shadowed by a more specific overload taking the same parameters, see [shadows],
+     * like `fun Int.coerceAtLeast(minimumValue: Int)`, called instead,
+     * unless the type argument is given explicitly, like `5.coerceAtLeast<Int>(3)`:
+     * a member function of the class, given by [memberFunctions] their names, other than a member extension,
+     * or one of these extensions on the class itself, imported from the same package as the shadowed one.
+     * Any other extension on a type parameter is listed, as the type parameter can be inferred as a supertype of the class,
+     * like for `ps.foo(object : PD {})` of `fun <T : PD> T.foo(value: T)`, next to the member `foo(value: PS)`.
      */
     private fun ListedExtensions.withoutShadowed(
         kmClass: KmClass,
-        memberFunctions: List<KmFunction>,
-        memberProperties: List<KmProperty>
+        memberFunctions: (names: Set<String>) -> List<KmFunction>
     ): ListedExtensions {
-        fun isOnClass(receiver: KmType?): Boolean =
+        val pinned = functions.filter { it.function.hasReceiverPinnedByComparable }
+        if (pinned.isEmpty() || !isComparableOnlyToItself(kmClass)) return this
+        val members = memberFunctions(pinned.mapTo(HashSet()) { it.function.name }).groupBy { it.name }
+        val extensionsOnClass = functions.filter { extension ->
+            val receiver = extension.function.receiverParameterType
             receiver != null && !receiver.isNullable && receiver.arguments.isEmpty() &&
                 (receiver.classifier as? KmClassifier.Class)?.name == kmClass.name
-        val specificFunctions = (
-            memberFunctions.filter { it.receiverParameterType == null } +
-                functions.map { it.function }.filter { isOnClass(it.receiverParameterType) }
-            ).groupBy { it.name }
-        val specificPropertyNames = (
-            memberProperties.filter { it.receiverParameterType == null } +
-                properties.map { it.property }.filter { isOnClass(it.receiverParameterType) }
-            ).mapTo(HashSet()) { it.name }
-        return ListedExtensions(
-            functions.filter { extension ->
-                val function = extension.function
-                specificFunctions[function.name].orEmpty().none { it.shadows(function, kmClass.name) }
-            },
-            properties.filter { extension ->
-                val receiver = extension.property.receiverParameterType
-                val isOnTypeParameter = receiver?.classifier is KmClassifier.TypeParameter && !receiver.isNullable
-                !isOnTypeParameter || extension.property.name !in specificPropertyNames
+        }
+        val shadowed = pinned.filterTo(HashSet()) { extension ->
+            val function = extension.function
+            val overloads = members[function.name].orEmpty() +
+                extensionsOnClass.filter { it.function.name == function.name && it.source == extension.source }.map { it.function }
+            overloads.any { it.shadows(function, kmClass.name) }
+        }
+        return ListedExtensions(functions.filter { it !in shadowed }, properties)
+    }
+
+    /**
+     * Whether the [kmClass] pins the type parameter `T : Comparable<T>` to itself, see [hasReceiverPinnedByComparable]:
+     * a final class, without type parameters, comparable to itself, like `Int`, a `Comparable<Int>`,
+     * while none of its proper supertypes is comparable, so that no other type satisfies the bound,
+     * as told by the Kotlin metadata, unlike an enum class, comparable through `kotlin.Enum`.
+     */
+    private fun isComparableOnlyToItself(kmClass: KmClass): Boolean {
+        if (kmClass.modality != Modality.FINAL || kmClass.typeParameters.isNotEmpty()) return false
+        var isComparableToItself = false
+        val pending = ArrayDeque<KmClass>()
+        for (supertype in kmClass.supertypes) {
+            val name = (supertype.classifier as? KmClassifier.Class)?.name ?: return false
+            if (name == COMPARABLE_METADATA_NAME) {
+                val argument = supertype.arguments.singleOrNull()?.type ?: return false
+                val argumentClassifier = argument.classifier as? KmClassifier.Class ?: return false
+                if (argumentClassifier.name != kmClass.name || argument.isNullable) return false
+                isComparableToItself = true
+            } else {
+                pending += builtinClasses[name] ?: loadKmClass(name) ?: return false
             }
-        )
+        }
+        val visited = mutableSetOf<String>()
+        while (pending.isNotEmpty()) {
+            for (supertype in pending.removeFirst().supertypes) {
+                val name = (supertype.classifier as? KmClassifier.Class)?.name ?: return false
+                if (name == COMPARABLE_METADATA_NAME) return false
+                if (visited.add(name)) pending += builtinClasses[name] ?: loadKmClass(name) ?: return false
+            }
+        }
+        return isComparableToItself
     }
 
     /**
@@ -4120,13 +4142,30 @@ private class MemberListing(
 }
 
 /**
+ * Whether this extension function is on a type parameter `T` bounded only by `Comparable<T>`,
+ * like `fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T)`, its only type parameter,
+ * pinned to the class it is listed for, when the class is comparable only to itself, see `isComparableOnlyToItself`.
+ */
+private val KmFunction.hasReceiverPinnedByComparable: Boolean
+    get() {
+        val receiver = receiverParameterType ?: return false
+        val receiverTypeParameter = receiver.classifier as? KmClassifier.TypeParameter ?: return false
+        if (receiver.isNullable) return false
+        val typeParameter = typeParameters.singleOrNull()?.takeIf { it.id == receiverTypeParameter.id } ?: return false
+        val bound = typeParameter.upperBounds.singleOrNull() ?: return false
+        val argument = bound.arguments.singleOrNull()?.type ?: return false
+        return (bound.classifier as? KmClassifier.Class)?.name == COMPARABLE_METADATA_NAME && !bound.isNullable &&
+            (argument.classifier as? KmClassifier.TypeParameter)?.id == receiverTypeParameter.id && !argument.isNullable
+    }
+
+/**
  * Whether this function, a member, or an extension on the class named [className], like `fun Int.coerceAtLeast(minimumValue: Int)`,
- * is called instead of the extension [function] on a type parameter, like `fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T)`,
- * for every call of it on the class, as it is more specific, telling it conservatively:
- * the receiver of the [function] is a non-nullable type parameter, `T`,
- * and its value parameters have neither a default value, nor a vararg, which this function could not be called with,
- * while this function takes the same value parameters, of the types of the parameters of the [function],
- * where `T` stands for the class, see [isSameType], without any type parameter of its own, or any context parameter,
+ * is called instead of the extension [function] on a type parameter pinned to the class, see `withoutShadowed`,
+ * like `fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T)`, unless its type argument is given explicitly:
+ * the value parameters of the [function] have neither a default value, nor a vararg, which this function could not be called with,
+ * while this function takes the same value parameters, of the same names, as they can be named in a call,
+ * and of the types of the parameters of the [function], where `T` stands for the class, see [isSameType],
+ * without any type parameter of its own, or any context parameter,
  * and it is not suspend, unless the [function] is, and it is an operator, or infix, if the [function] is,
  * as only then it is called the same way.
  */
@@ -4142,7 +4181,8 @@ private fun KmFunction.shadows(function: KmFunction, className: String): Boolean
         (isInfix || !function.isInfix) &&
         valueParameters.size == function.valueParameters.size &&
         valueParameters.zip(function.valueParameters).all { (parameter, shadowedParameter) ->
-            parameter.varargElementType == null &&
+            parameter.name == shadowedParameter.name &&
+                parameter.varargElementType == null &&
                 isSameType(shadowedParameter.type, parameter.type, receiverTypeParameter.id, className)
         }
 }

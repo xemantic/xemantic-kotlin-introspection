@@ -4317,14 +4317,25 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should not resolve stdlib extension on type parameter shadowed by member as member of built-in type`() {
-        // the operator rangeTo(that: T) for any Comparable is never called on a Char, which declares its own
+    fun `should resolve stdlib extension on type parameter next to member of other parameter name as member of built-in type`() {
+        // 'a'.rangeTo(that = 'z') calls the rangeTo(that: T) for any Comparable, as the member takes `other`
         resolver.resolve(
             "kotlin.Char.rangeTo"
         ) sameAsKotlin """
             // kotlin.Char.rangeTo [page 1/1]
             operator fun rangeTo(other: Char): CharRange
+            // from kotlin.ranges
+            operator fun <T : Comparable<T>> T.rangeTo(that: T): ClosedRange<T>
         """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve stdlib extension on type parameter next to members of other parameter name as member of Int`() {
+        // 5.rangeTo(that = 6) calls the rangeTo(that: T) for any Comparable
+        resolver.resolve("kotlin.Int.rangeTo") should {
+            have("operator fun rangeTo(other: Int): IntRange" in lines())
+            have("operator fun <T : Comparable<T>> T.rangeTo(that: T): ClosedRange<T>" in lines())
+        }
     }
 
     @Test
@@ -4377,91 +4388,104 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should resolve class with extensions on type parameters except the ones shadowed by more specific overloads`() {
-        // a member, or an extension on the class itself, taking the same parameters, is called instead,
-        // unless it cannot be called the same way, like a function which is not infix,
-        // or for every call of the one on the type parameter, like with a vararg, a default value, or a nullable parameter
+    fun `should resolve class with extensions on type parameters next to its overloads`() {
+        // T is not pinned to BoundedReceiverShadowing, but can be inferred as BoundedReceiverD, so that,
+        // like for BoundedReceiverShadowing().nextToExtension(object : BoundedReceiverD {}), the extension can be called
         resolver.resolve(
-            "com.xemantic.kotlin.introspection.test.BoundedReceiverShadowing",
-            pageSize = 100
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverShadowing"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.BoundedReceiverShadowing [page 1/1]
             class BoundedReceiverShadowing : BoundedReceiverD {
-                val shadowedProperty: Int
-                fun shadowedByMember(): BoundedReceiverShadowing
-                fun notShadowedByNonInfix(other: BoundedReceiverShadowing): BoundedReceiverShadowing
-                fun notShadowedByOtherArity(): BoundedReceiverShadowing
-                fun notShadowedByVararg(value: Int)
-                fun notShadowedByDefault(value: Int)
-                fun notShadowedByOtherType(value: String)
-                fun notShadowedByNullable(value: BoundedReceiverShadowing)
-                fun String.notShadowedByMemberExtension()
+                val nextToProperty: Int
+                fun nextToMember(): BoundedReceiverShadowing
+                fun nextToSubtypeParameter(value: BoundedReceiverShadowing)
+                fun nextToNullableBound(value: BoundedReceiverShadowing)
             }
             // from com.xemantic.kotlin.introspection.test
-            fun <T : BoundedReceiverD> T.notShadowedByDefault(value: Int = …)
-            fun <T : BoundedReceiverD> T.notShadowedByMemberExtension()
-            infix fun <T : BoundedReceiverD> T.notShadowedByNonInfix(other: T): T
-            fun <T : BoundedReceiverD> T.notShadowedByNullable(value: T?)
-            fun <T : BoundedReceiverD> T.notShadowedByOtherArity(value: Int): T
-            fun <T : BoundedReceiverD> T.notShadowedByOtherType(value: T)
-            fun <T : BoundedReceiverD> T.notShadowedByVararg(vararg values: Int)
-            fun BoundedReceiverShadowing.shadowedByExtension(value: BoundedReceiverShadowing): BoundedReceiverShadowing
+            val <T : BoundedReceiverD> T.nextToProperty: Int
+            fun BoundedReceiverShadowing.nextToExtension(value: BoundedReceiverShadowing): BoundedReceiverShadowing
+            fun <T : BoundedReceiverD> T.nextToExtension(value: T): T
+            fun <T : BoundedReceiverD> T.nextToMember(): T
+            fun <T : BoundedReceiverD?> T.nextToNullableBound(value: T)
+            fun <T : BoundedReceiverD> T.nextToSubtypeParameter(value: T)
         """.trimIndent()
     }
 
     @Test
-    fun `should resolve interface with extensions on type parameters bounded by it not shadowed by any overload`() {
+    fun `should resolve interface with extensions on type parameters bounded by it next to overloads of its subtype`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.BoundedReceiverD"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.BoundedReceiverD [page 1/1]
             interface BoundedReceiverD
             // from com.xemantic.kotlin.introspection.test
-            val <T : BoundedReceiverD> T.shadowedProperty: Int
-            fun <T : BoundedReceiverD> T.notShadowedByDefault(value: Int = …)
-            fun <T : BoundedReceiverD> T.notShadowedByMemberExtension()
-            infix fun <T : BoundedReceiverD> T.notShadowedByNonInfix(other: T): T
-            fun <T : BoundedReceiverD> T.notShadowedByNullable(value: T?)
-            fun <T : BoundedReceiverD> T.notShadowedByOtherArity(value: Int): T
-            fun <T : BoundedReceiverD> T.notShadowedByOtherType(value: T)
-            fun <T : BoundedReceiverD> T.notShadowedByVararg(vararg values: Int)
-            fun <T : BoundedReceiverD> T.shadowedByExtension(value: T): T
-            fun <T : BoundedReceiverD> T.shadowedByMember(): T
+            val <T : BoundedReceiverD> T.nextToProperty: Int
+            fun <T : BoundedReceiverD> T.nextToExtension(value: T): T
+            fun <T : BoundedReceiverD> T.nextToMember(): T
+            fun <T : BoundedReceiverD?> T.nextToNullableBound(value: T)
+            fun <T : BoundedReceiverD> T.nextToSubtypeParameter(value: T)
         """.trimIndent()
     }
 
     @Test
-    fun `should not resolve extension on type parameter shadowed by member as member of class`() {
-        // like in the listing of BoundedReceiverShadowing
+    fun `should resolve extension on type parameter next to member taking subtype as member of class`() {
+        // BoundedReceiverShadowing().nextToSubtypeParameter(object : BoundedReceiverD {}) calls the extension
         resolver.resolve(
-            "com.xemantic.kotlin.introspection.test.BoundedReceiverShadowing.shadowedByMember"
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverShadowing.nextToSubtypeParameter"
         ) sameAsKotlin """
-            // com.xemantic.kotlin.introspection.test.BoundedReceiverShadowing.shadowedByMember [page 1/1]
-            fun shadowedByMember(): BoundedReceiverShadowing
-        """.trimIndent()
-    }
-
-    @Test
-    fun `should not resolve extension property on type parameter shadowed by member property as member of class`() {
-        // like in the listing of BoundedReceiverShadowing
-        resolver.resolve(
-            "com.xemantic.kotlin.introspection.test.BoundedReceiverShadowing.shadowedProperty"
-        ) sameAsKotlin """
-            // com.xemantic.kotlin.introspection.test.BoundedReceiverShadowing.shadowedProperty [page 1/1]
-            val shadowedProperty: Int
-        """.trimIndent()
-    }
-
-    @Test
-    fun `should resolve extension on type parameter not shadowed by member which is not infix as member of class`() {
-        // like in the listing of BoundedReceiverShadowing, called as `a notShadowedByNonInfix b`
-        resolver.resolve(
-            "com.xemantic.kotlin.introspection.test.BoundedReceiverShadowing.notShadowedByNonInfix"
-        ) sameAsKotlin """
-            // com.xemantic.kotlin.introspection.test.BoundedReceiverShadowing.notShadowedByNonInfix [page 1/1]
-            fun notShadowedByNonInfix(other: BoundedReceiverShadowing): BoundedReceiverShadowing
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverShadowing.nextToSubtypeParameter [page 1/1]
+            fun nextToSubtypeParameter(value: BoundedReceiverShadowing)
             // from com.xemantic.kotlin.introspection.test
-            infix fun <T : BoundedReceiverD> T.notShadowedByNonInfix(other: T): T
+            fun <T : BoundedReceiverD> T.nextToSubtypeParameter(value: T)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension on type parameter with nullable bound next to member as member of class`() {
+        // BoundedReceiverShadowing().nextToNullableBound(null) calls the extension
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverShadowing.nextToNullableBound"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverShadowing.nextToNullableBound [page 1/1]
+            fun nextToNullableBound(value: BoundedReceiverShadowing)
+            // from com.xemantic.kotlin.introspection.test
+            fun <T : BoundedReceiverD?> T.nextToNullableBound(value: T)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension property on type parameter next to member property as member of class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverShadowing.nextToProperty"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverShadowing.nextToProperty [page 1/1]
+            val nextToProperty: Int
+            // from com.xemantic.kotlin.introspection.test
+            val <T : BoundedReceiverD> T.nextToProperty: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve stdlib extension on Comparable shadowed by member of final class comparable only to itself`() {
+        // T : Comparable<T> is pinned to BoundedReceiverVersion, so its member coerceAtMost is called instead
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverVersion.coerceAtMost"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverVersion.coerceAtMost [page 1/1]
+            fun coerceAtMost(maximumValue: BoundedReceiverVersion): BoundedReceiverVersion
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve stdlib extension on Comparable next to member of class comparable through its supertype`() {
+        // T can be inferred as BoundedReceiverVersionBase, like for patch.coerceAtMost(base)
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverPatchVersion.coerceAtMost"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverPatchVersion.coerceAtMost [page 1/1]
+            fun coerceAtMost(maximumValue: BoundedReceiverPatchVersion): BoundedReceiverPatchVersion
+            // from kotlin.ranges
+            fun <T : Comparable<T>> T.coerceAtMost(maximumValue: T): T
         """.trimIndent()
     }
 
@@ -4654,12 +4678,12 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.test.BoundedReceiverVersion [page 1/1]
             class BoundedReceiverVersion(val major: Int) : Comparable<BoundedReceiverVersion> {
                 override operator fun compareTo(other: BoundedReceiverVersion): Int
+                fun coerceAtMost(maximumValue: BoundedReceiverVersion): BoundedReceiverVersion
             }
             // from kotlin
             inline infix fun <T> Comparable<T>.compareTo(other: T): Int
             // from kotlin.ranges
             fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T): T
-            fun <T : Comparable<T>> T.coerceAtMost(maximumValue: T): T
             fun <T : Comparable<T>> T.coerceIn(minimumValue: T?, maximumValue: T?): T
             fun <T : Comparable<T>> T.coerceIn(range: ClosedFloatingPointRange<T>): T
             fun <T : Comparable<T>> T.coerceIn(range: ClosedRange<T>): T
@@ -4741,27 +4765,29 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve built-in type with stdlib extensions on type parameters bounded by its supertype`() {
-        // Char declares no coerceAtLeast of its own, while the rangeTo of any Comparable is shadowed by its member
+        // Char declares no coerceAtLeast of its own, while its member rangeTo takes `other`, not `that`
         resolver.resolve(
             "kotlin.Char",
             pageSize = 10000
         ) should {
             have("fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T): T" in lines())
             have("    operator fun rangeTo(other: Char): CharRange" in lines())
-            have(lines().none { "T.rangeTo(" in it })
+            have("operator fun <T : Comparable<T>> T.rangeTo(that: T): ClosedRange<T>" in lines())
             have(lines().none { "T.also(" in it || "T.let(" in it })
         }
     }
 
     @Test
     fun `should resolve built-in type without stdlib extensions on type parameters shadowed by more specific overloads`() {
-        // coerceAtLeast is declared both for Int, shown in the class body, and for any Comparable, never called on an Int
+        // coerceAtLeast is declared both for Int, shown in the class body, and for any Comparable,
+        // whose T is pinned to Int, final and comparable only to itself, called only with an explicit type argument
         resolver.resolve(
             "kotlin.Int",
             pageSize = 10000
         ) should {
             have("    fun coerceAtLeast(minimumValue: Int): Int" in lines())
-            have(lines().none { "T.coerceAtLeast(" in it || "T.rangeTo(" in it })
+            have(lines().none { "T.coerceAtLeast(" in it })
+            have("operator fun <T : Comparable<T>> T.rangeTo(that: T): ClosedRange<T>" in lines())
             // not on a type parameter, and the member compareTo is not infix anyway
             have("inline infix fun <T> Comparable<T>.compareTo(other: T): Int" in lines())
         }

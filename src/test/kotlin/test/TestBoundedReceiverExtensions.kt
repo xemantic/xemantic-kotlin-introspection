@@ -82,40 +82,28 @@ fun <T> T.boundedByAAndSuspendFunction() where T : BoundedReceiverA, T : suspend
 
 class BoundedReceiverJavaFunction : JavaFunctionBase()
 
-// the extensions on a type parameter shadowed by a more specific overload, called instead
+// the extensions on a type parameter next to an overload of a class not pinning the type parameter,
+// which can be inferred as a supertype, like BoundedReceiverD, so that none of them is shadowed
 interface BoundedReceiverD
 
-fun <T : BoundedReceiverD> T.shadowedByMember(): T = this
+fun <T : BoundedReceiverD> T.nextToMember(): T = this
 
-fun <T : BoundedReceiverD> T.shadowedByExtension(value: T): T = this
+fun <T : BoundedReceiverD> T.nextToExtension(value: T): T = this
 
-infix fun <T : BoundedReceiverD> T.notShadowedByNonInfix(other: T): T = this
+fun <T : BoundedReceiverD> T.nextToSubtypeParameter(value: T) {}
 
-fun <T : BoundedReceiverD> T.notShadowedByOtherArity(value: Int): T = this
+fun <T : BoundedReceiverD?> T.nextToNullableBound(value: T) {}
 
-val <T : BoundedReceiverD> T.shadowedProperty: Int get() = 0
-
-fun <T : BoundedReceiverD> T.notShadowedByVararg(vararg values: Int) {}
-
-fun <T : BoundedReceiverD> T.notShadowedByDefault(value: Int = 0) {}
-
-fun <T : BoundedReceiverD> T.notShadowedByOtherType(value: T) {}
-
-fun <T : BoundedReceiverD> T.notShadowedByNullable(value: T?) {}
-
-fun <T : BoundedReceiverD> T.notShadowedByMemberExtension() {}
+val <T : BoundedReceiverD> T.nextToProperty: Int get() = 0
 
 class BoundedReceiverShadowing : BoundedReceiverD {
-    val shadowedProperty: Int = 1
-    fun shadowedByMember(): BoundedReceiverShadowing = this
-    fun notShadowedByNonInfix(other: BoundedReceiverShadowing): BoundedReceiverShadowing = other
-    fun notShadowedByOtherArity(): BoundedReceiverShadowing = this
-    fun notShadowedByVararg(value: Int) {}
-    fun notShadowedByDefault(value: Int) {}
-    fun notShadowedByOtherType(value: String) {}
-    fun notShadowedByNullable(value: BoundedReceiverShadowing) {}
-    fun String.notShadowedByMemberExtension() {}
+    val nextToProperty: Int = 1
+    fun nextToMember(): BoundedReceiverShadowing = this
+    fun nextToSubtypeParameter(value: BoundedReceiverShadowing) {}
+    fun nextToNullableBound(value: BoundedReceiverShadowing) {}
 }
+
+fun BoundedReceiverShadowing.nextToExtension(value: BoundedReceiverShadowing): BoundedReceiverShadowing = value
 
 // an extension on a supertype never shadows a more specific one on a type parameter
 interface BoundedReceiverShape
@@ -134,18 +122,21 @@ val BoundedReceiverShape.label: String get() = ""
 val <T> T.label: String where T : BoundedReceiverShape, T : BoundedReceiverNamed
     @JvmName("getNamedLabel") get() = ""
 
-fun BoundedReceiverShadowing.shadowedByExtension(value: BoundedReceiverShadowing): BoundedReceiverShadowing = value
-
 // the classes comparable to themselves, satisfying the bound T : Comparable<T>, or not
 class BoundedReceiverVersion(val major: Int) : Comparable<BoundedReceiverVersion> {
     override fun compareTo(other: BoundedReceiverVersion): Int = major.compareTo(other.major)
+    // shadows T.coerceAtMost(maximumValue: T), as T is pinned to this final class, comparable only to itself
+    fun coerceAtMost(maximumValue: BoundedReceiverVersion): BoundedReceiverVersion = this
 }
 
 open class BoundedReceiverVersionBase : Comparable<BoundedReceiverVersionBase> {
     override fun compareTo(other: BoundedReceiverVersionBase): Int = 0
 }
 
-class BoundedReceiverPatchVersion : BoundedReceiverVersionBase()
+class BoundedReceiverPatchVersion : BoundedReceiverVersionBase() {
+    // does not shadow T.coerceAtMost(maximumValue: T), as T can be inferred as BoundedReceiverVersionBase
+    fun coerceAtMost(maximumValue: BoundedReceiverPatchVersion): BoundedReceiverPatchVersion = this
+}
 
 class BoundedReceiverComparableToOther : Comparable<BoundedReceiverVersion> {
     override fun compareTo(other: BoundedReceiverVersion): Int = 0
