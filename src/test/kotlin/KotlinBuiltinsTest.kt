@@ -101,6 +101,39 @@ class KotlinBuiltinsTest {
     }
 
     @Test
+    fun `should find kotlin_builtins resources of standard library in a module of a runtime image`() {
+        // given
+        // the runtime image linked with the standard library of the tests, as its own module
+        val stdlib = Path.of(KotlinVersion::class.java.protectionDomain.codeSource.location.toURI())
+        val image = tempDir.resolve("image")
+        val jlink = java.util.spi.ToolProvider.findFirst("jlink").orElseThrow()
+        val exitCode = jlink.run(
+            System.out,
+            System.err,
+            "--module-path", stdlib.toString(),
+            "--add-modules", "kotlin.stdlib",
+            "--no-header-files", "--no-man-pages", "--strip-debug",
+            "--output", image.toString()
+        )
+        assert(exitCode == 0)
+        // the jrt file system of that image, rather than the one of the running JVM
+        val found = java.nio.file.FileSystems.newFileSystem(
+            URI("jrt:/"),
+            mapOf("java.home" to image.toString())
+        ).use { jrt ->
+            val anchor = jrt.getPath("/modules/kotlin.stdlib/kotlin/kotlin.kotlin_builtins")
+
+            // when
+            pathBuiltinsResources(anchor)
+        }
+
+        // then
+        // the resources relative to the root of the module, like the ones listed in the jar of the standard library
+        assert("kotlin/Unit.class" in found)
+        assert(found.filter { it.endsWith(".kotlin_builtins") }.sorted() == kotlinBuiltinsResources())
+    }
+
+    @Test
     fun `should find kotlin_builtins resources of standard library in a jar`() {
         // given
         val jar = tempDir.resolve("stdlib.jar")
