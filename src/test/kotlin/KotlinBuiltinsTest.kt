@@ -101,27 +101,44 @@ class KotlinBuiltinsTest {
         assert(found == resources.sorted())
     }
 
+    /**
+     * The runtime image linked with the standard library of the tests, as its own module,
+     * skipping the test rather than failing it only when the JDK of the tests cannot link at all, like a JRE,
+     * or one without jmods, which cannot link from its own runtime image either,
+     * telling it by linking the image of `java.base` alone,
+     * so that any other failure, like of an argument, or of the module of the standard library, fails the test.
+     */
+    private fun stdlibRuntimeImage(): Path {
+        val jlink = java.util.spi.ToolProvider.findFirst("jlink").orElse(null)
+        assumeTrue(jlink != null, "jlink is not available")
+        fun link(output: Path, vararg arguments: String): Pair<Int, String> {
+            val log = java.io.StringWriter()
+            val exitCode = java.io.PrintWriter(log).use { writer ->
+                jlink.run(
+                    writer,
+                    writer,
+                    *arguments,
+                    "--no-header-files", "--no-man-pages", "--strip-debug",
+                    "--output", output.toString()
+                )
+            }
+            return exitCode to log.toString()
+        }
+        val stdlib = Path.of(KotlinVersion::class.java.protectionDomain.codeSource.location.toURI())
+        val image = tempDir.resolve("image")
+        val (exitCode, log) = link(image, "--module-path", stdlib.toString(), "--add-modules", "kotlin.stdlib")
+        if (exitCode != 0) {
+            val (javaBaseExitCode, javaBaseLog) = link(tempDir.resolve("java.base"), "--add-modules", "java.base")
+            assumeTrue(javaBaseExitCode == 0) { "the JDK cannot link: $javaBaseLog" }
+        }
+        assert(exitCode == 0, log)
+        return image
+    }
+
     @Test
     fun `should find kotlin_builtins resources of standard library in a module of a runtime image`() {
         // given
-        // the runtime image linked with the standard library of the tests, as its own module
-        val stdlib = Path.of(KotlinVersion::class.java.protectionDomain.codeSource.location.toURI())
-        val image = tempDir.resolve("image")
-        // skipped rather than failed when the JDK of the tests cannot link, like a JRE, or one without jmods
-        val jlink = java.util.spi.ToolProvider.findFirst("jlink").orElse(null)
-        assumeTrue(jlink != null, "jlink is not available")
-        val output = java.io.StringWriter()
-        val exitCode = java.io.PrintWriter(output).use { writer ->
-            jlink.run(
-                writer,
-                writer,
-                "--module-path", stdlib.toString(),
-                "--add-modules", "kotlin.stdlib",
-                "--no-header-files", "--no-man-pages", "--strip-debug",
-                "--output", image.toString()
-            )
-        }
-        assumeTrue(exitCode == 0) { "jlink cannot link the standard library: $output" }
+        val image = stdlibRuntimeImage()
         // the jrt file system of that image, rather than the one of the running JVM
         val found = java.nio.file.FileSystems.newFileSystem(
             URI("jrt:/"),
@@ -137,6 +154,37 @@ class KotlinBuiltinsTest {
         // the resources relative to the root of the module, like the ones listed in the jar of the standard library
         assert("kotlin/Unit.class" in found)
         assert(found.filter { it.endsWith(".kotlin_builtins") }.sorted() == kotlinBuiltinsResources())
+    }
+
+    @Test
+    fun `should find kotlin_builtins resources of standard library from their jrt URL`() {
+        // given
+        val image = stdlibRuntimeImage()
+        // the classpath of the tests, but the standard library, which is in the image, and the logging backend,
+        // which needs modules the image lacks
+        val stdlib = Path.of(KotlinVersion::class.java.protectionDomain.codeSource.location.toURI())
+        val classpath = System.getProperty("java.class.path")
+            .split(java.io.File.pathSeparator)
+            .filter { Path.of(it) != stdlib && "logback" !in Path.of(it).fileName.toString() }
+            .joinToString(java.io.File.pathSeparator)
+        val process = ProcessBuilder(
+            image.resolve("bin").resolve("java").toString(),
+            "-cp", classpath,
+            // printed to the standard output otherwise
+            "-Dkotlin-logging.logStartupMessage=false",
+            "com.xemantic.kotlin.introspection.RuntimeImageBuiltinsResourcesKt"
+        ).redirectError(ProcessBuilder.Redirect.INHERIT).start()
+
+        // when
+        // the jrt: URL of the runtime image of the JVM of that image, see RuntimeImageBuiltinsResources
+        val found = process.inputStream.bufferedReader().use { it.readLines() }
+        // bounded, so that a regression fails the test rather than hanging it
+        val isExited = process.waitFor(60, java.util.concurrent.TimeUnit.SECONDS)
+        if (!isExited) process.destroyForcibly()
+
+        // then
+        assert(isExited && process.exitValue() == 0)
+        assert(found == kotlinBuiltinsResources())
     }
 
     @Test
