@@ -7488,6 +7488,29 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve inherited var with setter deprecated with error level`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.AccessorDeprecationSub.inheritedErrorSetter"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.AccessorDeprecationSub.inheritedErrorSetter [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.AccessorDeprecationBase
+            @set:Deprecated("Assign y", level = DeprecationLevel.ERROR) var inheritedErrorSetter: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve inherited var whose protected setter final subclass cannot call as val with deprecation of reading`() {
+        // the setter, and its deprecation, are not part of the API of the final subclass
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.AccessorDeprecationSub.inheritedProtectedSetter"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.AccessorDeprecationSub.inheritedProtectedSetter [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.AccessorDeprecationBase
+            @Deprecated("Read y", level = DeprecationLevel.ERROR) val inheritedProtectedSetter: Int
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve member var with getter deprecated with hidden level`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.HiddenGetterVarHolder.inBody"

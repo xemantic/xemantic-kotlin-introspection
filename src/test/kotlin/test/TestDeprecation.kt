@@ -160,3 +160,15 @@ class AccessorDeprecationHolder(@get:Deprecated("Read y", level = DeprecationLev
 var AccessorDeprecationHolder.errorSetterExtension: Int
     get() = errorSetter
     set(@Suppress("unused") value) {}
+
+// the accessor deprecations of the vars inherited by a final subclass, which cannot call the protected setter
+open class AccessorDeprecationBase {
+    @set:Deprecated("Assign y", level = DeprecationLevel.ERROR)
+    var inheritedErrorSetter: Int = 0
+    @get:Deprecated("Read y", level = DeprecationLevel.ERROR)
+    @set:Deprecated("Assign y")
+    var inheritedProtectedSetter: Int = 0
+        protected set
+}
+
+class AccessorDeprecationSub : AccessorDeprecationBase()
