@@ -18,6 +18,9 @@
 
 package com.xemantic.kotlin.introspection.test
 
+import com.xemantic.kotlin.introspection.test.other.JavaBoundedReceiverBase
+import com.xemantic.kotlin.introspection.test.other.JavaFunctionBase
+
 // Extensions on type parameter receivers, listed for the classes satisfying their bounds,
 // names avoid the "TestClass" suffix to keep search result tests stable
 interface BoundedReceiverA
@@ -56,3 +59,90 @@ fun <T : BoundedReceiverC> T.deprecatedInContext() {}
 
 context(log: Logger)
 fun ((Int, Int, Int, Int, Int, Int, Int, Int, Int) -> Unit).invokeInContext() {}
+
+// the bounds satisfied through a Java supertype
+class BoundedReceiverStream : java.io.FilterInputStream(null), BoundedReceiverA
+
+fun <T> T.boundedByAAndCloseable() where T : BoundedReceiverA, T : java.io.Closeable {}
+
+class BoundedReceiverThroughJava : JavaBoundedReceiverBase(), BoundedReceiverA
+
+// the function type supertypes
+class BoundedReceiverHandler : (String) -> Unit {
+    override fun invoke(p1: String) {}
+}
+
+fun <P, R> ((P) -> R).handleAll(events: List<P>): List<R> = events.map(this)
+
+class BoundedReceiverSuspendHandler : BoundedReceiverA, suspend () -> Unit {
+    override suspend fun invoke() {}
+}
+
+fun <T> T.boundedByAAndSuspendFunction() where T : BoundedReceiverA, T : suspend () -> Unit {}
+
+class BoundedReceiverJavaFunction : JavaFunctionBase()
+
+// the extensions on a type parameter next to an overload of a class not pinning the type parameter,
+// which can be inferred as a supertype, like BoundedReceiverD, so that none of them is shadowed
+interface BoundedReceiverD
+
+fun <T : BoundedReceiverD> T.nextToMember(): T = this
+
+fun <T : BoundedReceiverD> T.nextToExtension(value: T): T = this
+
+fun <T : BoundedReceiverD> T.nextToSubtypeParameter(value: T) {}
+
+fun <T : BoundedReceiverD?> T.nextToNullableBound(value: T) {}
+
+val <T : BoundedReceiverD> T.nextToProperty: Int get() = 0
+
+class BoundedReceiverShadowing : BoundedReceiverD {
+    val nextToProperty: Int = 1
+    fun nextToMember(): BoundedReceiverShadowing = this
+    fun nextToSubtypeParameter(value: BoundedReceiverShadowing) {}
+    fun nextToNullableBound(value: BoundedReceiverShadowing) {}
+}
+
+fun BoundedReceiverShadowing.nextToExtension(value: BoundedReceiverShadowing): BoundedReceiverShadowing = value
+
+// an extension on a supertype never shadows a more specific one on a type parameter
+interface BoundedReceiverShape
+
+interface BoundedReceiverNamed
+
+class BoundedReceiverCircle : BoundedReceiverShape, BoundedReceiverNamed
+
+fun BoundedReceiverShape.describe(): String = ""
+
+@JvmName("describeNamed")
+fun <T> T.describe(): String where T : BoundedReceiverShape, T : BoundedReceiverNamed = ""
+
+val BoundedReceiverShape.label: String get() = ""
+
+val <T> T.label: String where T : BoundedReceiverShape, T : BoundedReceiverNamed
+    @JvmName("getNamedLabel") get() = ""
+
+// the classes comparable to themselves, satisfying the bound T : Comparable<T>, or not
+class BoundedReceiverVersion(val major: Int) : Comparable<BoundedReceiverVersion> {
+    override fun compareTo(other: BoundedReceiverVersion): Int = major.compareTo(other.major)
+    // shadows T.coerceAtMost(maximumValue: T), as T is pinned to this final class, comparable only to itself
+    fun coerceAtMost(maximumValue: BoundedReceiverVersion): BoundedReceiverVersion = this
+}
+
+open class BoundedReceiverVersionBase : Comparable<BoundedReceiverVersionBase> {
+    override fun compareTo(other: BoundedReceiverVersionBase): Int = 0
+}
+
+class BoundedReceiverPatchVersion : BoundedReceiverVersionBase() {
+    // does not shadow T.coerceAtMost(maximumValue: T), as T can be inferred as BoundedReceiverVersionBase
+    fun coerceAtMost(maximumValue: BoundedReceiverPatchVersion): BoundedReceiverPatchVersion = this
+}
+
+class BoundedReceiverComparableToOther : Comparable<BoundedReceiverVersion> {
+    override fun compareTo(other: BoundedReceiverVersion): Int = 0
+}
+
+// the bounds of the standard library satisfied by a class
+class BoundedReceiverRange(override val start: Int, override val endInclusive: Int) : ClosedRange<Int>, Iterable<Int> {
+    override fun iterator(): Iterator<Int> = (start..endInclusive).iterator()
+}

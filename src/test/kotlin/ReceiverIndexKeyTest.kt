@@ -68,7 +68,7 @@ class ReceiverIndexKeyTest {
     }
 
     @Test
-    fun `should key a type parameter receiver bounded by Any? apart from any class name`() {
+    fun `should key a type parameter receiver bounded by nullable Any apart from any class name`() {
         // given
         val type = typeParameterType(0)
         val bound = classType("kotlin/Any").apply { isNullable = true }

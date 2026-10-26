@@ -66,7 +66,7 @@ internal class RuntimeFunctionType(
  */
 internal fun KmType.decodeRuntimeFunctionType(): RuntimeFunctionType? {
     val classifier = classifier as? KmClassifier.Class ?: return null
-    val arity = functionArity(classifier.name, prefix = "kotlin/Function") ?: return null
+    val arity = parseFunctionTypeName(classifier.name)?.takeIf { it.kind == FunctionTypeKind.FUNCTION }?.arity ?: return null
     if (arguments.size != arity + 1) return null
     val arguments = arguments.map { it.type ?: return null }
     if (!isSuspend) return RuntimeFunctionType(isSuspend = false, arguments.dropLast(1), arguments.last())
@@ -131,7 +131,10 @@ internal val KType.isSuspendFunctionType: Boolean?
             arguments.size < 23 -> null
             else -> arguments.size == 23
         }
-        val arity = functionArity(kClass.qualifiedName ?: return null, prefix = FUNCTION_TYPE_PREFIX) ?: return null
+        val arity = parseFunctionTypeName(kClass.qualifiedName?.replace('.', '/') ?: return null)
+            ?.takeIf { it.kind == FunctionTypeKind.FUNCTION }
+            ?.arity
+            ?: return null
         return when (arguments.size) {
             arity + 1 -> false
             arity -> true
@@ -140,13 +143,92 @@ internal val KType.isSuspendFunctionType: Boolean?
     }
 
 /**
+ * The kinds of the function type classes, which the compiler synthesizes, see [FunctionTypeClass],
+ * by the prefix of their metadata names, followed by the arity, like `kotlin/Function1`, see [parseFunctionTypeName].
+ *
+ * @property isSuspend whether it is the type of a suspend function, like `SuspendFunction0`, or `KSuspendFunction0`.
+ * @property isReference whether it is the type of a function reference, like `KFunction1`, a subtype of `KFunction`.
+ */
+internal enum class FunctionTypeKind(
+    val metadataPrefix: String,
+    val isSuspend: Boolean = false,
+    val isReference: Boolean = false
+) {
+
+    /**
+     * Like `kotlin/Function1` of `(P1) -> R`.
+     */
+    FUNCTION("kotlin/Function"),
+
+    /**
+     * Like `kotlin/coroutines/SuspendFunction0` of `suspend () -> R`, never stored in the metadata under this name,
+     * but as the function type of one more parameter, the continuation, see [decodeRuntimeFunctionType].
+     */
+    SUSPEND_FUNCTION("kotlin/coroutines/SuspendFunction", isSuspend = true),
+
+    /**
+     * Like `kotlin/reflect/KFunction1` of a reference to a function of one parameter.
+     */
+    FUNCTION_REFERENCE("kotlin/reflect/KFunction", isReference = true),
+
+    /**
+     * Like `kotlin/reflect/KSuspendFunction1` of a reference to a suspend function of one parameter.
+     */
+    SUSPEND_FUNCTION_REFERENCE("kotlin/reflect/KSuspendFunction", isSuspend = true, isReference = true);
+
+    /**
+     * The metadata name of the function type class of this kind and the given [arity], like `kotlin/Function1`.
+     */
+    fun metadataName(arity: Int): String = "$metadataPrefix$arity"
+
+    /**
+     * The Kotlin name of the function type class of this kind and the given [arity], like `kotlin.Function1`.
+     */
+    fun kotlinName(arity: Int): String = metadataName(arity).replace('/', '.')
+
+    /**
+     * The simple name of the function type class of this kind and the given [arity], like `Function1`.
+     */
+    fun simpleName(arity: Int): String = metadataPrefix.substringAfterLast('/') + arity
+
+    /**
+     * The kind of the function types, which the function reference types of this kind are subtypes of,
+     * like [FUNCTION] of [FUNCTION_REFERENCE], or this kind itself, if it is not the one of the function reference types.
+     */
+    val functionTypeKind: FunctionTypeKind
+        get() = when (this) {
+            FUNCTION_REFERENCE -> FUNCTION
+            SUSPEND_FUNCTION_REFERENCE -> SUSPEND_FUNCTION
+            else -> this
+        }
+
+}
+
+/**
+ * The name of a function type class of the [kind] and the [arity], see [parseFunctionTypeName].
+ */
+internal class FunctionTypeName(val kind: FunctionTypeKind, val arity: Int)
+
+/**
+ * The function type class named by the [metadataName], like `kotlin/Function1`, or `null` if it is not one,
+ * written with the arity without leading zeros, like the name of any class the compiler synthesizes,
+ * see [FunctionTypeKind].
+ */
+internal fun parseFunctionTypeName(metadataName: String): FunctionTypeName? {
+    for (kind in FunctionTypeKind.entries) {
+        functionArity(metadataName, kind.metadataPrefix)?.let { return FunctionTypeName(kind, it) }
+    }
+    return null
+}
+
+/**
  * The arity of a function type class, like `2` of `kotlin/Function2`, given its name and the expected [prefix],
  * or `null` if the [name] is not the one of a function type class.
  * The arity is written without leading zeros, like in the name of any class the compiler synthesizes,
- * or compiles a function type to, like `kotlin.jvm.functions.Function2`.
+ * or compiles a function type to, like `kotlin/jvm/functions/Function2`.
  * The prefix is checked before anything else, as most of the types are not function types.
  */
-internal fun functionArity(name: String, prefix: String): Int? {
+private fun functionArity(name: String, prefix: String): Int? {
     if (!name.startsWith(prefix) || name.length == prefix.length) return null
     for (index in prefix.length until name.length) {
         if (name[index] !in '0'..'9') return null
@@ -160,11 +242,6 @@ internal fun functionArity(name: String, prefix: String): Int? {
  * The supertype of all the function types, see [FunctionTypeClass].
  */
 internal const val FUNCTION_CLASS_NAME = "kotlin.Function"
-
-/**
- * The prefix of the Kotlin name of a function type class, like `kotlin.Function1`.
- */
-internal const val FUNCTION_TYPE_PREFIX = FUNCTION_CLASS_NAME
 
 /**
  * The prefix of the metadata name of a JVM interface of a function type, like `kotlin/jvm/functions/Function1`.
@@ -183,13 +260,7 @@ internal const val MAX_JVM_FUNCTION_INTERFACE_ARITY = 22
 internal fun functionTypeOfJvmInterface(name: String): String? =
     functionArity(name, JVM_FUNCTION_INTERFACE_PREFIX)
         ?.takeIf { it <= MAX_JVM_FUNCTION_INTERFACE_ARITY }
-        ?.let { "kotlin/Function$it" }
-
-/**
- * The prefix of the Kotlin name of a suspend function type class, like `kotlin.coroutines.SuspendFunction0`,
- * also the key of the extension index of the extensions on a suspend function type, see [receiverIndexKeys].
- */
-internal const val SUSPEND_FUNCTION_PREFIX = "kotlin.coroutines.SuspendFunction"
+        ?.let { FunctionTypeKind.FUNCTION.metadataName(it) }
 
 /**
  * The highest arity of a function type class resolved by its name, as an instance JVM method,
@@ -200,7 +271,8 @@ private const val MAX_FUNCTION_TYPE_CLASS_ARITY = 254
 
 /**
  * The class of a function type, like `kotlin.Function1` of `(Int) -> String`,
- * or `kotlin.coroutines.SuspendFunction0` of `suspend () -> Unit`, by its Kotlin name.
+ * or `kotlin.coroutines.SuspendFunction0` of `suspend () -> Unit`, by its Kotlin name,
+ * or of a function reference type, like `kotlin.reflect.KFunction1`, see [FunctionTypeKind].
  *
  * The compiler synthesizes these classes, there is neither a class file, nor any metadata, of them:
  * the ones up to `Function22` are compiled to `kotlin.jvm.functions.Function0`…`Function22`,
@@ -212,10 +284,24 @@ private const val MAX_FUNCTION_TYPE_CLASS_ARITY = 254
  * `interface Function1<in P1, out R> : Function<R> { operator fun invoke(p1: P1): R }`.
  * A function type with a receiver, or with context parameters, is of the same class,
  * like `String.() -> Unit` and `context(String) () -> Unit` are both `Function1<String, Unit>`.
+ * A function reference type extends `KFunction<R>`, and the function type of the same arity,
+ * like `interface KFunction1<in P1, out R> : KFunction<R>, Function1<P1, R>`, inheriting its `invoke` operator.
  */
-internal class FunctionTypeClass private constructor(val isSuspend: Boolean, val arity: Int) {
+internal class FunctionTypeClass private constructor(val kind: FunctionTypeKind, val arity: Int) {
 
-    val simpleName: String = (if (isSuspend) "SuspendFunction" else "Function") + arity
+    val simpleName: String = kind.simpleName(arity)
+
+    /**
+     * The Kotlin names of the supertypes, whose extensions are listed for this class:
+     * `kotlin.Function`, and of a function reference type, `kotlin.reflect.KFunction`, and its function type,
+     * like `kotlin.Function1` of `kotlin.reflect.KFunction1`.
+     */
+    val supertypeNames: List<String> =
+        if (kind.isReference) {
+            listOf(KFUNCTION_CLASS_NAME, kind.functionTypeKind.kotlinName(arity), FUNCTION_CLASS_NAME)
+        } else {
+            listOf(FUNCTION_CLASS_NAME)
+        }
 
     /**
      * The interface declaration, like `interface Function1<in P1, out R> : Function<R>`.
@@ -224,14 +310,20 @@ internal class FunctionTypeClass private constructor(val isSuspend: Boolean, val
         append("interface ")
         append(simpleName)
         append(((1..arity).map { "in P$it" } + "out R").joinToString(", ", prefix = "<", postfix = ">"))
-        append(" : Function<R>")
+        if (kind.isReference) {
+            append(" : KFunction<R>, ")
+            append(kind.functionTypeKind.simpleName(arity))
+            append(((1..arity).map { "P$it" } + "R").joinToString(", ", prefix = "<", postfix = ">"))
+        } else {
+            append(" : Function<R>")
+        }
     }
 
     /**
      * The `invoke` operator, like `operator fun invoke(p1: P1): R`.
      */
     val invoke: String = buildString {
-        if (isSuspend) append("suspend ")
+        if (kind.isSuspend) append("suspend ")
         append("operator fun invoke")
         append((1..arity).joinToString(", ", prefix = "(", postfix = ")") { "p$it: P$it" })
         append(": R")
@@ -241,19 +333,24 @@ internal class FunctionTypeClass private constructor(val isSuspend: Boolean, val
 
         /**
          * The function type class of the given Kotlin [name], like `kotlin.Function1`, or `null` if it is not one,
-         * see [functionArity].
+         * see [parseFunctionTypeName].
          */
-        fun of(name: String): FunctionTypeClass? =
-            functionArity(name, SUSPEND_FUNCTION_PREFIX)
-                ?.takeIf { it < MAX_FUNCTION_TYPE_CLASS_ARITY }
-                ?.let { FunctionTypeClass(isSuspend = true, arity = it) }
-                ?: functionArity(name, FUNCTION_TYPE_PREFIX)
-                    ?.takeIf { it <= MAX_FUNCTION_TYPE_CLASS_ARITY }
-                    ?.let { FunctionTypeClass(isSuspend = false, arity = it) }
+        fun of(name: String): FunctionTypeClass? {
+            // a metadata name, like kotlin/Function1, is not a Kotlin name
+            if ('/' in name) return null
+            val functionTypeName = parseFunctionTypeName(name.replace('.', '/')) ?: return null
+            val maxArity = if (functionTypeName.kind.isSuspend) MAX_FUNCTION_TYPE_CLASS_ARITY - 1 else MAX_FUNCTION_TYPE_CLASS_ARITY
+            return if (functionTypeName.arity <= maxArity) FunctionTypeClass(functionTypeName.kind, functionTypeName.arity) else null
+        }
 
     }
 
 }
+
+/**
+ * The supertype of all the function reference types, see [FunctionTypeClass].
+ */
+private const val KFUNCTION_CLASS_NAME = "kotlin.reflect.KFunction"
 
 private fun <T> decodeParameters(
     isSuspend: Boolean,

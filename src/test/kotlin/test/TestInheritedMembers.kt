@@ -119,3 +119,59 @@ open class InheritedNumberHolder<T : Number> {
 class InheritedAnyHolder<T> : InheritedNumberHolder<Int>() {
     fun h(x: T) {}
 }
+
+// The members inherited by a sealed interface, with an open subclass, or without one
+interface SealedInheritedBase {
+    fun f() {}
+}
+
+sealed interface OpenSealedInheriting : SealedInheritedBase
+
+open class OpenSealedInheritingImpl : OpenSealedInheriting
+
+sealed interface ClosedSealedInheriting : SealedInheritedBase
+
+class ClosedSealedInheritingImpl : ClosedSealedInheriting
+
+// A member of Any inherited by a sealed class with an open subclass, which the user code can override
+sealed class OpenSealedInheritingClass {
+    open class Sub : OpenSealedInheritingClass()
+}
+
+// The members of Any inherited by a sealed interface without an open subclass
+sealed interface SealedAnyInheriting {
+    fun g(): Int = 1
+}
+
+class SealedAnyInheritingImpl : SealedAnyInheriting
+
+// Overrides of JVM-only members of built-in types, taking platform types, like PrintStream! and Consumer<in T!>!
+class InheritedJvmOverridingException : Exception() {
+    override fun printStackTrace(s: java.io.PrintStream) {}
+    override fun initCause(cause: Throwable?): Throwable = this
+}
+
+class InheritedJvmException : Exception()
+
+class InheritedJvmOverridingIterable : Iterable<String> {
+    override fun iterator(): Iterator<String> = emptyList<String>().iterator()
+    override fun forEach(action: java.util.function.Consumer<in String>) {}
+}
+
+abstract class InheritedJvmOverridingList : java.util.AbstractList<String>() {
+    override fun forEach(action: java.util.function.Consumer<in String>?) {}
+}
+
+// The same overrides declared by an intermediate class
+open class InheritedJvmOverridingBaseException : Exception() {
+    override fun printStackTrace(s: java.io.PrintStream) {}
+}
+
+class InheritedJvmOverridingLeafException : InheritedJvmOverridingBaseException()
+
+open class InheritedJvmOverridingBaseIterable : Iterable<String> {
+    override fun iterator(): Iterator<String> = emptyList<String>().iterator()
+    override fun forEach(action: java.util.function.Consumer<in String>) {}
+}
+
+class InheritedJvmOverridingLeafIterable : InheritedJvmOverridingBaseIterable()

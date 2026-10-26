@@ -98,7 +98,8 @@ kotlin.target.compilations.named(friendModuleTestFixtures.name) {
 }
 
 // two unrelated Kotlin modules, both with the default module name main, which the compiler omits from the metadata,
-// like when compiled with plain kotlinc, without -module-name
+// like when compiled with plain kotlinc, without -module-name;
+// both write META-INF/main.kotlin_module, so that neither may declare top-level members, which a test guards
 val defaultModuleTestFixtures: SourceSet = sourceSets.create("defaultModuleTestFixtures")
 val otherDefaultModuleTestFixtures: SourceSet = sourceSets.create("otherDefaultModuleTestFixtures")
 

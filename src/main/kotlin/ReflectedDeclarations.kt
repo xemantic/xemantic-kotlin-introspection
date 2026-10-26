@@ -49,7 +49,9 @@ import kotlin.reflect.typeOf
  * The JVM classes of the built-in types expose, through kotlin-reflect, also their Java-only methods,
  * and the JDK is compiled without parameter names,
  * so kotlin-reflect names the parameters of these methods after their position, like `arg0`, `arg1`.
- * Such a method would be rendered without telling what its parameters are, therefore it is left out.
+ * Such a method is still rendered with these names, as Kotlin calls it all the same,
+ * while such a constructor tells a JVM constructor, like `Integer(int)`, which has no counterpart in Kotlin,
+ * see [toKmBuiltinClass].
  * Only the exact positional name is matched, as real Kotlin names like `args` or `argument` are common.
  *
  * The parameter names are the only signal available here:
@@ -61,6 +63,24 @@ internal fun hasSyntheticParameterNames(function: KFunction<*>): Boolean =
     function.parameters.filter { it.kind == KParameter.Kind.VALUE }.withIndex().any { (position, parameter) ->
         parameter.name.let { it == null || it == "arg$position" }
     }
+
+/**
+ * Tells whether the [callable] reflected by kotlin-reflect is a JDK member of a built-in type which Kotlin does not call,
+ * newer than the members mapped to the built-in type, like `String.indent(Int)`, `strip()`, or `CharSequence.getChars`,
+ * which kotlin-reflect tells deprecated as "not fully supported by Kotlin compiler", mirroring the warning of K1,
+ * while K2 does not resolve it at all, so that it is neither rendered, nor shadows the extensions of its signature.
+ */
+internal fun isUnsupportedByCompiler(callable: KCallable<*>): Boolean = try {
+    callable.annotations.any { it is Deprecated && it.message.startsWith(UNSUPPORTED_MEMBER_MESSAGE) }
+} catch (_: Exception) {
+    false
+} catch (e: Error) {
+    // like the KotlinReflectionInternalError of a member kotlin-reflect cannot describe
+    if (e is VirtualMachineError) throw e
+    false
+}
+
+private const val UNSUPPORTED_MEMBER_MESSAGE = "This member is not fully supported by Kotlin compiler"
 
 /**
  * The ids of the type parameters a reflected declaration can refer to, by their names:
@@ -101,8 +121,10 @@ internal class ReflectedTypeParameters(private val ids: Map<String, Int>) {
  *
  * kotlin-reflect describes the JVM class, like `java.lang.String`, so that the declaration is approximate:
  * its supertypes are only the Kotlin ones, its members are the ones the JVM class declares,
- * but the ones whose parameter names are not known, see [hasSyntheticParameterNames],
+ * also the ones whose parameter names are not known, like `initCause(arg0: Throwable?)`,
+ * but the ones Kotlin does not call, see [isUnsupportedByCompiler],
  * and its constructors are the ones of the JVM class whose parameter names are known, like `String()`,
+ * see [hasSyntheticParameterNames],
  * as the others, like `Integer(int)`, have no counterpart in Kotlin.
  * Its companion object is not declared.
  */
@@ -127,12 +149,12 @@ internal fun KClass<*>.toKmBuiltinClass(name: String): KmClass {
         .filter { supertype -> (supertype.classifier as? KClass<*>)?.qualifiedName?.startsWith("kotlin.") == true }
         .mapTo(kmClass.supertypes) { it.toKmType(typeParameters) }
     declaredMemberFunctions
-        .filter { '$' !in it.name && !hasSyntheticParameterNames(it) }
+        .filter { '$' !in it.name && !isUnsupportedByCompiler(it) }
         .mapTo(kmClass.functions) { function ->
             function.toKmFunction(typeParameters).also { it.modality = it.modality.finalIn(kmClass) }
         }
     declaredMemberProperties
-        .filter { '$' !in it.name }
+        .filter { '$' !in it.name && !isUnsupportedByCompiler(it) }
         .mapTo(kmClass.properties) { property ->
             property.toKmProperty(typeParameters).also { it.modality = it.modality.finalIn(kmClass) }
         }
@@ -219,7 +241,8 @@ private fun reflectedModality(callable: KCallable<*>): Modality = when {
 private fun KTypeParameter.toKmTypeParameter(scope: ReflectedTypeParameters): KmTypeParameter =
     KmTypeParameter(name, scope.idOf(this), variance.toKmVariance()).also { typeParameter ->
         typeParameter.isReified = isReified
-        upperBounds.mapTo(typeParameter.upperBounds) { it.toKmType(scope) }
+        // like the implicit Any! bound of a Java type parameter, which admits nullable type arguments
+        upperBounds.mapTo(typeParameter.upperBounds) { it.toKmType(scope, platformAsNullable = true) }
     }
 
 /**
@@ -240,7 +263,9 @@ internal fun varargElementType(arrayType: KmType): KmType =
 
 private fun KParameter.toKmValueParameter(position: Int, scope: ReflectedTypeParameters): KmValueParameter =
     KmValueParameter(name ?: "arg$position").also { parameter ->
-        val type = type.toKmType(scope)
+        // a Java parameter of a platform type, like Any! of Object, accepts null,
+        // but a vararg one, whose array is never null, and which tells the nullability of its elements below
+        val type = type.toKmType(scope, platformAsNullable = !isVararg)
         parameter.type = type
         // a vararg parameter is typed as an array, like Array<out T> or IntArray, of its element type
         if (isVararg) {
@@ -273,14 +298,19 @@ private fun classType(name: String, nullable: Boolean = false): KmType = KmType(
 /**
  * The type of the Kotlin metadata described by this [KType], where the type parameters are in the [scope].
  *
+ * A platform type of Java, like `Any!`, see [isPlatformNullable], which cannot be rendered as valid Kotlin,
+ * is nullable when [platformAsNullable], like the type of a value parameter, or the bound of a type parameter,
+ * where it accepts `null`, and else not nullable, like a return type, which Kotlin lets be used as such,
+ * or a type argument, not to flood the signatures with the nullable types, like `Array<StackTraceElement?>`.
+ *
  * A function type is stored like in the Kotlin metadata, see [KmType.decodeFunctionType]:
  * a suspend function type, which kotlin-reflect describes with `R` in place of its trailing `Continuation<R>, Any?`,
  * see [KType.isSuspendFunctionType], gets them back,
  * and the type annotations telling its receiver, its context parameters, and the names of its parameters, are kept.
  */
-internal fun KType.toKmType(scope: ReflectedTypeParameters): KmType {
+internal fun KType.toKmType(scope: ReflectedTypeParameters, platformAsNullable: Boolean = false): KmType {
     val type = KmType()
-    type.isNullable = isMarkedNullable
+    type.isNullable = isMarkedNullable || (platformAsNullable && isPlatformNullable)
     val classifier = classifier
     val isSuspendFunctionType = isSuspendFunctionType
     // a FunctionN is only guessed to be a function type, which an undecodable shape does not confirm
@@ -289,11 +319,13 @@ internal fun KType.toKmType(scope: ReflectedTypeParameters): KmType {
         // kotlin-reflect gives the KFunction class for the function reference types, like KFunction1<P, R>,
         // telling their arity by the type arguments, apart from KFunction<R> itself, which takes one;
         // a KSuspendFunctionN cannot be told apart from a KFunctionN in the public API
-        KFunction::class if arguments.size > 1 -> KmClassifier.Class("kotlin/reflect/KFunction${arguments.size - 1}")
+        KFunction::class if arguments.size > 1 -> KmClassifier.Class(FunctionTypeKind.FUNCTION_REFERENCE.metadataName(arguments.size - 1))
         // a function type of more than 22 runtime parameters, stored in the metadata as a FunctionN of its arity
         FunctionN::class if isFunctionNType ->
-            KmClassifier.Class("kotlin/Function${if (isSuspendFunctionType) arguments.size else arguments.size - 1}")
-        is KClass<*> -> KmClassifier.Class(classifier.qualifiedName?.let(::kotlinClassName) ?: kotlinClassName(classifier.java))
+            KmClassifier.Class(
+                FunctionTypeKind.FUNCTION.metadataName(if (isSuspendFunctionType) arguments.size else arguments.size - 1)
+            )
+        is KClass<*> -> KmClassifier.Class(reflectedClassName(classifier))
         is KTypeParameter -> KmClassifier.TypeParameter(scope.idOf(classifier))
         else -> KmClassifier.Class("kotlin/Any")
     }
@@ -331,6 +363,21 @@ internal fun KType.toKmType(scope: ReflectedTypeParameters): KmType {
     return type
 }
 
+/**
+ * The Kotlin class name of the [kClass], like `java/util/Map.Entry`, told by its Java class, see [kotlinClassName],
+ * as its fully qualified name does not tell where its package ends, like for a package `com.example.Api`,
+ * but of a type mapped to a JVM type, like `kotlin/collections/Map.Entry` of `java.util.Map.Entry`,
+ * whose fully qualified name is a built-in one, of the `kotlin.*` packages, starting with lowercase letters.
+ */
+private fun reflectedClassName(kClass: KClass<*>): String {
+    val qualifiedName = kClass.qualifiedName
+    return if (qualifiedName != null && qualifiedName != kClass.java.canonicalName) {
+        kotlinClassName(qualifiedName)
+    } else {
+        kotlinClassName(kClass.java)
+    }
+}
+
 private fun KTypeProjection.toKmTypeProjection(scope: ReflectedTypeParameters): KmTypeProjection {
     val projectionType = type ?: return KmTypeProjection.STAR
     return KmTypeProjection(variance?.toKmVariance() ?: KmVariance.INVARIANT, projectionType.toKmType(scope))
@@ -344,7 +391,7 @@ private fun outerType(innerClass: KClass<*>, arguments: List<KmTypeProjection>):
     val outerClass = innerClass.java.declaringClass?.kotlin ?: return null
     val ownArgumentCount = outerClass.typeParameters.size
     return KmType().also { type ->
-        type.classifier = KmClassifier.Class(outerClass.qualifiedName?.let(::kotlinClassName) ?: kotlinClassName(outerClass.java))
+        type.classifier = KmClassifier.Class(reflectedClassName(outerClass))
         type.arguments += arguments.take(ownArgumentCount)
         if (outerClass.isInner && arguments.size > ownArgumentCount) {
             type.outerType = outerType(outerClass, arguments.drop(ownArgumentCount))

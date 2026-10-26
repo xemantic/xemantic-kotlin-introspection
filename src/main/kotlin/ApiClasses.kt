@@ -18,48 +18,56 @@
 
 package com.xemantic.kotlin.introspection
 
+import kotlin.metadata.ClassKind
 import kotlin.metadata.Visibility
 
 /**
  * What a class tells by itself about whether it, and the declarations within it, are part of the API,
  * see [ApiClasses].
  *
+ * @param kind the kind of the class, telling, like for a protected one, how it is declared.
  * @param isUsable whether the class can be used in the source code at all, regardless of its visibility,
  *   unlike a synthetic class, a class deprecated with the `HIDDEN` level, or a generated serializer.
  * @param isSubclassable whether this class can be subclassed outside of its own body, and so, maybe indirectly,
  *   by the user code: an open or abstract class with a constructor other than a private one, which is not hidden.
  *   An internal constructor does not close the class, as a subclass in its own module can be public and open,
  *   while a private one does, unless the class has other constructors.
- * @param sealedSubclasses the metadata names of the direct subclasses of a sealed class, which might make it open
- *   to the user code indirectly, see [ApiScope.isOpen].
+ * @param sealedSubclasses the metadata names of the direct subclasses of a sealed class, or a sealed interface,
+ *   which might make it open to the user code indirectly, see [ApiScope.isOpen].
  */
 internal class ClassScope(
     val visibility: Visibility,
-    val isCompanion: Boolean,
+    val kind: ClassKind,
     val isUsable: Boolean,
     val isSubclassable: Boolean,
     val sealedSubclasses: List<String>
-)
+) {
+    val isCompanion: Boolean get() = kind == ClassKind.COMPANION_OBJECT
+}
 
 /**
  * A class enclosing a declaration of the API, which is itself part of the API.
  *
  * @param isOpen whether the user code can declare a subclass of this class, maybe indirectly,
- *   and so use its protected members: told by [ClassScope.isSubclassable],
- *   or, for a sealed class, by an open subclass which is part of the API, like `open class A : S()` of `sealed class S`,
- *   decided only once asked, as it is only needed for the protected declarations.
+ *   and so use its protected members, and override its open members: told by [ClassScope.isSubclassable],
+ *   or, for a sealed class, or a sealed interface, by an open subclass which is part of the API,
+ *   like `open class A : S()` of `sealed class S`,
+ *   decided only once asked, as it is needed only for the protected members, and for the modifiers of the open ones.
  *   An open class with only private constructors is not open,
  *   even when it is subclassed by an open class nested in it, which the metadata does not tell.
  * @param isSubclassable see [ClassScope.isSubclassable].
+ * @param kind see [ClassScope.kind].
  */
 internal class ApiScope(
     val visibility: Visibility,
     isOpen: Lazy<Boolean>,
     val isSubclassable: Boolean,
-    val isCompanion: Boolean
+    val kind: ClassKind
 ) {
 
     val isOpen: Boolean by isOpen
+
+    val isCompanion: Boolean get() = kind == ClassKind.COMPANION_OBJECT
 
 }
 
@@ -156,33 +164,56 @@ internal class ApiClasses(
     fun apiClass(name: String): ApiClass? = apiClass(name, inProgress = emptySet())
 
     /**
+     * The class named like `com/example/Outer.Nested` in its metadata, whose own [scope] is already known,
+     * like the one of a class found by its binary name, which might not be the one of its metadata name,
+     * like after relocating the class by shading, which does not rewrite its metadata.
+     */
+    fun apiClass(name: String, scope: ClassScope): ApiClass? = apiClass(name, inProgress = emptySet(), scope)
+
+    /**
+     * The class named like `com/example/Outer.Nested` nested in the [outer] class, which is its enclosing class,
+     * derived from it, without deciding again whether the classes enclosing it are part of the API.
+     */
+    fun nestedApiClass(outer: ApiClass, name: String): ApiClass? =
+        enclosed(outer, name, scopeOf(name) ?: return null, inProgress = emptySet())
+
+    /**
      * @param inProgress the sealed classes whose openness is being decided, assumed not to be open meanwhile,
      *   as a class nested in a sealed class, like its subclass, might be part of the API only if the sealed class is open.
+     * @param scope the scope of the class itself, if already known.
      */
-    private fun apiClass(name: String, inProgress: Set<String>): ApiClass? {
+    private fun apiClass(name: String, inProgress: Set<String>, scope: ClassScope? = null): ApiClass? {
         // local and anonymous classes have names starting with '.'
         if (name.startsWith('.')) return null
         var apiClass: ApiClass? = null
-        for (className in enclosingClassNames(name) + name) {
-            val scope = scopeOf(className)
-                ?: if (className != name && isAbsent(className)) ABSENT_ENCLOSING_CLASS else return null
-            if (!scope.isUsable || !(apiClass ?: TopLevel).isApi(scope.visibility)) return null
-            val apiScope = ApiScope(
-                visibility = scope.visibility,
-                isOpen = lazy { isOpen(className, scope, inProgress) },
-                isSubclassable = scope.isSubclassable,
-                isCompanion = scope.isCompanion
-            )
-            apiClass = apiClass?.plus(apiScope) ?: ApiClass(listOf(apiScope))
+        for (className in enclosingClassNames(name)) {
+            val enclosingScope = scopeOf(className) ?: if (isAbsent(className)) ABSENT_ENCLOSING_CLASS else return null
+            apiClass = enclosed(apiClass, className, enclosingScope, inProgress) ?: return null
         }
-        return apiClass
+        return enclosed(apiClass, name, scope ?: scopeOf(name) ?: return null, inProgress)
+    }
+
+    /**
+     * The class named [name], of the [scope], enclosed by the [outer] class, or a top-level one, if `null`,
+     * if it is part of the API, or else `null`.
+     */
+    private fun enclosed(outer: ApiClass?, name: String, scope: ClassScope, inProgress: Set<String>): ApiClass? {
+        if (!scope.isUsable || !(outer ?: TopLevel).isApi(scope.visibility)) return null
+        val apiScope = ApiScope(
+            visibility = scope.visibility,
+            isOpen = lazy { isOpen(name, scope, inProgress) },
+            isSubclassable = scope.isSubclassable,
+            kind = scope.kind
+        )
+        return outer?.plus(apiScope) ?: ApiClass(listOf(apiScope))
     }
 
     /**
      * Whether the class is open, see [ApiScope.isOpen], where a sealed class is, when any of its subclasses
      * is part of the API, and open.
      * Only the openness decided without assuming any sealed class not to be open is kept,
-     * which is exact, as such an assumption matters only when the sealed class is not open otherwise,
+     * or else decided to be open anyway, which is exact either way,
+     * as such an assumption matters only when the sealed class is not open otherwise,
      * and not after a transient failure meanwhile, see [transientFailures].
      */
     private fun isOpen(name: String, scope: ClassScope, inProgress: Set<String>): Boolean {
@@ -192,7 +223,7 @@ internal class ApiClasses(
         if (name in inProgress) return false
         val failureCount = transientFailures?.count()
         val isOpen = scope.sealedSubclasses.any { subclass -> apiClass(subclass, inProgress + name)?.isOpen == true }
-        if (inProgress.isEmpty() && transientFailures?.count() == failureCount) sealedOpenness.put(name, isOpen)
+        if ((inProgress.isEmpty() || isOpen) && transientFailures?.count() == failureCount) sealedOpenness.put(name, isOpen)
         return isOpen
     }
 
@@ -200,7 +231,8 @@ internal class ApiClasses(
 
         val ABSENT_ENCLOSING_CLASS = ClassScope(
             visibility = Visibility.PUBLIC,
-            isCompanion = false,
+            // never protected, as it is assumed to be public
+            kind = ClassKind.CLASS,
             isUsable = true,
             isSubclassable = false,
             sealedSubclasses = emptyList()

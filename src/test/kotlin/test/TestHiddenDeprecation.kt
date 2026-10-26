@@ -106,6 +106,28 @@ class HiddenSetterHolder(@set:Deprecated("replaced", level = DeprecationLevel.HI
     var inBody: Int = 0
 }
 
+// an override of a var stays a var, as a val cannot override it, even when its setter is hidden
+open class HiddenSetterOverrideBase {
+    open var value: Int = 0
+}
+
+class HiddenSetterOverride : HiddenSetterOverrideBase() {
+    override var value: Int = 0
+        @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+        set
+}
+
+// the same for a protected one, whose setter has the visibility of the property
+open class ProtectedHiddenSetterOverrideBase {
+    protected open var value: Int = 0
+}
+
+open class ProtectedHiddenSetterOverride : ProtectedHiddenSetterOverrideBase() {
+    override var value: Int = 0
+        @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+        set
+}
+
 @set:Deprecated("replaced", level = DeprecationLevel.HIDDEN)
 var HiddenSetterHolder.hiddenSetterExtension: Int
     get() = inBody
@@ -128,6 +150,10 @@ class HiddenGetterVarHolder(@get:Deprecated("replaced", level = DeprecationLevel
     @Deprecated("deprecated")
     @get:Deprecated("replaced", level = DeprecationLevel.HIDDEN)
     var deprecatedWithHiddenGetter: Int = 0
+    // can be referred to, but neither read, nor assigned
+    @get:Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    @set:Deprecated("Assign y", level = DeprecationLevel.ERROR)
+    var withErrorSetter: Int = 0
 }
 
 // the protected setter can be called by the subclasses

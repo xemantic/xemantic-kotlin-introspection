@@ -75,12 +75,12 @@ class KotlinIntrospectorTest {
                 inline fun contentEquals(stringBuilder: java.lang.StringBuffer): Boolean
                 @Deprecated("Use replaceFirstChar instead.", ReplaceWith("replaceFirstChar { it.lowercase(Locale.getDefault()) }")) fun decapitalize(): String
                 @Deprecated("Use replaceFirstChar instead.", ReplaceWith("replaceFirstChar { it.lowercase(locale) }")) fun decapitalize(locale: java.util.Locale): String
-                @Deprecated("This member is not fully supported by Kotlin compiler, so it may be absent or have different signature in next major version") fun describeConstable(): java.util.Optional<String>
                 fun drop(n: Int): String
                 fun dropLast(n: Int): String
                 inline fun dropLastWhile(predicate: (Char) -> Boolean): String
                 inline fun dropWhile(predicate: (Char) -> Boolean): String
                 fun encodeToByteArray(): ByteArray
+                fun encodeToByteArray(startIndex: Int = …, endIndex: Int = …, throwOnInvalidSequence: Boolean = …): ByteArray
             }
         """.trimIndent()
     }
@@ -94,7 +94,6 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // kotlin.String [page 3/42]
             class String : Comparable<String>, CharSequence {
-                fun encodeToByteArray(startIndex: Int = …, endIndex: Int = …, throwOnInvalidSequence: Boolean = …): ByteArray
                 fun endsWith(suffix: String, ignoreCase: Boolean = …): Boolean
                 override operator fun equals(other: Any?): Boolean
                 inline fun filter(predicate: (Char) -> Boolean): String
@@ -104,19 +103,24 @@ class KotlinIntrospectorTest {
                 inline fun format(locale: java.util.Locale?, vararg args: Any?): String
                 override operator fun get(index: Int): Char
                 fun hexToByte(format: HexFormat = …): Byte
+                fun hexToByteArray(format: HexFormat = …): ByteArray
             }
         """.trimIndent()
     }
 
     @Test
-    fun `should resolve String as known stdlib class - page 18 (transition page with members and extensions)`() {
-        // page 18 shows the last class members, the companion object, and the first extensions
+    fun `should resolve String as known stdlib class - page 17 (the last page of the class body)`() {
+        // page 17 shows the last class members and the companion object, followed by the first extensions
         resolver.resolve(
             "kotlin.String",
-            page = 18
+            page = 17
         ) sameAsKotlin """
-            // kotlin.String [page 18/42]
+            // kotlin.String [page 17/42]
             class String : Comparable<String>, CharSequence {
+                fun trimIndent(): String
+                fun trimMargin(marginPrefix: String = …): String
+                inline fun trimStart(predicate: (Char) -> Boolean): String
+                fun trimStart(vararg chars: Char): String
                 inline fun trimStart(): String
                 inline fun uppercase(): String
                 inline fun uppercase(locale: java.util.Locale): String
@@ -126,15 +130,11 @@ class KotlinIntrospectorTest {
             inline infix fun <T> Comparable<T>.compareTo(other: T): Int
             // from kotlin.ranges
             fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T): T
-            fun <T : Comparable<T>> T.coerceAtMost(maximumValue: T): T
-            fun <T : Comparable<T>> T.coerceIn(minimumValue: T?, maximumValue: T?): T
-            fun <T : Comparable<T>> T.coerceIn(range: ClosedFloatingPointRange<T>): T
-            fun <T : Comparable<T>> T.coerceIn(range: ClosedRange<T>): T
         """.trimIndent()
     }
 
     @Test
-    fun `should resolve String as known stdlib class - page 42 (the last)`() {
+    fun `should resolve String as known stdlib class - the last page`() {
         // extension-only pages omit the empty class body
         resolver.resolve(
             "kotlin.String",
@@ -142,13 +142,9 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // kotlin.String [page 42/42]
             // from kotlin.text
-            fun CharSequence.windowedSequence(size: Int, step: Int = …, partialWindows: Boolean = …): Sequence<String>
-            fun <R> CharSequence.windowedSequence(size: Int, step: Int = …, partialWindows: Boolean = …, transform: (CharSequence) -> R): Sequence<R>
-            fun CharSequence.withIndex(): Iterable<IndexedValue<Char>>
-            infix fun CharSequence.zip(other: CharSequence): List<Pair<Char, Char>>
-            inline fun <V> CharSequence.zip(other: CharSequence, transform: (a: Char, b: Char) -> V): List<V>
-            fun CharSequence.zipWithNext(): List<Pair<Char, Char>>
             inline fun <R> CharSequence.zipWithNext(transform: (a: Char, b: Char) -> R): List<R>
+            // from kotlinx.serialization.builtins
+            fun String.Companion.serializer(): kotlinx.serialization.KSerializer<String>
         """.trimIndent()
     }
 
@@ -174,7 +170,6 @@ class KotlinIntrospectorTest {
                 inline fun contentEquals(stringBuilder: java.lang.StringBuffer): Boolean
                 @Deprecated("Use replaceFirstChar instead.", ReplaceWith("replaceFirstChar { it.lowercase(Locale.getDefault()) }")) fun decapitalize(): String
                 @Deprecated("Use replaceFirstChar instead.", ReplaceWith("replaceFirstChar { it.lowercase(locale) }")) fun decapitalize(locale: java.util.Locale): String
-                @Deprecated("This member is not fully supported by Kotlin compiler, so it may be absent or have different signature in next major version") fun describeConstable(): java.util.Optional<String>
                 fun drop(n: Int): String
                 fun dropLast(n: Int): String
                 inline fun dropLastWhile(predicate: (Char) -> Boolean): String
@@ -240,10 +235,6 @@ class KotlinIntrospectorTest {
                 inline fun slice(indices: Iterable<Int>): String
                 fun startsWith(prefix: String, ignoreCase: Boolean = …): Boolean
                 fun startsWith(prefix: String, startIndex: Int, ignoreCase: Boolean = …): Boolean
-                @Deprecated("This member is not fully supported by Kotlin compiler, so it may be absent or have different signature in next major version") fun strip(): String
-                @Deprecated("This member is not fully supported by Kotlin compiler, so it may be absent or have different signature in next major version") fun stripIndent(): String
-                @Deprecated("This member is not fully supported by Kotlin compiler, so it may be absent or have different signature in next major version") fun stripLeading(): String
-                @Deprecated("This member is not fully supported by Kotlin compiler, so it may be absent or have different signature in next major version") fun stripTrailing(): String
                 override fun subSequence(startIndex: Int, endIndex: Int): CharSequence
                 inline fun substring(startIndex: Int): String
                 inline fun substring(startIndex: Int, endIndex: Int): String
@@ -319,7 +310,6 @@ class KotlinIntrospectorTest {
                 fun toUShortOrNull(radix: Int): UShort?
                 @Deprecated("Use uppercase() instead.", ReplaceWith("uppercase(Locale.getDefault())"), level = DeprecationLevel.ERROR) inline fun toUpperCase(): String
                 @Deprecated("Use uppercase() instead.", ReplaceWith("uppercase(locale)"), level = DeprecationLevel.ERROR) inline fun toUpperCase(locale: java.util.Locale): String
-                @Deprecated("This member is not fully supported by Kotlin compiler, so it may be absent or have different signature in next major version") fun translateEscapes(): String
                 inline fun trim(predicate: (Char) -> Boolean): String
                 fun trim(vararg chars: Char): String
                 inline fun trim(): String
@@ -581,6 +571,8 @@ class KotlinIntrospectorTest {
             inline fun <V> CharSequence.zip(other: CharSequence, transform: (a: Char, b: Char) -> V): List<V>
             fun CharSequence.zipWithNext(): List<Pair<Char, Char>>
             inline fun <R> CharSequence.zipWithNext(transform: (a: Char, b: Char) -> R): List<R>
+            // from kotlinx.serialization.builtins
+            fun String.Companion.serializer(): kotlinx.serialization.KSerializer<String>
         """.trimIndent()
     }
 
@@ -1467,22 +1459,23 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve function type by its Kotlin name with its extensions`() {
-        // the extensions of the supertype kotlin.Function are listed as well
+        // the extensions of the supertype kotlin.Function are listed as well, and the ones of any library,
+        // unlike for a built-in type, like the ones of the test package, or of kotlinx-coroutines, if on the classpath
         resolver.resolve(
-            "kotlin.Function0"
-        ) sameAsKotlin """
-            // kotlin.Function0 [page 1/1]
-            interface Function0<out R> : Function<R> {
-                operator fun invoke(): R
-            }
-            // from com.xemantic.kotlin.introspection.test
-            val (() -> Unit).repeatCount: Int
-            fun (() -> Unit).repeat()
-            // from kotlin.reflect.jvm
-            fun <R> Function<R>.reflect(): KFunction<R>?
-            // from kotlinx.coroutines.flow
-            fun <T> (() -> T).asFlow(): kotlinx.coroutines.flow.Flow<T>
-        """.trimIndent()
+            "kotlin.Function0",
+            pageSize = 1000
+        ) should {
+            have(lines().take(5) == listOf(
+                "// kotlin.Function0 [page 1/1]",
+                "interface Function0<out R> : Function<R> {",
+                "    operator fun invoke(): R",
+                "}",
+                "// from com.xemantic.kotlin.introspection.test"
+            ))
+            have("val (() -> Unit).repeatCount: Int" in lines())
+            have("fun (() -> Unit).repeat()" in lines())
+            have("fun <R> Function<R>.reflect(): KFunction<R>?" in lines())
+        }
     }
 
     @Test
@@ -1609,21 +1602,22 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve JVM function interface with the extensions of its function type`() {
+        // like kotlin.Function0
         resolver.resolve(
-            "kotlin.jvm.functions.Function0"
-        ) sameAsKotlin """
-            // kotlin.jvm.functions.Function0 [page 1/1]
-            interface Function0<out R> : Function<R> {
-                operator fun invoke(): R
-            }
-            // from com.xemantic.kotlin.introspection.test
-            val (() -> Unit).repeatCount: Int
-            fun (() -> Unit).repeat()
-            // from kotlin.reflect.jvm
-            fun <R> Function<R>.reflect(): KFunction<R>?
-            // from kotlinx.coroutines.flow
-            fun <T> (() -> T).asFlow(): kotlinx.coroutines.flow.Flow<T>
-        """.trimIndent()
+            "kotlin.jvm.functions.Function0",
+            pageSize = 1000
+        ) should {
+            have(lines().take(5) == listOf(
+                "// kotlin.jvm.functions.Function0 [page 1/1]",
+                "interface Function0<out R> : Function<R> {",
+                "    operator fun invoke(): R",
+                "}",
+                "// from com.xemantic.kotlin.introspection.test"
+            ))
+            have("val (() -> Unit).repeatCount: Int" in lines())
+            have("fun (() -> Unit).repeat()" in lines())
+            have("fun <R> Function<R>.reflect(): KFunction<R>?" in lines())
+        }
     }
 
     @Test
@@ -1666,6 +1660,85 @@ class KotlinIntrospectorTest {
             have("kotlin.Function22" in lines())
             have("kotlin.coroutines.SuspendFunction21" in lines())
             have("kotlin.coroutines.SuspendFunction22" !in lines())
+        }
+    }
+
+    // function reference types, resolved by their Kotlin names
+
+    @Test
+    fun `should resolve function reference type by its Kotlin name with its extensions`() {
+        // the extensions of its function type, like of kotlin.Function1, and the ones of KFunction
+        resolver.resolve(
+            "kotlin.reflect.KFunction1",
+            pageSize = 1000
+        ) should {
+            have(lines()[1] == "interface KFunction1<in P1, out R> : KFunction<R>, Function1<P1, R> {")
+            have(lines()[2] == "    operator fun invoke(p1: P1): R")
+            have("val KFunction<*>.javaMethod: java.lang.reflect.Method?" in lines())
+            have("fun <P, R> ((P) -> R).handleAll(events: List<P>): List<R>" in lines())
+            have("fun <R> Function<R>.reflect(): KFunction<R>?" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve suspend function reference type by its Kotlin name with its extensions`() {
+        resolver.resolve(
+            "kotlin.reflect.KSuspendFunction0",
+            pageSize = 1000
+        ) should {
+            have(lines()[1] == "interface KSuspendFunction0<out R> : KFunction<R>, SuspendFunction0<R> {")
+            have(lines()[2] == "    suspend operator fun invoke(): R")
+            have("val KFunction<*>.javaMethod: java.lang.reflect.Method?" in lines())
+            have("fun (suspend () -> Unit).retry()" in lines())
+            have("fun (() -> Unit).repeat()" !in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve extension of KFunction as member of function reference type`() {
+        // like in the listing of kotlin.reflect.KFunction1
+        resolver.resolve(
+            "kotlin.reflect.KFunction1.javaMethod"
+        ) sameAsKotlin """
+            // kotlin.reflect.KFunction1.javaMethod [page 1/1]
+            // from kotlin.reflect.jvm
+            val KFunction<*>.javaMethod: java.lang.reflect.Method?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve invoke of function reference type`() {
+        resolver.resolve(
+            "kotlin.reflect.KFunction2.invoke"
+        ) sameAsKotlin """
+            // kotlin.reflect.KFunction2.invoke [page 1/1]
+            operator fun invoke(p1: P1, p2: P2): R
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve function reference type name with leading zero in arity`() {
+        assert(resolver.resolve("kotlin.reflect.KFunction01") == null)
+    }
+
+    @Test
+    fun `should not resolve function type by its metadata name`() {
+        // like any other class, resolved only by its Kotlin name
+
+        // when
+        val function = resolver.resolve("kotlin/Function1")
+        val functionReference = resolver.resolve("kotlin/reflect/KFunction1")
+
+        // then
+        assert(function == null && functionReference == null)
+    }
+
+    @Test
+    fun `should find function reference types like their function types`() {
+        resolver.search("Function2", pageSize = 1000) should {
+            have("kotlin.reflect.KFunction22" in lines())
+            have("kotlin.reflect.KSuspendFunction21" in lines())
+            have("kotlin.reflect.KSuspendFunction22" !in lines())
         }
     }
 
@@ -1757,7 +1830,8 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve class with override modifier`() {
-        // compareTo from Comparable is an operator function
+        // compareTo from Comparable is an operator function,
+        // with the extensions on Comparable, as the class is comparable to itself
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.OverrideTestClass"
         ) sameAsKotlin """
@@ -1765,6 +1839,16 @@ class KotlinIntrospectorTest {
             class OverrideTestClass : Comparable<OverrideTestClass> {
                 override operator fun compareTo(other: OverrideTestClass): Int
             }
+            // from kotlin
+            inline infix fun <T> Comparable<T>.compareTo(other: T): Int
+            // from kotlin.ranges
+            fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T): T
+            fun <T : Comparable<T>> T.coerceAtMost(maximumValue: T): T
+            fun <T : Comparable<T>> T.coerceIn(minimumValue: T?, maximumValue: T?): T
+            fun <T : Comparable<T>> T.coerceIn(range: ClosedFloatingPointRange<T>): T
+            fun <T : Comparable<T>> T.coerceIn(range: ClosedRange<T>): T
+            operator fun <T : Comparable<T>> T.rangeTo(that: T): ClosedRange<T>
+            operator fun <T : Comparable<T>> T.rangeUntil(that: T): OpenEndRange<T>
         """.trimIndent()
     }
 
@@ -1967,8 +2051,10 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should mark override of value class member with value class parameter`() {
+        // with the extensions on Comparable, as the class is comparable to itself
         resolver.resolve(
-            "com.xemantic.kotlin.introspection.test.ValueComparable"
+            "com.xemantic.kotlin.introspection.test.ValueComparable",
+            pageSize = 100
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.ValueComparable [page 1/1]
             @JvmInline value class ValueComparable(val x: Int) : Comparable<ValueComparable> {
@@ -1977,6 +2063,16 @@ class KotlinIntrospectorTest {
                 override fun hashCode(): Int
                 override fun toString(): String
             }
+            // from kotlin
+            inline infix fun <T> Comparable<T>.compareTo(other: T): Int
+            // from kotlin.ranges
+            fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T): T
+            fun <T : Comparable<T>> T.coerceAtMost(maximumValue: T): T
+            fun <T : Comparable<T>> T.coerceIn(minimumValue: T?, maximumValue: T?): T
+            fun <T : Comparable<T>> T.coerceIn(range: ClosedFloatingPointRange<T>): T
+            fun <T : Comparable<T>> T.coerceIn(range: ClosedRange<T>): T
+            operator fun <T : Comparable<T>> T.rangeTo(that: T): ClosedRange<T>
+            operator fun <T : Comparable<T>> T.rangeUntil(that: T): OpenEndRange<T>
         """.trimIndent()
     }
 
@@ -2152,8 +2248,8 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should keep final modality of override in enum class with entry bodies`() {
-        // an enum class is final in the metadata, even when its entries subclass it
+    fun `should not mark override in enum class with entry bodies as final`() {
+        // its entries can override its members, but the user code cannot subclass it
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.EntryBodiesEnum"
         ) sameAsKotlin """
@@ -2162,7 +2258,55 @@ class KotlinIntrospectorTest {
                 A,
                 B;
                 override fun f(): Int
-                final override fun g()
+                override fun g()
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark neither open member nor final override of open class with only private constructor`() {
+        // like its protected members, which are not listed, as the user code cannot subclass it
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.PrivateConstructorModality"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PrivateConstructorModality [page 1/1]
+            open class PrivateConstructorModality private constructor() : ModalityBase {
+                fun f()
+                override fun finalized()
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve open member of open class with only private constructor without open modifier`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.PrivateConstructorModality.f") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PrivateConstructorModality.f [page 1/1]
+            fun f()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not mark open member of sealed class without open subclass as open`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ClosedSealedModality"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ClosedSealedModality [page 1/1]
+            sealed class ClosedSealedModality {
+                class Sub : ClosedSealedModality
+                fun f()
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark open member of sealed class with open subclass as open`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.OpenSealedModality"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OpenSealedModality [page 1/1]
+            sealed class OpenSealedModality {
+                open class Sub : OpenSealedModality
+                open fun f()
             }
         """.trimIndent()
     }
@@ -2222,14 +2366,15 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should keep abstract and final modality of override in sealed class`() {
+    fun `should keep abstract modality of override in sealed class, but not final one, without open subclass`() {
+        // the user code cannot subclass it
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.SealedModalityOverrides"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.SealedModalityOverrides [page 1/1]
             sealed class SealedModalityOverrides : ModalityBase {
                 abstract override fun abstracted()
-                final override fun finalized()
+                override fun finalized()
                 override fun reopened()
             }
         """.trimIndent()
@@ -2633,16 +2778,16 @@ class KotlinIntrospectorTest {
         """.trimIndent()
     }
 
-    // a @PublishedApi internal member is not mangled, so it is assumed to be overridden by a class of a module
-    // of the same name, as an unrelated module cannot be told from the same one then
+    // a @PublishedApi internal member is not mangled, so an unrelated module of the same name cannot be told
+    // from the same one by the JVM methods, but a final member of a final class is not an override
     @Test
-    fun `should mark members named like PublishedApi internal members of superclass of another module of the same name as override`() {
+    fun `should not mark final members named like PublishedApi internal members of superclass of another module of the same name as override`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.otherdefaultmodule.OtherDefaultModulePublishedApiSubclass"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.otherdefaultmodule.OtherDefaultModulePublishedApiSubclass [page 1/1]
             class OtherDefaultModulePublishedApiSubclass : com.xemantic.kotlin.introspection.defaultmodule.DefaultModulePublishedApiBase {
-                override fun publish(x: Int = …)
+                fun publish(x: Int)
             }
         """.trimIndent()
     }
@@ -2656,6 +2801,35 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.test.PublishedApiSubclass [page 1/1]
             class PublishedApiSubclass : com.xemantic.kotlin.introspection.othermodule.PublishedApiBase {
                 fun publish()
+            }
+        """.trimIndent()
+    }
+
+    // a @PublishedApi internal member is not mangled, so that the public override of a friend module
+    // cannot be told by the JVM methods from a member of the same name of an unrelated module,
+    // but an open member of a final class is an override
+    @Test
+    fun `should mark public overrides of PublishedApi internal members of superclass of a friend module in final class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.friendmodule.FriendModulePublishedApiSubclass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.friendmodule.FriendModulePublishedApiSubclass [page 1/1]
+            class FriendModulePublishedApiSubclass : com.xemantic.kotlin.introspection.othermodule.PublishedApiBase {
+                override fun publish()
+            }
+        """.trimIndent()
+    }
+
+    // an accepted trade-off: in a class which is not final, an open member might not be an override,
+    // so that the public override of a friend module cannot be told from a member of an unrelated module
+    @Test
+    fun `should not mark public overrides of PublishedApi internal members of superclass of a friend module in open class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.friendmodule.FriendModuleOpenPublishedApiSubclass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.friendmodule.FriendModuleOpenPublishedApiSubclass [page 1/1]
+            open class FriendModuleOpenPublishedApiSubclass : com.xemantic.kotlin.introspection.othermodule.PublishedApiBase {
+                open fun publish()
             }
         """.trimIndent()
     }
@@ -2873,6 +3047,7 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should mark override of invoke of function type supertype`() {
+        // with the extensions of the function type, like the ones of kotlin.Function1, whatever its type arguments
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.FunctionTypeImpl"
         ) sameAsKotlin """
@@ -2881,11 +3056,17 @@ class KotlinIntrospectorTest {
                 override operator fun invoke(p1: String): Int
                 fun invoke(p1: Int): Int
             }
+            // from com.xemantic.kotlin.introspection.test
+            fun <P, R> ((P) -> R).handleAll(events: List<P>): List<R>
+            fun (context(String) () -> Unit).runInContext()
+            // from kotlin.reflect.jvm
+            fun <R> Function<R>.reflect(): KFunction<R>?
         """.trimIndent()
     }
 
     @Test
     fun `should mark override of invoke of suspend function type supertype`() {
+        // with the extensions of the suspend function type, like the ones of kotlin.coroutines.SuspendFunction1
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.SuspendFunctionTypeImpl"
         ) sameAsKotlin """
@@ -2894,6 +3075,14 @@ class KotlinIntrospectorTest {
                 override suspend operator fun invoke(p1: String): Int
                 fun invoke(p1: String, p2: Int): Int
             }
+            // from kotlin.coroutines
+            fun <R, T> (suspend R.() -> T).createCoroutine(receiver: R, completion: Continuation<T>): Continuation<Unit>
+            fun <R, T> (suspend R.() -> T).startCoroutine(receiver: R, completion: Continuation<T>)
+            // from kotlin.coroutines.intrinsics
+            fun <R, T> (suspend R.() -> T).createCoroutineUnintercepted(receiver: R, completion: Continuation<T>): Continuation<Unit>
+            inline fun <R, T> (suspend R.() -> T).startCoroutineUninterceptedOrReturn(receiver: R, completion: Continuation<T>): Any?
+            // from kotlin.reflect.jvm
+            fun <R> Function<R>.reflect(): KFunction<R>?
         """.trimIndent()
     }
 
@@ -3444,6 +3633,71 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should not resolve inherited JVM-only member of built-in type overridden with not nullable platform parameter`() {
+        // printStackTrace(s: PrintStream) overrides printStackTrace(arg0: java.io.PrintStream?), of a PrintStream!
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJvmOverridingException.printStackTrace"
+        ) should {
+            have("override fun printStackTrace(s: java.io.PrintStream)" in lines())
+            have(lines().none { "printStackTrace(arg0: java.io.PrintStream" in it })
+        }
+    }
+
+    @Test
+    fun `should not resolve inherited JVM-only member of built-in type overridden with nullable platform parameter`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJvmOverridingException.initCause"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJvmOverridingException.initCause [page 1/1]
+            override fun initCause(cause: Throwable?): Throwable
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve inherited JVM-only member of built-in type overridden with substituted type argument`() {
+        // forEach(action: Consumer<in String>) overrides forEach(arg0: java.util.function.Consumer<in T>?) of Iterable<T>
+        listOf("InheritedJvmOverridingIterable", "InheritedJvmOverridingList").forEach { name ->
+            resolver.resolve("com.xemantic.kotlin.introspection.test.$name.forEach") should {
+                have(lines().none { "forEach(arg0: " in it })
+            }
+        }
+    }
+
+    @Test
+    fun `should not resolve inherited JVM-only member of built-in type overridden by intermediate class`() {
+        // the override of the superclass wins over the JVM member of kotlin.Throwable
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJvmOverridingLeafException.printStackTrace"
+        ) should {
+            have("// inherited from com.xemantic.kotlin.introspection.test.InheritedJvmOverridingBaseException" in lines())
+            have(lines().none { "printStackTrace(arg0: java.io.PrintStream" in it })
+        }
+    }
+
+    @Test
+    fun `should not resolve inherited JVM-only member of built-in type overridden by intermediate class with substituted type argument`() {
+        // the override of the superclass wins over the JVM member of kotlin.collections.Iterable
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJvmOverridingLeafIterable.forEach"
+        ) should {
+            have("// inherited from com.xemantic.kotlin.introspection.test.InheritedJvmOverridingBaseIterable" in lines())
+            have(lines().none { "forEach(arg0: " in it })
+        }
+    }
+
+    @Test
+    fun `should resolve extension hiding inherited JVM-only member of built-in type`() {
+        // the @HidesMembers Throwable.addSuppressed is called instead of the addSuppressed of java.lang.Throwable
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJvmException.addSuppressed"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJvmException.addSuppressed [page 1/1]
+            // from kotlin
+            fun Throwable.addSuppressed(exception: Throwable)
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve inherited member before extension of the same name`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.InheritedWithExtension.extended"
@@ -3550,6 +3804,44 @@ class KotlinIntrospectorTest {
             "com.xemantic.kotlin.introspection.test.InheritedJavaRunnable.hashCode"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.InheritedJavaRunnable.hashCode [page 1/1]
+            // inherited from kotlin.Any
+            open fun hashCode(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member with body inherited by sealed interface with open subclass as open`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OpenSealedInheriting.f") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OpenSealedInheriting.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.SealedInheritedBase
+            open fun f()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member with body inherited by sealed interface without open subclass as open`() {
+        // within an interface, telling it apart from an abstract member, like the own members of an interface
+        resolver.resolve("com.xemantic.kotlin.introspection.test.ClosedSealedInheriting.f") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ClosedSealedInheriting.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.SealedInheritedBase
+            open fun f()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of Any inherited by sealed interface as open`() {
+        // rendered as within the interface, where a member with a body is open, telling it apart from an abstract one
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SealedAnyInheriting.hashCode") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SealedAnyInheriting.hashCode [page 1/1]
+            // inherited from kotlin.Any
+            open fun hashCode(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of Any inherited by sealed class with open subclass as open`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OpenSealedInheritingClass.hashCode") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OpenSealedInheritingClass.hashCode [page 1/1]
             // inherited from kotlin.Any
             open fun hashCode(): Int
         """.trimIndent()
@@ -4045,11 +4337,12 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve inner class with type parameters of the outer class`() {
+        // qualified with the outer class declaring them, like an inner class listed in another class
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.TypeParametersNestedHolder.Cursor"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.TypeParametersNestedHolder.Cursor [page 1/1]
-            inner class Cursor : Iterator<K> {
+            inner class TypeParametersNestedHolder<K>.Cursor : Iterator<K> {
                 override operator fun hasNext(): Boolean
                 override operator fun next(): K
             }
@@ -4259,11 +4552,199 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve built-in type member with stdlib extension on type parameter bounded by its supertype`() {
-        // both the one declared for Int, and the one for any Comparable, like in the listing
-        resolver.resolve("kotlin.Int.coerceAtLeast") should {
-            have("fun Int.coerceAtLeast(minimumValue: Int): Int" in lines())
-            have("fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T): T" in lines())
+        // Char declares no coerceAtLeast of its own, like in the listing
+        resolver.resolve(
+            "kotlin.Char.coerceAtLeast"
+        ) sameAsKotlin """
+            // kotlin.Char.coerceAtLeast [page 1/1]
+            // from kotlin.ranges
+            fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T): T
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve stdlib extension on type parameter shadowed by more specific overload as member of built-in type`() {
+        // the one for any Comparable is never called on an Int, like in the listing
+        resolver.resolve(
+            "kotlin.Int.coerceAtLeast"
+        ) sameAsKotlin """
+            // kotlin.Int.coerceAtLeast [page 1/1]
+            // from kotlin.ranges
+            fun Int.coerceAtLeast(minimumValue: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve stdlib extension on type parameter next to member of other parameter name as member of built-in type`() {
+        // 'a'.rangeTo(that = 'z') calls the rangeTo(that: T) for any Comparable, as the member takes `other`
+        resolver.resolve(
+            "kotlin.Char.rangeTo"
+        ) sameAsKotlin """
+            // kotlin.Char.rangeTo [page 1/1]
+            operator fun rangeTo(other: Char): CharRange
+            // from kotlin.ranges
+            operator fun <T : Comparable<T>> T.rangeTo(that: T): ClosedRange<T>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve stdlib extension on type parameter next to members of other parameter name as member of Int`() {
+        // 5.rangeTo(that = 6) calls the rangeTo(that: T) for any Comparable
+        resolver.resolve("kotlin.Int.rangeTo") should {
+            have("operator fun rangeTo(other: Int): IntRange" in lines())
+            have("operator fun <T : Comparable<T>> T.rangeTo(that: T): ClosedRange<T>" in lines())
         }
+    }
+
+    @Test
+    fun `should resolve stdlib extension on type parameter with multiple bounds next to more specific overload`() {
+        // R.contains(element: T?) where R : ClosedRange<T>, R : Iterable<T> is not told to be shadowed
+        // by IntRange.contains(element: Int?), as T is not the receiver, whose type argument is not inferred
+        resolver.resolve("kotlin.ranges.IntRange.contains") should {
+            have("inline operator fun IntRange.contains(element: Int?): Boolean" in lines())
+            have(lines().count { "R.contains(" in it } == 2)
+        }
+    }
+
+    @Test
+    fun `should resolve built-in type member with stdlib extension on type parameter taking nullable parameters`() {
+        // 5.coerceIn(null, 10) calls the one for any Comparable, as Int.coerceIn(minimumValue: Int, maximumValue: Int) takes no null
+        resolver.resolve("kotlin.Int.coerceIn") should {
+            have("fun Int.coerceIn(minimumValue: Int, maximumValue: Int): Int" in lines())
+            have("fun <T : Comparable<T>> T.coerceIn(minimumValue: T?, maximumValue: T?): T" in lines())
+            have(lines().none { "T.coerceIn(range: ClosedRange<T>)" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve class with extension on type parameter next to extension on its supertype`() {
+        // BoundedReceiverCircle().describe() calls the one on the type parameter, more specific than the one on BoundedReceiverShape
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverCircle"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverCircle [page 1/1]
+            class BoundedReceiverCircle : BoundedReceiverShape, BoundedReceiverNamed
+            // from com.xemantic.kotlin.introspection.test
+            val BoundedReceiverShape.label: String
+            val <T> T.label: String where T : BoundedReceiverShape, T : BoundedReceiverNamed
+            fun BoundedReceiverShape.describe(): String
+            fun <T> T.describe(): String where T : BoundedReceiverShape, T : BoundedReceiverNamed
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension on type parameter next to extension on supertype as member of class`() {
+        // like in the listing of BoundedReceiverCircle
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverCircle.describe"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverCircle.describe [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverShape.describe(): String
+            fun <T> T.describe(): String where T : BoundedReceiverShape, T : BoundedReceiverNamed
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extensions on type parameters next to its overloads`() {
+        // T is not pinned to BoundedReceiverShadowing, but can be inferred as BoundedReceiverD, so that,
+        // like for BoundedReceiverShadowing().nextToExtension(object : BoundedReceiverD {}), the extension can be called
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverShadowing"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverShadowing [page 1/1]
+            class BoundedReceiverShadowing : BoundedReceiverD {
+                val nextToProperty: Int
+                fun nextToMember(): BoundedReceiverShadowing
+                fun nextToSubtypeParameter(value: BoundedReceiverShadowing)
+                fun nextToNullableBound(value: BoundedReceiverShadowing)
+            }
+            // from com.xemantic.kotlin.introspection.test
+            val <T : BoundedReceiverD> T.nextToProperty: Int
+            fun BoundedReceiverShadowing.nextToExtension(value: BoundedReceiverShadowing): BoundedReceiverShadowing
+            fun <T : BoundedReceiverD> T.nextToExtension(value: T): T
+            fun <T : BoundedReceiverD> T.nextToMember(): T
+            fun <T : BoundedReceiverD?> T.nextToNullableBound(value: T)
+            fun <T : BoundedReceiverD> T.nextToSubtypeParameter(value: T)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve interface with extensions on type parameters bounded by it next to overloads of its subtype`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverD"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverD [page 1/1]
+            interface BoundedReceiverD
+            // from com.xemantic.kotlin.introspection.test
+            val <T : BoundedReceiverD> T.nextToProperty: Int
+            fun <T : BoundedReceiverD> T.nextToExtension(value: T): T
+            fun <T : BoundedReceiverD> T.nextToMember(): T
+            fun <T : BoundedReceiverD?> T.nextToNullableBound(value: T)
+            fun <T : BoundedReceiverD> T.nextToSubtypeParameter(value: T)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension on type parameter next to member taking subtype as member of class`() {
+        // BoundedReceiverShadowing().nextToSubtypeParameter(object : BoundedReceiverD {}) calls the extension
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverShadowing.nextToSubtypeParameter"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverShadowing.nextToSubtypeParameter [page 1/1]
+            fun nextToSubtypeParameter(value: BoundedReceiverShadowing)
+            // from com.xemantic.kotlin.introspection.test
+            fun <T : BoundedReceiverD> T.nextToSubtypeParameter(value: T)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension on type parameter with nullable bound next to member as member of class`() {
+        // BoundedReceiverShadowing().nextToNullableBound(null) calls the extension
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverShadowing.nextToNullableBound"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverShadowing.nextToNullableBound [page 1/1]
+            fun nextToNullableBound(value: BoundedReceiverShadowing)
+            // from com.xemantic.kotlin.introspection.test
+            fun <T : BoundedReceiverD?> T.nextToNullableBound(value: T)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension property on type parameter next to member property as member of class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverShadowing.nextToProperty"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverShadowing.nextToProperty [page 1/1]
+            val nextToProperty: Int
+            // from com.xemantic.kotlin.introspection.test
+            val <T : BoundedReceiverD> T.nextToProperty: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve stdlib extension on Comparable shadowed by member of final class comparable only to itself`() {
+        // T : Comparable<T> is pinned to BoundedReceiverVersion, so its member coerceAtMost is called instead
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverVersion.coerceAtMost"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverVersion.coerceAtMost [page 1/1]
+            fun coerceAtMost(maximumValue: BoundedReceiverVersion): BoundedReceiverVersion
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve stdlib extension on Comparable next to member of class comparable through its supertype`() {
+        // T can be inferred as BoundedReceiverVersionBase, like for patch.coerceAtMost(base)
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverPatchVersion.coerceAtMost"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverPatchVersion.coerceAtMost [page 1/1]
+            fun coerceAtMost(maximumValue: BoundedReceiverPatchVersion): BoundedReceiverPatchVersion
+            // from kotlin.ranges
+            fun <T : Comparable<T>> T.coerceAtMost(maximumValue: T): T
+        """.trimIndent()
     }
 
     @Test
@@ -4322,6 +4803,216 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve class with extension on type parameter with multiple bounds satisfied through Java superclass`() {
+        // java.io.Closeable is implemented by java.io.FilterInputStream, a Java class without the Kotlin metadata
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverStream"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverStream [page 1/1]
+            class BoundedReceiverStream : java.io.FilterInputStream, BoundedReceiverA
+            // from com.xemantic.kotlin.introspection.test
+            val <T : BoundedReceiverA> T.boundedPropertyOfA: Int
+            fun <T : BoundedReceiverA> T.boundedByA(): T
+            fun <T> T.boundedByAAndCloseable() where T : BoundedReceiverA, T : java.io.Closeable
+            fun <U : BoundedReceiverA, T : U> T.boundedByTypeParameter()
+            fun <T : BoundedReceiverA?> T.nullableBoundedByA()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension on type parameter with multiple bounds satisfied through Java superclass as member`() {
+        // like in the listing of BoundedReceiverStream
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverStream.boundedByAAndCloseable"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverStream.boundedByAAndCloseable [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            fun <T> T.boundedByAAndCloseable() where T : BoundedReceiverA, T : java.io.Closeable
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extensions on type parameters bounded by Kotlin interfaces of its Java superclass`() {
+        // BoundedReceiverB and BoundedReceiverC are implemented only by the Java class JavaBoundedReceiverBase
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverThroughJava"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverThroughJava [page 1/1]
+            class BoundedReceiverThroughJava : com.xemantic.kotlin.introspection.test.other.JavaBoundedReceiverBase, BoundedReceiverA
+            // from com.xemantic.kotlin.introspection.test
+            val <T : BoundedReceiverA> T.boundedPropertyOfA: Int
+            fun <T : BoundedReceiverA> T.boundedByA(): T
+            fun <T> T.boundedByBoth() where T : BoundedReceiverA, T : BoundedReceiverB
+            fun <U : BoundedReceiverA, T : U> T.boundedByTypeParameter()
+            @Deprecated("Use boundedByA") context(log: Logger) fun <T : BoundedReceiverC> T.deprecatedInContext()
+            fun <T : BoundedReceiverA?> T.nullableBoundedByA()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension on type parameter bounded by Kotlin interface of Java superclass as member`() {
+        // like in the listing of BoundedReceiverThroughJava
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverThroughJava.boundedByBoth"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverThroughJava.boundedByBoth [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            fun <T> T.boundedByBoth() where T : BoundedReceiverA, T : BoundedReceiverB
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class implementing function type with the extensions of the function type`() {
+        // like kotlin.jvm.functions.Function1, also with the ones of kotlin.Function
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverHandler",
+            pageSize = 1000
+        ) should {
+            have(lines()[1] == "class BoundedReceiverHandler : (String) -> Unit {")
+            have("fun <P, R> ((P) -> R).handleAll(events: List<P>): List<R>" in lines())
+            have("fun (context(String) () -> Unit).runInContext()" in lines())
+            have("fun <R> Function<R>.reflect(): KFunction<R>?" in lines())
+            have("fun (() -> Unit).repeat()" !in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve class with the extensions of function type implemented by its Java superclass`() {
+        // JavaFunctionBase implements kotlin.jvm.functions.Function0, which is () -> Unit in Kotlin
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverJavaFunction",
+            pageSize = 1000
+        ) should {
+            have("fun (() -> Unit).repeat()" in lines())
+            have("fun <R> Function<R>.reflect(): KFunction<R>?" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve extension of function type as member of class implementing it`() {
+        // like in the listing of BoundedReceiverHandler
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverHandler.handleAll"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverHandler.handleAll [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            fun <P, R> ((P) -> R).handleAll(events: List<P>): List<R>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class implementing suspend function type with extension on type parameter bounded by it`() {
+        // suspend () -> Unit is stored in the metadata as Function1<Continuation<Unit>, Any?>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverSuspendHandler",
+            pageSize = 1000
+        ) should {
+            have(lines()[1] == "class BoundedReceiverSuspendHandler : BoundedReceiverA, suspend () -> Unit {")
+            have("fun <T> T.boundedByAAndSuspendFunction() where T : BoundedReceiverA, T : suspend () -> Unit" in lines())
+            have("fun (suspend () -> Unit).retry()" in lines())
+            have("fun <R> Function<R>.reflect(): KFunction<R>?" in lines())
+            have("fun (context(String) () -> Unit).runInContext()" !in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve extension on type parameter bounded by suspend function type as member of class implementing it`() {
+        // like in the listing of BoundedReceiverSuspendHandler
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverSuspendHandler.boundedByAAndSuspendFunction"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverSuspendHandler.boundedByAAndSuspendFunction [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            fun <T> T.boundedByAAndSuspendFunction() where T : BoundedReceiverA, T : suspend () -> Unit
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class comparable to itself with stdlib extensions on Comparable`() {
+        // unlike the other generic extensions of the standard library, few and widely used
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverVersion"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverVersion [page 1/1]
+            class BoundedReceiverVersion(val major: Int) : Comparable<BoundedReceiverVersion> {
+                override operator fun compareTo(other: BoundedReceiverVersion): Int
+                fun coerceAtMost(maximumValue: BoundedReceiverVersion): BoundedReceiverVersion
+            }
+            // from kotlin
+            inline infix fun <T> Comparable<T>.compareTo(other: T): Int
+            // from kotlin.ranges
+            fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T): T
+            fun <T : Comparable<T>> T.coerceIn(minimumValue: T?, maximumValue: T?): T
+            fun <T : Comparable<T>> T.coerceIn(range: ClosedFloatingPointRange<T>): T
+            fun <T : Comparable<T>> T.coerceIn(range: ClosedRange<T>): T
+            operator fun <T : Comparable<T>> T.rangeTo(that: T): ClosedRange<T>
+            operator fun <T : Comparable<T>> T.rangeUntil(that: T): OpenEndRange<T>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve stdlib extension on Comparable as member of class comparable to itself`() {
+        // like in the listing of BoundedReceiverVersion
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverVersion.coerceAtLeast"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverVersion.coerceAtLeast [page 1/1]
+            // from kotlin.ranges
+            fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T): T
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class comparable to its supertype with stdlib extensions on Comparable`() {
+        // T is inferred as BoundedReceiverVersionBase
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverPatchVersion"
+        ) should {
+            have("fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T): T" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve class comparable to another type without stdlib extensions on Comparable`() {
+        // BoundedReceiverComparableToOther does not satisfy T : Comparable<T>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverComparableToOther"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverComparableToOther [page 1/1]
+            class BoundedReceiverComparableToOther : Comparable<BoundedReceiverVersion> {
+                override operator fun compareTo(other: BoundedReceiverVersion): Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with stdlib extension on type parameter with multiple bounds of the standard library satisfied by it`() {
+        // the generic extensions on a single bound of the standard library are not listed for a user class,
+        // unlike the ones on multiple bounds satisfied by the class, which are not generic in the same way
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverRange",
+            pageSize = 1000
+        ) should {
+            have(lines().count { "R.contains(" in it } == 1)
+            have(lines().none { "Iterable<T>." in it })
+        }
+    }
+
+    @Test
+    fun `should resolve stdlib extension on type parameter with multiple bounds of the standard library as member of class satisfying them`() {
+        // like in the listing of BoundedReceiverRange, after the member contains(value: T) inherited from ClosedRange
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverRange.contains"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverRange.contains [page 1/1]
+            // inherited from kotlin.ranges.ClosedRange
+            operator fun contains(value: T): Boolean
+            // from kotlin.ranges
+            inline operator fun <T : Comparable<T>, R> R.contains(element: T?): Boolean where R : ClosedRange<T>, R : Iterable<T>
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve extension on type parameter bounded by interface as its member`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.BoundedReceiverA.boundedByA"
@@ -4334,14 +5025,31 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve built-in type with stdlib extensions on type parameters bounded by its supertype`() {
-        // coerceAtLeast is declared both for Int, shown in the class body, and for any Comparable
+        // Char declares no coerceAtLeast of its own, while its member rangeTo takes `other`, not `that`
+        resolver.resolve(
+            "kotlin.Char",
+            pageSize = 10000
+        ) should {
+            have("fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T): T" in lines())
+            have("    operator fun rangeTo(other: Char): CharRange" in lines())
+            have("operator fun <T : Comparable<T>> T.rangeTo(that: T): ClosedRange<T>" in lines())
+            have(lines().none { "T.also(" in it || "T.let(" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve built-in type without stdlib extensions on type parameters shadowed by more specific overloads`() {
+        // coerceAtLeast is declared both for Int, shown in the class body, and for any Comparable,
+        // whose T is pinned to Int, final and comparable only to itself, called only with an explicit type argument
         resolver.resolve(
             "kotlin.Int",
             pageSize = 10000
         ) should {
             have("    fun coerceAtLeast(minimumValue: Int): Int" in lines())
-            have("fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T): T" in lines())
-            have(lines().none { "T.also(" in it || "T.let(" in it })
+            have(lines().none { "T.coerceAtLeast(" in it })
+            have("operator fun <T : Comparable<T>> T.rangeTo(that: T): ClosedRange<T>" in lines())
+            // not on a type parameter, and the member compareTo is not infix anyway
+            have("inline infix fun <T> Comparable<T>.compareTo(other: T): Int" in lines())
         }
     }
 
@@ -4596,33 +5304,74 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should not resolve Java-only member of built-in type which its listing leaves out`() {
-        // the JDK is compiled without parameter names, so String.indent(arg0: Int) tells nothing about its parameter
-        assumeNoParameterNames(String::class.java.getMethod("indent", Int::class.java))
-        assert(resolver.resolve("kotlin.String.indent") == null)
-    }
-
-    @Test
-    fun `should resolve extension of built-in type without Java-only member of the same name`() {
-        // not with the addSuppressed(arg0: Throwable) of java.lang.Throwable, which the listing leaves out
-        assumeNoParameterNames(Throwable::class.java.getMethod("addSuppressed", Throwable::class.java))
-        resolver.resolve("kotlin.Throwable.addSuppressed") sameAsKotlin """
-            // kotlin.Throwable.addSuppressed [page 1/1]
-            // from kotlin
-            fun Throwable.addSuppressed(exception: Throwable)
+    fun `should resolve Java-only member of built-in type with synthetic parameter names`() {
+        // the JDK is compiled without parameter names, which Kotlin does not let a call to a Java method name anyway
+        assumeNoParameterNames(Throwable::class.java.getMethod("initCause", Throwable::class.java))
+        resolver.resolve("kotlin.Throwable.initCause") sameAsKotlin """
+            // kotlin.Throwable.initCause [page 1/1]
+            open fun initCause(arg0: Throwable?): Throwable
         """.trimIndent()
     }
 
     @Test
-    fun `should list no member of built-in type with synthetic parameter names`() {
+    fun `should not resolve JVM-only member of built-in type which the compiler cannot call`() {
+        // kotlin-reflect tells the JDK members newer than the ones mapped to kotlin.String, like String.indent,
+        // deprecated as "not fully supported by Kotlin compiler", which K2 does not resolve at all
+        assert(resolver.resolve("kotlin.String.indent") == null)
+        assert(resolver.resolve("kotlin.String.strip") == null)
+        assert(resolver.resolve("kotlin.CharSequence.getChars") == null)
+    }
+
+    @Test
+    fun `should list no JVM-only member of built-in type which the compiler cannot call`() {
         // when
         val listings = DefaultKotlinIntrospector.builtinTypes.keys.associateWith { type ->
             resolver.resolve(type, pageSize = 100_000).orEmpty()
         }
 
         // then
-        val synthetic = listings.filterValues { listing -> listing.lines().any { "(arg0: " in it || "(vararg arg0: " in it } }
-        assert(synthetic.keys.isEmpty())
+        val uncallable = listings.filterValues { "This member is not fully supported by Kotlin compiler" in it }
+        assert(uncallable.keys.isEmpty())
+    }
+
+    @Test
+    fun `should list Java-only members of built-in type with synthetic parameter names`() {
+        assumeNoParameterNames(Throwable::class.java.getMethod("initCause", Throwable::class.java))
+        resolver.resolve("kotlin.Throwable", pageSize = 10000) should {
+            have("    open fun initCause(arg0: Throwable?): Throwable" in lines())
+            have("    open fun printStackTrace(arg0: java.io.PrintStream?)" in lines())
+            have("    open fun printStackTrace(arg0: java.io.PrintWriter?)" in lines())
+        }
+    }
+
+    @Test
+    fun `should list Java-only member of built-in type next to extension hiding the members of another signature`() {
+        // the @HidesMembers Iterable.forEach is called for a lambda, the member forEach of java.lang.Iterable for a Consumer
+        assumeNoParameterNames(Iterable::class.java.getMethod("forEach", java.util.function.Consumer::class.java))
+        resolver.resolve("kotlin.collections.Iterable", pageSize = 10000) should {
+            have("    inline fun forEach(action: (T) -> Unit)" in lines())
+            have("    open fun forEach(arg0: java.util.function.Consumer<in T>?)" in lines())
+        }
+    }
+
+    @Test
+    fun `should list extension of built-in type hiding Java-only member of the same signature in its body`() {
+        // the @HidesMembers Throwable.addSuppressed is called instead of the member addSuppressed of java.lang.Throwable
+        assumeNoParameterNames(Throwable::class.java.getMethod("addSuppressed", Throwable::class.java))
+        resolver.resolve("kotlin.Throwable", pageSize = 10000) should {
+            have("    fun addSuppressed(exception: Throwable)" in lines())
+            have(lines().none { "addSuppressed(arg0" in it || "Throwable.addSuppressed" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve extension of built-in type hiding Java-only member of the same signature`() {
+        assumeNoParameterNames(Throwable::class.java.getMethod("addSuppressed", Throwable::class.java))
+        resolver.resolve("kotlin.Throwable.addSuppressed") sameAsKotlin """
+            // kotlin.Throwable.addSuppressed [page 1/1]
+            // from kotlin
+            fun Throwable.addSuppressed(exception: Throwable)
+        """.trimIndent()
     }
 
     @Test
@@ -4642,8 +5391,9 @@ class KotlinIntrospectorTest {
             val lines = resolver.resolve(type, pageSize = 100_000).orEmpty().lines().drop(1)
             Listing(lines.mapTo(HashSet()) { it.trim() }, lines.firstOrNull { !it.startsWith("//") }.orEmpty())
         }
-        // an inherited member of a class which cannot be subclassed is rendered without the open modifier
-        fun withoutModality(line: String) = line.removePrefix("open ")
+        // an inherited member of a class which cannot be subclassed is rendered without the open modifier,
+        // following its annotations, like the @Deprecated of a JDK member
+        fun withoutModality(line: String) = line.replaceFirst(Regex("^((?:@.*\\) )?)open "), "$1")
 
         // when
         val unlisted = memberNames.flatMap { (type, names) ->
@@ -5641,9 +6391,28 @@ class KotlinIntrospectorTest {
     fun `should resolve inner class of inner class with outer type parameters`() {
         resolver.resolve("com.xemantic.kotlin.introspection.test.InnerOfInnerHolder.Mid.Leaf") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.InnerOfInnerHolder.Mid.Leaf [page 1/1]
-            inner class Leaf(override val key: A, override val value: B) : Map.Entry<A, B> {
+            inner class InnerOfInnerHolder<A>.Mid<B>.Leaf(override val key: A, override val value: B) : Map.Entry<A, B> {
                 fun pair(): Pair<A, B>
             }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve inner class qualified with outer type parameters of its listed inner class`() {
+        // the type parameter of the outermost class, which the listed inner class refers to, is declared by the header
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InnerOfInnerHolder.Mid") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InnerOfInnerHolder.Mid [page 1/1]
+            inner class InnerOfInnerHolder<A>.Mid<B> {
+                inner class Leaf : Map.Entry<A, B>
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve inner sealed subclass qualified with type parameters of its outer class`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.GenericSealedOuter.Sub") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GenericSealedOuter.Sub [page 1/1]
+            inner class GenericSealedOuter<T>.Sub : GenericSealedHolder<T>
         """.trimIndent()
     }
 
@@ -5661,13 +6430,14 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should list companion object of another class as sealed subclass`() {
-        // the own companion object is rendered as such, while the one of another class is a branch of a when expression
+        // the own companion object is rendered as such, while the one of another class is a branch of a when expression,
+        // referred to as an object, as a companion object can only be declared in its own class
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.CompanionSealedHolder"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.CompanionSealedHolder [page 1/1]
             sealed class CompanionSealedHolder {
-                companion object CompanionSealedSubclassHolder.Companion : CompanionSealedHolder
+                object CompanionSealedSubclassHolder.Companion : CompanionSealedHolder
                 class Sub : CompanionSealedHolder
                 companion object : CompanionSealedHolder
             }
@@ -6489,6 +7259,32 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve companion object of built-in type with the extensions of any library`() {
+        // a library extends the companion object of a built-in type deliberately, like kotlinx.serialization,
+        // unlike the built-in type itself, whose extensions of the other libraries are not listed
+        resolver.resolve("kotlin.Int.Companion", pageSize = 1000) should {
+            have("// from kotlinx.serialization.builtins" in lines())
+            have("fun Int.Companion.serializer(): kotlinx.serialization.KSerializer<Int>" in lines())
+        }
+    }
+
+    @Test
+    fun `should not resolve companion object of built-in type with the extensions of an internal package`() {
+        resolver.resolve("kotlin.Int.Companion", pageSize = 1000) should {
+            have(lines().none { "internalPackageHelper" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve extension of companion object of built-in type from any library`() {
+        resolver.resolve("kotlin.UInt.Companion.serializer") sameAsKotlin """
+            // kotlin.UInt.Companion.serializer [page 1/1]
+            // from kotlinx.serialization.builtins
+            fun UInt.Companion.serializer(): kotlinx.serialization.KSerializer<UInt>
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve member of companion object of built-in type`() {
         resolver.resolve(
             "kotlin.Int.Companion.MAX_VALUE"
@@ -6895,6 +7691,43 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should not list named companion object and nested class deprecated with hidden level`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenNamedCompanionHolder"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenNamedCompanionHolder [page 1/1]
+            class HiddenNamedCompanionHolder {
+                fun f()
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve named companion object deprecated with hidden level`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenNamedCompanionHolder.Factory") == null)
+    }
+
+    @Test
+    fun `should not resolve member of named companion object deprecated with hidden level`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenNamedCompanionHolder.Factory.create") == null)
+    }
+
+    @Test
+    fun `should not resolve member of named companion object deprecated with hidden level through outer class`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenNamedCompanionHolder.create") == null)
+    }
+
+    @Test
+    fun `should not resolve nested class deprecated with hidden level`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenNamedCompanionHolder.HiddenNested") == null)
+    }
+
+    @Test
+    fun `should not resolve member of nested class deprecated with hidden level`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenNamedCompanionHolder.HiddenNested.g") == null)
+    }
+
+    @Test
     fun `should not render deprecation of enum class constructor`() {
         // it is always private, called only by the entries
         resolver.resolve(
@@ -7249,6 +8082,15 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should not list in body of built-in type extension shadowed by JVM member accepting null`() {
+        // printStackTrace(PrintStream) of java.lang.Throwable, taking the platform type PrintStream!, is called instead
+        resolver.resolve("kotlin.Throwable", pageSize = 10000) should {
+            have("inline fun Throwable.printStackTrace(stream: java.io.PrintStream)" in lines())
+            have("    inline fun printStackTrace(stream: java.io.PrintStream)" !in lines())
+        }
+    }
+
+    @Test
     fun `should resolve JVM-only members of open built-in class as open`() {
         resolver.resolve("kotlin.Throwable", pageSize = 10000) should {
             have("    open fun fillInStackTrace(): Throwable" in lines())
@@ -7293,6 +8135,29 @@ class KotlinIntrospectorTest {
     fun `should list extensions of built-in type with star-projected and own type arguments outside of the class body`() {
         resolver.resolve("kotlin.collections.Map", pageSize = 10000) should {
             have("inline fun <K> Map<out K, *>.containsKey(key: K): Boolean" in lines())
+        }
+    }
+
+    @Test
+    fun `should list extensions of built-in type on in-projected receiver in the class body only when accepting the same arguments`() {
+        // T of MutableCollection<in T> stands for any subtype of E, which Iterable<T> accepts as Iterable<E> does,
+        // unlike the invariant Array<T>, rendered as Array<E>, narrower than it is
+        resolver.resolve("kotlin.collections.MutableCollection", pageSize = 10000) should {
+            have("    inline operator fun plusAssign(element: E)" in lines())
+            have("    inline operator fun plusAssign(elements: Iterable<E>)" in lines())
+            have("    inline operator fun plusAssign(elements: Array<E>)" !in lines())
+            have("inline operator fun <T> MutableCollection<in T>.plusAssign(elements: Array<T>)" in lines())
+        }
+    }
+
+    @Test
+    fun `should list extensions of built-in type on out-projected receiver in the class body only when accepting the same arguments`() {
+        // K of Map<out K, V> stands for any supertype of the K of the class, which a function taking it accepts,
+        // unlike a parameter of the type K itself, rendered as K, narrower than it is
+        resolver.resolve("kotlin.collections.Map", pageSize = 10000) should {
+            have("    inline fun forEach(action: (Map.Entry<K, V>) -> Unit)" in lines())
+            have("    operator fun minus(key: K): Map<K, V>" !in lines())
+            have("operator fun <K, V> Map<out K, V>.minus(key: K): Map<K, V>" in lines())
         }
     }
 
@@ -7467,6 +8332,32 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should render override of var with setter deprecated with hidden level as var with its deprecation`() {
+        // a val cannot override a var, so the annotation tells it cannot be assigned
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenSetterOverride"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenSetterOverride [page 1/1]
+            class HiddenSetterOverride : HiddenSetterOverrideBase {
+                @set:Deprecated("replaced", level = DeprecationLevel.HIDDEN) override var value: Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render protected override of var with setter deprecated with hidden level without setter line`() {
+        // the setter has the visibility of the property, so no line implies a setter wider than the property
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ProtectedHiddenSetterOverride"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ProtectedHiddenSetterOverride [page 1/1]
+            open class ProtectedHiddenSetterOverride : ProtectedHiddenSetterOverrideBase {
+                @set:Deprecated("replaced", level = DeprecationLevel.HIDDEN) protected override var value: Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve member var with setter deprecated with hidden level as val`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.HiddenSetterHolder.inBody"
@@ -7497,9 +8388,76 @@ class KotlinIntrospectorTest {
             class HiddenGetterVarHolder(@get:Deprecated("replaced", level = DeprecationLevel.HIDDEN) var inConstructor: Int) {
                 @get:Deprecated("replaced", level = DeprecationLevel.HIDDEN) var inBody: Int
                 @Deprecated("deprecated") @get:Deprecated("replaced", level = DeprecationLevel.HIDDEN) var deprecatedWithHiddenGetter: Int
+                @get:Deprecated("replaced", level = DeprecationLevel.HIDDEN) @set:Deprecated("Assign y", level = DeprecationLevel.ERROR) var withErrorSetter: Int
             }
             // from com.xemantic.kotlin.introspection.test
             @get:Deprecated("replaced", level = DeprecationLevel.HIDDEN) var HiddenGetterVarHolder.hiddenGetterExtension: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve var with getter deprecated with hidden level and setter deprecated with error level`() {
+        // still listed, like any declaration deprecated with the ERROR level, which can be referred to, but not called
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenGetterVarHolder.withErrorSetter"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenGetterVarHolder.withErrorSetter [page 1/1]
+            @get:Deprecated("replaced", level = DeprecationLevel.HIDDEN) @set:Deprecated("Assign y", level = DeprecationLevel.ERROR) var withErrorSetter: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render deprecation of accessors of var apart from property`() {
+        // only the reading, or only the assigning, is deprecated, while a var which cannot be assigned
+        // from the outside reads as a val, whose reading is deprecated as a whole
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.AccessorDeprecationHolder"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.AccessorDeprecationHolder [page 1/1]
+            class AccessorDeprecationHolder(@get:Deprecated("Read y", level = DeprecationLevel.ERROR) var inConstructor: Int) {
+                @get:Deprecated("Read y", level = DeprecationLevel.ERROR) var errorGetter: Int
+                @get:Deprecated("Read y") var warningGetter: Int
+                @set:Deprecated("Assign y") var warningSetter: Int
+                @set:Deprecated("Assign y", level = DeprecationLevel.ERROR) var errorSetter: Int
+                @get:Deprecated("Read y") @set:Deprecated("Assign y", level = DeprecationLevel.ERROR) var bothAccessors: Int
+                @Deprecated("Use y") @set:Deprecated("Assign y", level = DeprecationLevel.ERROR) var deprecatedWithErrorSetter: Int
+                @Deprecated("Read y", level = DeprecationLevel.ERROR) val withPrivateSetter: Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            @set:Deprecated("Assign y", level = DeprecationLevel.ERROR) var AccessorDeprecationHolder.errorSetterExtension: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve var with setter deprecated with error level`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.AccessorDeprecationHolder.errorSetter"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.AccessorDeprecationHolder.errorSetter [page 1/1]
+            @set:Deprecated("Assign y", level = DeprecationLevel.ERROR) var errorSetter: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve inherited var with setter deprecated with error level`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.AccessorDeprecationSub.inheritedErrorSetter"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.AccessorDeprecationSub.inheritedErrorSetter [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.AccessorDeprecationBase
+            @set:Deprecated("Assign y", level = DeprecationLevel.ERROR) var inheritedErrorSetter: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve inherited var whose protected setter final subclass cannot call as val with deprecation of reading`() {
+        // the setter, and its deprecation, are not part of the API of the final subclass
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.AccessorDeprecationSub.inheritedProtectedSetter"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.AccessorDeprecationSub.inheritedProtectedSetter [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.AccessorDeprecationBase
+            @Deprecated("Read y", level = DeprecationLevel.ERROR) val inheritedProtectedSetter: Int
         """.trimIndent()
     }
 

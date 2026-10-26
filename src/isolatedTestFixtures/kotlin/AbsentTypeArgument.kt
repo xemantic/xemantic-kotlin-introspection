@@ -193,6 +193,34 @@ class MissingOuter {
     }
 }
 
+// tests leave the class file of the generic outer class out, so that the names of its type parameters are not known
+class MissingGenericOuter<T> {
+    inner class Inner : Comparable<T> {
+        override fun compareTo(other: T): Int = 0
+        // declaring its own type parameter, which is not one of the outer class
+        fun <R> map(f: (T) -> R): R = f(TODO())
+    }
+}
+
+// tests leave the class file of the middle class out, while the outermost one is there
+class MissingMidHolder<A> {
+    inner class Mid<B> {
+        inner class Leaf : Comparable<B> {
+            override fun compareTo(other: B): Int = 0
+            fun pair(): Pair<A, B> = TODO()
+        }
+    }
+}
+
+// tests leave the class file of the middle class out, which is nested, not inner, in the generic outermost one
+class NestedMidHolder<X> {
+    class Mid<T> {
+        inner class Leaf : Comparable<T> {
+            override fun compareTo(other: T): Int = 0
+        }
+    }
+}
+
 // the Java superclass cannot be loaded, so that its members and its generic supertypes are read from its class file
 abstract class AbsentGenericJavaLeaf : AbsentGenericJavaMid<String>() {
     override fun process(item: String) {}
