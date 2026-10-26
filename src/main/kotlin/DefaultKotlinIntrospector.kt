@@ -2065,7 +2065,7 @@ internal class DefaultKotlinIntrospector(
      * Either way, the ones on a type parameter with multiple bounds only when the class satisfies all of them,
      * see [receiverBoundsOf], also when none of them is among the [userSupertypes], see [listedFor],
      * and only the ones which can be called on the class, as told by the type arguments, see [isCallableOn],
-     * also the ones on its companion object, see [companionObjectName],
+     * also the ones on its companion object, see [companionObjectName], deprecated by it, see [withCompanionDeprecation],
      * and never the ones on a type parameter shadowed by a more specific overload, see [withoutShadowed].
      *
      * @param apiClass the [kmClass] as a class of the API.
@@ -2127,12 +2127,45 @@ internal class DefaultKotlinIntrospector(
             }
         )
         val builtinClass = declarations as? BuiltinClass
-        return callable.withoutShadowed(supertypes) { names ->
+        val unshadowed = callable.withoutShadowed(supertypes) { names ->
             (kmClass.functions + builtinClass?.jvmOnlyFunctions.orEmpty())
                 .filter { it.name in names && it.receiverParameterType == null }
                 .inApi(apiClass, declarations) +
                 inheritedFunctionsNamed(kmClass, names, apiClass)
         }
+        return unshadowed.withCompanionDeprecation(kmClass, companionName, apiClass, declarations)
+    }
+
+    /**
+     * These extensions, the ones on the companion object named [companionName] of the [kmClass],
+     * see [companionObjectName], deprecated by the deprecation of the companion object, if any, targeting their receiver,
+     * see [extensionDeprecationOf], as Kotlin reports it when they are called on the name of the class, like `Foo.of()`.
+     *
+     * @param apiClass the [kmClass] as a class of the API.
+     * @param declarations the declarations of the [kmClass], telling the located name of the companion object.
+     */
+    private fun ListedExtensions.withCompanionDeprecation(
+        kmClass: KmClass,
+        companionName: String?,
+        apiClass: ApiClass,
+        declarations: ClassDeclarations
+    ): ListedExtensions {
+        // a built-in type described by kotlin-reflect declares no companion object, which is never deprecated anyway
+        if (companionName == null || kmClass.companionObject == null) return this
+        val (located, _) = apiCompanionClassOf(kmClass, declarations, apiClass) ?: return this
+        val companionDeprecation = classDeclarations(located)?.classDeprecation ?: return this
+        val receiverName = "${kmClass.name}.$companionName"
+        fun KmType?.isCompanion() = (this?.classifier as? KmClassifier.Class)?.name == receiverName
+        return ListedExtensions(
+            functions.map { extension ->
+                if (!extension.function.receiverParameterType.isCompanion()) extension
+                else extension.copy(deprecation = extensionDeprecationOf(extension.deprecation, companionDeprecation))
+            },
+            properties.map { extension ->
+                if (!extension.property.receiverParameterType.isCompanion()) extension
+                else extension.copy(deprecation = extensionDeprecationOf(extension.deprecation, companionDeprecation))
+            }
+        )
     }
 
     /**
@@ -3886,6 +3919,7 @@ internal class DefaultKotlinIntrospector(
             Deprecation.Target.DECLARATION -> "@Deprecated(\""
             Deprecation.Target.GETTER -> "@get:Deprecated(\""
             Deprecation.Target.SETTER -> "@set:Deprecated(\""
+            Deprecation.Target.RECEIVER -> "@receiver:Deprecated(\""
         }
         +firstLine.escapeKotlin('"')
         if (firstLine.length < message.length) +" …"

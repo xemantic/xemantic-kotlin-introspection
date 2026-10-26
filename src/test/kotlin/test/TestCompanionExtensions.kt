@@ -48,3 +48,29 @@ class HiddenCompanionExtensionHolder {
 fun HiddenCompanionExtensionHolder.Companion.of(): HiddenCompanionExtensionHolder = HiddenCompanionExtensionHolder()
 
 fun HiddenCompanionExtensionHolder.describe(): String = "holder"
+
+// Extensions on a deprecated companion object, called as DeprecatedCompanionExtensionHolder.of(),
+// for which Kotlin reports the deprecation of the companion object, next to the one of the extension itself, if any
+class DeprecatedCompanionExtensionHolder {
+    @Deprecated("Use the constructor")
+    companion object
+}
+
+@Suppress("DEPRECATION")
+fun DeprecatedCompanionExtensionHolder.Companion.of(): DeprecatedCompanionExtensionHolder = DeprecatedCompanionExtensionHolder()
+
+@Suppress("DEPRECATION")
+@Deprecated("Use of()", ReplaceWith("of()"), level = DeprecationLevel.ERROR)
+fun DeprecatedCompanionExtensionHolder.Companion.create(): DeprecatedCompanionExtensionHolder = DeprecatedCompanionExtensionHolder()
+
+@Suppress("DEPRECATION")
+val DeprecatedCompanionExtensionHolder.Companion.default: DeprecatedCompanionExtensionHolder
+    get() = DeprecatedCompanionExtensionHolder()
+
+class ErrorCompanionExtensionHolder {
+    @Deprecated("Removed", level = DeprecationLevel.ERROR)
+    companion object
+}
+
+@Suppress("DEPRECATION_ERROR")
+fun ErrorCompanionExtensionHolder.Companion.of(): ErrorCompanionExtensionHolder = ErrorCompanionExtensionHolder()

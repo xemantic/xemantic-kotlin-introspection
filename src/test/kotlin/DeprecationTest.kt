@@ -286,6 +286,74 @@ class DeprecationTest {
     }
 
     @Test
+    fun `should deprecate receiver of extension which is not deprecated itself`() {
+        // given
+        val receiverDeprecation = Deprecation("use constructor", replaceWith = null, DeprecationLevel.ERROR)
+
+        // when
+        val deprecation = extensionDeprecationOf(deprecation = null, receiverDeprecation)
+
+        // then
+        assert(deprecation != null && deprecation.message == "use constructor" && deprecation.level == DeprecationLevel.ERROR)
+        assert(deprecation.target == Deprecation.Target.RECEIVER && deprecation.accessors.isEmpty() && !deprecation.isHidden)
+    }
+
+    @Test
+    fun `should keep deprecations of extension and its receiver`() {
+        // given
+        val ownDeprecation = Deprecation("use of()", replaceWith = "of()", DeprecationLevel.WARNING)
+        val receiverDeprecation = Deprecation("use constructor", replaceWith = null, DeprecationLevel.ERROR)
+
+        // when
+        val deprecation = extensionDeprecationOf(ownDeprecation, receiverDeprecation)
+
+        // then
+        assert(deprecation != null && deprecation.message == "use of()" && deprecation.target == Deprecation.Target.DECLARATION)
+        assert(
+            deprecation.accessors.map { Triple(it.message, it.level, it.target) } ==
+                listOf(Triple("use constructor", DeprecationLevel.ERROR, Deprecation.Target.RECEIVER))
+        )
+    }
+
+    @Test
+    fun `should keep deprecation of receiver of val extension when reading it`() {
+        // given
+        val deprecation = extensionDeprecationOf(
+            deprecation = null,
+            receiverDeprecation = Deprecation("use constructor", replaceWith = null, DeprecationLevel.WARNING)
+        )
+
+        // when
+        val reading = deprecation?.ofReading()
+
+        // then
+        assert(reading != null && reading.message == "use constructor" && reading.target == Deprecation.Target.RECEIVER)
+    }
+
+    @Test
+    fun `should keep deprecation of receiver of var extension next to the one of its getter when reading it`() {
+        // given
+        val deprecation = extensionDeprecationOf(
+            deprecation = varDeprecationOf(
+                propertyDeprecation = null,
+                getterDeprecation = Deprecation("read y", replaceWith = null, DeprecationLevel.ERROR),
+                setterDeprecation = Deprecation("assign y", replaceWith = null, DeprecationLevel.WARNING)
+            ),
+            receiverDeprecation = Deprecation("use constructor", replaceWith = null, DeprecationLevel.WARNING)
+        )
+
+        // when
+        val reading = deprecation?.ofReading()
+
+        // then
+        assert(reading != null && reading.message == "read y" && reading.target == Deprecation.Target.DECLARATION)
+        assert(
+            reading.accessors.map { Triple(it.message, it.level, it.target) } ==
+                listOf(Triple("use constructor", DeprecationLevel.WARNING, Deprecation.Target.RECEIVER))
+        )
+    }
+
+    @Test
     fun `should hide reading of var whose getter is hidden`() {
         // given
         val deprecation = varDeprecationOf(
