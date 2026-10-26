@@ -44,6 +44,7 @@ import java.util.jar.Manifest
 import kotlin.io.path.createDirectories
 import kotlin.io.path.outputStream
 import kotlin.io.path.writeBytes
+import kotlin.metadata.jvm.KotlinModuleMetadata
 import kotlin.test.Test
 
 /**
@@ -1915,6 +1916,31 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should keep the colliding module files of both modules named by default without top-level declarations`() {
+        // given
+        // both default-module fixtures write META-INF/main.kotlin_module onto the test classpath,
+        // and only one of them would be seen by its resource name, depending on the classpath order,
+        // so that a top-level declaration of either, mapped only there, might not be found
+        // a dependency might ship a module file of the same name, which is not checked
+        val fixtureRoots = listOf(
+            "com.xemantic.kotlin.introspection.defaultmodule.DefaultModuleBase",
+            "com.xemantic.kotlin.introspection.otherdefaultmodule.OtherDefaultModuleSubclass"
+        ).map { Class.forName(it).protectionDomain.codeSource.location.toString() }
+        val moduleFiles = javaClass.classLoader.getResources("META-INF/main.kotlin_module").toList().filter { url ->
+            fixtureRoots.any { url.toString().startsWith(it) }
+        }
+
+        // when
+        val packageParts = moduleFiles.map { url ->
+            KotlinModuleMetadata.read(url.openStream().use { it.readBytes() }).kmModule.packageParts
+        }
+
+        // then
+        // a top-level declaration belongs in a fixture of a module of its own name instead
+        assert(moduleFiles.size == 2 && packageParts.all { it.isEmpty() })
+    }
+
+    @Test
     fun `should mark shrunk overrides of internal members of superclass of the same module named by default`() {
         // given
         val shrunkResource = "com/xemantic/kotlin/introspection/defaultmodule/DefaultModuleSubclass.class"
@@ -2136,6 +2162,84 @@ class ClassLoaderIntrospectionTest {
             }
         """.trimIndent()
         assert(requestedClasses.none { it.endsWith("\$DefaultImpls") })
+    }
+
+    @Test
+    fun `should not load DefaultImpls class of interface whose class file is served without the one of DefaultImpls`() {
+        // given
+        val defaultImplsName = "com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsOverloader\$DefaultImpls"
+        val requestedClasses = Collections.synchronizedList(mutableListOf<String>())
+        val classLoader = object : ClassLoader(javaClass.classLoader) {
+            override fun loadClass(name: String, resolve: Boolean): Class<*> {
+                requestedClasses += name
+                return super.loadClass(name, resolve)
+            }
+
+            override fun getResource(name: String): java.net.URL? =
+                if (name == defaultImplsName.replace('.', '/') + ".class") null else super.getResource(name)
+
+            override fun getResourceAsStream(name: String): InputStream? =
+                if (name == defaultImplsName.replace('.', '/') + ".class") null else super.getResourceAsStream(name)
+        }
+        val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
+
+        // when
+        // the JVM methods of the interface are read to tell whether its overload of a supertype member is shrunk
+        val greeter = introspector.resolve("com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsOverloader")
+
+        // then
+        greeter sameAsKotlin """
+            // com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsOverloader [page 1/1]
+            interface DefaultImplsOverloader : DefaultImplsBase {
+                open fun greet(times: Int): String
+            }
+        """.trimIndent()
+        // the class file of the interface is served, so the absence of the one of DefaultImpls tells there is none
+        assert(defaultImplsName !in requestedClasses)
+    }
+
+    @Test
+    fun `should not probe DefaultImpls classes of interfaces without member bodies when no class file is served`() {
+        // given
+        val failedLoads = Collections.synchronizedList(mutableListOf<String>())
+        // like an in-memory class loader, defining the classes without serving their class files as resources
+        val classLoader = object : ClassLoader(javaClass.classLoader) {
+            override fun loadClass(name: String, resolve: Boolean): Class<*> = try {
+                super.loadClass(name, resolve)
+            } catch (e: ClassNotFoundException) {
+                failedLoads += name
+                throw e
+            }
+
+            override fun getResource(name: String): java.net.URL? =
+                if (name.startsWith("com/xemantic/")) null else super.getResource(name)
+
+            override fun getResourceAsStream(name: String): InputStream? =
+                if (name.startsWith("com/xemantic/")) null else super.getResourceAsStream(name)
+        }
+        val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
+
+        // when
+        // the JVM methods of an interface owning an overload are reflected, also the ones relocated to DefaultImpls,
+        // which only an interface with member bodies might have, as its metadata tells
+        val greeter = introspector.resolve("com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsGreeter")
+        val processor = introspector.resolve("com.xemantic.kotlin.introspection.test.OverloadingProcessorInterface")
+
+        // then
+        greeter sameAsKotlin """
+            // com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsGreeter [page 1/1]
+            interface DefaultImplsGreeter : DefaultImplsBase {
+                open override val label: String
+                open override fun greet(name: String): String
+            }
+        """.trimIndent()
+        processor sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OverloadingProcessorInterface [page 1/1]
+            interface OverloadingProcessorInterface : Processor<String> {
+                fun process(item: Int)
+            }
+        """.trimIndent()
+        assert(failedLoads.none { it.endsWith("\$DefaultImpls") })
     }
 
     /**

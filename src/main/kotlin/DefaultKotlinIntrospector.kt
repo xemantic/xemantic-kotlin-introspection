@@ -273,7 +273,7 @@ internal class DefaultKotlinIntrospector(
         classLoader = classLoader,
         loadClassByMetadataName = { name -> findClassByMetadataName(name)?.clazz },
         loadKmClassByMetadataName = ::loadKmClass,
-        // read directly, without loading the class, like a DefaultImpls class probed for every interface
+        // read directly, without loading the class, like a DefaultImpls class which an interface might have
         readClassBytesByMetadataName = { name -> readClassBytes(binaryNameOf(name)) },
         unloadableClassBytesByMetadataName = { name -> lookUpClassByBinaryName(binaryNameOf(name)).unloadableClassBytes },
         transientFailures = transientFailures,

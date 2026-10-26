@@ -281,6 +281,27 @@ com.example.AnnotationTestClass
   The ones which are not part of the API, like the internal ones, are omitted,
   told by `// sealed subclasses not part of the API omitted`,
   as a `when` expression covering the listed ones still needs an `else` branch.
+* A member overriding a member of a supertype is marked `override`,
+  told by the Kotlin signatures, as the compiler does.
+  An internal member of a supertype can be overridden only in its own module, or in a friend module,
+  like the test module of the main one,
+  which the metadata does not tell, as unrelated modules might share a module name,
+  like the default `main` of `kotlinc` without `-module-name`,
+  so the JVM methods of the overriding class, mangled with the module name, like `reset$core`, are the evidence.
+  A `@PublishedApi internal` member is not mangled, so its JVM method tells nothing,
+  and the modality of the member is the evidence instead in a final class,
+  where only an override is open, and a final member is not an override.
+  This has known limitations:
+  - in a class which is not final, a public override of a `@PublishedApi internal` member in a friend module
+    is not marked `override`, and does not inherit the default values of its parameters,
+    as it cannot be told from a member of the same name of an unrelated module;
+  - in such a class, a member named like a `@PublishedApi internal` member of an unrelated module of the same name,
+    like two modules both compiled with the default `main`, is marked `override`,
+    as that module cannot be told from the same one;
+  - in a final class, a member of the same name as a `@PublishedApi internal` member of a supertype,
+    marked `open` in vain, is marked `override`,
+    while its override marked `final override` in vain is not;
+  - an override in a friend module is not marked when a shrinker, like R8, removed the bridge telling it.
 * The whole classpath visible to the given class loader is scanned on creation, which takes a while,
   so the instance should be created once and reused.
   The scan can be disabled with `KotlinIntrospector(scanEntireClasspath = false)`,

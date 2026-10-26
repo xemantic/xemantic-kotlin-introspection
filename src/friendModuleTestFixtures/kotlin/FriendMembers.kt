@@ -30,3 +30,12 @@ class UnreflectableFriendModuleSubclass : InternalBase() {
     public override val state: Int get() = 1
     fun take(marker: com.xemantic.kotlin.introspection.othermodule.OtherModuleMarker) {}
 }
+
+// A public override of a @PublishedApi internal member, whose JVM method is not mangled
+class FriendModulePublishedApiSubclass : com.xemantic.kotlin.introspection.othermodule.PublishedApiBase() {
+    public override fun publish() {}
+}
+
+open class FriendModuleOpenPublishedApiSubclass : com.xemantic.kotlin.introspection.othermodule.PublishedApiBase() {
+    public override fun publish() {}
+}
