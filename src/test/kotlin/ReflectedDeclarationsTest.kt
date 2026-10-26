@@ -24,12 +24,14 @@ import com.xemantic.kotlin.introspection.test.KeywordMembersSample
 import com.xemantic.kotlin.introspection.test.NonGenericInnerTypes
 import com.xemantic.kotlin.introspection.test.ReflectedValueParametersSample
 import com.xemantic.kotlin.introspection.test.other.JavaUnnamedParameters
+import com.xemantic.kotlin.introspection.test.other.Upper.JavaUpperCasePackage
 import com.xemantic.kotlin.test.assert
 import kotlin.metadata.KmClassifier
 import kotlin.metadata.KmType
 import kotlin.reflect.KFunction
 import kotlin.reflect.full.memberFunctions
 import kotlin.reflect.full.memberProperties
+import kotlin.reflect.typeOf
 import kotlin.test.Test
 
 /**
@@ -262,6 +264,25 @@ class ReflectedDeclarationsTest {
 
         // then
         assert(rendered == "fun cursor(): com.xemantic.kotlin.introspection.test.NonGenericInnerOuter.In<String>")
+    }
+
+    @Test
+    fun `should name class of package with uppercase segment by its Java class`() {
+        // given
+        val types = listOf(typeOf<JavaUpperCasePackage>(), typeOf<JavaUpperCasePackage.Nested>())
+
+        // when
+        val names = types.map {
+            (it.toKmType(ReflectedTypeParameters.classTypeParameters(emptyList())).classifier as KmClassifier.Class).name
+        }
+
+        // then
+        assert(
+            names == listOf(
+                "com/xemantic/kotlin/introspection/test/other/Upper/JavaUpperCasePackage",
+                "com/xemantic/kotlin/introspection/test/other/Upper/JavaUpperCasePackage.Nested"
+            )
+        )
     }
 
 }

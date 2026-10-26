@@ -308,7 +308,7 @@ internal fun KType.toKmType(scope: ReflectedTypeParameters, platformAsNullable: 
             KmClassifier.Class(
                 FunctionTypeKind.FUNCTION.metadataName(if (isSuspendFunctionType) arguments.size else arguments.size - 1)
             )
-        is KClass<*> -> KmClassifier.Class(classifier.qualifiedName?.let(::kotlinClassName) ?: kotlinClassName(classifier.java))
+        is KClass<*> -> KmClassifier.Class(reflectedClassName(classifier))
         is KTypeParameter -> KmClassifier.TypeParameter(scope.idOf(classifier))
         else -> KmClassifier.Class("kotlin/Any")
     }
@@ -346,7 +346,23 @@ internal fun KType.toKmType(scope: ReflectedTypeParameters, platformAsNullable: 
     return type
 }
 
+/**
+ * The Kotlin class name of the [kClass], like `java/util/Map.Entry`, told by its Java class, see [kotlinClassName],
+ * as its fully qualified name does not tell where its package ends, like for a package `com.example.Api`,
+ * but of a type mapped to a JVM type, like `kotlin/collections/Map.Entry` of `java.util.Map.Entry`,
+ * whose fully qualified name is a built-in one, of the `kotlin.*` packages, starting with lowercase letters.
+ */
+private fun reflectedClassName(kClass: KClass<*>): String {
+    val qualifiedName = kClass.qualifiedName
+    return if (qualifiedName != null && qualifiedName != kClass.java.canonicalName) {
+        kotlinClassName(qualifiedName)
+    } else {
+        kotlinClassName(kClass.java)
+    }
+}
+
 private fun KTypeProjection.toKmTypeProjection(scope: ReflectedTypeParameters): KmTypeProjection {
+
     val projectionType = type ?: return KmTypeProjection.STAR
     return KmTypeProjection(variance?.toKmVariance() ?: KmVariance.INVARIANT, projectionType.toKmType(scope))
 }
@@ -359,7 +375,7 @@ private fun outerType(innerClass: KClass<*>, arguments: List<KmTypeProjection>):
     val outerClass = innerClass.java.declaringClass?.kotlin ?: return null
     val ownArgumentCount = outerClass.typeParameters.size
     return KmType().also { type ->
-        type.classifier = KmClassifier.Class(outerClass.qualifiedName?.let(::kotlinClassName) ?: kotlinClassName(outerClass.java))
+        type.classifier = KmClassifier.Class(reflectedClassName(outerClass))
         type.arguments += arguments.take(ownArgumentCount)
         if (outerClass.isInner && arguments.size > ownArgumentCount) {
             type.outerType = outerType(outerClass, arguments.drop(ownArgumentCount))
