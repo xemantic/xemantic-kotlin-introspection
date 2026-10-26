@@ -31,19 +31,25 @@ class BuiltinExtensionSourceTest {
         // given
         // kotlin-stdlib-jre7 and -jre8 of Kotlin 1.2, kotlin-stdlib-jdk7 and -jdk8, merged into kotlin-stdlib since 1.8,
         // and kotlin-reflect, whose module is named kotlin-reflect-api from Kotlin 1.2.40 to 1.3.11
+        // the JVM class declaring them, the Kotlin package, or the object, to import them from, and the module
         val sources = listOf(
-            "kotlin" to "kotlin-stdlib",
-            "kotlin.text" to "kotlin-stdlib",
-            "kotlin.io.path" to "kotlin-stdlib-jdk7",
-            "kotlin.streams" to "kotlin-stdlib-jdk8",
-            "kotlin.io" to "kotlin-stdlib-jre7",
-            "kotlin.collections" to "kotlin-stdlib-jre8",
-            "kotlin.reflect.full" to "kotlin-reflection",
-            "kotlin.reflect.full" to "kotlin-reflect-api"
+            Triple("kotlin.ComparisonsKt", "kotlin", "kotlin-stdlib"),
+            Triple("kotlin.text.StringsKt__StringsKt", "kotlin.text", "kotlin-stdlib"),
+            Triple("kotlin.io.path.PathsKt__PathUtilsKt", "kotlin.io.path", "kotlin-stdlib-jdk7"),
+            // relocated to another JVM package by @JvmPackageName
+            Triple("kotlin.streams.jdk8.StreamsKt", "kotlin.streams", "kotlin-stdlib-jdk8"),
+            Triple("kotlin.io.ExceptionsKt", "kotlin.io", "kotlin-stdlib-jre7"),
+            Triple("kotlin.collections.jdk8.CollectionsJDK8Kt", "kotlin.collections", "kotlin-stdlib-jre8"),
+            Triple("kotlin.reflect.full.KClasses", "kotlin.reflect.full", "kotlin-reflection"),
+            Triple("kotlin.reflect.full.KClasses", "kotlin.reflect.full", "kotlin-reflect-api"),
+            // an object, the member extensions are imported from by its located name
+            Triple("kotlin.time.TimeSource\$Monotonic", "kotlin.time.TimeSource.Monotonic", "kotlin-stdlib")
         )
 
         // when
-        val notShown = sources.filterNot { (source, moduleName) -> isBuiltinExtensionSource(source, moduleName) }
+        val notShown = sources.filterNot { (sourceClass, source, moduleName) ->
+            isBuiltinExtensionSource(sourceClass, source, moduleName)
+        }
 
         // then
         assert(notShown.isEmpty())
@@ -53,13 +59,15 @@ class BuiltinExtensionSourceTest {
     fun `should not show extensions of other libraries declaring kotlin packages`() {
         // given
         val sources = listOf(
-            "kotlin.metadata.jvm" to "kotlin.metadata.internal:kotlin-metadata-jvm",
-            "kotlin.test" to "org.jetbrains.kotlin:kotlin-test",
-            "kotlin.text" to null
+            Triple("kotlin.metadata.jvm.JvmExtensionsKt", "kotlin.metadata.jvm", "kotlin.metadata.internal:kotlin-metadata-jvm"),
+            Triple("kotlin.test.AssertionsKt__AssertionsKt", "kotlin.test", "org.jetbrains.kotlin:kotlin-test"),
+            Triple("kotlin.text.StringsKt__StringsKt", "kotlin.text", null)
         )
 
         // when
-        val shown = sources.filter { (source, moduleName) -> isBuiltinExtensionSource(source, moduleName) }
+        val shown = sources.filter { (sourceClass, source, moduleName) ->
+            isBuiltinExtensionSource(sourceClass, source, moduleName)
+        }
 
         // then
         assert(shown.isEmpty())
@@ -67,8 +75,26 @@ class BuiltinExtensionSourceTest {
 
     @Test
     fun `should not show extensions of internal packages of the standard library`() {
+        // given
+        val sources = listOf(
+            Triple("kotlin.jvm.internal.ClassReferenceKt", "kotlin.jvm.internal", "kotlin-stdlib"),
+            // the member extensions of an object in an internal package
+            Triple("kotlin.jvm.internal.Holder\$Companion", "kotlin.jvm.internal.Holder.Companion", "kotlin-stdlib")
+        )
+
         // when
-        val isShown = isBuiltinExtensionSource("kotlin.jvm.internal", "kotlin-stdlib")
+        val shown = sources.filter { (sourceClass, source, moduleName) ->
+            isBuiltinExtensionSource(sourceClass, source, moduleName)
+        }
+
+        // then
+        assert(shown.isEmpty())
+    }
+
+    @Test
+    fun `should not show extensions of standard library relocated by shading keeping its Kotlin package`() {
+        // when - the metadata keeps the Kotlin package of the relocated file facade, like a Kotlin-aware relocation might
+        val isShown = isBuiltinExtensionSource("shaded.kotlin.text.StringsKt__StringsKt", "kotlin.text", "kotlin-stdlib")
 
         // then
         assert(!isShown)

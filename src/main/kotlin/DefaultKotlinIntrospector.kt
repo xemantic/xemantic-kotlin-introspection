@@ -2179,11 +2179,10 @@ internal class DefaultKotlinIntrospector(
     ): String? {
         fun isExtended(name: String) = "$className.$name".let { it in extensionIndex || it in extensionPropertyIndex }
         kmClass.companionObject?.let { name ->
-            return name.takeIf {
-                isExtended(it) && apiClasses.nestedApiClass(apiClass, declarations.located("${kmClass.name}.$it")) != null
-            }
+            return name.takeIf { isExtended(it) && apiCompanionClassOf(kmClass, declarations, apiClass) != null }
         }
-        if (declarations !is BuiltinClass || kmClass.name in builtinClasses) return null
+        // the companion objects of the built-in types have the default name
+        if (declarations !is BuiltinClass || kmClass.name in builtinClasses || !isExtended(DEFAULT_COMPANION_NAME)) return null
         return reflectedValue(default = null) { builtinTypes[className]?.companionObject?.simpleName }?.takeIf(::isExtended)
     }
 
@@ -2244,10 +2243,18 @@ internal class DefaultKotlinIntrospector(
      * @param outer the [kmClass] as a class of the API, which the companion object is derived from.
      */
     private fun apiCompanionOf(kmClass: KmClass, declarations: ClassDeclarations, outer: ApiClass): ApiCompanion? {
-        val name = declarations.located("${kmClass.name}.${kmClass.companionObject ?: return null}")
-        val apiClass = apiClasses.nestedApiClass(outer, name) ?: return null
+        val (name, apiClass) = apiCompanionClassOf(kmClass, declarations, outer) ?: return null
         val companionClass = classDeclarations(name) ?: return null
         return ApiCompanion(companionClass.kmClass ?: return null, companionClass, apiClass)
+    }
+
+    /**
+     * The located name of the companion object of the [kmClass], with the companion object as a class of the API,
+     * see [apiCompanionOf], without loading its declarations, or `null` if it has none which is part of the API.
+     */
+    private fun apiCompanionClassOf(kmClass: KmClass, declarations: ClassDeclarations, outer: ApiClass): Pair<String, ApiClass>? {
+        val name = declarations.located("${kmClass.name}.${kmClass.companionObject ?: return null}")
+        return name to (apiClasses.nestedApiClass(outer, name) ?: return null)
     }
 
     /**
@@ -4626,7 +4633,7 @@ internal class DefaultKotlinIntrospector(
         isObjectMember: Boolean,
         moduleName: String?
     ): List<IndexedExtension> {
-        val isBuiltinExtension = isBuiltinExtensionSource(source, moduleName)
+        val isBuiltinExtension = isBuiltinExtensionSource(className, source, moduleName)
         return functions
             .filter { it.receiverParameterType != null }
             .inApi(TopLevel, classFile)
@@ -4646,7 +4653,7 @@ internal class DefaultKotlinIntrospector(
         isObjectMember: Boolean,
         moduleName: String?
     ): List<IndexedExtensionProperty> {
-        val isBuiltinExtension = isBuiltinExtensionSource(source, moduleName)
+        val isBuiltinExtension = isBuiltinExtensionSource(className, source, moduleName)
         return properties
             .filter { it.receiverParameterType != null }
             .inApi(TopLevel, classFile)
@@ -5568,10 +5575,14 @@ private const val COMPARABLE_CLASS_NAME = "kotlin.Comparable"
 private const val COMPARABLE_METADATA_NAME = "kotlin/Comparable"
 
 /**
- * Whether the extensions imported from the [source], the Kotlin package, or the object, declaring them,
- * of the Kotlin module named [moduleName] in its metadata, are shown with the built-in types:
+ * Whether the extensions declared in the class of the JVM binary name [sourceClass], imported from the [source],
+ * the Kotlin package, or the object, declaring them, of the Kotlin module named [moduleName] in its metadata,
+ * are shown with the built-in types:
  * only the ones of the public `kotlin.*` packages, not the ones of the internal packages, like `kotlin.jvm.internal`,
  * told by the Kotlin package, not by the JVM one, which a file facade relocates with `@JvmPackageName`,
+ * while the JVM package is in `kotlin.*` too, like the one of `@JvmPackageName("kotlin.collections.jdk8")`,
+ * unlike the one of the standard library relocated by shading, like `shaded.kotlin.text`,
+ * not to list its extensions twice,
  * and only the ones of the modules of the standard library, or of kotlin-reflect, see [builtinExtensionModules],
  * whose extensions, like `KClass.memberFunctions` of `kotlin.reflect.full`,
  * can be called by the user code depending on it, even if some of them, like `KClass.cast()`,
@@ -5580,9 +5591,9 @@ private const val COMPARABLE_METADATA_NAME = "kotlin/Comparable"
  * or kotlin-metadata-jvm, whose `String.isLocalClassName()` would read like a member of `String`,
  * told apart by the Kotlin module declaring them, which is kept also when merged into one jar, like a shadow jar.
  */
-internal fun isBuiltinExtensionSource(source: String, moduleName: String?): Boolean =
-    (source == "kotlin" || source.startsWith("kotlin.")) && !isInternalPackageSource(source) &&
-        moduleName in builtinExtensionModules
+internal fun isBuiltinExtensionSource(sourceClass: String, source: String, moduleName: String?): Boolean =
+    sourceClass.startsWith("kotlin.") && (source == "kotlin" || source.startsWith("kotlin.")) &&
+        !isInternalPackageSource(source) && moduleName in builtinExtensionModules
 
 /**
  * Whether the [source], the Kotlin package, or the object, declaring extensions, is an internal package,
