@@ -1633,7 +1633,8 @@ internal class DefaultKotlinIntrospector(
 
     /**
      * A [member] of a class, see [apiMembersIncludingHidden], telling whether it [isHidden], deprecated as hidden,
-     * told only when asked, not to compute the deprecations of the members which only override.
+     * told only when asked, not to look up the deprecations, through kotlin-reflect for a built-in type,
+     * of the declared members, which hide the inherited ones they override, hidden or not, see [inheritedCandidates].
      */
     private class ApiMember(val member: Member, isHidden: () -> Boolean) {
         val isHidden: Boolean by lazy(LazyThreadSafetyMode.NONE, isHidden)
@@ -1722,7 +1723,7 @@ internal class DefaultKotlinIntrospector(
      * @param typeParameters the names of the type parameters the [member] refers to, by their ids.
      * @param isHidden whether the [member] is deprecated as hidden, so that it is not inherited,
      *   while it still hides the members it overrides,
-     *   and the members merged with it, when the compiler picks it of them, see [contribution].
+     *   and the members merged with it, when the compiler picks it of them, see [inheritedCandidates].
      * @param jvmMethod the JVM method of the [member], see [JvmMethod],
      *   of a JVM-only member of a built-in type, see [BuiltinClass], or of a member of a Java class, see [JavaClass].
      */
@@ -1882,7 +1883,7 @@ internal class DefaultKotlinIntrospector(
         val visited = hashSetOf(kmClass.name, ANY_CLASS_NAME)
         val pending = ArrayDeque(kmClass.supertypes.map { it.substituted(inheriting) })
         val candidates = mutableListOf<InheritedCandidate>()
-        // the names of the direct supertypes of each class walked, in the order of declaration, see contribution
+        // the names of the direct supertypes of each class walked, in the order of declaration, see contribution below
         val directSupertypes = hashMapOf(kmClass.name to kmClass.supertypes.classNames())
         fun collect(name: String, supertype: KmType) {
             val superDeclarations = inheritedDeclarations(name)
@@ -1993,25 +1994,21 @@ internal class DefaultKotlinIntrospector(
             }
         }
         val declaredSignatures = HashSet<String>()
-        val declaredOverridden = HashSet<String>()
         // also a hidden one, hiding the member it overrides, which cannot be called on the class either
         apiMembersIncludingHidden(kmClass, declarations, memberName, scope).map { it.member }.forEach { member ->
             if (member is Member.Function && hasJavaCandidates) {
                 collectJavaOverrides(kmClass, member.declaration)
             }
             val keys = member.overridden(overrideResolver, kmClass)
-            declaredOverridden += keys
+            overridden += keys
             if (keys.isEmpty() && member.isOverride(overrideResolver, kmClass)) {
                 declaredSignatures += member.signature(inheritingTypeParameters)
             }
         }
-        overridden += declaredOverridden
-        // the members not overridden by the declared ones, also the hidden ones, competing with the members merged with them
-        val contenders = candidates.filter {
-            it.key !in declaredOverridden && it.signature !in declaredSignatures &&
+        val survivors = candidates.filter {
+            !it.isHidden && it.key !in overridden && it.signature !in declaredSignatures &&
                 it.jvmMethod?.key !in overriddenJavaMembers && it.jvmMethod?.signature !in overridingJvmSignatures
         }
-        val survivors = contenders.filter { !it.isHidden && it.key !in overridden }
         // whether the member a wins over the merged member b, of a less specific return type, or else declared later
         fun wins(a: InheritedCandidate, aIndex: Int, b: InheritedCandidate, bIndex: Int): Boolean =
             when (val specificity = compareSpecificity(a.member.returnType, b.member.returnType, supertypeNamesOf)) {
@@ -2038,36 +2035,22 @@ internal class DefaultKotlinIntrospector(
         // while the compiler picks the abstract one of Shape, the first direct supertype
         if (candidates.none { it.isHidden }) return listed
         val candidatesByClass = candidates.groupBy { it.kmClass.name }
-        return listed.filter { candidate ->
-            contribution(kmClass.name, directSupertypes, HashMap(), ::winner) { name ->
-                candidatesByClass[name].orEmpty().filter { it === candidate || it.isMergedWith(candidate) }
-            }.singleOrNull()?.isHidden != true
-        }
-    }
-
-    /**
-     * The members merged from the supertypes, of the ones of the same group, which the class named [name] contributes
-     * to its subclasses, as the compiler picks them, see [inheritedMembers]:
-     * its own one, of the [members] it declares, or else the one which the [winner] picks
-     * of the ones its [directSupertypes] contribute, in the order of declaration,
-     * like the hidden `f()` of `Left` for `interface Join : Left, Right`, also when `Right` overrides it,
-     * or none, or all of them, when the [winner] cannot pick one.
-     *
-     * @param contributions the members each class contributes, by its name, computed once.
-     */
-    private fun <T : Any> contribution(
-        name: String,
-        directSupertypes: Map<String, List<String>>,
-        contributions: MutableMap<String, List<T>>,
-        winner: (List<T>) -> T?,
-        members: (name: String) -> List<T>
-    ): List<T> = contributions[name] ?: run {
-        val own = members(name)
-        val merged = own.ifEmpty {
-            directSupertypes[name].orEmpty().map { contribution(it, directSupertypes, contributions, winner, members) }
-                .let { picks -> picks.firstOrNull { it.size > 1 } ?: picks.flatten().distinct() }
-        }
-        (winner(merged)?.let { listOf(it) } ?: merged).also { contributions[name] = it }
+        val contributions = HashMap<Pair<String, InheritedCandidate>, List<InheritedCandidate>>()
+        // the members merged with the listed candidate which the class named name contributes to its subclasses:
+        // its own one, or else the one picked of the ones its direct supertypes contribute, in the order of declaration,
+        // like the hidden f() of Left for `interface Join : Left, Right`, also when Right overrides it,
+        // or none, or all of them, when none can be picked, as some cannot be compared
+        fun contribution(name: String, candidate: InheritedCandidate): List<InheritedCandidate> =
+            contributions.getOrPut(name to candidate) {
+                val merged = candidatesByClass[name].orEmpty()
+                    .filter { it === candidate || it.isMergedWith(candidate) }
+                    .ifEmpty {
+                        val picks = directSupertypes[name].orEmpty().map { contribution(it, candidate) }
+                        picks.firstOrNull { it.size > 1 } ?: picks.flatten().distinct()
+                    }
+                winner(merged)?.let { listOf(it) } ?: merged
+            }
+        return listed.filter { candidate -> contribution(kmClass.name, candidate).singleOrNull()?.isHidden != true }
     }
 
     /**
