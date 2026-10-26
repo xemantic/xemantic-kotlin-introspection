@@ -37,6 +37,7 @@ import kotlin.metadata.*
 import kotlin.metadata.jvm.JvmMethodSignature
 import kotlin.metadata.jvm.KotlinClassMetadata
 import kotlin.metadata.jvm.getterSignature
+import kotlin.metadata.jvm.moduleName
 import kotlin.metadata.jvm.setterSignature
 import kotlin.metadata.jvm.signature
 import kotlin.metadata.jvm.syntheticMethodForAnnotations
@@ -61,8 +62,22 @@ internal data class IndexedExtension(
     val source: String,  // the package, or the object, to import it from
     val isObjectMember: Boolean,  // whether the source is an object
     val deprecation: Deprecation? = null,  // never a hidden one, as the hidden extensions are not indexed
-    override val receiverBounds: Set<String> = emptySet()
-) : ReceiverBounded
+    override val receiverBounds: Set<String> = emptySet(),
+    override val moduleName: String? = null
+) : ReceiverBounded, ModuleBound
+
+/**
+ * An indexed extension declared in a Kotlin module.
+ */
+internal sealed interface ModuleBound {
+
+    /**
+     * The name of the Kotlin module declaring it, like `kotlin-stdlib`, read from its metadata when indexed,
+     * kept also when its library is merged into another jar, like a shadow jar, or `null` if not told.
+     */
+    val moduleName: String?
+
+}
 
 /**
  * An indexed extension listed only for the classes which are subtypes of all its [receiverBounds].
@@ -87,8 +102,9 @@ internal data class IndexedExtensionProperty(
     val setterVisibility: Visibility?,  // when its setter can be called, see apiSetterVisibility
     // never a hidden one, as the hidden extensions are not indexed, but maybe hiding the getter, see Deprecation.hidesGetter
     val deprecation: Deprecation? = null,
-    override val receiverBounds: Set<String> = emptySet()
-) : ReceiverBounded
+    override val receiverBounds: Set<String> = emptySet(),
+    override val moduleName: String? = null
+) : ReceiverBounded, ModuleBound
 
 /**
  * A Kotlin class found on the classpath, by its metadata name, like `com/example/Outer.Nested`,
@@ -359,10 +375,14 @@ internal class DefaultKotlinIntrospector(
 
         private const val DEFAULT_COMPANION_NAME = "Companion"
 
-        private const val UNIT_BINARY_NAME = "kotlin.Unit"
-
-        // the file facade of the extensions of KClass in kotlin.reflect.full, like KClass.memberFunctions
-        private const val KOTLIN_REFLECT_KCLASSES_BINARY_NAME = "kotlin.reflect.full.KClasses"
+        /**
+         * The Kotlin modules whose extensions are shown with the built-in types, see [isBuiltinExtension]:
+         * the standard library, with `kotlin-stdlib-jdk7` and `kotlin-stdlib-jdk8`,
+         * separate jars before Kotlin 1.8, merged into it since, still declaring their modules, and kotlin-reflect.
+         */
+        private val BUILTIN_EXTENSION_MODULES = setOf(
+            "kotlin-stdlib", "kotlin-stdlib-jdk7", "kotlin-stdlib-jdk8", "kotlin-reflection"
+        )
 
         private const val ENUM_CLASS_NAME = "kotlin/Enum"
 
@@ -1376,7 +1396,7 @@ internal class DefaultKotlinIntrospector(
      * The extensions listed for the [kmClass], named [className], on the class and on its supertypes.
      *
      * For a built-in type, or its companion object, when [isBuiltin],
-     * only the ones of the public `kotlin.*` packages, see [isPublicKotlinPackageSource],
+     * only the ones of the public `kotlin.*` packages, see [isBuiltinExtension],
      * on the class and on all its supertypes, except `Any`, also the ones from the `kotlin.*` packages,
      * whose extensions are, after all, the ones of the standard library.
      * For any other class, all of them, on the class and its [userSupertypes], see [extensionReceiverNames],
@@ -1399,8 +1419,8 @@ internal class DefaultKotlinIntrospector(
         val receiverNames = listOf(className) + supertypeNames + companionReceiverNames(kmClass, className)
         val satisfiedBounds = lazyOf(supertypeNames + className)
         return ListedExtensions(
-            extensionIndex.listedFor(receiverNames, satisfiedBounds).filter { isPublicKotlinPackageSource(it.sourceClass) },
-            extensionPropertyIndex.listedFor(receiverNames, satisfiedBounds).filter { isPublicKotlinPackageSource(it.sourceClass) }
+            extensionIndex.listedFor(receiverNames, satisfiedBounds).filter { isBuiltinExtension(it.sourceClass, it) },
+            extensionPropertyIndex.listedFor(receiverNames, satisfiedBounds).filter { isBuiltinExtension(it.sourceClass, it) }
         )
     }
 
@@ -1408,7 +1428,8 @@ internal class DefaultKotlinIntrospector(
      * The receiver name of the extensions on the companion object of the [kmClass], named [className],
      * like `fun Foo.Companion.parse()`, called on the name of the class, like `Foo.parse()`.
      * The companion object is not loaded to tell whether it is part of the API, as an indexed extension is public,
-     * and so is then its receiver, unless it is deprecated as hidden, which is not told apart.
+     * and the compiler does not let a public extension expose a receiver which is not, like a private companion object,
+     * while one deprecated as hidden is not told apart.
      * The ones on the supertypes of the companion object are not listed, not to flood the listing of the class.
      */
     private fun companionReceiverNames(kmClass: KmClass, className: String): List<String> =
@@ -1518,7 +1539,7 @@ internal class DefaultKotlinIntrospector(
             val binaryName = foundClass.binaryName
             val packageName = foundClass.kotlinPackageName
             val source = packageSourceOf(binaryName, packageName)
-            val contextPackage = packageName.ifEmpty { binaryName.substringBeforeLast('.', "") }
+            val contextPackage = kotlinPackageOf(binaryName, packageName)
             format(kmPackage, foundClass, contextPackage).map { ListingItem.Extension(source, it) }
         }
         val properties = signatures { kmPackage, foundClass, contextPackage ->
@@ -1688,39 +1709,19 @@ internal class DefaultKotlinIntrospector(
     }
 
     /**
-     * Whether the extensions declared in the [sourceClass] are shown with the built-in types:
+     * Whether an [extension] declared in the [sourceClass] is shown with the built-in types:
      * only the ones of the public `kotlin.*` packages, not the ones of the internal packages, like `kotlin.jvm.internal`,
-     * and only the ones of the standard library, or of kotlin-reflect, see [kotlinLibraryRoots],
+     * and only the ones of the modules of the standard library, or of kotlin-reflect, see [BUILTIN_EXTENSION_MODULES],
      * whose extensions, like `KClass.memberFunctions` of `kotlin.reflect.full`,
      * can be called by the user code depending on it, even if some of them, like `KClass.cast()`,
      * have the same signature as the ones of the standard library, imported from another package,
      * but not the ones of the other libraries declaring `kotlin.*` packages, like kotlin-test, kotlin-scripting,
-     * or kotlin-metadata-jvm, whose `String.isLocalClassName()` would read like a member of `String`.
-     * When the roots of these libraries cannot be told, the extensions of all the public `kotlin.*` packages are shown.
+     * or kotlin-metadata-jvm, whose `String.isLocalClassName()` would read like a member of `String`,
+     * told apart by the Kotlin module declaring them, also when merged into one jar, like a shadow jar.
      */
-    private fun isPublicKotlinPackageSource(sourceClass: String): Boolean {
-        if (!sourceClass.startsWith("kotlin.") || sourceClass.split('.').contains("internal")) return false
-        val roots = kotlinLibraryRoots
-        if (roots.isEmpty()) return true
-        return kotlinLibrarySources.computeIfAbsent(sourceClass) { classLoader.classFileRoot(it) in roots }
-    }
-
-    /**
-     * The roots of the class path serving the standard library, and kotlin-reflect, if present,
-     * told by the class files of `kotlin.Unit`, and of `kotlin.reflect.full.KClasses`, see [classFileRoot],
-     * or none, if the standard library cannot be found, like when the class files are not served as resources.
-     * A fat jar merging the libraries is a single root, whose `kotlin.*` packages then all count as the standard library.
-     */
-    private val kotlinLibraryRoots: Set<String> by lazy {
-        val stdlibRoot = classLoader.classFileRoot(UNIT_BINARY_NAME) ?: return@lazy emptySet()
-        setOfNotNull(stdlibRoot, classLoader.classFileRoot(KOTLIN_REFLECT_KCLASSES_BINARY_NAME))
-    }
-
-    /**
-     * Whether the class of the extensions of a `kotlin.*` package, by its JVM binary name,
-     * comes from one of the [kotlinLibraryRoots], bounded by the number of such classes indexed.
-     */
-    private val kotlinLibrarySources = ConcurrentHashMap<String, Boolean>()
+    private fun isBuiltinExtension(sourceClass: String, extension: ModuleBound): Boolean =
+        sourceClass.startsWith("kotlin.") && !sourceClass.split('.').contains("internal") &&
+            extension.moduleName in BUILTIN_EXTENSION_MODULES
 
     /**
      * The `@JvmInline` annotation, which a value class with a single underlying property requires on the JVM.
@@ -3186,10 +3187,10 @@ internal class DefaultKotlinIntrospector(
                         binaryName = className,
                         scope = classScope(kmClass, isUsableClass(kmClass, classFile), classFile),
                         extensions = if (isObject) {
-                            apiExtensions(kmClass.functions, classFile, className, source, isObjectMember = true)
+                            apiExtensions(kmClass.functions, classFile, className, source, isObjectMember = true, kmClass.moduleName)
                         } else emptyList(),
                         extensionProperties = if (isObject) {
-                            apiExtensionProperties(kmClass.properties, classFile, className, source, isObjectMember = true)
+                            apiExtensionProperties(kmClass.properties, classFile, className, source, isObjectMember = true, kmClass.moduleName)
                         } else emptyList()
                     )
                 }
@@ -3203,8 +3204,8 @@ internal class DefaultKotlinIntrospector(
             }
             val source = packageSourceOf(className, classFile.metadata?.packageName.orEmpty())
             indexExtensions(
-                apiExtensions(kmPackage.functions, classFile, className, source, isObjectMember = false),
-                apiExtensionProperties(kmPackage.properties, classFile, className, source, isObjectMember = false),
+                apiExtensions(kmPackage.functions, classFile, className, source, isObjectMember = false, kmPackage.moduleName),
+                apiExtensionProperties(kmPackage.properties, classFile, className, source, isObjectMember = false, kmPackage.moduleName),
                 funcIndex,
                 propIndex
             )
@@ -3304,18 +3305,20 @@ internal class DefaultKotlinIntrospector(
         classFile: ClassFile,
         className: String,
         source: String,
-        isObjectMember: Boolean
+        isObjectMember: Boolean,
+        moduleName: String?
     ): List<IndexedExtension> = functions
         .filter { it.receiverParameterType != null }
         .inApi(TopLevel, classFile)
-        .map { IndexedExtension(it, className, source, isObjectMember, classFile.deprecation(it)) }
+        .map { IndexedExtension(it, className, source, isObjectMember, classFile.deprecation(it), moduleName = moduleName) }
 
     private fun apiExtensionProperties(
         properties: List<KmProperty>,
         classFile: ClassFile,
         className: String,
         source: String,
-        isObjectMember: Boolean
+        isObjectMember: Boolean,
+        moduleName: String?
     ): List<IndexedExtensionProperty> = properties
         .filter { it.receiverParameterType != null }
         .inApi(TopLevel, classFile)
@@ -3323,7 +3326,8 @@ internal class DefaultKotlinIntrospector(
             IndexedExtensionProperty(
                 it, className, source, isObjectMember,
                 setterVisibility = it.apiSetterVisibility(TopLevel, classFile),
-                deprecation = classFile.deprecation(it)
+                deprecation = classFile.deprecation(it),
+                moduleName = moduleName
             )
         }
 
@@ -4113,7 +4117,14 @@ private const val TYPE_PARAMETER_RECEIVER_KEY = "[type parameter]"
  * or else its JVM package, or the facade class name for the default package, which has no name.
  */
 private fun packageSourceOf(binaryName: String, packageName: String): String =
-    packageName.ifEmpty { binaryName.substringBeforeLast('.') }
+    kotlinPackageOf(binaryName, packageName).ifEmpty { binaryName }
+
+/**
+ * The Kotlin package of the file facade class named [binaryName], the [packageName] of its metadata,
+ * when it differs from the JVM package, see [packageSourceOf], or else its JVM package, empty for the default package.
+ */
+private fun kotlinPackageOf(binaryName: String, packageName: String): String =
+    packageName.ifEmpty { binaryName.substringBeforeLast('.', "") }
 
 private const val ANY_RECEIVER_KEY = "kotlin.Any"
 

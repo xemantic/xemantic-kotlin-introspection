@@ -120,11 +120,13 @@ com.example.AnnotationTestClass
   like `fun String?.orEmpty()`, callable also on `null`, or `fun Iterable<Int>.sum()`.
   Only the extensions of the public `kotlin.*` packages of the standard library, and of `kotlin-reflect`,
   like `KClass.memberFunctions`, are listed for the built-in types,
-  told by the jar their classes come from, not the ones of the other libraries declaring `kotlin.*` packages,
+  told by the Kotlin module declaring them, also when merged into one jar, like a shadow jar,
+  not the ones of the other libraries declaring `kotlin.*` packages,
   like `kotlin-metadata-jvm`, `kotlin-test`, or `kotlin-scripting`.
   When the `.kotlin_builtins` resources cannot be read, like when the standard library is a named module,
   whose resources are encapsulated, a warning is logged, and the built-in types are described by `kotlin-reflect` instead,
-  approximately, from their JVM types, without their companion objects, and without the mutable collection types,
+  approximately, from their JVM types, without their companion objects, nor their extensions, like `String.Companion.format()`,
+  and without the mutable collection types,
   which `kotlin-reflect` cannot tell apart from their read-only counterparts.
 * The function types are resolved by their Kotlin names, like `kotlin.Function1` of `(P1) -> R`,
   or `kotlin.coroutines.SuspendFunction0` of `suspend () -> R`, listing the extensions on the function types,

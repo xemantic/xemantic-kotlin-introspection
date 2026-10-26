@@ -1044,6 +1044,10 @@ class KotlinIntrospectorTest {
     fun `should not resolve class nested in companion object through outer class name`() {
         // Kotlin does not resolve CompanionNestedClassesHolder.Builder, only CompanionNestedClassesHolder.Companion.Builder
         assert(resolver.resolve("com.xemantic.kotlin.introspection.test.CompanionNestedClassesHolder.Builder") == null)
+    }
+
+    @Test
+    fun `should resolve class nested in companion object through companion object name`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.CompanionNestedClassesHolder.Companion.Factory"
         ) sameAsKotlin """

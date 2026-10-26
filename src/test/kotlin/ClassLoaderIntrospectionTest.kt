@@ -2178,4 +2178,60 @@ class ClassLoaderIntrospectionTest {
         """.trimIndent()
     }
 
+    @Test
+    fun `should list extensions of standard library with built-in type when class loader fails to look up their class file`() {
+        // given
+        // a failure, maybe transient, of a class loader looking up a resource, does not tell where the extensions come from
+        val classLoader = object : ClassLoader(javaClass.classLoader) {
+            override fun getResource(name: String): java.net.URL? =
+                if (name == "kotlin/text/StringsKt__IndentKt.class") throw IllegalStateException("closed: $name")
+                else super.getResource(name)
+        }
+        val introspector = KotlinIntrospector(classLoader)
+
+        // when
+        val signature = introspector.resolve("kotlin.String.trimIndent")
+
+        // then
+        signature sameAs """
+            // kotlin.String.trimIndent [page 1/1]
+            // from kotlin.text
+            fun String.trimIndent(): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not list extensions of other library with built-in type when merged with standard library in one jar`() {
+        // given
+        // like a shadow jar, merging kotlin-metadata-jvm, which declares fun ClassName.isLocalClassName() on a String,
+        // with the standard library, told apart by the Kotlin modules their classes belong to
+        val shadowJar = tempDir.resolve("shadow.jar")
+        val libraries = listOf(Unit::class.java, Class.forName("kotlin.metadata.jvm.JvmExtensionsKt")).map {
+            File(it.protectionDomain.codeSource.location.toURI())
+        }
+        JarOutputStream(shadowJar.outputStream()).use { out ->
+            val written = HashSet<String>()
+            libraries.forEach { library ->
+                java.util.jar.JarFile(library).use { jar ->
+                    jar.entries().asSequence()
+                        .filter { !it.isDirectory && !it.name.startsWith("META-INF/versions/") && written.add(it.name) }
+                        .forEach { entry ->
+                            out.putNextEntry(JarEntry(entry.name))
+                            jar.getInputStream(entry).use { it.copyTo(out) }
+                            out.closeEntry()
+                        }
+                }
+            }
+        }
+        val classLoader = URLClassLoader(arrayOf(shadowJar.toUri().toURL()), ClassLoader.getPlatformClassLoader())
+        val introspector = KotlinIntrospector(classLoader)
+
+        // when
+        val signatures = listOf("kotlin.String.isLocalClassName", "kotlin.String.trimIndent").map { introspector.resolve(it) }
+
+        // then
+        assert(signatures[0] == null)
+        assert(signatures[1]?.contains("fun String.trimIndent(): String") == true)
+    }
+
 }

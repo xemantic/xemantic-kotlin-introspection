@@ -43,18 +43,6 @@ internal fun ClassLoader.hasClassFile(binaryName: String): Boolean = try {
     false
 }
 
-/**
- * The root of the class path serving the class file of the class of this JVM [binaryName],
- * like `jar:file:/libs/kotlin-stdlib.jar!/`, the URL of its class file without the path of the class file,
- * telling the library the class comes from, or `null` if there is no such class file.
- */
-internal fun ClassLoader.classFileRoot(binaryName: String): String? = try {
-    val resource = classFileResource(binaryName)
-    getResource(resource)?.toString()?.takeIf { it.endsWith(resource) }?.removeSuffix(resource)
-} catch (_: Exception) {
-    null
-}
-
 private fun classFileResource(binaryName: String): String = binaryName.replace('.', '/') + ".class"
 
 /**
