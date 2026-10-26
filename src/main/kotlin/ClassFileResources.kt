@@ -54,3 +54,16 @@ internal fun binaryNameOf(metadataName: String): String {
     val simpleName = metadataName.substringAfterLast('/').replace('.', '$')
     return if (packageName.isEmpty()) simpleName else "${packageName.replace('/', '.')}.$simpleName"
 }
+
+/**
+ * The metadata name, like `com/example/Outer.Nested`, of a class found by its JVM [binaryName],
+ * in the package of the binary name, which is the [metadataName] the Kotlin metadata tells,
+ * unless the class is relocated, like by shading, rewriting the binary names, but not the Kotlin metadata,
+ * like `shaded/com/example/Outer.Nested` of `shaded.com.example.Outer${'$'}Nested`,
+ * so that the classes enclosing it are found by their relocated binary names too, see [binaryNameOf].
+ */
+internal fun locatedNameOf(binaryName: String, metadataName: String): String {
+    val packageName = binaryName.substringBeforeLast('.', "")
+    val simpleName = metadataName.substringAfterLast('/')
+    return if (packageName.isEmpty()) simpleName else "${packageName.replace('.', '/')}/$simpleName"
+}

@@ -22,3 +22,8 @@ package com.xemantic.kotlin.introspection.isolated
 class IsolatedTestClass(val value: Int)
 
 fun IsolatedTestClass.isolatedExtension(): Int = value
+
+// tests relocate it, like shading, so that its outer class is found only by its relocated binary name
+internal class RelocatedInternalOuter {
+    class PublicNested
+}

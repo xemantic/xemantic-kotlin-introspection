@@ -164,6 +164,65 @@ class ClassLoaderIntrospectionTest {
     }
 
     /**
+     * A copy of the isolated test fixture class files named [fileNames], in the [root] directory,
+     * relocated to the `shaded` package, like by shading, which does not rewrite their Kotlin metadata.
+     */
+    private fun relocatedCopy(root: Path, vararg fileNames: String) {
+        fileNames.forEach { fileName ->
+            val original = isolatedTestFixtures
+                .map { it.resolve("com/xemantic/kotlin/introspection/isolated/$fileName") }
+                .single { it.exists() }
+            val relocatedName = "shaded/com/xemantic/kotlin/introspection/isolated/${fileName.removeSuffix(".class")}"
+            val relocated = root.resolve("$relocatedName.class")
+            relocated.parent.createDirectories()
+            relocated.writeBytes(withClassName(original.readBytes(), relocatedName))
+        }
+    }
+
+    @Test
+    fun `should find both class relocated without its metadata and the original one`() {
+        // given
+        // the relocated copy is scanned first
+        val shadedRoot = tempDir.resolve("shadedFirst")
+        relocatedCopy(shadedRoot, "IsolatedTestClass.class")
+        val root = isolatedTestFixturesCopy("original")
+        val introspector = KotlinIntrospector(
+            URLClassLoader(arrayOf(shadedRoot.toUri().toURL(), root.toUri().toURL()), javaClass.classLoader)
+        )
+
+        // when
+        val searchResult = introspector.search("IsolatedTestClass")
+
+        // then
+        searchResult sameAs """
+            // search results for "IsolatedTestClass" [page 1/1]
+            com.xemantic.kotlin.introspection.isolated.IsolatedTestClass
+            shaded.com.xemantic.kotlin.introspection.isolated.IsolatedTestClass
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should neither resolve nor find class relocated without its metadata nested in internal class`() {
+        // given
+        val root = isolatedTestFixturesCopy(
+            "relocatedNested",
+            "RelocatedInternalOuter.class",
+            "RelocatedInternalOuter\$PublicNested.class"
+        )
+        relocatedCopy(root, "RelocatedInternalOuter.class", "RelocatedInternalOuter\$PublicNested.class")
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("shaded.com.xemantic.kotlin.introspection.isolated.RelocatedInternalOuter.PublicNested")
+        val searchResult = introspector.search("PublicNested")
+
+        // then
+        // the outer class is found by its relocated binary name, telling it is internal
+        assert(signature == null)
+        assert(searchResult?.contains("RelocatedInternalOuter") != true)
+    }
+
+    /**
      * The class bytes with the class renamed to the [internalName], like `com/example/Foo`,
      * referring to the other classes as they are.
      */

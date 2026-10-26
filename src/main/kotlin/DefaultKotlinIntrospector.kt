@@ -101,7 +101,12 @@ internal class IndexedClass(
     val scope: ClassScope,
     val extensions: List<IndexedExtension>,
     val extensionProperties: List<IndexedExtensionProperty>
-)
+) {
+    /**
+     * The metadata name in the package of the binary name, see [locatedNameOf], by which the classes are indexed.
+     */
+    val locatedName: String get() = locatedNameOf(binaryName, name)
+}
 
 // the visibilities of the constructors which do not make a class subclassable, see classScope
 private val PRIVATE_VISIBILITIES = setOf(Visibility.PRIVATE, Visibility.PRIVATE_TO_THIS, Visibility.LOCAL)
@@ -470,9 +475,11 @@ internal class DefaultKotlinIntrospector(
                     val kmClass = metadata.kmClass
                     // neither a class which is not part of the API, nor anything declared within it, is resolved,
                     // while its name might still be a member of the outer class, like an extension property,
-                    // the class told by its own scope, as its binary name might not be the one of its metadata name,
-                    // like when relocated by shading
-                    val apiClass = foundClass.scope?.let { apiClasses.apiClass(kmClass.name, it) } ?: continue
+                    // the class told by its own scope, and the enclosing ones by its binary name, see locatedNameOf,
+                    // as it might not be the one of its metadata name, like when relocated by shading
+                    val apiClass = foundClass.scope?.let {
+                        apiClasses.apiClass(locatedNameOf(foundClass.binaryName, kmClass.name), it)
+                    } ?: continue
                     if (memberName != null) {
                         resolveMember(kmClass, apiClass, className, foundClass, memberName)
                     } else {
@@ -3358,7 +3365,7 @@ internal class DefaultKotlinIntrospector(
             isAbsent = { name -> !scanner.isScanned(binaryNameOf(name)) && !classLoader.hasClassFile(binaryNameOf(name)) }
         )
         val classesOfApi = classes.values.mapNotNull { indexedClass ->
-            apiClasses.apiClass(indexedClass.name)?.let { indexedClass to it }
+            apiClasses.apiClass(indexedClass.locatedName)?.let { indexedClass to it }
         }
 
         // the member extensions of public objects, which can be imported like the top-level ones,
@@ -3377,9 +3384,8 @@ internal class DefaultKotlinIntrospector(
             .filter { !it.scope.isCompanion }
             .forEach { indexedClass ->
                 // the Kotlin name, like com.example.Outer.Nested, which can be resolved, in the package of its binary name,
-                // which might not be the one of its metadata name, like when relocated by shading
-                val packagePrefix = indexedClass.binaryName.substringBeforeLast('.', "").let { if (it.isEmpty()) "" else "$it." }
-                val kotlinName = packagePrefix + indexedClass.name.substringAfterLast('/')
+                // which might not be the one of its metadata name, like when relocated by shading, see locatedNameOf
+                val kotlinName = indexedClass.locatedName.replace('/', '.')
                 val simpleName = kotlinName.substringAfterLast('.').lowercase()
                 clsIndex.getOrPut(simpleName) { mutableListOf() }.add(kotlinName)
             }
@@ -3527,7 +3533,8 @@ internal class DefaultKotlinIntrospector(
                 // the member extensions of classes can be called only in the scope of their dispatch receiver,
                 // while the ones of objects can be imported, which is decided once all the enclosing classes are known
                 val isObject = kmClass.kind == ClassKind.OBJECT || kmClass.kind == ClassKind.COMPANION_OBJECT
-                classes.getOrPut(kmClass.name) {
+                // by the located name, so that a class relocated by shading is indexed next to the original one
+                classes.getOrPut(locatedNameOf(className, kmClass.name)) {
                     val source = kmClass.name.replace('/', '.')
                     IndexedClass(
                         name = kmClass.name,
