@@ -109,12 +109,23 @@ com.example.AnnotationTestClass
   The ones with Kotlin metadata of their own, like `kotlin.UInt`, are rendered from it.
   `kotlin-reflect` only tells the deprecations of their members, which the `.kotlin_builtins` metadata does not carry,
   and the members of their JVM types only, like `String.chars()`,
-  listed when the names of their parameters are known, which the JDK is compiled without.
+  whose parameters are named after their positions, like `Throwable.printStackTrace(arg0: java.io.PrintStream?)`,
+  as the JDK is compiled without their names, which Kotlin does not let a call to a Java method name anyway,
+  and whose parameters of the platform types of Java, like `Throwable!`, accepting `null`, are nullable,
+  like `Throwable.initCause(arg0: Throwable?): Throwable`,
+  but the JDK members newer than the ones mapped to the built-in type, like `String.indent(Int)` or `String.strip()`,
+  which the compiler does not call, and kotlin-reflect tells deprecated as "not fully supported by Kotlin compiler".
+  An extension hiding a member of the same signature, like `Throwable.addSuppressed(exception: Throwable)`,
+  annotated with `@kotlin.internal.HidesMembers` in the standard library, is listed in place of that member.
   The body of a built-in type also lists the extensions of the standard library reading like its members,
   without their receivers, like `fun fill(value: E)` of `fun <T> MutableList<T>.fill(value: T)` in `interface MutableList<E>`,
   sorted by name together with its members, while the other ones are listed after it, with their receivers,
-  like `fun String?.orEmpty()`, callable also on `null`, or `fun Iterable<Int>.sum()`.
-  Only the extensions of the public `kotlin.*` packages are listed for the built-in types.
+  like `fun String?.orEmpty()`, callable also on `null`, or `fun Iterable<Int>.sum()`,
+  or the ones on a projected receiver whose parameters would read narrower in the body than they are,
+  like `fun <T> MutableCollection<in T>.plusAssign(elements: Array<T>)`, taking an array of any subtype of `E`,
+  unlike `plusAssign(elements: Iterable<E>)`, read the same in the body of `interface MutableCollection<E>`.
+  Only the extensions of the public `kotlin.*` packages are listed for the built-in types,
+  but the ones of any library on their companion objects, like `fun Int.Companion.serializer()` of kotlinx.serialization.
   When the `.kotlin_builtins` resources cannot be read, like when the standard library is a named module,
   whose resources are encapsulated, a warning is logged, and the built-in types are described by `kotlin-reflect` instead,
   approximately, from their JVM types, without their companion objects, and without the mutable collection types,

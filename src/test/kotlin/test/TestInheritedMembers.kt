@@ -144,3 +144,34 @@ sealed interface SealedAnyInheriting {
 }
 
 class SealedAnyInheritingImpl : SealedAnyInheriting
+
+// Overrides of JVM-only members of built-in types, taking platform types, like PrintStream! and Consumer<in T!>!
+class InheritedJvmOverridingException : Exception() {
+    override fun printStackTrace(s: java.io.PrintStream) {}
+    override fun initCause(cause: Throwable?): Throwable = this
+}
+
+class InheritedJvmException : Exception()
+
+class InheritedJvmOverridingIterable : Iterable<String> {
+    override fun iterator(): Iterator<String> = emptyList<String>().iterator()
+    override fun forEach(action: java.util.function.Consumer<in String>) {}
+}
+
+abstract class InheritedJvmOverridingList : java.util.AbstractList<String>() {
+    override fun forEach(action: java.util.function.Consumer<in String>?) {}
+}
+
+// The same overrides declared by an intermediate class
+open class InheritedJvmOverridingBaseException : Exception() {
+    override fun printStackTrace(s: java.io.PrintStream) {}
+}
+
+class InheritedJvmOverridingLeafException : InheritedJvmOverridingBaseException()
+
+open class InheritedJvmOverridingBaseIterable : Iterable<String> {
+    override fun iterator(): Iterator<String> = emptyList<String>().iterator()
+    override fun forEach(action: java.util.function.Consumer<in String>) {}
+}
+
+class InheritedJvmOverridingLeafIterable : InheritedJvmOverridingBaseIterable()

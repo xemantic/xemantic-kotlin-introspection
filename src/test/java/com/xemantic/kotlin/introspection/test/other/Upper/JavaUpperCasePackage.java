@@ -1,0 +1,30 @@
+/*
+ * xemantic-kotlin-introspection - Kotlin API introspection of the classpath, rendering LLM-friendly signatures
+ * Copyright (C) 2026  Kazimierz Pogoda / Xemantic
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+package com.xemantic.kotlin.introspection.test.other.Upper;
+
+/**
+ * A Java class in a package with a segment starting with an uppercase letter, against the naming conventions,
+ * so that its fully qualified name alone does not tell where the package ends.
+ */
+public class JavaUpperCasePackage {
+
+    public static class Nested {
+    }
+
+}

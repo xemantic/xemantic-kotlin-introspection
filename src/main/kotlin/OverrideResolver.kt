@@ -210,7 +210,8 @@ internal class OverrideResolver(
         val isJava: Boolean,
         val visibility: MemberVisibility = MemberVisibility.Visible,
         val declaresDefaultValues: Set<Int> = emptySet(),
-        val key: String? = null
+        val key: String? = null,
+        val javaKey: String? = null
     )
 
     /**
@@ -415,6 +416,23 @@ internal class OverrideResolver(
             it.matches(signature, onlyKnownTypes = true)
         }
         return matchingKnownTypes.ifEmpty { overridden }.mapTo(HashSet()) { it.key!! }
+    }
+
+    /**
+     * The keys, see [javaMemberKey], of the methods of the Java supertypes of the [owner], also of the JVM types
+     * of the built-in types, like `java.lang.Throwable#printStackTrace(Ljava/io/PrintStream;)V`,
+     * which its [function] overrides, or would override, if it is not declared as an override,
+     * matched like the Java members are, see [typesMatch], regardless of the nullability of a platform type,
+     * which an override declares either way, like `PrintStream` or `PrintStream?` of `PrintStream!`,
+     * and with the type arguments of the supertypes substituted, like `Consumer<in String>` of `Consumer<? super T>`
+     * of `java.lang.Iterable<T>`, implemented as `Iterable<String>`.
+     */
+    fun overriddenJavaMembers(owner: KmClass, function: KmFunction): Set<String> {
+        val overridables = overridables(owner)
+        val candidates = overridables.functions[function.name] ?: return emptySet()
+        val signature = overridables.signature(function)
+        return candidates.filter { it.javaKey != null && it.matches(signature) && overridables.isVisible(it) }
+            .mapTo(HashSet()) { it.javaKey!! }
     }
 
     /**
@@ -1171,19 +1189,20 @@ internal class OverrideResolver(
                         javaClass.packageName == ownerPackage)
             }
         // a generic type, like a wildcard or a type variable bound, might refer to a class missing from the classpath
-        return reflectOrNull { overridables.map { method -> method.name to javaOverridable(method, substitution) } }
+        return reflectOrNull { overridables.map { method -> method.name to javaOverridable(javaClass, method, substitution) } }
             ?: asmMethods(javaClass, ownerPackage, substitution)
     }
 
     /**
      * The generic types are resolved lazily, so this might throw when they refer to a class missing from the classpath.
      */
-    private fun javaOverridable(method: Method, substitution: JavaSubstitution): Overridable =
+    private fun javaOverridable(javaClass: Class<*>, method: Method, substitution: JavaSubstitution): Overridable =
         Overridable(
             receiver = null,
             parameters = method.genericParameterTypes.map { javaType(it, substitution, method) },
             typeParameterCount = method.typeParameters.size,
-            isJava = true
+            isJava = true,
+            javaKey = javaMemberKey(javaClass.name, method.name, AsmType.getMethodDescriptor(method))
         )
 
     private fun javaSupertypes(javaClass: Class<*>, substitution: JavaSubstitution): List<ClassType> {
@@ -1297,18 +1316,21 @@ internal class OverrideResolver(
         val bytes = readClassBytesByMetadataName(kotlinClassName(javaClass)) ?: return emptyList()
         // the methods of a class file which cannot be parsed are unknown
         val methods = readMethods(bytes) ?: return emptyList()
-        return asmMethods(methods, javaClass.packageName, ownerPackage, substitution)
+        return asmMethods(methods, javaClass.packageName, ownerPackage, substitution, className = javaClass.name)
     }
 
     /**
      * The overridable [methods] of a Java class of the [packageName], read from its class file,
      * matched by the erasure of the parameter types.
+     *
+     * @param className the binary name of the Java class, telling the keys of its methods, see [javaMemberKey].
      */
     private fun asmMethods(
         methods: List<DeclaredMethod>,
         packageName: String,
         ownerPackage: String,
-        substitution: JavaSubstitution
+        substitution: JavaSubstitution,
+        className: String? = null
     ): List<Pair<String, Overridable>> {
         return methods.mapNotNull { method ->
             val access = method.access
@@ -1330,7 +1352,8 @@ internal class OverrideResolver(
                 receiver = null,
                 parameters = parameters,
                 typeParameterCount = generic?.typeParameters?.size ?: 0,
-                isJava = true
+                isJava = true,
+                javaKey = className?.let { javaMemberKey(it, method.name, method.descriptor) }
             )
         }
     }
@@ -1847,6 +1870,12 @@ internal fun kotlinClassName(javaClass: Class<*>): String =
  */
 internal fun kotlinClassName(packageName: String, name: String): String =
     if (packageName.isEmpty()) name else "${packageName.replace('.', '/')}/$name"
+
+/**
+ * The key of a method of a Java class of the binary [className], named [name], of the JVM [descriptor],
+ * like `java.lang.Throwable#printStackTrace(Ljava/io/PrintStream;)V`, see [OverrideResolver.overriddenJavaMembers].
+ */
+internal fun javaMemberKey(className: String, name: String, descriptor: String): String = "$className#$name$descriptor"
 
 /**
  * The key of a [function] of the [owner] class, like `kotlin/collections/List#context() fun get(kotlin/Int)`,

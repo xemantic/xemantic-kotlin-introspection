@@ -46,7 +46,7 @@ class KotlinIntrospectorTest {
         resolver.resolve(
             "kotlin.String"
         ) sameAsKotlin """
-            // kotlin.String [page 1/42]
+            // kotlin.String [page 1/41]
             class String : Comparable<String>, CharSequence {
                 inline fun byteInputStream(charset: java.nio.charset.Charset = …): java.io.ByteArrayInputStream
                 @Deprecated("Use replaceFirstChar instead.", ReplaceWith("replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }")) fun capitalize(): String
@@ -69,18 +69,18 @@ class KotlinIntrospectorTest {
             "kotlin.String",
             page = 2
         ) sameAsKotlin """
-            // kotlin.String [page 2/42]
+            // kotlin.String [page 2/41]
             class String : Comparable<String>, CharSequence {
                 inline fun contentEquals(charSequence: CharSequence): Boolean
                 inline fun contentEquals(stringBuilder: java.lang.StringBuffer): Boolean
                 @Deprecated("Use replaceFirstChar instead.", ReplaceWith("replaceFirstChar { it.lowercase(Locale.getDefault()) }")) fun decapitalize(): String
                 @Deprecated("Use replaceFirstChar instead.", ReplaceWith("replaceFirstChar { it.lowercase(locale) }")) fun decapitalize(locale: java.util.Locale): String
-                @Deprecated("This member is not fully supported by Kotlin compiler, so it may be absent or have different signature in next major version") fun describeConstable(): java.util.Optional<String>
                 fun drop(n: Int): String
                 fun dropLast(n: Int): String
                 inline fun dropLastWhile(predicate: (Char) -> Boolean): String
                 inline fun dropWhile(predicate: (Char) -> Boolean): String
                 fun encodeToByteArray(): ByteArray
+                fun encodeToByteArray(startIndex: Int = …, endIndex: Int = …, throwOnInvalidSequence: Boolean = …): ByteArray
             }
         """.trimIndent()
     }
@@ -92,9 +92,8 @@ class KotlinIntrospectorTest {
             "kotlin.String",
             page = 3
         ) sameAsKotlin """
-            // kotlin.String [page 3/42]
+            // kotlin.String [page 3/41]
             class String : Comparable<String>, CharSequence {
-                fun encodeToByteArray(startIndex: Int = …, endIndex: Int = …, throwOnInvalidSequence: Boolean = …): ByteArray
                 fun endsWith(suffix: String, ignoreCase: Boolean = …): Boolean
                 override operator fun equals(other: Any?): Boolean
                 inline fun filter(predicate: (Char) -> Boolean): String
@@ -104,19 +103,24 @@ class KotlinIntrospectorTest {
                 inline fun format(locale: java.util.Locale?, vararg args: Any?): String
                 override operator fun get(index: Int): Char
                 fun hexToByte(format: HexFormat = …): Byte
+                fun hexToByteArray(format: HexFormat = …): ByteArray
             }
         """.trimIndent()
     }
 
     @Test
-    fun `should resolve String as known stdlib class - page 18 (transition page with members and extensions)`() {
-        // page 18 shows the last class members, the companion object, and the first extensions
+    fun `should resolve String as known stdlib class - page 17 (the last page of the class body)`() {
+        // page 17 shows the last class members and the companion object, the extensions start on the next page
         resolver.resolve(
             "kotlin.String",
-            page = 18
+            page = 17
         ) sameAsKotlin """
-            // kotlin.String [page 18/42]
+            // kotlin.String [page 17/41]
             class String : Comparable<String>, CharSequence {
+                fun trimEnd(vararg chars: Char): String
+                inline fun trimEnd(): String
+                fun trimIndent(): String
+                fun trimMargin(marginPrefix: String = …): String
                 inline fun trimStart(predicate: (Char) -> Boolean): String
                 fun trimStart(vararg chars: Char): String
                 inline fun trimStart(): String
@@ -124,24 +128,22 @@ class KotlinIntrospectorTest {
                 inline fun uppercase(locale: java.util.Locale): String
                 companion object
             }
-            // from kotlin
-            inline infix fun <T> Comparable<T>.compareTo(other: T): Int
-            // from kotlin.ranges
-            fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T): T
-            fun <T : Comparable<T>> T.coerceAtMost(maximumValue: T): T
-            fun <T : Comparable<T>> T.coerceIn(minimumValue: T?, maximumValue: T?): T
         """.trimIndent()
     }
 
     @Test
-    fun `should resolve String as known stdlib class - page 42 (the last)`() {
+    fun `should resolve String as known stdlib class - the last page`() {
         // extension-only pages omit the empty class body
         resolver.resolve(
             "kotlin.String",
-            page = 42
+            page = 41
         ) sameAsKotlin """
-            // kotlin.String [page 42/42]
+            // kotlin.String [page 41/41]
             // from kotlin.text
+            fun CharSequence.trimStart(): CharSequence
+            fun CharSequence.windowed(size: Int, step: Int = …, partialWindows: Boolean = …): List<String>
+            fun <R> CharSequence.windowed(size: Int, step: Int = …, partialWindows: Boolean = …, transform: (CharSequence) -> R): List<R>
+            fun CharSequence.windowedSequence(size: Int, step: Int = …, partialWindows: Boolean = …): Sequence<String>
             fun <R> CharSequence.windowedSequence(size: Int, step: Int = …, partialWindows: Boolean = …, transform: (CharSequence) -> R): Sequence<R>
             fun CharSequence.withIndex(): Iterable<IndexedValue<Char>>
             infix fun CharSequence.zip(other: CharSequence): List<Pair<Char, Char>>
@@ -173,7 +175,6 @@ class KotlinIntrospectorTest {
                 inline fun contentEquals(stringBuilder: java.lang.StringBuffer): Boolean
                 @Deprecated("Use replaceFirstChar instead.", ReplaceWith("replaceFirstChar { it.lowercase(Locale.getDefault()) }")) fun decapitalize(): String
                 @Deprecated("Use replaceFirstChar instead.", ReplaceWith("replaceFirstChar { it.lowercase(locale) }")) fun decapitalize(locale: java.util.Locale): String
-                @Deprecated("This member is not fully supported by Kotlin compiler, so it may be absent or have different signature in next major version") fun describeConstable(): java.util.Optional<String>
                 fun drop(n: Int): String
                 fun dropLast(n: Int): String
                 inline fun dropLastWhile(predicate: (Char) -> Boolean): String
@@ -240,10 +241,6 @@ class KotlinIntrospectorTest {
                 inline fun slice(indices: Iterable<Int>): String
                 fun startsWith(prefix: String, ignoreCase: Boolean = …): Boolean
                 fun startsWith(prefix: String, startIndex: Int, ignoreCase: Boolean = …): Boolean
-                @Deprecated("This member is not fully supported by Kotlin compiler, so it may be absent or have different signature in next major version") fun strip(): String
-                @Deprecated("This member is not fully supported by Kotlin compiler, so it may be absent or have different signature in next major version") fun stripIndent(): String
-                @Deprecated("This member is not fully supported by Kotlin compiler, so it may be absent or have different signature in next major version") fun stripLeading(): String
-                @Deprecated("This member is not fully supported by Kotlin compiler, so it may be absent or have different signature in next major version") fun stripTrailing(): String
                 override fun subSequence(startIndex: Int, endIndex: Int): CharSequence
                 inline fun substring(startIndex: Int): String
                 inline fun substring(startIndex: Int, endIndex: Int): String
@@ -320,7 +317,6 @@ class KotlinIntrospectorTest {
                 fun toUShortOrNull(radix: Int): UShort?
                 @Deprecated("Use uppercase() instead.", ReplaceWith("uppercase(Locale.getDefault())"), level = DeprecationLevel.ERROR) inline fun toUpperCase(): String
                 @Deprecated("Use uppercase() instead.", ReplaceWith("uppercase(locale)"), level = DeprecationLevel.ERROR) inline fun toUpperCase(locale: java.util.Locale): String
-                @Deprecated("This member is not fully supported by Kotlin compiler, so it may be absent or have different signature in next major version") fun translateEscapes(): String
                 inline fun trim(predicate: (Char) -> Boolean): String
                 fun trim(vararg chars: Char): String
                 inline fun trim(): String
@@ -3540,6 +3536,71 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should not resolve inherited JVM-only member of built-in type overridden with not nullable platform parameter`() {
+        // printStackTrace(s: PrintStream) overrides printStackTrace(arg0: java.io.PrintStream?), of a PrintStream!
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJvmOverridingException.printStackTrace"
+        ) should {
+            have("override fun printStackTrace(s: java.io.PrintStream)" in lines())
+            have(lines().none { "printStackTrace(arg0: java.io.PrintStream" in it })
+        }
+    }
+
+    @Test
+    fun `should not resolve inherited JVM-only member of built-in type overridden with nullable platform parameter`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJvmOverridingException.initCause"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJvmOverridingException.initCause [page 1/1]
+            override fun initCause(cause: Throwable?): Throwable
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve inherited JVM-only member of built-in type overridden with substituted type argument`() {
+        // forEach(action: Consumer<in String>) overrides forEach(arg0: java.util.function.Consumer<in T>?) of Iterable<T>
+        listOf("InheritedJvmOverridingIterable", "InheritedJvmOverridingList").forEach { name ->
+            resolver.resolve("com.xemantic.kotlin.introspection.test.$name.forEach") should {
+                have(lines().none { "forEach(arg0: " in it })
+            }
+        }
+    }
+
+    @Test
+    fun `should not resolve inherited JVM-only member of built-in type overridden by intermediate class`() {
+        // the override of the superclass wins over the JVM member of kotlin.Throwable
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJvmOverridingLeafException.printStackTrace"
+        ) should {
+            have("// inherited from com.xemantic.kotlin.introspection.test.InheritedJvmOverridingBaseException" in lines())
+            have(lines().none { "printStackTrace(arg0: java.io.PrintStream" in it })
+        }
+    }
+
+    @Test
+    fun `should not resolve inherited JVM-only member of built-in type overridden by intermediate class with substituted type argument`() {
+        // the override of the superclass wins over the JVM member of kotlin.collections.Iterable
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJvmOverridingLeafIterable.forEach"
+        ) should {
+            have("// inherited from com.xemantic.kotlin.introspection.test.InheritedJvmOverridingBaseIterable" in lines())
+            have(lines().none { "forEach(arg0: " in it })
+        }
+    }
+
+    @Test
+    fun `should resolve extension hiding inherited JVM-only member of built-in type`() {
+        // the @HidesMembers Throwable.addSuppressed is called instead of the addSuppressed of java.lang.Throwable
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJvmException.addSuppressed"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJvmException.addSuppressed [page 1/1]
+            // from kotlin
+            fun Throwable.addSuppressed(exception: Throwable)
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve inherited member before extension of the same name`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.InheritedWithExtension.extended"
@@ -5146,33 +5207,74 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should not resolve Java-only member of built-in type which its listing leaves out`() {
-        // the JDK is compiled without parameter names, so String.indent(arg0: Int) tells nothing about its parameter
-        assumeNoParameterNames(String::class.java.getMethod("indent", Int::class.java))
-        assert(resolver.resolve("kotlin.String.indent") == null)
-    }
-
-    @Test
-    fun `should resolve extension of built-in type without Java-only member of the same name`() {
-        // not with the addSuppressed(arg0: Throwable) of java.lang.Throwable, which the listing leaves out
-        assumeNoParameterNames(Throwable::class.java.getMethod("addSuppressed", Throwable::class.java))
-        resolver.resolve("kotlin.Throwable.addSuppressed") sameAsKotlin """
-            // kotlin.Throwable.addSuppressed [page 1/1]
-            // from kotlin
-            fun Throwable.addSuppressed(exception: Throwable)
+    fun `should resolve Java-only member of built-in type with synthetic parameter names`() {
+        // the JDK is compiled without parameter names, which Kotlin does not let a call to a Java method name anyway
+        assumeNoParameterNames(Throwable::class.java.getMethod("initCause", Throwable::class.java))
+        resolver.resolve("kotlin.Throwable.initCause") sameAsKotlin """
+            // kotlin.Throwable.initCause [page 1/1]
+            open fun initCause(arg0: Throwable?): Throwable
         """.trimIndent()
     }
 
     @Test
-    fun `should list no member of built-in type with synthetic parameter names`() {
+    fun `should not resolve JVM-only member of built-in type which the compiler cannot call`() {
+        // kotlin-reflect tells the JDK members newer than the ones mapped to kotlin.String, like String.indent,
+        // deprecated as "not fully supported by Kotlin compiler", which K2 does not resolve at all
+        assert(resolver.resolve("kotlin.String.indent") == null)
+        assert(resolver.resolve("kotlin.String.strip") == null)
+        assert(resolver.resolve("kotlin.CharSequence.getChars") == null)
+    }
+
+    @Test
+    fun `should list no JVM-only member of built-in type which the compiler cannot call`() {
         // when
         val listings = DefaultKotlinIntrospector.builtinTypes.keys.associateWith { type ->
             resolver.resolve(type, pageSize = 100_000).orEmpty()
         }
 
         // then
-        val synthetic = listings.filterValues { listing -> listing.lines().any { "(arg0: " in it || "(vararg arg0: " in it } }
-        assert(synthetic.keys.isEmpty())
+        val uncallable = listings.filterValues { "This member is not fully supported by Kotlin compiler" in it }
+        assert(uncallable.keys.isEmpty())
+    }
+
+    @Test
+    fun `should list Java-only members of built-in type with synthetic parameter names`() {
+        assumeNoParameterNames(Throwable::class.java.getMethod("initCause", Throwable::class.java))
+        resolver.resolve("kotlin.Throwable", pageSize = 10000) should {
+            have("    open fun initCause(arg0: Throwable?): Throwable" in lines())
+            have("    open fun printStackTrace(arg0: java.io.PrintStream?)" in lines())
+            have("    open fun printStackTrace(arg0: java.io.PrintWriter?)" in lines())
+        }
+    }
+
+    @Test
+    fun `should list Java-only member of built-in type next to extension hiding the members of another signature`() {
+        // the @HidesMembers Iterable.forEach is called for a lambda, the member forEach of java.lang.Iterable for a Consumer
+        assumeNoParameterNames(Iterable::class.java.getMethod("forEach", java.util.function.Consumer::class.java))
+        resolver.resolve("kotlin.collections.Iterable", pageSize = 10000) should {
+            have("    inline fun forEach(action: (T) -> Unit)" in lines())
+            have("    open fun forEach(arg0: java.util.function.Consumer<in T>?)" in lines())
+        }
+    }
+
+    @Test
+    fun `should list extension of built-in type hiding Java-only member of the same signature in its body`() {
+        // the @HidesMembers Throwable.addSuppressed is called instead of the member addSuppressed of java.lang.Throwable
+        assumeNoParameterNames(Throwable::class.java.getMethod("addSuppressed", Throwable::class.java))
+        resolver.resolve("kotlin.Throwable", pageSize = 10000) should {
+            have("    fun addSuppressed(exception: Throwable)" in lines())
+            have(lines().none { "addSuppressed(arg0" in it || "Throwable.addSuppressed" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve extension of built-in type hiding Java-only member of the same signature`() {
+        assumeNoParameterNames(Throwable::class.java.getMethod("addSuppressed", Throwable::class.java))
+        resolver.resolve("kotlin.Throwable.addSuppressed") sameAsKotlin """
+            // kotlin.Throwable.addSuppressed [page 1/1]
+            // from kotlin
+            fun Throwable.addSuppressed(exception: Throwable)
+        """.trimIndent()
     }
 
     @Test
@@ -5192,8 +5294,9 @@ class KotlinIntrospectorTest {
             val lines = resolver.resolve(type, pageSize = 100_000).orEmpty().lines().drop(1)
             Listing(lines.mapTo(HashSet()) { it.trim() }, lines.firstOrNull { !it.startsWith("//") }.orEmpty())
         }
-        // an inherited member of a class which cannot be subclassed is rendered without the open modifier
-        fun withoutModality(line: String) = line.removePrefix("open ")
+        // an inherited member of a class which cannot be subclassed is rendered without the open modifier,
+        // following its annotations, like the @Deprecated of a JDK member
+        fun withoutModality(line: String) = line.replaceFirst(Regex("^((?:@.*\\) )?)open "), "$1")
 
         // when
         val unlisted = memberNames.flatMap { (type, names) ->
@@ -7021,6 +7124,32 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve companion object of built-in type with the extensions of any library`() {
+        // a library extends the companion object of a built-in type deliberately, like kotlinx.serialization,
+        // unlike the built-in type itself, whose extensions of the other libraries are not listed
+        resolver.resolve("kotlin.Int.Companion", pageSize = 1000) should {
+            have("// from kotlinx.serialization.builtins" in lines())
+            have("fun Int.Companion.serializer(): kotlinx.serialization.KSerializer<Int>" in lines())
+        }
+    }
+
+    @Test
+    fun `should not resolve companion object of built-in type with the extensions of an internal package`() {
+        resolver.resolve("kotlin.Int.Companion", pageSize = 1000) should {
+            have(lines().none { "internalPackageHelper" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve extension of companion object of built-in type from any library`() {
+        resolver.resolve("kotlin.UInt.Companion.serializer") sameAsKotlin """
+            // kotlin.UInt.Companion.serializer [page 1/1]
+            // from kotlinx.serialization.builtins
+            fun UInt.Companion.serializer(): kotlinx.serialization.KSerializer<UInt>
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve member of companion object of built-in type`() {
         resolver.resolve(
             "kotlin.Int.Companion.MAX_VALUE"
@@ -7818,6 +7947,15 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should not list in body of built-in type extension shadowed by JVM member accepting null`() {
+        // printStackTrace(PrintStream) of java.lang.Throwable, taking the platform type PrintStream!, is called instead
+        resolver.resolve("kotlin.Throwable", pageSize = 10000) should {
+            have("inline fun Throwable.printStackTrace(stream: java.io.PrintStream)" in lines())
+            have("    inline fun printStackTrace(stream: java.io.PrintStream)" !in lines())
+        }
+    }
+
+    @Test
     fun `should resolve JVM-only members of open built-in class as open`() {
         resolver.resolve("kotlin.Throwable", pageSize = 10000) should {
             have("    open fun fillInStackTrace(): Throwable" in lines())
@@ -7862,6 +8000,29 @@ class KotlinIntrospectorTest {
     fun `should list extensions of built-in type with star-projected and own type arguments outside of the class body`() {
         resolver.resolve("kotlin.collections.Map", pageSize = 10000) should {
             have("inline fun <K> Map<out K, *>.containsKey(key: K): Boolean" in lines())
+        }
+    }
+
+    @Test
+    fun `should list extensions of built-in type on in-projected receiver in the class body only when accepting the same arguments`() {
+        // T of MutableCollection<in T> stands for any subtype of E, which Iterable<T> accepts as Iterable<E> does,
+        // unlike the invariant Array<T>, rendered as Array<E>, narrower than it is
+        resolver.resolve("kotlin.collections.MutableCollection", pageSize = 10000) should {
+            have("    inline operator fun plusAssign(element: E)" in lines())
+            have("    inline operator fun plusAssign(elements: Iterable<E>)" in lines())
+            have("    inline operator fun plusAssign(elements: Array<E>)" !in lines())
+            have("inline operator fun <T> MutableCollection<in T>.plusAssign(elements: Array<T>)" in lines())
+        }
+    }
+
+    @Test
+    fun `should list extensions of built-in type on out-projected receiver in the class body only when accepting the same arguments`() {
+        // K of Map<out K, V> stands for any supertype of the K of the class, which a function taking it accepts,
+        // unlike a parameter of the type K itself, rendered as K, narrower than it is
+        resolver.resolve("kotlin.collections.Map", pageSize = 10000) should {
+            have("    inline fun forEach(action: (Map.Entry<K, V>) -> Unit)" in lines())
+            have("    operator fun minus(key: K): Map<K, V>" !in lines())
+            have("operator fun <K, V> Map<out K, V>.minus(key: K): Map<K, V>" in lines())
         }
     }
 

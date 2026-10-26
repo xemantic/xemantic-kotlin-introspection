@@ -24,12 +24,14 @@ import com.xemantic.kotlin.introspection.test.KeywordMembersSample
 import com.xemantic.kotlin.introspection.test.NonGenericInnerTypes
 import com.xemantic.kotlin.introspection.test.ReflectedValueParametersSample
 import com.xemantic.kotlin.introspection.test.other.JavaUnnamedParameters
+import com.xemantic.kotlin.introspection.test.other.Upper.JavaUpperCasePackage
 import com.xemantic.kotlin.test.assert
 import kotlin.metadata.KmClassifier
 import kotlin.metadata.KmType
 import kotlin.reflect.KFunction
 import kotlin.reflect.full.memberFunctions
 import kotlin.reflect.full.memberProperties
+import kotlin.reflect.typeOf
 import kotlin.test.Test
 
 /**
@@ -78,6 +80,36 @@ class ReflectedDeclarationsTest {
         // then
         // without the owner, which the user code might subclass, a member is not rendered as open
         assert(rendered == "fun format(vararg arg0: Any?): String")
+    }
+
+    @Test
+    fun `should render Java parameter of platform type as nullable`() {
+        // given - Object is seen in Kotlin as Any!, accepting null
+        val describe = JavaUnnamedParameters::class.memberFunctions.single { it.name == "describe" }
+
+        // when
+        val rendered = introspector.formatReflectedFunction(describe)
+
+        // then - the return type, which Kotlin lets be used as not nullable, stays so,
+        // and without the owner, which the user code might subclass, the member is not rendered as open
+        assert(rendered == "fun describe(arg0: Any?): String")
+    }
+
+    @Test
+    fun `should render Java type parameter bound of platform type as nullable`() {
+        // given - the implicit bound of <T> is Object, seen in Kotlin as Any!
+        val functions = JavaUnnamedParameters::class.memberFunctions.filter { it.name == "first" || it.name == "listOf" }
+
+        // when
+        val rendered = functions.sortedBy { it.name }.map { introspector.formatReflectedFunction(it) }
+
+        // then
+        assert(
+            rendered == listOf(
+                "fun <T> first(arg0: T?): T",
+                "fun <T> listOf(vararg arg0: T?): List<T>"
+            )
+        )
     }
 
     @Test
@@ -233,6 +265,25 @@ class ReflectedDeclarationsTest {
 
         // then
         assert(rendered == "fun cursor(): com.xemantic.kotlin.introspection.test.NonGenericInnerOuter.In<String>")
+    }
+
+    @Test
+    fun `should name class of package with uppercase segment by its Java class`() {
+        // given
+        val types = listOf(typeOf<JavaUpperCasePackage>(), typeOf<JavaUpperCasePackage.Nested>())
+
+        // when
+        val names = types.map {
+            (it.toKmType(ReflectedTypeParameters.classTypeParameters(emptyList())).classifier as KmClassifier.Class).name
+        }
+
+        // then
+        assert(
+            names == listOf(
+                "com/xemantic/kotlin/introspection/test/other/Upper/JavaUpperCasePackage",
+                "com/xemantic/kotlin/introspection/test/other/Upper/JavaUpperCasePackage.Nested"
+            )
+        )
     }
 
 }
