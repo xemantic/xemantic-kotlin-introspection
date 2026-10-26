@@ -1658,6 +1658,18 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should not resolve function type by its metadata name`() {
+        // like any other class, resolved only by its Kotlin name
+
+        // when
+        val function = resolver.resolve("kotlin/Function1")
+        val functionReference = resolver.resolve("kotlin/reflect/KFunction1")
+
+        // then
+        assert(function == null && functionReference == null)
+    }
+
+    @Test
     fun `should find function reference types like their function types`() {
         resolver.search("Function2", pageSize = 1000) should {
             have("kotlin.reflect.KFunction22" in lines())

@@ -187,6 +187,11 @@ internal enum class FunctionTypeKind(
     fun kotlinName(arity: Int): String = metadataName(arity).replace('/', '.')
 
     /**
+     * The simple name of the function type class of this kind and the given [arity], like `Function1`.
+     */
+    fun simpleName(arity: Int): String = metadataPrefix.substringAfterLast('/') + arity
+
+    /**
      * The kind of the function types, which the function reference types of this kind are subtypes of,
      * like [FUNCTION] of [FUNCTION_REFERENCE], or this kind itself, if it is not the one of the function reference types.
      */
@@ -284,7 +289,7 @@ private const val MAX_FUNCTION_TYPE_CLASS_ARITY = 254
  */
 internal class FunctionTypeClass private constructor(val kind: FunctionTypeKind, val arity: Int) {
 
-    val simpleName: String = kind.metadataPrefix.substringAfterLast('/') + arity
+    val simpleName: String = kind.simpleName(arity)
 
     /**
      * The Kotlin names of the supertypes, whose extensions are listed for this class:
@@ -307,7 +312,7 @@ internal class FunctionTypeClass private constructor(val kind: FunctionTypeKind,
         append(((1..arity).map { "in P$it" } + "out R").joinToString(", ", prefix = "<", postfix = ">"))
         if (kind.isReference) {
             append(" : KFunction<R>, ")
-            append(kind.functionTypeKind.metadataPrefix.substringAfterLast('/') + arity)
+            append(kind.functionTypeKind.simpleName(arity))
             append(((1..arity).map { "P$it" } + "R").joinToString(", ", prefix = "<", postfix = ">"))
         } else {
             append(" : Function<R>")
@@ -331,6 +336,8 @@ internal class FunctionTypeClass private constructor(val kind: FunctionTypeKind,
          * see [parseFunctionTypeName].
          */
         fun of(name: String): FunctionTypeClass? {
+            // a metadata name, like kotlin/Function1, is not a Kotlin name
+            if ('/' in name) return null
             val functionTypeName = parseFunctionTypeName(name.replace('.', '/')) ?: return null
             val maxArity = if (functionTypeName.kind.isSuspend) MAX_FUNCTION_TYPE_CLASS_ARITY - 1 else MAX_FUNCTION_TYPE_CLASS_ARITY
             return if (functionTypeName.arity <= maxArity) FunctionTypeClass(functionTypeName.kind, functionTypeName.arity) else null

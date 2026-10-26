@@ -1690,15 +1690,15 @@ internal class DefaultKotlinIntrospector(
      */
     private fun javaSupertypeNames(metadataName: String): List<Pair<String, String>> {
         val javaClass = findClassByMetadataName(metadataName)?.clazz ?: return emptyList()
-        return try {
-            (listOfNotNull(javaClass.superclass) + javaClass.interfaces).map { supertype ->
+        val supertypes = reflectedValue(default = emptyList()) { listOfNotNull(javaClass.superclass) + javaClass.interfaces }
+        // each one on its own, not to lose the others when one of them cannot be reflected
+        return supertypes.mapNotNull { supertype ->
+            reflectedValue(default = null) {
                 val supertypeMetadataName = overrideResolver.builtinNameOfJavaClass(supertype.name)
                     ?: functionTypeOfJvmInterface(supertype.name.replace('.', '/'))
                     ?: kotlinClassName(supertype)
                 supertypeMetadataName.replace('/', '.') to supertypeMetadataName
             }
-        } catch (_: LinkageError) {
-            emptyList()
         }
     }
 
