@@ -1987,6 +1987,48 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should not mark shrunk members named like internal members of superclass of another module as override`() {
+        // given
+        val shrunkMethods = mapOf(
+            "com/xemantic/kotlin/introspection/test/OtherModuleSubclass.class" to setOf("reset()V", "getState()I"),
+            "com/xemantic/kotlin/introspection/test/PublishedApiSubclass.class" to setOf("publish()V")
+        )
+        // like R8 removing the JVM methods of the members, keeping the metadata
+        val classLoader = object : ClassLoader(javaClass.classLoader) {
+            override fun getResourceAsStream(name: String): InputStream? {
+                val stream = super.getResourceAsStream(name) ?: return null
+                val removed = shrunkMethods[name] ?: return stream
+                return withoutMethods(stream.use { it.readBytes() }) { methodName, descriptor ->
+                    methodName + descriptor in removed
+                }.inputStream()
+            }
+        }
+        val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
+
+        // when
+        val otherModuleSubclass = introspector.resolve("com.xemantic.kotlin.introspection.test.OtherModuleSubclass")
+        val publishedApiSubclass = introspector.resolve("com.xemantic.kotlin.introspection.test.PublishedApiSubclass")
+
+        // then
+        // the internal members of another module are not visible, whether mangled or not,
+        // so a supertype member of the same name does not make a shrunk member an override
+        otherModuleSubclass sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OtherModuleSubclass [page 1/1]
+            class OtherModuleSubclass : com.xemantic.kotlin.introspection.othermodule.InternalBase {
+                val state: Int
+                fun reset()
+                override fun keep()
+            }
+        """.trimIndent()
+        publishedApiSubclass sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PublishedApiSubclass [page 1/1]
+            class PublishedApiSubclass : com.xemantic.kotlin.introspection.othermodule.PublishedApiBase {
+                fun publish()
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should mark overrides of class whose class file cannot be parsed`() {
         // given
         val introspector = introspectorWithUnreadableClassFiles(

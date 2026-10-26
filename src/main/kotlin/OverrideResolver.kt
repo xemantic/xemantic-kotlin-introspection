@@ -361,7 +361,9 @@ internal class OverrideResolver(
             !withDefaultValues -> if (overridden.any()) noDefaultValues else null
             else -> overridden.toList().takeIf { it.isNotEmpty() }
                 ?.let { FunctionOverride(inheritedDefaultValues(it, signature)) }
-        } ?: if (overridables.isShrunk(function.signature)) noDefaultValues else null
+        } ?: noDefaultValues.takeIf {
+            overridables.isShrunkOverride(candidates, owner, function.modality, function.signature)
+        }
     }
 
     private val noDefaultValues = FunctionOverride(emptySet())
@@ -496,7 +498,7 @@ internal class OverrideResolver(
             it.isJava && it.matches(contexts, receiver, emptyList(), property.typeParameters.size, isSuspend = false)
         }
         return overridesProperty || overridesGetter ||
-            (candidates.isNotEmpty() && overridables.isShrunk(property.getterSignature))
+            overridables.isShrunkOverride(candidates, owner, property.modality, property.getterSignature)
     }
 
     /**
@@ -517,10 +519,26 @@ internal class OverrideResolver(
         }
 
     /**
+     * Whether a member of the [modality], whose JVM method is the [signature], is taken for an override
+     * of one of the [candidates] of the same name, as its JVM method is shrunk, see [isShrunk].
+     * Only a candidate which might be visible to the [owner] is taken, see [MemberVisibility],
+     * the mangled one also when the JVM methods of the [owner] do not tell it, as a shrinker might remove its bridge too,
+     * so that an internal member of another module does not make a member of the same name an override,
+     * and the JVM methods of the [owner] are not read for it, unless it is mangled.
+     */
+    private fun Overridables.isShrunkOverride(
+        candidates: List<Overridable>,
+        owner: KmClass,
+        modality: Modality,
+        signature: JvmMethodSignature?
+    ): Boolean = candidates.any {
+        (it.visibility as? MemberVisibility.Mangled)?.isVisibleWhenUnknown == true || isVisible(it, owner, modality)
+    } && isShrunk(signature)
+
+    /**
      * Whether the JVM method of a member, declared in the metadata, has been removed from the class file of its owner,
      * like by R8, so that it cannot be told from an overload of a supertype member,
-     * which is then assumed to be overridden, as one with the same name is known.
-     * The caller checks that a supertype member of the same name exists.
+     * which is then assumed to be overridden, as one with the same name is known, see [isShrunkOverride].
      * A member whose owner JVM methods can be neither read nor reflected is not considered shrunk.
      */
     private fun Overridables.isShrunk(signature: JvmMethodSignature?): Boolean =
