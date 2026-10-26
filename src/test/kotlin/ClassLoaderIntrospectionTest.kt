@@ -1219,6 +1219,52 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should count failing lookup by name after ClassNotFoundException caused by IOException`() {
+        // given
+        val holder = "com.xemantic.kotlin.introspection.test.TypeParametersNestedHolder"
+        val nested = "$holder\$Sorted"
+        // like a URLClassLoader failing to read the class file, telling a transient failure even when not probed
+        val classLoader = CountingClassLoader(
+            javaClass.classLoader,
+            failure = { ClassNotFoundException(it, IOException("transient failure of $it")) }
+        )
+        classLoader.failing += nested
+        val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
+
+        // when
+        introspector.resolve("$holder.Sorted")
+        val signatures = List(2) { introspector.resolve(holder) }
+
+        // then
+        assert(signatures.all { it != null && "class Sorted<T>" !in it })
+        // retried by the resolve by name, and by the first resolve of the holder, deeming the failure final,
+        // rather than the miss by name taken as final, telling nothing about the failure
+        assert(classLoader.loads[nested] == 2)
+    }
+
+    @Test
+    fun `should not cache missing class resolved by name when ClassNotFoundException is caused by IOException`() {
+        // given
+        val missing = "com.xemantic.kotlin.introspection.test.Missing"
+        // like a class loader wrapping the NoSuchFileException of a class file which is not there
+        val classLoader = CountingClassLoader(
+            javaClass.classLoader,
+            failure = { ClassNotFoundException(it, java.nio.file.NoSuchFileException(it)) }
+        )
+        classLoader.failing += missing
+        val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
+
+        // when
+        val signatures = List(3) { introspector.resolve(missing) }
+
+        // then
+        // a final miss, as its class file is not there, which is not cached, as the name comes from the user input,
+        // rather than taken as a transient failure, deemed final, and cached
+        assert(signatures.all { it == null })
+        assert(classLoader.loads[missing] == 3)
+    }
+
+    @Test
     fun `should load nested class again after NoClassDefFoundError and failed read of its class file`() {
         // given
         val nested = "com.xemantic.kotlin.introspection.test.TypeParametersNestedHolder\$Sorted"
@@ -1239,6 +1285,53 @@ class ClassLoaderIntrospectionTest {
         assert(signatures[0] != null && "class Sorted<T>" !in signatures[0]!!)
         assert(signatures[1] != null && "class Sorted<T>" in signatures[1]!!)
         assert(classLoader.loads[nested] == 2)
+    }
+
+    /**
+     * A class loader of the class files of the [root], counting the classes requested by their names,
+     * failing the first definition of the class [failingOnce], like a `URLClassLoader` failing to read its class file
+     * with an `IOException`, which it throws wrapped in a `ClassNotFoundException`.
+     */
+    private class FailingOnceUrlClassLoader(
+        root: Path,
+        parent: ClassLoader,
+        private val failingOnce: String
+    ) : URLClassLoader(arrayOf(root.toUri().toURL()), parent) {
+        val loads = ConcurrentHashMap<String, Int>()
+        private val hasFailed = java.util.concurrent.atomic.AtomicBoolean()
+        override fun loadClass(name: String, resolve: Boolean): Class<*> {
+            loads.merge(name, 1, Int::plus)
+            return super.loadClass(name, resolve)
+        }
+        override fun findClass(name: String): Class<*> {
+            if (name == failingOnce && hasFailed.compareAndSet(false, true)) {
+                throw ClassNotFoundException(name, IOException("transient failure of $name"))
+            }
+            return super.findClass(name)
+        }
+    }
+
+    @Test
+    fun `should load class again after NoClassDefFoundError caused by transient IOException of its supertype`() {
+        // given
+        val subclass = "com.xemantic.kotlin.introspection.isolated.AbsentNestedHolder\$AbsentSubclass"
+        // the supertype, whose class file cannot be read for now, failing the definition of its subclass
+        val classLoader = FailingOnceUrlClassLoader(
+            isolatedTestFixturesCopy("failingOnce"),
+            javaClass.classLoader,
+            failingOnce = "com.xemantic.kotlin.introspection.isolated.Absent"
+        )
+        val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
+
+        // when
+        val signatures = List(3) {
+            introspector.resolve("com.xemantic.kotlin.introspection.isolated.AbsentNestedHolder.AbsentSubclass")
+        }
+
+        // then
+        // read from the class file the first time, and loaded the second time, rather than never again
+        assert(signatures.all { it != null && "class AbsentSubclass : Absent" in it })
+        assert(classLoader.loads[subclass] == 2)
     }
 
     @Test
@@ -1444,6 +1537,29 @@ class ClassLoaderIntrospectionTest {
         assert(classLoader.loads[javaSuperclass] == 3)
     }
 
+    @Test
+    fun `should count failing lookups of class by name together with its other lookups`() {
+        // given
+        val javaSuperclass = "com.xemantic.kotlin.introspection.test.other.JavaProcessorBase"
+        // a linkage error which might be transient, whichever the lookup
+        val classLoader = CountingClassLoader(javaClass.classLoader)
+        classLoader.failing += javaSuperclass
+        val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
+
+        // when
+        val signatures = List(3) {
+            introspector.resolve("com.xemantic.kotlin.introspection.test.JavaProcessor").also {
+                introspector.resolve(javaSuperclass)
+            }
+        }
+
+        // then
+        assert(signatures.all { it == javaProcessorSignature })
+        // retried by the first resolve, and by the first resolve by name, deeming the failure final,
+        // rather than counted apart, each lookup retrying until its own count deems it final
+        assert(classLoader.loads[javaSuperclass] == 2)
+    }
+
     /**
      * A class loader blocking the first request of the class [blocked] until [release]d,
      * and then failing it with a `ClassNotFoundException`, like a transient failure,
@@ -1457,7 +1573,8 @@ class ClassLoaderIntrospectionTest {
     ) : ClassLoader(parent) {
         val entered = java.util.concurrent.CountDownLatch(1)
         val release = java.util.concurrent.CountDownLatch(1)
-        private val requests = java.util.concurrent.atomic.AtomicInteger()
+        // the requests of the class blocked
+        val requests = java.util.concurrent.atomic.AtomicInteger()
         private val blockedResource = blocked.replace('.', '/') + ".class"
         private val isHidden get() = isFirstRequestLoaded && release.count > 0
         override fun loadClass(name: String, resolve: Boolean): Class<*> {
@@ -1479,30 +1596,59 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
-    fun `should keep class found by name over miss cached by concurrent lookup meanwhile`() {
+    fun `should share class found by name with concurrent lookup of the same class`() {
         // given
         val outer = "com.xemantic.kotlin.introspection.test.TypeParametersNestedHolder"
-        // the outer class found by name, after the lookup of the nested class has cached the outer class as missing
+        // the outer class found by name, while any other request of it fails meanwhile, without its class file served
         val classLoader = BlockingClassLoader(javaClass.classLoader, blocked = outer, isFirstRequestLoaded = true)
         val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
         var byNameSignature: String? = null
         val byName = testThread { byNameSignature = introspector.resolve(outer) }
         awaitOrFail(classLoader.entered)
-        // on its own thread, as it would wait for the lookup by name, if it shared its cache entry
-        val lookup = testThread { introspector.resolve("$outer.Sorted") }
+        var nested: String? = null
+        val lookup = testThread { nested = introspector.resolve("$outer.Sorted") }
+
+        // when
         try {
-            joinOrFail(lookup)
+            // until the lookup of the outer class by the lookup of the nested class waits for the lookup by name, if it does
+            pollUntil { !lookup.isAlive || lookup.isWaitingForComputation() }
         } finally {
             classLoader.release.countDown()
         }
-
-        // when
-        joinOrFail(byName)
+        joinOrFail(byName, lookup)
         val signature = introspector.resolve(outer)
 
         // then
+        // the outer class is loaded once, and found by both, rather than looked up again, and assumed missing meanwhile
+        assert(classLoader.requests.get() == 1)
         assert(byNameSignature != null && "class TypeParametersNestedHolder" in byNameSignature!!)
+        assert(nested != null && "class Sorted<T>" in nested!!)
         assert(signature != null && "class TypeParametersNestedHolder" in signature)
+    }
+
+    @Test
+    fun `should share class lookup of concurrent resolves by name`() {
+        // given
+        val outer = "com.xemantic.kotlin.introspection.test.TypeParametersNestedHolder"
+        val classLoader = BlockingClassLoader(javaClass.classLoader, blocked = outer, isFirstRequestLoaded = true)
+        val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
+        val signatures = arrayOfNulls<String>(2)
+        val first = testThread { signatures[0] = introspector.resolve(outer) }
+        awaitOrFail(classLoader.entered)
+        val second = testThread { signatures[1] = introspector.resolve(outer) }
+
+        // when
+        try {
+            pollUntil { !second.isAlive || second.isWaitingForComputation() }
+        } finally {
+            classLoader.release.countDown()
+        }
+        joinOrFail(first, second)
+
+        // then
+        // loaded once, rather than by each resolve, the second one failing meanwhile
+        assert(classLoader.requests.get() == 1)
+        assert(signatures.all { it != null && "class TypeParametersNestedHolder" in it })
     }
 
     @Test
@@ -1521,11 +1667,7 @@ class ClassLoaderIntrospectionTest {
         try {
             // until the lookup of the nested class waits for the lookup of its outer class, if it does,
             // bounded, as it might wait for something else instead
-            pollUntil {
-                !lookup.isAlive || (
-                    lookup.state == Thread.State.BLOCKED && lookup.stackTrace.any { "Lazy" in it.className }
-                    )
-            }
+            pollUntil { !lookup.isAlive || lookup.isWaitingForComputation() }
         } finally {
             classLoader.release.countDown()
         }

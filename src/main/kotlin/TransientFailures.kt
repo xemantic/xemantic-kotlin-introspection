@@ -33,7 +33,8 @@ import java.util.concurrent.atomic.AtomicLong
  * An operation started before the last failing attempt, like a resolve overlapping it on another thread,
  * is within the same outage, so it neither retries, nor counts as another failing attempt,
  * so that concurrent resolves do not deem a failure final after one outage.
- * An attempt outside an operation is an operation of its own, so it always retries.
+ * An attempt outside an operation always retries, but never counts, as its outage cannot be told,
+ * like of two lookups within one call, so that its failure is never deemed final, nor anything computed from it cached.
  *
  * @param capacity the number of the failing attempts remembered, the least recently used ones, each with its outcome,
  *   like a class found only from its class file, kept until the key is attempted successfully, deemed final, or forgotten,
@@ -47,9 +48,12 @@ internal class TransientFailures(private val maxAttempts: Int = 2, private val c
     }
 
     /**
-     * An outcome of an [attempt], [isFinal] unless it might be transient.
+     * An outcome of an [attempt], [isFinal] unless it might be transient,
+     * and [isDecisive] unless it tells nothing about the failure of the key,
+     * like a miss of a class lookup which does not tell a missing class apart from one failing to load,
+     * so that it neither counts as a failing attempt, nor ends the failure, while it is received as it is.
      */
-    class Outcome<T>(val value: T, val isFinal: Boolean)
+    class Outcome<T>(val value: T, val isFinal: Boolean, val isDecisive: Boolean = true)
 
     /**
      * @param since the last operation started when the failure happened, see [operationIds],
@@ -102,17 +106,19 @@ internal class TransientFailures(private val maxAttempts: Int = 2, private val c
      * Neither marks a transient failure, which is up to the receiver of the outcome, see [mark].
      */
     fun <T> attempt(key: String, attempt: () -> Outcome<T>): Outcome<T> {
-        val operation = operations.get()[0].takeIf { it != NO_OPERATION } ?: operationIds.incrementAndGet()
-        synchronized(failures) { failures[key] }?.let { failure ->
+        val operation = operations.get()[0]
+        if (operation != NO_OPERATION) synchronized(failures) { failures[key] }?.let { failure ->
             @Suppress("UNCHECKED_CAST")
             if (operation <= failure.since) return Outcome(failure.value as T, isFinal = false)
         }
         val outcome = attempt()
+        if (!outcome.isDecisive) return outcome
         synchronized(failures) {
             if (outcome.isFinal) {
                 failures.remove(key)
                 return outcome
             }
+            if (operation == NO_OPERATION) return outcome
             val previous = failures[key]
             // like an attempt of an overlapping operation, failing at the same time, which neither counts,
             // nor extends the outage to the operations started meanwhile, so that their attempts still count

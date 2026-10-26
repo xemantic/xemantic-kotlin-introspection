@@ -21,7 +21,6 @@ package com.xemantic.kotlin.introspection
 import com.xemantic.kotlin.test.assert
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicInteger
-import kotlin.concurrent.thread
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
 
@@ -34,19 +33,19 @@ class BoundedCacheTest {
         val computations = AtomicInteger()
         val computing = CountDownLatch(1)
         val release = CountDownLatch(1)
-        val first = thread {
+        val first = testThread {
             cache.getOrPut("key") {
                 computations.incrementAndGet()
                 computing.countDown()
-                release.await()
+                awaitOrFail(release)
                 "first"
             }
         }
-        computing.await()
+        awaitOrFail(computing)
 
         // when
         var secondValue: String? = null
-        val second = thread {
+        val second = testThread {
             secondValue = cache.getOrPut("key") {
                 computations.incrementAndGet()
                 "second"
@@ -54,25 +53,16 @@ class BoundedCacheTest {
         }
         // the second request either waits for the first computation, or, if it is not shared, completes on its own,
         // told by the stack of the second thread, as it might also wait momentarily for anything else
-        while (second.isAlive && !second.isWaitingForComputation()) {
-            Thread.onSpinWait()
+        try {
+            pollUntil { !second.isAlive || second.isWaitingForComputation() }
+        } finally {
+            release.countDown()
         }
-        release.countDown()
-        first.join()
-        second.join()
+        joinOrFail(first, second)
 
         // then
         assert(computations.get() == 1 && secondValue == "first")
     }
-
-    /**
-     * Whether this thread is blocked within the cache, like on the lock of the value computed by another thread,
-     * and not momentarily on anything else, like on loading a class.
-     */
-    private fun Thread.isWaitingForComputation(): Boolean =
-        state == Thread.State.BLOCKED && stackTrace.firstOrNull().let { frame ->
-            frame != null && (frame.className == BoundedCache::class.java.name || frame.methodName == "getValue")
-        }
 
     @Test
     fun `should evict least recently used value beyond capacity`() {

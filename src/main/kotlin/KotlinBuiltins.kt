@@ -112,12 +112,7 @@ internal fun kotlinBuiltinsResources(
     }
     var failure: Exception? = null
     val resources = try {
-        val resources = if (anchor.protocol == "jar") {
-            jarBuiltinsResources(anchor)
-        } else {
-            pathBuiltinsResources(Path.of(anchor.toURI()))
-        }
-        resources.filter { it.startsWith("kotlin/") && it.endsWith(BUILTINS_EXTENSION) }.sorted()
+        listedBuiltinsResources(anchor)
     } catch (e: Exception) {
         failure = e
         emptyList()
@@ -131,6 +126,19 @@ internal fun kotlinBuiltinsResources(
         }
     }
     return knownBuiltinsResources
+}
+
+/**
+ * Lists the `.kotlin_builtins` resources in the root containing the [anchor], see [kotlinBuiltinsResources],
+ * failing if they cannot be listed, rather than returning the known ones.
+ */
+internal fun listedBuiltinsResources(anchor: URL): List<String> {
+    val resources = if (anchor.protocol == "jar") {
+        jarBuiltinsResources(anchor)
+    } else {
+        pathBuiltinsResources(Path.of(anchor.toURI()))
+    }
+    return resources.filter { it.startsWith("kotlin/") && it.endsWith(BUILTINS_EXTENSION) }.sorted()
 }
 
 /**

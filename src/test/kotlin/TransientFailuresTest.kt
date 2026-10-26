@@ -44,7 +44,7 @@ class TransientFailuresTest {
     }
 
     @Test
-    fun `should retry failing attempt every time outside an operation until its failure is final`() {
+    fun `should retry failing attempt every time outside an operation, never deeming its failure final`() {
         // given
         val failures = TransientFailures(maxAttempts = 2)
         var attempts = 0
@@ -54,12 +54,41 @@ class TransientFailuresTest {
         }
 
         // when
-        val outcomes = listOf(attempt(), attempt())
+        // like two lookups within one call, not wrapped in an operation, failing within the same outage
+        val outcomes = listOf(attempt(), attempt(), attempt())
+        val within = failures.operation { attempt() }
 
         // then
-        // each attempt outside an operation is an operation of its own, never sharing the failure of another one
-        assert(attempts == 2)
-        assert(!outcomes[0].isFinal && outcomes[1].isFinal)
+        // never sharing the failure of another attempt, nor counted, as the outage of an attempt outside an operation is unknown
+        assert(attempts == 4)
+        assert(outcomes.none { it.isFinal } && !within.isFinal)
+    }
+
+    @Test
+    fun `should neither count nor end failure by indecisive outcome`() {
+        // given
+        val failures = TransientFailures(maxAttempts = 2)
+        var attempts = 0
+        fun attempt(outcome: TransientFailures.Outcome<String>) = failures.operation {
+            failures.attempt("key") {
+                attempts++
+                outcome
+            }
+        }
+
+        // when
+        val first = attempt(TransientFailures.Outcome("failed", isFinal = false))
+        // like a miss of a class lookup not telling a missing class apart from one failing to load
+        val indecisive = listOf(
+            attempt(TransientFailures.Outcome("failing", isFinal = false, isDecisive = false)),
+            attempt(TransientFailures.Outcome("missing", isFinal = true, isDecisive = false))
+        )
+        val last = attempt(TransientFailures.Outcome("failed", isFinal = false))
+
+        // then
+        // the indecisive outcomes are received as they are, while the failure is deemed final by the second failing attempt
+        assert(attempts == 4)
+        assert(!first.isFinal && !indecisive[0].isFinal && indecisive[1].isFinal && last.isFinal)
     }
 
     @Test
