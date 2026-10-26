@@ -287,7 +287,7 @@ class NestedClassFilesScanTest {
 
 }
 
-private fun scan(
+internal fun scan(
     classLoader: ClassLoader,
     skipNestedClassFiles: Boolean = true
 ): DefaultKotlinIntrospector.ClasspathScan = DefaultKotlinIntrospector(classLoader, scanEntireClasspath = false)
@@ -297,7 +297,7 @@ private fun scan(
  * The extensions and classes indexed by the classpath scan, one per line, in the scan order,
  * and, [withClasses], all the Kotlin classes found, with their flags, which decide what is indexed.
  */
-private fun DefaultKotlinIntrospector.ClasspathScan.indexDump(withClasses: Boolean = true): String = buildList {
+internal fun DefaultKotlinIntrospector.ClasspathScan.indexDump(withClasses: Boolean = true): String = buildList {
     extensionIndex.forEach { (receiver, extensions) ->
         extensions.forEach {
             add("fun $receiver.${it.function.name} in ${it.sourceClass} from ${it.source} object=${it.isObjectMember}")
@@ -324,7 +324,7 @@ private fun DefaultKotlinIntrospector.ClasspathScan.indexDump(withClasses: Boole
     }
 }.joinToString("\n")
 
-private fun testFixtures(property: String): List<File> = System.getProperty(property)
+internal fun testFixtures(property: String): List<File> = System.getProperty(property)
     .split(File.pathSeparator)
     .map { File(it) }
     .filter { it.exists() }
