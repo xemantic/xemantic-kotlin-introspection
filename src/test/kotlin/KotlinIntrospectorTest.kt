@@ -2737,6 +2737,21 @@ class KotlinIntrospectorTest {
         """.trimIndent()
     }
 
+    // an accepted trade-off: a @PublishedApi internal member is not mangled, so that the public override
+    // of a friend module cannot be told from a member of the same name of an unrelated module,
+    // and it is rendered open, as an override not marked final is
+    @Test
+    fun `should not mark public overrides of PublishedApi internal members of superclass of a friend module as override`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.friendmodule.FriendModulePublishedApiSubclass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.friendmodule.FriendModulePublishedApiSubclass [page 1/1]
+            class FriendModulePublishedApiSubclass : com.xemantic.kotlin.introspection.othermodule.PublishedApiBase {
+                open fun publish()
+            }
+        """.trimIndent()
+    }
+
     @Test
     fun `should match type parameters of overridden functions by position`() {
         resolver.resolve(
