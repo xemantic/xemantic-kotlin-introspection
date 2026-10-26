@@ -97,6 +97,19 @@ class HiddenCompanionHolder {
     }
 }
 
+// the same for a named companion object, and a nested class, in a class which is not hidden itself
+class HiddenNamedCompanionHolder {
+    fun f() {}
+    @Deprecated("Replaced", level = DeprecationLevel.HIDDEN)
+    class HiddenNested {
+        fun g() {}
+    }
+    @Deprecated("Replaced", level = DeprecationLevel.HIDDEN)
+    companion object Factory {
+        fun create(): HiddenNamedCompanionHolder = HiddenNamedCompanionHolder()
+    }
+}
+
 // a deprecated companion object, declared with each of its members found by a member lookup on the outer class
 class DeprecatedCompanionHolder {
     @Deprecated("Use the constructor")
@@ -119,3 +132,43 @@ data class HiddenPropertyDataClass(@property:Deprecated("Replaced", level = Depr
 
 @JvmInline
 value class HiddenPropertyValueClass(@property:Deprecated("Replaced", level = DeprecationLevel.HIDDEN) val raw: Int)
+
+// the accessors of a var deprecated apart from the property, so that only its reading, or only its assigning, is deprecated
+class AccessorDeprecationHolder(@get:Deprecated("Read y", level = DeprecationLevel.ERROR) var inConstructor: Int) {
+    @get:Deprecated("Read y", level = DeprecationLevel.ERROR)
+    var errorGetter: Int = 0
+    @get:Deprecated("Read y")
+    var warningGetter: Int = 0
+    @set:Deprecated("Assign y")
+    var warningSetter: Int = 0
+    @set:Deprecated("Assign y", level = DeprecationLevel.ERROR)
+    var errorSetter: Int = 0
+    @get:Deprecated("Read y")
+    @set:Deprecated("Assign y", level = DeprecationLevel.ERROR)
+    var bothAccessors: Int = 0
+    @Deprecated("Use y")
+    @set:Deprecated("Assign y", level = DeprecationLevel.ERROR)
+    var deprecatedWithErrorSetter: Int = 0
+    // cannot be assigned from the outside, so that only its reading is deprecated
+    @get:Deprecated("Read y", level = DeprecationLevel.ERROR)
+    @set:Deprecated("Assign y")
+    var withPrivateSetter: Int = 0
+        private set
+}
+
+@set:Deprecated("Assign y", level = DeprecationLevel.ERROR)
+var AccessorDeprecationHolder.errorSetterExtension: Int
+    get() = errorSetter
+    set(@Suppress("unused") value) {}
+
+// the accessor deprecations of the vars inherited by a final subclass, which cannot call the protected setter
+open class AccessorDeprecationBase {
+    @set:Deprecated("Assign y", level = DeprecationLevel.ERROR)
+    var inheritedErrorSetter: Int = 0
+    @get:Deprecated("Read y", level = DeprecationLevel.ERROR)
+    @set:Deprecated("Assign y")
+    var inheritedProtectedSetter: Int = 0
+        protected set
+}
+
+class AccessorDeprecationSub : AccessorDeprecationBase()

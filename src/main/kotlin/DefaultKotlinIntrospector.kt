@@ -85,7 +85,7 @@ internal data class IndexedExtensionProperty(
     val source: String,  // the package, or the object, to import it from
     val isObjectMember: Boolean,  // whether the source is an object
     val setterVisibility: Visibility?,  // when its setter can be called, see apiSetterVisibility
-    // never a hidden one, as the hidden extensions are not indexed, but maybe hiding the getter, see Deprecation.hidesGetter
+    // never a hidden one, as the hidden extensions are not indexed, but maybe hiding an accessor, see Deprecation.accessors
     val deprecation: Deprecation? = null,
     override val receiverBounds: Set<String> = emptySet()
 ) : ReceiverBounded
@@ -136,12 +136,11 @@ private interface Deprecations {
 
     fun deprecation(constructor: KmConstructor): Deprecation?
 
-    fun deprecation(property: KmProperty): Deprecation?
-
     /**
-     * Whether only the setter of a `var` [property] is hidden, like with `@set:Deprecated(level = HIDDEN)`.
+     * The deprecation of the [property], also of its accessors, like with `@set:Deprecated(level = HIDDEN)`,
+     * see [Deprecation.accessors].
      */
-    fun isSetterHidden(property: KmProperty): Boolean
+    fun deprecation(property: KmProperty): Deprecation?
 
 }
 
@@ -155,7 +154,7 @@ private fun Deprecations.isHidden(constructor: KmConstructor): Boolean = depreca
  */
 private fun Deprecations.isHidden(property: KmProperty, scope: DeclarationScope): Boolean {
     val deprecation = deprecation(property) ?: return false
-    return deprecation.isHidden || (deprecation.hidesGetter && property.apiSetterVisibility(scope, this) == null)
+    return deprecation.isHidden || (deprecation.hidesGetter && property.apiSetterVisibility(scope, deprecation) == null)
 }
 
 /**
@@ -176,13 +175,27 @@ private fun List<KmProperty>.inApi(scope: DeclarationScope, deprecations: Deprec
 /**
  * The visibility of the setter of this property, when it is a `var` whose setter is part of the API,
  * like the property itself, see [inApi], or else `null`, telling that the property cannot be assigned
- * from the user code, and is rendered as a `val`, like with `private set`, or the `protected set` of a final class.
+ * from the user code, and is rendered as a `val`, like with `private set`, or the `protected set` of a final class,
+ * or `@set:Deprecated(level = HIDDEN)`, told by the [deprecation] of this property.
  */
-private fun KmProperty.apiSetterVisibility(scope: DeclarationScope, deprecations: Deprecations?): Visibility? {
-    if (!isVar) return null
-    val setterVisibility = setter?.visibility ?: visibility
-    return setterVisibility.takeIf { scope.isApi(it) && deprecations?.isSetterHidden(this) != true }
-}
+private fun KmProperty.apiSetterVisibility(scope: DeclarationScope, deprecation: Deprecation?): Visibility? =
+    declaredSetterVisibility?.takeIf { scope.isApi(it) && deprecation?.hidesSetter != true }
+
+/**
+ * The visibility of the setter of this property as declared, when it is a `var`, or else `null`.
+ */
+private val KmProperty.declaredSetterVisibility: Visibility? get() = if (isVar) setter?.visibility ?: visibility else null
+
+/**
+ * Whether the [owner] of a member might be subclassed, unless told otherwise, see `mightBeSubclassed`.
+ */
+private fun isOpenForOverridesByDefault(owner: KmClass?): Boolean = owner != null && owner.modality != Modality.FINAL
+
+/**
+ * Whether this is a data class, or a value class, which cannot be declared without a property for each parameter
+ * of its primary constructor, never a data object, which cannot have a constructor.
+ */
+private val KmClass.isDataOrValueClass: Boolean get() = kind == ClassKind.CLASS && (isData || isValue)
 
 internal class DefaultKotlinIntrospector(
     private val classLoader: ClassLoader = Thread.currentThread().contextClassLoader,
@@ -575,8 +588,6 @@ internal class DefaultKotlinIntrospector(
             return classFile.deprecation(property, annotationsDeprecation = annotationsFile?.annotationsDeprecation(property))
         }
 
-        override fun isSetterHidden(property: KmProperty): Boolean = classFile?.isSetterHidden(property) == true
-
         /**
          * The scope of the class, see [ApiClasses], where the usability of a class whose class file cannot be read
          * is told by the metadata and the reflection of the class, see [isUsableClass] and [reflectedClassFile],
@@ -731,8 +742,6 @@ internal class DefaultKotlinIntrospector(
 
         override fun deprecation(property: KmProperty): Deprecation? =
             reflectedProperties[property.name]?.let { builtinDeprecation(it.kProperty) }
-
-        override fun isSetterHidden(property: KmProperty): Boolean = false
 
     }
 
@@ -1156,11 +1165,10 @@ internal class DefaultKotlinIntrospector(
         val isInterface = kmClass.kind == ClassKind.INTERFACE
         val typeParameters = typeParametersInScope(kmClass)
         return when (member) {
-            is Member.Property -> formatProperty(
-                member.property, member.property.apiSetterVisibility(scope, declarations),
+            is Member.Property -> formatApiProperty(
+                member.property, scope, declarations,
                 inInterface = isInterface, owner = kmClass, contextPackage = contextPackage, classTypeParameters = typeParameters,
-                deprecation = declarations.deprecation(member.property), isOwnerOpenForOverrides = isOwnerOpenForOverrides,
-                isInheritedByFinalClass = isInheritedByFinalClass
+                isOwnerOpenForOverrides = isOwnerOpenForOverrides, isInheritedByFinalClass = isInheritedByFinalClass
             )
             is Member.Function -> listOf(
                 formatFunction(
@@ -1469,10 +1477,7 @@ internal class DefaultKotlinIntrospector(
      * the setter visibility decided in the companion object.
      */
     private fun formatCompanionProperty(property: KmProperty, companion: ApiCompanion, contextPackage: String): List<String> =
-        formatProperty(
-            property, property.apiSetterVisibility(companion.apiClass, companion.foundClass),
-            owner = companion.kmClass, contextPackage = contextPackage, deprecation = companion.foundClass.deprecation(property)
-        )
+        formatApiProperty(property, companion.apiClass, companion.foundClass, owner = companion.kmClass, contextPackage = contextPackage)
 
     private fun formatCompanionFunction(function: KmFunction, companion: ApiCompanion, contextPackage: String): String =
         formatFunction(
@@ -1498,10 +1503,7 @@ internal class DefaultKotlinIntrospector(
         }
         val properties = signatures { kmPackage, foundClass, contextPackage ->
             kmPackage.properties.filter { it.name == memberName }.inApi(TopLevel, foundClass).map {
-                formatProperty(
-                    it, it.apiSetterVisibility(TopLevel, foundClass), contextPackage = contextPackage,
-                    deprecation = foundClass.deprecation(it)
-                )
+                formatApiProperty(it, TopLevel, foundClass, contextPackage = contextPackage)
             }
         }
         val functions = signatures { kmPackage, foundClass, contextPackage ->
@@ -1718,6 +1720,85 @@ internal class DefaultKotlinIntrospector(
     }
 
     /**
+     * How the primary constructor of a class is declared in its header, see [constructorsOf].
+     */
+    private sealed interface HeaderConstructor {
+
+        /**
+         * Not declared: the implicit public constructor without parameters, like in `class Foo`,
+         * or none, as the kind of the class already tells how it can be created, if at all, like for an object.
+         */
+        data object Implicit : HeaderConstructor
+
+        /**
+         * Marked with ` private constructor()`, whatever the actual constructors, see [NOT_CONSTRUCTIBLE_MARKER],
+         * as the class can neither be instantiated, nor subclassed, from the user code.
+         */
+        data object NotConstructible : HeaderConstructor
+
+        /**
+         * Declared with its parameters, and with the [visibility] and the [deprecation], unless public and not deprecated,
+         * like `class Foo(val a: Int)`, or `open class Foo protected constructor()`.
+         */
+        class Declared(val constructor: KmConstructor, val visibility: Visibility, val deprecation: Deprecation?) : HeaderConstructor
+
+    }
+
+    /**
+     * The constructors of a class rendered: the [header] one, and the [secondary] ones, listed in the class body,
+     * with the [primary] one, whose parameters are the ones of an annotation class.
+     */
+    private class Constructors(val primary: KmConstructor?, val header: HeaderConstructor, val secondary: List<KmConstructor>)
+
+    /**
+     * The constructors of the [kmClass] to render, decided in this one place, see [formatClass]:
+     * the ones which can be called from the user code, unless hidden,
+     * and the primary one of an enum class, whose constructor is always private,
+     * while its parameters are the idiomatic way of declaring the properties of the entries,
+     * and of a data class, or a value class, which cannot be declared without its primary constructor and its parameters,
+     * rendered as private then, like a class without any constructor which can be called, see [HeaderConstructor.NotConstructible].
+     */
+    private fun constructorsOf(kmClass: KmClass, apiClass: ApiClass, foundClass: ClassDeclarations): Constructors {
+        val isEnum = kmClass.kind == ClassKind.ENUM_CLASS
+        // the constructor of kotlin.Enum is called only by the enum classes, which no class can extend directly
+        val isCallable = { constructor: KmConstructor ->
+            kmClass.name != ENUM_CLASS_NAME && apiClass.isConstructorApi(constructor.visibility) && !foundClass.isHidden(constructor)
+        }
+        // never of an enum class, as they are private, nor of an annotation class, which cannot have any
+        val secondary = kmClass.constructors.filter { it.isSecondary && isCallable(it) }
+        val primary = kmClass.constructors.firstOrNull { !it.isSecondary }
+        val isPrimaryCallable = primary != null && isCallable(primary)
+        val header = when {
+            primary != null && (isEnum || isPrimaryCallable || kmClass.isDataOrValueClass) -> {
+                // the always private constructor of an enum class is rendered only for its parameters
+                val visibility = when {
+                    isEnum -> Visibility.PUBLIC
+                    isPrimaryCallable -> primary.visibility
+                    else -> Visibility.PRIVATE
+                }
+                val deprecation = if (isPrimaryCallable) foundClass.deprecation(primary) else null
+                // the implicit public constructor without parameters is omitted, unless there are other constructors,
+                // as `class Foo { constructor(x: Int) }` has no constructor without parameters
+                if (
+                    primary.valueParameters.isNotEmpty() || secondary.isNotEmpty() ||
+                    visibility != Visibility.PUBLIC || deprecation != null
+                ) {
+                    HeaderConstructor.Declared(primary, visibility, deprecation)
+                } else {
+                    HeaderConstructor.Implicit
+                }
+            }
+            // the kinds of classes which would read as having the implicit public constructor without parameters,
+            // unlike an object, an enum class, an interface, an annotation class,
+            // or a sealed class, whose constructors are never callable from the user code
+            kmClass.kind == ClassKind.CLASS && kmClass.modality != Modality.SEALED && secondary.isEmpty() ->
+                HeaderConstructor.NotConstructible
+            else -> HeaderConstructor.Implicit
+        }
+        return Constructors(primary, header, secondary)
+    }
+
+    /**
      * Lists a class: its header, see [formatClassHeader], and its body, with the nested classes, the properties,
      * the secondary constructors, the functions, and the companion object, followed by its extensions,
      * see [listedExtensions].
@@ -1753,45 +1834,17 @@ internal class DefaultKotlinIntrospector(
         val properties = kmClass.properties.inApi(apiClass, foundClass)
         val functions = kmClass.functions.inApi(apiClass, foundClass)
 
-        // Find primary constructor and its parameter names
-        val primaryConstructor = kmClass.constructors.firstOrNull { !it.isSecondary }
-        // The parameters of a constructor which cannot be called are not rendered, while the properties
-        // they declare still are, in the class body. Except for an enum class, whose constructor is always private,
-        // while its parameters are the idiomatic way of declaring the properties of the entries.
-        // A data class, or a value class, cannot be declared without its primary constructor and its parameters,
-        // which is therefore rendered as private, like a class without any constructor which can be called.
-        // never a data object, which cannot have a constructor
-        val isDataOrValueClass = kmClass.kind == ClassKind.CLASS && (kmClass.isData || kmClass.isValue)
-        // the constructor of kotlin.Enum is called only by the enum classes, which no class can extend directly
-        val isConstructorCallable = { constructor: KmConstructor ->
-            kmClass.name != ENUM_CLASS_NAME && apiClass.isConstructorApi(constructor.visibility) && !foundClass.isHidden(constructor)
-        }
-        val isPrimaryConstructorCallable = primaryConstructor != null && isConstructorCallable(primaryConstructor)
-        val renderedConstructor = primaryConstructor?.takeIf {
-            isEnum || isPrimaryConstructorCallable || isDataOrValueClass
-        }
-        // The other ways of creating the class, never of an enum class, as they are private,
-        // nor of an annotation class, which cannot have any
-        val secondaryConstructors = kmClass.constructors.filter { it.isSecondary && isConstructorCallable(it) }
-        // the always private constructor of an enum class is rendered only for its parameters
-        val primaryConstructorVisibility = when {
-            isEnum || renderedConstructor == null -> Visibility.PUBLIC
-            isPrimaryConstructorCallable -> renderedConstructor.visibility
-            else -> Visibility.PRIVATE
-        }
-        val primaryConstructorDeprecation = renderedConstructor?.takeIf { isPrimaryConstructorCallable }
-            ?.let { foundClass.deprecation(it) }
+        // the primary constructor declared in the header, if any, and the secondary ones, see constructorsOf
+        val constructors = constructorsOf(kmClass, apiClass, foundClass)
+        val declaredConstructor = constructors.header as? HeaderConstructor.Declared
+        val secondaryConstructors = constructors.secondary
         // whether the final modality of an override is not redundant, see mightBeSubclassed
         val isOpenForOverrides = mightBeSubclassed(kmClass, foundClass)
-        // the kinds of classes which would read as having the implicit public constructor without parameters,
-        // unlike an object, an enum class, an interface, an annotation class,
-        // or a sealed class, whose constructors are never callable from the user code
-        val isConstructibleKind = kmClass.kind == ClassKind.CLASS && !isSealed
         // The properties declared by the parameters of the rendered constructor, by the parameter name,
         // also the ones which are not part of the API of a data class, or a value class,
         // whose parameters must all declare properties, like `private val rawValue: Long`
-        val propertiesOfParameters = if (isDataOrValueClass) kmClass.properties else properties
-        val constructorProperties = renderedConstructor?.valueParameters.orEmpty().mapNotNull { param ->
+        val propertiesOfParameters = if (kmClass.isDataOrValueClass) kmClass.properties else properties
+        val constructorProperties = declaredConstructor?.constructor?.valueParameters.orEmpty().mapNotNull { param ->
             propertiesOfParameters.firstOrNull { it.isDeclaredBy(param) }?.let { param.name to it }
         }.toMap()
         val declaredInConstructor = constructorProperties.values.toSet()
@@ -1811,7 +1864,7 @@ internal class DefaultKotlinIntrospector(
         val extensionProperties = listedExtensions.properties - bodyExtensions.properties.toSet()
 
         // For annotation classes, the parameters are shown inline, without body
-        val annotationParameters = primaryConstructor?.valueParameters
+        val annotationParameters = constructors.primary?.valueParameters
             ?.takeIf { isAnnotation && it.isNotEmpty() }
 
         val constructorDeclaration = when {
@@ -1826,46 +1879,46 @@ internal class DefaultKotlinIntrospector(
                     defaultValue = { clazz?.let { formatAnnotationDefaultValue(it, param.name, contextPackage) } }
                 )
             }
-            // the implicit public constructor without parameters is omitted, unless there are other constructors,
-            // as `class Foo { constructor(x: Int) }` has no constructor without parameters
-            renderedConstructor != null && (
-                renderedConstructor.valueParameters.isNotEmpty() ||
-                    secondaryConstructors.isNotEmpty() ||
-                    primaryConstructorVisibility != Visibility.PUBLIC ||
-                    primaryConstructorDeprecation != null
-                ) -> formatConstructor(
-                renderedConstructor,
+            declaredConstructor != null -> formatConstructor(
+                declaredConstructor.constructor,
                 isPrimary = true,
-                visibility = primaryConstructorVisibility,
-                primaryConstructorDeprecation,
+                visibility = declaredConstructor.visibility,
+                declaredConstructor.deprecation,
                 contextPackage,
                 typeParameters
             ) { param ->
                 // a parameter not declaring a property is still needed to call the constructor
                 val prop = constructorProperties[param.name]
                 val isOverride = prop != null && isOverride(kmClass, prop)
+                // never with a setter narrower than the property, which is declared in the class body
+                val declaration = prop?.let {
+                    val deprecation = foundClass.deprecation(it)
+                    val setterVisibility = if (it in properties) {
+                        it.apiSetterVisibility(apiClass, deprecation)
+                    } else {
+                        // the property of a data class, or a value class, which is not part of the API, like a private one,
+                        // declared as it is
+                        it.declaredSetterVisibility
+                    }
+                    propertyDeclaration(it, setterVisibility, isOverride, deprecation)
+                }
                 formatValueParameter(
                     param,
                     contextPackage,
                     typeParameters,
                     prefix = when {
-                        prop == null -> ""
-                        // the property of a data class, or a value class, which is not part of the API, like a private one
-                        prop !in properties -> if (prop.isVar) "var " else "val "
-                        // never with a setter narrower than the property, which is declared in the class body
-                        renderedSetterVisibility(prop, prop.apiSetterVisibility(apiClass, foundClass), isOverride) != null -> "var "
+                        declaration == null -> ""
+                        declaration.isVar -> "var "
                         else -> "val "
                     },
                     // a constructor property is never abstract, but it can be open or final
                     // the hidden property of a data class, or a value class, is still declared, see formatDeprecation
-                    modifiers = if (prop == null) "" else formatDeprecation(foundClass.deprecation(prop), withHidden = prop !in properties) +
+                    modifiers = if (declaration == null) "" else formatDeprecation(declaration.deprecation, withHidden = prop !in properties) +
                         formatVisibility(prop.visibility) +
                         formatModalityModifiers(prop.modality, isOverride, inInterface = false, isOpenForOverrides)
                 )
             }
-            // a class which can neither be instantiated, nor subclassed, from the user code
-            isConstructibleKind && renderedConstructor == null && secondaryConstructors.isEmpty() ->
-                NOT_CONSTRUCTIBLE_MARKER
+            constructors.header == HeaderConstructor.NotConstructible -> NOT_CONSTRUCTIBLE_MARKER
             else -> ""
         }
 
@@ -1920,10 +1973,10 @@ internal class DefaultKotlinIntrospector(
             val propertyItems = properties
                 .filter { it !in declaredInConstructor }
                 .map { property ->
-                    property.name to formatProperty(
-                        property, property.apiSetterVisibility(apiClass, foundClass),
+                    property.name to formatApiProperty(
+                        property, apiClass, foundClass,
                         inInterface = isInterface, owner = kmClass, contextPackage = contextPackage, classTypeParameters = typeParameters,
-                        deprecation = foundClass.deprecation(property), isOwnerOpenForOverrides = isOpenForOverrides
+                        isOwnerOpenForOverrides = isOpenForOverrides
                     )
                 }
 
@@ -2064,10 +2117,10 @@ internal class DefaultKotlinIntrospector(
         val isOpenForOverrides = mightBeSubclassed(kmClass, declarations)
         val builtinClass = declarations as? BuiltinClass
         val jvmOnlyProperties = builtinClass?.jvmOnlyProperties.orEmpty().inApi(apiClass, declarations).map { property ->
-            property.name to formatProperty(
-                property, property.apiSetterVisibility(apiClass, declarations),
+            property.name to formatApiProperty(
+                property, apiClass, declarations,
                 inInterface = isInterface, owner = kmClass, contextPackage = contextPackage, classTypeParameters = typeParameters,
-                deprecation = declarations.deprecation(property), isOwnerOpenForOverrides = isOpenForOverrides
+                isOwnerOpenForOverrides = isOpenForOverrides
             )
         }
         val jvmOnlyFunctions = builtinClass?.jvmOnlyFunctions.orEmpty()
@@ -2254,7 +2307,8 @@ internal class DefaultKotlinIntrospector(
      * except [withHidden], the only place being the property declared by a primary constructor parameter
      * of a data class, or a value class, which must declare a property, like
      * `data class Foo(@Deprecated("Replaced", level = DeprecationLevel.HIDDEN) val a: Int)`, telling it cannot be used,
-     * and the hidden getter of a `var` which can still be assigned, rendered as `@get:Deprecated`, see [Deprecation.hidesGetter].
+     * and the deprecations of the accessors of a `var`, also a hidden one, rendered as `@get:Deprecated`, or `@set:Deprecated`,
+     * see [Deprecation.accessors], when it is rendered as a `var`, otherwise only the [one of reading it][Deprecation.ofReading].
      * Only the first non-blank line of a multiline message is rendered, followed by `…`, to keep it compact,
      * and the expression of `ReplaceWith` without its imports.
      */
@@ -2264,8 +2318,12 @@ internal class DefaultKotlinIntrospector(
     ): String = if (deprecation == null || (deprecation.isHidden && !withHidden)) "" else buildString {
         val message = deprecation.message.trim()
         val firstLine = message.lineSequence().first().trimEnd()
-        // telling that a var whose getter is hidden can only be assigned
-        +(if (deprecation.target == Deprecation.Target.GETTER) "@get:Deprecated(\"" else "@Deprecated(\"")
+        // telling that only the reading, or the assigning, of a var is deprecated
+        +when (deprecation.target) {
+            Deprecation.Target.DECLARATION -> "@Deprecated(\""
+            Deprecation.Target.GETTER -> "@get:Deprecated(\""
+            Deprecation.Target.SETTER -> "@set:Deprecated(\""
+        }
         +firstLine.escapeKotlin('"')
         if (firstLine.length < message.length) +" …"
         +"\""
@@ -2276,7 +2334,7 @@ internal class DefaultKotlinIntrospector(
         }
         if (deprecation.level != DeprecationLevel.WARNING) +", level = DeprecationLevel.${deprecation.level.name}"
         +") "
-        +formatDeprecation(deprecation.hiddenGetter)
+        deprecation.accessors.forEach { +formatDeprecation(it) }
     }
 
     private fun formatSupertypes(
@@ -2508,7 +2566,7 @@ internal class DefaultKotlinIntrospector(
         classTypeParameters: Map<Int, String> = emptyMap(),
         bodyReceiverSubstitution: Map<Int, String>? = null,
         deprecation: Deprecation? = null,
-        isOwnerOpenForOverrides: Boolean = owner != null && owner.modality != Modality.FINAL,
+        isOwnerOpenForOverrides: Boolean = isOpenForOverridesByDefault(owner),
         isInheritedByFinalClass: Boolean = false
     ): String = buildString {
         val typeParameters = classTypeParameters + function.typeParameters.namesById() + bodyReceiverSubstitution.orEmpty()
@@ -2605,12 +2663,35 @@ internal class DefaultKotlinIntrospector(
     ): String = formatContextParameters(parameters.map { it.name to formatType(it.type, contextPackage, typeParameters) })
 
     /**
+     * Format a [property] of the API in the [scope], see [formatProperty],
+     * with its deprecation told once by the [deprecations], also deciding whether its setter is part of the API.
+     */
+    private fun formatApiProperty(
+        property: KmProperty,
+        scope: DeclarationScope,
+        deprecations: Deprecations?,
+        inInterface: Boolean = false,
+        owner: KmClass? = null,
+        contextPackage: String? = null,
+        classTypeParameters: Map<Int, String> = emptyMap(),
+        isOwnerOpenForOverrides: Boolean = isOpenForOverridesByDefault(owner),
+        isInheritedByFinalClass: Boolean = false
+    ): List<String> {
+        val deprecation = deprecations?.deprecation(property)
+        return formatProperty(
+            property, property.apiSetterVisibility(scope, deprecation), inInterface, owner, contextPackage, classTypeParameters,
+            deprecation = deprecation, isOwnerOpenForOverrides = isOwnerOpenForOverrides,
+            isInheritedByFinalClass = isInheritedByFinalClass
+        )
+    }
+
+    /**
      * Format a member, top-level or extension property, on its lines: the declaration, followed by the line
      * of its setter, like `    protected set`, when its visibility differs from the one of the property.
      *
      * @param setterVisibility the visibility of the setter, when the property can be assigned from the user code,
      *   see [apiSetterVisibility], otherwise the property is rendered as a `val`,
-     *   unless it overrides a `var`, see [renderedSetterVisibility].
+     *   unless it overrides a `var`, see [propertyDeclaration].
      * @param owner the class declaring the [property], to tell whether it is an override.
      * @param bodyReceiverSubstitution the substitution of an extension listed in the body of its receiver class,
      *   like for [formatFunction].
@@ -2627,16 +2708,17 @@ internal class DefaultKotlinIntrospector(
         classTypeParameters: Map<Int, String> = emptyMap(),
         bodyReceiverSubstitution: Map<Int, String>? = null,
         deprecation: Deprecation? = null,
-        isOwnerOpenForOverrides: Boolean = owner != null && owner.modality != Modality.FINAL,
+        isOwnerOpenForOverrides: Boolean = isOpenForOverridesByDefault(owner),
         isInheritedByFinalClass: Boolean = false
     ): List<String> = buildList {
         val typeParameters = classTypeParameters + property.typeParameters.namesById() + bodyReceiverSubstitution.orEmpty()
         // the type parameters standing for the ones of the class are not declared
         val declaredTypeParameters = property.typeParameters.filter { it.id !in bodyReceiverSubstitution.orEmpty() }
         val isOverride = isOverride(owner, property)
-        val renderedSetterVisibility = renderedSetterVisibility(property, setterVisibility, isOverride)
+        val declaration = propertyDeclaration(property, setterVisibility, isOverride, deprecation)
+        val renderedSetterVisibility = declaration.setterVisibility
         add(buildString {
-            +formatDeprecation(deprecation)
+            +formatDeprecation(declaration.deprecation)
             +formatContextParameters(property.contextParameters, contextPackage, typeParameters)
             +formatVisibility(property.visibility)
 
@@ -2666,14 +2748,34 @@ internal class DefaultKotlinIntrospector(
     }
 
     /**
-     * The visibility of the setter rendered for the [property], or `null` when it is rendered as a `val`:
-     * the [setterVisibility] of the API, see [apiSetterVisibility], except for an override of a `var`,
+     * How a property is declared, by [formatProperty], or by a parameter of a primary constructor:
+     * as a `var`, with the [setterVisibility] rendered, or as a `val`, when `null`,
+     * with its [deprecation] rendered, which for a `val` is the one of reading it only, see [Deprecation.ofReading].
+     */
+    private class PropertyDeclaration(val setterVisibility: Visibility?, val deprecation: Deprecation?) {
+        val isVar: Boolean get() = setterVisibility != null
+    }
+
+    /**
+     * The [PropertyDeclaration] of the [property], deprecated by the [deprecation],
+     * whose setter rendered is the one of the API, with the [setterVisibility], see [apiSetterVisibility],
+     * or `null` when it is rendered as a `val`, except for an override of a `var`,
      * which cannot be a `val`, so that its setter is rendered with its actual visibility, like `protected set`,
      * even when it cannot be called, like in a final class.
      * A hidden setter of an override, whose visibility does not tell it, still renders the override as a `var`.
      */
-    private fun renderedSetterVisibility(property: KmProperty, setterVisibility: Visibility?, isOverride: Boolean): Visibility? =
-        setterVisibility ?: if (property.isVar && isOverride) property.setter?.visibility ?: property.visibility else null
+    private fun propertyDeclaration(
+        property: KmProperty,
+        setterVisibility: Visibility?,
+        isOverride: Boolean,
+        deprecation: Deprecation?
+    ): PropertyDeclaration {
+        val renderedSetterVisibility = setterVisibility ?: if (isOverride) property.declaredSetterVisibility else null
+        return PropertyDeclaration(
+            renderedSetterVisibility,
+            if (renderedSetterVisibility != null) deprecation else deprecation?.ofReading()
+        )
+    }
 
     private fun List<KmTypeParameter>.namesById(): Map<Int, String> = associate { it.id to it.name }
 
@@ -3272,10 +3374,11 @@ internal class DefaultKotlinIntrospector(
         .filter { it.receiverParameterType != null }
         .inApi(TopLevel, classFile)
         .map {
+            val deprecation = classFile.deprecation(it)
             IndexedExtensionProperty(
                 it, className, source, isObjectMember,
-                setterVisibility = it.apiSetterVisibility(TopLevel, classFile),
-                deprecation = classFile.deprecation(it)
+                setterVisibility = it.apiSetterVisibility(TopLevel, deprecation),
+                deprecation = deprecation
             )
         }
 
@@ -3499,8 +3602,7 @@ internal class DefaultKotlinIntrospector(
          * kept only for the binary compatibility, which the metadata does not tell.
          * The annotation is found on the JVM method of a function or a constructor,
          * and on the synthetic method for the annotations of a property, or its getter, if annotated itself,
-         * while only the setter is deprecated when annotated itself, which tells only whether it is hidden,
-         * and the hidden getter of a `var` hides only the reading, see [Deprecation.hidesGetter].
+         * while the accessors of a `var`, when annotated themselves, are deprecated apart, see [varDeprecationOf].
          * The ACC_SYNTHETIC flag, which the compiler also sets on the hidden methods, is not relied on,
          * as @JvmSynthetic sets it on the declarations which are still callable from Kotlin,
          * while the field of a hidden @JvmField or const property does not have it.
@@ -3516,20 +3618,18 @@ internal class DefaultKotlinIntrospector(
         /**
          * The deprecation of the [property], whose own one, of the synthetic method for its annotations,
          * is the [annotationsDeprecation], combined with the one of its getter, see [highestOf],
-         * except a hidden getter of a `var`, which might still be assigned, see [varDeprecationOf].
+         * except for a `var`, whose accessors are deprecated apart, as it can be read, and assigned, see [varDeprecationOf].
          */
         fun deprecation(property: KmProperty, annotationsDeprecation: Deprecation?): Deprecation? {
             val getterDeprecation = deprecation(property.getterSignature)
             return if (property.isVar) {
-                varDeprecationOf(annotationsDeprecation, getterDeprecation)
+                varDeprecationOf(annotationsDeprecation, getterDeprecation, deprecation(property.setterSignature))
             } else {
                 highestOf(annotationsDeprecation, getterDeprecation)
             }
         }
 
         fun annotationsDeprecation(property: KmProperty): Deprecation? = deprecation(property.syntheticMethodForAnnotations)
-
-        override fun isSetterHidden(property: KmProperty): Boolean = deprecation(property.setterSignature)?.isHidden == true
 
         /**
          * Whether the synthetic method for the annotations of the [property] is rather in the `DefaultImpls` class,

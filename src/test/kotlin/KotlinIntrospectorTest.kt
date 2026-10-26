@@ -6785,6 +6785,43 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should not list named companion object and nested class deprecated with hidden level`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenNamedCompanionHolder"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenNamedCompanionHolder [page 1/1]
+            class HiddenNamedCompanionHolder {
+                fun f()
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve named companion object deprecated with hidden level`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenNamedCompanionHolder.Factory") == null)
+    }
+
+    @Test
+    fun `should not resolve member of named companion object deprecated with hidden level`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenNamedCompanionHolder.Factory.create") == null)
+    }
+
+    @Test
+    fun `should not resolve member of named companion object deprecated with hidden level through outer class`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenNamedCompanionHolder.create") == null)
+    }
+
+    @Test
+    fun `should not resolve nested class deprecated with hidden level`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenNamedCompanionHolder.HiddenNested") == null)
+    }
+
+    @Test
+    fun `should not resolve member of nested class deprecated with hidden level`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenNamedCompanionHolder.HiddenNested.g") == null)
+    }
+
+    @Test
     fun `should not render deprecation of enum class constructor`() {
         // it is always private, called only by the entries
         resolver.resolve(
@@ -7357,6 +7394,19 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should render override of var with setter deprecated with hidden level as var with its deprecation`() {
+        // a val cannot override a var, so the annotation tells it cannot be assigned
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenSetterOverride"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenSetterOverride [page 1/1]
+            class HiddenSetterOverride : HiddenSetterOverrideBase {
+                @set:Deprecated("replaced", level = DeprecationLevel.HIDDEN) override var value: Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve member var with setter deprecated with hidden level as val`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.HiddenSetterHolder.inBody"
@@ -7387,9 +7437,76 @@ class KotlinIntrospectorTest {
             class HiddenGetterVarHolder(@get:Deprecated("replaced", level = DeprecationLevel.HIDDEN) var inConstructor: Int) {
                 @get:Deprecated("replaced", level = DeprecationLevel.HIDDEN) var inBody: Int
                 @Deprecated("deprecated") @get:Deprecated("replaced", level = DeprecationLevel.HIDDEN) var deprecatedWithHiddenGetter: Int
+                @get:Deprecated("replaced", level = DeprecationLevel.HIDDEN) @set:Deprecated("Assign y", level = DeprecationLevel.ERROR) var withErrorSetter: Int
             }
             // from com.xemantic.kotlin.introspection.test
             @get:Deprecated("replaced", level = DeprecationLevel.HIDDEN) var HiddenGetterVarHolder.hiddenGetterExtension: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve var with getter deprecated with hidden level and setter deprecated with error level`() {
+        // still listed, like any declaration deprecated with the ERROR level, which can be referred to, but not called
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenGetterVarHolder.withErrorSetter"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenGetterVarHolder.withErrorSetter [page 1/1]
+            @get:Deprecated("replaced", level = DeprecationLevel.HIDDEN) @set:Deprecated("Assign y", level = DeprecationLevel.ERROR) var withErrorSetter: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render deprecation of accessors of var apart from property`() {
+        // only the reading, or only the assigning, is deprecated, while a var which cannot be assigned
+        // from the outside reads as a val, whose reading is deprecated as a whole
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.AccessorDeprecationHolder"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.AccessorDeprecationHolder [page 1/1]
+            class AccessorDeprecationHolder(@get:Deprecated("Read y", level = DeprecationLevel.ERROR) var inConstructor: Int) {
+                @get:Deprecated("Read y", level = DeprecationLevel.ERROR) var errorGetter: Int
+                @get:Deprecated("Read y") var warningGetter: Int
+                @set:Deprecated("Assign y") var warningSetter: Int
+                @set:Deprecated("Assign y", level = DeprecationLevel.ERROR) var errorSetter: Int
+                @get:Deprecated("Read y") @set:Deprecated("Assign y", level = DeprecationLevel.ERROR) var bothAccessors: Int
+                @Deprecated("Use y") @set:Deprecated("Assign y", level = DeprecationLevel.ERROR) var deprecatedWithErrorSetter: Int
+                @Deprecated("Read y", level = DeprecationLevel.ERROR) val withPrivateSetter: Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            @set:Deprecated("Assign y", level = DeprecationLevel.ERROR) var AccessorDeprecationHolder.errorSetterExtension: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve var with setter deprecated with error level`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.AccessorDeprecationHolder.errorSetter"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.AccessorDeprecationHolder.errorSetter [page 1/1]
+            @set:Deprecated("Assign y", level = DeprecationLevel.ERROR) var errorSetter: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve inherited var with setter deprecated with error level`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.AccessorDeprecationSub.inheritedErrorSetter"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.AccessorDeprecationSub.inheritedErrorSetter [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.AccessorDeprecationBase
+            @set:Deprecated("Assign y", level = DeprecationLevel.ERROR) var inheritedErrorSetter: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve inherited var whose protected setter final subclass cannot call as val with deprecation of reading`() {
+        // the setter, and its deprecation, are not part of the API of the final subclass
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.AccessorDeprecationSub.inheritedProtectedSetter"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.AccessorDeprecationSub.inheritedProtectedSetter [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.AccessorDeprecationBase
+            @Deprecated("Read y", level = DeprecationLevel.ERROR) val inheritedProtectedSetter: Int
         """.trimIndent()
     }
 

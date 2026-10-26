@@ -188,6 +188,10 @@ com.example.AnnotationTestClass
   @Deprecated("Use uppercase() instead.", ReplaceWith("uppercase(Locale.getDefault())"), level = DeprecationLevel.ERROR) inline fun String.toUpperCase(): String
   ```
 
+  The accessors of a `var` deprecated on their own keep their targets,
+  as only the reading, or only the assigning, is deprecated,
+  like `@set:Deprecated("Assign y", level = DeprecationLevel.ERROR) var x: Int`,
+  while a `var` rendered as a `val` is deprecated as a whole by the higher of the deprecations of the property and its getter.
   The level is the one in effect for the standard library of the class loader,
   also when told by `@DeprecatedSinceKotlin`, as for the declarations of the standard library,
   and it is rendered unless it is the default `WARNING`.
@@ -206,12 +210,14 @@ com.example.AnnotationTestClass
   or `open class Foo protected constructor()`, callable only from a subclass.
   A class without any constructor callable from the user code,
   which can neither be instantiated, nor subclassed there,
-  is marked with `private constructor()`, like `open class Base64 private constructor()`,
-  whatever the actual visibility and parameters of its constructors,
+  is marked with `private constructor()`, like `open class Base64 private constructor()`.
+  The marker is a convention, not the actual signature:
+  the constructors might be internal, or take parameters,
+  like the ones of `IntProgression`, `Instant`, or `Uuid`,
   while the properties declared by its primary constructor are rendered in the class body.
   A data class, or a value class, cannot be declared without the parameters of its primary constructor,
   each declaring a property,
-  so they are rendered after its `private constructor`, with the actual visibility of their properties,
+  so they are rendered after the same `private constructor` marker, with the actual visibility of their properties,
   like `@JvmInline value class Duration private constructor(private val rawValue: Long)`.
   An object, an enum class, a sealed class, an interface, or an annotation class is not marked,
   as its kind already tells how it can be created, if at all.
