@@ -117,8 +117,6 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // kotlin.String [page 18/42]
             class String : Comparable<String>, CharSequence {
-                inline fun trimStart(predicate: (Char) -> Boolean): String
-                fun trimStart(vararg chars: Char): String
                 inline fun trimStart(): String
                 inline fun uppercase(): String
                 inline fun uppercase(locale: java.util.Locale): String
@@ -130,6 +128,8 @@ class KotlinIntrospectorTest {
             fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T): T
             fun <T : Comparable<T>> T.coerceAtMost(maximumValue: T): T
             fun <T : Comparable<T>> T.coerceIn(minimumValue: T?, maximumValue: T?): T
+            fun <T : Comparable<T>> T.coerceIn(range: ClosedFloatingPointRange<T>): T
+            fun <T : Comparable<T>> T.coerceIn(range: ClosedRange<T>): T
         """.trimIndent()
     }
 
@@ -142,8 +142,6 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // kotlin.String [page 42/42]
             // from kotlin.text
-            fun CharSequence.windowed(size: Int, step: Int = …, partialWindows: Boolean = …): List<String>
-            fun <R> CharSequence.windowed(size: Int, step: Int = …, partialWindows: Boolean = …, transform: (CharSequence) -> R): List<R>
             fun CharSequence.windowedSequence(size: Int, step: Int = …, partialWindows: Boolean = …): Sequence<String>
             fun <R> CharSequence.windowedSequence(size: Int, step: Int = …, partialWindows: Boolean = …, transform: (CharSequence) -> R): Sequence<R>
             fun CharSequence.withIndex(): Iterable<IndexedValue<Char>>
@@ -202,7 +200,6 @@ class KotlinIntrospectorTest {
                 inline fun hexToULong(format: HexFormat = …): ULong
                 inline fun hexToUShort(format: HexFormat = …): UShort
                 inline fun intern(): String
-                fun isLocalClassName(): Boolean
                 override val length: Int
                 inline fun lowercase(): String
                 inline fun lowercase(locale: java.util.Locale): String
@@ -289,7 +286,6 @@ class KotlinIntrospectorTest {
                 inline fun toInt(radix: Int): Int
                 fun toIntOrNull(): Int?
                 fun toIntOrNull(radix: Int): Int?
-                fun toJvmInternalName(): String
                 inline fun toLong(): Long
                 inline fun toLong(radix: Int): Long
                 fun toLongOrNull(): Long?
@@ -5847,6 +5843,20 @@ class KotlinIntrospectorTest {
             // from kotlin.reflect.full
             val KClass<*>.memberFunctions: Collection<KFunction<*>>
         """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve extension of built-in type from kotlin package of library other than stdlib and kotlin-reflect`() {
+        // kotlin-metadata-jvm declares fun ClassName.isLocalClassName() in kotlin.metadata, ClassName being a typealias of String
+        assert(resolver.resolve("kotlin.String.isLocalClassName") == null)
+    }
+
+    @Test
+    fun `should not list extensions of built-in type from kotlin package of library other than stdlib and kotlin-reflect`() {
+        // which would be listed in the body of String, like its member
+        resolver.resolve("kotlin.String", pageSize = 10000) should {
+            have(lines().none { "isLocalClassName" in it })
+        }
     }
 
     @Test

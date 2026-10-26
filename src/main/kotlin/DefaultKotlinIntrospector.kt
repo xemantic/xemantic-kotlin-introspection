@@ -359,6 +359,11 @@ internal class DefaultKotlinIntrospector(
 
         private const val DEFAULT_COMPANION_NAME = "Companion"
 
+        private const val UNIT_BINARY_NAME = "kotlin.Unit"
+
+        // the file facade of the extensions of KClass in kotlin.reflect.full, like KClass.memberFunctions
+        private const val KOTLIN_REFLECT_KCLASSES_BINARY_NAME = "kotlin.reflect.full.KClasses"
+
         private const val ENUM_CLASS_NAME = "kotlin/Enum"
 
         /**
@@ -1684,15 +1689,38 @@ internal class DefaultKotlinIntrospector(
 
     /**
      * Whether the extensions declared in the [sourceClass] are shown with the built-in types:
-     * only the ones of the public `kotlin.*` packages, not the ones of the other libraries, like the test package,
-     * or the ones of the internal packages, like `kotlin.reflect.jvm.internal`.
-     * Such a package is not necessarily one of the standard library, it can also be of another library
-     * on the classpath, like `kotlin.reflect.full` of kotlin-reflect, whose extensions, like `KClass.memberFunctions`,
+     * only the ones of the public `kotlin.*` packages, not the ones of the internal packages, like `kotlin.jvm.internal`,
+     * and only the ones of the standard library, or of kotlin-reflect, see [kotlinLibraryRoots],
+     * whose extensions, like `KClass.memberFunctions` of `kotlin.reflect.full`,
      * can be called by the user code depending on it, even if some of them, like `KClass.cast()`,
-     * have the same signature as the ones of the standard library, imported from another package.
+     * have the same signature as the ones of the standard library, imported from another package,
+     * but not the ones of the other libraries declaring `kotlin.*` packages, like kotlin-test, kotlin-scripting,
+     * or kotlin-metadata-jvm, whose `String.isLocalClassName()` would read like a member of `String`.
+     * When the roots of these libraries cannot be told, the extensions of all the public `kotlin.*` packages are shown.
      */
-    private fun isPublicKotlinPackageSource(sourceClass: String): Boolean =
-        sourceClass.startsWith("kotlin.") && !sourceClass.split('.').contains("internal")
+    private fun isPublicKotlinPackageSource(sourceClass: String): Boolean {
+        if (!sourceClass.startsWith("kotlin.") || sourceClass.split('.').contains("internal")) return false
+        val roots = kotlinLibraryRoots
+        if (roots.isEmpty()) return true
+        return kotlinLibrarySources.computeIfAbsent(sourceClass) { classLoader.classFileRoot(it) in roots }
+    }
+
+    /**
+     * The roots of the class path serving the standard library, and kotlin-reflect, if present,
+     * told by the class files of `kotlin.Unit`, and of `kotlin.reflect.full.KClasses`, see [classFileRoot],
+     * or none, if the standard library cannot be found, like when the class files are not served as resources.
+     * A fat jar merging the libraries is a single root, whose `kotlin.*` packages then all count as the standard library.
+     */
+    private val kotlinLibraryRoots: Set<String> by lazy {
+        val stdlibRoot = classLoader.classFileRoot(UNIT_BINARY_NAME) ?: return@lazy emptySet()
+        setOfNotNull(stdlibRoot, classLoader.classFileRoot(KOTLIN_REFLECT_KCLASSES_BINARY_NAME))
+    }
+
+    /**
+     * Whether the class of the extensions of a `kotlin.*` package, by its JVM binary name,
+     * comes from one of the [kotlinLibraryRoots], bounded by the number of such classes indexed.
+     */
+    private val kotlinLibrarySources = ConcurrentHashMap<String, Boolean>()
 
     /**
      * The `@JvmInline` annotation, which a value class with a single underlying property requires on the JVM.
