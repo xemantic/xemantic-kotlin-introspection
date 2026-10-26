@@ -284,3 +284,9 @@ interface InheritedTaker {
 }
 
 class InheritedFromJavaTakeBase : com.xemantic.kotlin.introspection.test.other.JavaTakeBase(), InheritedTaker
+
+// An abstract member of kotlin.Number implemented by a Java class, and declared abstract again by its Java subclass
+abstract class InheritedReabstractedNumber : com.xemantic.kotlin.introspection.test.other.JavaReabstractedNumberMid()
+
+// A public method of a public Java class nested in a package-private one, inherited through its public Java subclass
+class InheritedThroughPublicNestedJavaMid : com.xemantic.kotlin.introspection.test.other.JavaPublicNestedGreeterMid()

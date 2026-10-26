@@ -4130,6 +4130,18 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve abstract member of Kotlin superclass implemented by Java class and declared abstract again below as abstract`() {
+        // intValue() of JavaNumberBase implements the toInt() of kotlin.Number, but JavaReabstractedNumberMid declares it abstract
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedReabstractedNumber.toInt"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedReabstractedNumber.toInt [page 1/1]
+            // inherited from kotlin.Number
+            abstract fun toInt(): Int
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve abstract member of Kotlin superclass not implemented by Java superclass as abstract`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.InheritedAtomicInteger.toByte"
@@ -4289,6 +4301,18 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.test.InheritedThroughPublicJavaMid.hello [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.other.JavaPublicGreeterMid
             fun hello(): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve public method of public Java class nested in package-private one as inherited from public subclass`() {
+        // the user code cannot name JavaHiddenOuter.Base, as it cannot access its outer class
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedThroughPublicNestedJavaMid.hi"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedThroughPublicNestedJavaMid.hi [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaPublicNestedGreeterMid
+            fun hi(): String
         """.trimIndent()
     }
 

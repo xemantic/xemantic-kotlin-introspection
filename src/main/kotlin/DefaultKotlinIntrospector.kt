@@ -1747,7 +1747,7 @@ internal class DefaultKotlinIntrospector(
     ) {
 
         /**
-         * The modality of the method of a Java class implementing the abstract [member], which is inherited in its place,
+         * The modality of the method of the nearest Java class implementing the abstract [member], which is inherited in its place,
          * like `intValue()` of `java.util.concurrent.atomic.AtomicInteger` of the `toInt()` of `kotlin.Number`,
          * see [inheritedCandidates], or `null`.
          */
@@ -1895,16 +1895,19 @@ internal class DefaultKotlinIntrospector(
     /**
      * The name of the class the [candidate] is inherited from, rendered in its `// inherited from …` header,
      * like `java.util.ArrayList`: the class declaring it, but of a Java class which the user code cannot name,
-     * like a package-private one, the public JVM superclass of the [inheriting] class extending it, closest to it, if any,
+     * like a package-private one, or one nested in it, the public JVM superclass of the [inheriting] class extending it, closest to it, if any,
      * which inherits its public members, like the public subclass of a package-private class, which javac bridges them in.
      */
     private fun inheritedFromName(candidate: InheritedCandidate, inheriting: Class<*>?): String {
-        val declaring = (candidate.declarations as? JavaClass)?.clazz?.takeUnless { Modifier.isPublic(it.modifiers) }
+        // a public nested class of a package-private class cannot be named either
+        fun Class<*>.isNameable() = generateSequence(this) { it.enclosingClass }.all { Modifier.isPublic(it.modifiers) }
+        val declaring = (candidate.declarations as? JavaClass)?.clazz
+            ?.takeUnless { reflectedValue(default = true) { it.isNameable() } }
             ?: return candidate.kmClass.name.replace('/', '.')
         val nearest = reflectedValue(default = null) {
             generateSequence(inheriting?.superclass) { it.superclass }
                 .takeWhile { it != declaring }
-                .lastOrNull { Modifier.isPublic(it.modifiers) && declaring.isAssignableFrom(it) }
+                .lastOrNull { it.isNameable() && declaring.isAssignableFrom(it) }
         }
         return (nearest?.let { kotlinClassName(it) } ?: candidate.kmClass.name).replace('/', '.')
     }
@@ -2008,9 +2011,10 @@ internal class DefaultKotlinIntrospector(
                 overridden.key in candidate.overridden && !candidate.refines(overridden, supertypeNamesOf)
             }
             // the Kotlin member stands for the Java method implementing it, like toInt() of kotlin.Number
-            // for intValue() of java.util.concurrent.atomic.AtomicInteger
+            // for intValue() of java.util.concurrent.atomic.AtomicInteger, the nearest one, walked first,
+            // which might declare it abstract again, like an abstract Java subclass of the implementing one
             (candidate.member as? Member.Function)?.function?.modality?.let { modality ->
-                implemented.forEach { it.implementationModality = modality }
+                implemented.forEach { if (it.implementationModality == null) it.implementationModality = modality }
             }
             implemented.isNotEmpty() ||
                 (candidate.overridden.isEmpty() && candidate.overridesHiddenJdkMethod(exposedJdkMethods)) ||

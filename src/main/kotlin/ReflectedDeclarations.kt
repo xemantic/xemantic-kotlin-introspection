@@ -459,8 +459,9 @@ internal fun KType.toKmType(scope: ReflectedTypeParameters, platformAsNullable: 
         else -> KmClassifier.Class("kotlin/Any")
     }
     val arguments = arguments.map { it.toKmTypeProjection(scope) }
-    if (classifier is KClass<*> && isContravariantlyProjectedReadOnly(classifier, arguments)) {
-        type.classifier = KmClassifier.Class(MUTABLE_COLLECTION_TYPES.getValue((type.classifier as KmClassifier.Class).name))
+    val mutableName = (type.classifier as? KmClassifier.Class)?.name?.let { MUTABLE_COLLECTION_TYPES[it] }
+    if (mutableName != null && classifier is KClass<*> && isContravariantlyProjected(classifier, arguments)) {
+        type.classifier = KmClassifier.Class(mutableName)
     }
     // kotlin-reflect lists the type arguments of the outer classes of an inner class, like `Outer<String>.Inner<Int>`,
     // after its own ones, while the metadata keeps them in the outer type
@@ -511,8 +512,7 @@ private val MUTABLE_COLLECTION_TYPES: Map<String, String> = listOf(
  * like `(Mutable)Collection<in E!>!` of `Collection<? super E>`, callable only as its mutable counterpart,
  * like `MutableCollection<in E>`, see [MUTABLE_COLLECTION_TYPES].
  */
-private fun isContravariantlyProjectedReadOnly(kClass: KClass<*>, arguments: List<KmTypeProjection>): Boolean {
-    if (reflectedClassName(kClass) !in MUTABLE_COLLECTION_TYPES) return false
+private fun isContravariantlyProjected(kClass: KClass<*>, arguments: List<KmTypeProjection>): Boolean {
     val typeParameters = kClass.typeParameters
     return arguments.withIndex().any { (index, argument) ->
         argument.variance == KmVariance.IN && typeParameters.getOrNull(index)?.variance == KVariance.OUT
