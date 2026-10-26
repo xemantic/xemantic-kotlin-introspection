@@ -8560,9 +8560,32 @@ class KotlinIntrospectorTest {
                 @get:Deprecated("Read y") @set:Deprecated("Assign y", level = DeprecationLevel.ERROR) var bothAccessors: Int
                 @Deprecated("Use y") @set:Deprecated("Assign y", level = DeprecationLevel.ERROR) var deprecatedWithErrorSetter: Int
                 @Deprecated("Read y", level = DeprecationLevel.ERROR) val withPrivateSetter: Int
+                @Deprecated("Use z", ReplaceWith("z")) @get:Deprecated("Read y", level = DeprecationLevel.ERROR) val deprecatedWithPrivateSetter: Int
+                @Deprecated("Use z", ReplaceWith("z")) @get:Deprecated("Read y", level = DeprecationLevel.ERROR) val deprecatedVal: Int
             }
             // from com.xemantic.kotlin.introspection.test
             @set:Deprecated("Assign y", level = DeprecationLevel.ERROR) var AccessorDeprecationHolder.errorSetterExtension: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve var whose setter cannot be called deprecated itself and with getter as val with both deprecations`() {
+        // the hint of the property deprecation to use z is kept next to the one of reading it
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.AccessorDeprecationHolder.deprecatedWithPrivateSetter"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.AccessorDeprecationHolder.deprecatedWithPrivateSetter [page 1/1]
+            @Deprecated("Use z", ReplaceWith("z")) @get:Deprecated("Read y", level = DeprecationLevel.ERROR) val deprecatedWithPrivateSetter: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve val deprecated itself and with getter with both deprecations`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.AccessorDeprecationHolder.deprecatedVal"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.AccessorDeprecationHolder.deprecatedVal [page 1/1]
+            @Deprecated("Use z", ReplaceWith("z")) @get:Deprecated("Read y", level = DeprecationLevel.ERROR) val deprecatedVal: Int
         """.trimIndent()
     }
 
@@ -8671,6 +8694,39 @@ class KotlinIntrospectorTest {
     @Test
     fun `should not resolve val with getter deprecated with hidden level`() {
         assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenGetterVarHolder.hiddenGetterVal") == null)
+    }
+
+    @Test
+    fun `should not resolve override var with getter deprecated with hidden level and protected setter of final class`() {
+        // the setter can be called only by the subclasses of the base class, while the getter hides the overridden one
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenGetterOverrideHolder.overridden") == null)
+    }
+
+    @Test
+    fun `should render final class without override var with getter deprecated with hidden level and protected setter`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenGetterOverrideHolder"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenGetterOverrideHolder [page 1/1]
+            class HiddenGetterOverrideHolder : HiddenGetterOverrideBase
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve function overridden by override deprecated with hidden level`() {
+        // the hidden override hides the function it overrides too, which is therefore not inherited
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenOverride.member") == null)
+    }
+
+    @Test
+    fun `should not resolve property overridden by override deprecated with hidden level`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenOverride.property") == null)
+    }
+
+    @Test
+    fun `should not resolve members overridden by inherited overrides deprecated with hidden level`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenOverrideSub.member") == null)
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenOverrideSub.property") == null)
     }
 
     @Test

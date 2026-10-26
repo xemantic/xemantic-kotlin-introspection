@@ -248,10 +248,10 @@ class DeprecationTest {
     }
 
     @Test
-    fun `should deprecate reading of var by higher of its own and getter deprecations`() {
+    fun `should deprecate reading of var by its own and getter deprecations`() {
         // given
         val deprecation = varDeprecationOf(
-            propertyDeprecation = Deprecation("use y", replaceWith = null, DeprecationLevel.WARNING),
+            propertyDeprecation = Deprecation("use z", replaceWith = "z", DeprecationLevel.WARNING),
             getterDeprecation = Deprecation("read y", replaceWith = null, DeprecationLevel.ERROR),
             setterDeprecation = Deprecation("assign y", replaceWith = null, DeprecationLevel.ERROR)
         )
@@ -260,8 +260,45 @@ class DeprecationTest {
         val reading = deprecation?.ofReading()
 
         // then
+        assert(reading != null && reading.message == "use z" && reading.replaceWith == "z")
+        assert(reading.target == Deprecation.Target.DECLARATION && reading.level == DeprecationLevel.WARNING)
+        assert(
+            reading.accessors.map { Triple(it.message, it.level, it.target) } ==
+                listOf(Triple("read y", DeprecationLevel.ERROR, Deprecation.Target.GETTER))
+        )
+    }
+
+    @Test
+    fun `should deprecate reading of var by its getter deprecation alone as declaration`() {
+        // given
+        val deprecation = varDeprecationOf(
+            propertyDeprecation = null,
+            getterDeprecation = Deprecation("read y", replaceWith = null, DeprecationLevel.ERROR),
+            setterDeprecation = Deprecation("assign y", replaceWith = null, DeprecationLevel.WARNING)
+        )
+
+        // when
+        val reading = deprecation?.ofReading()
+
+        // then
         assert(reading != null && reading.message == "read y" && reading.level == DeprecationLevel.ERROR)
         assert(reading.target == Deprecation.Target.DECLARATION && reading.accessors.isEmpty())
+    }
+
+    @Test
+    fun `should hide reading of var whose getter is hidden`() {
+        // given
+        val deprecation = varDeprecationOf(
+            propertyDeprecation = Deprecation("use z", replaceWith = null, DeprecationLevel.WARNING),
+            getterDeprecation = Deprecation("read y", replaceWith = null, DeprecationLevel.HIDDEN),
+            setterDeprecation = null
+        )
+
+        // when
+        val reading = deprecation?.ofReading()
+
+        // then
+        assert(reading != null && reading.isHidden)
     }
 
 }

@@ -154,6 +154,16 @@ class AccessorDeprecationHolder(@get:Deprecated("Read y", level = DeprecationLev
     @set:Deprecated("Assign y")
     var withPrivateSetter: Int = 0
         private set
+    // deprecated itself too, telling the replacement, next to the deprecation of its reading
+    @Deprecated("Use z", ReplaceWith("z"))
+    @get:Deprecated("Read y", level = DeprecationLevel.ERROR)
+    @set:Deprecated("Assign y")
+    var deprecatedWithPrivateSetter: Int = 0
+        private set
+    // the same for a val
+    @Deprecated("Use z", ReplaceWith("z"))
+    @get:Deprecated("Read y", level = DeprecationLevel.ERROR)
+    val deprecatedVal: Int = 0
 }
 
 @set:Deprecated("Assign y", level = DeprecationLevel.ERROR)
