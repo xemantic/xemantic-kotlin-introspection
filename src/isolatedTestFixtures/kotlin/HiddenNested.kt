@@ -36,3 +36,13 @@ class DeprecatedNestedHolder {
         fun create(): DeprecatedNestedHolder = DeprecatedNestedHolder()
     }
 }
+
+// An open class whose only constructor is deprecated with the HIDDEN level, and a hidden function,
+// whose class file a test does not serve as a resource, judged then by reflection,
+// so that the user code cannot subclass it, nor use its protected members
+open class HiddenConstructorBase @Deprecated("internal", level = DeprecationLevel.HIDDEN) constructor() {
+    protected fun forSubclasses() {}
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    fun hiddenFunction() {}
+    fun visible() {}
+}

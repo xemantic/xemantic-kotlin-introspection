@@ -25,6 +25,7 @@ import org.objectweb.asm.ClassReader
 import org.objectweb.asm.ClassVisitor
 import org.objectweb.asm.MethodVisitor
 import org.objectweb.asm.Opcodes
+import org.objectweb.asm.Type
 import java.io.File
 import java.io.IOException
 import java.net.URI
@@ -573,14 +574,16 @@ internal class DefaultKotlinIntrospector(
 
         private val defaultImplsFileRead = FinalOnce { readClassFile("$binaryName\$$DEFAULT_IMPLS") }
 
-        // the deprecation of a declaration of this class, see ClassFile, never when the class file cannot be read
+        // the deprecation of a declaration of this class, see ClassFile, reflected when the class file cannot be read,
+        // see reflectedClassFile, like the one of a hidden constructor, telling whether the class can be subclassed
 
-        override fun deprecation(function: KmFunction): Deprecation? = classFile?.deprecation(function)
+        override fun deprecation(function: KmFunction): Deprecation? = (classFile ?: reflectedClassFile).deprecation(function)
 
-        override fun deprecation(constructor: KmConstructor): Deprecation? = classFile?.deprecation(constructor)
+        override fun deprecation(constructor: KmConstructor): Deprecation? =
+            (classFile ?: reflectedClassFile).deprecation(constructor)
 
         override fun deprecation(property: KmProperty): Deprecation? {
-            val classFile = classFile ?: return null
+            val classFile = classFile ?: return reflectedClassFile.deprecation(property)
             // the synthetic method for the annotations of an interface property is rather in its DefaultImpls
             val annotationsFile = if (classFile.hasAnnotationsInDefaultImpls(property)) defaultImplsFile else classFile
             return classFile.deprecation(property, annotationsDeprecation = annotationsFile?.annotationsDeprecation(property))
@@ -817,21 +820,32 @@ internal class DefaultKotlinIntrospector(
     /**
      * The flags of a class whose class file cannot be read, like one an in-memory class loader does not serve,
      * reflected from the [clazz], if loaded: [Class.isSynthetic], reporting the flags of the `InnerClasses` attribute
-     * for a nested class, and its deprecation, see [reflectedDeprecation],
+     * for a nested class, its deprecation, and the ones of its methods and constructors, see [reflectedDeprecation],
      * each annotation read on its own, never failing the resolve.
      */
-    private fun reflectedClassFile(clazz: Class<*>?): ClassFile = ClassFile(
-        metadata = null,
-        isSynthetic = clazz?.isSynthetic == true,
-        classDeprecation = clazz?.let {
-            reflectedDeprecation(
-                listOfNotNull(
-                    reflectedValue(default = null) { clazz.getAnnotation(Deprecated::class.java) },
-                    reflectedValue(default = null) { clazz.getAnnotation(DeprecatedSinceKotlin::class.java) }
-                )
+    private fun reflectedClassFile(clazz: Class<*>?): ClassFile {
+        fun deprecationOf(element: java.lang.reflect.AnnotatedElement): Deprecation? = reflectedDeprecation(
+            listOfNotNull(
+                reflectedValue(default = null) { element.getAnnotation(Deprecated::class.java) },
+                reflectedValue(default = null) { element.getAnnotation(DeprecatedSinceKotlin::class.java) }
             )
+        )
+        // by their JVM signatures, like the ones read from a class file, see ClassFile.deprecatedMethods
+        val methods = reflectedValue(default = emptyList()) {
+            clazz?.declaredMethods.orEmpty().map { it to it.name + Type.getMethodDescriptor(it) }
         }
-    )
+        val constructors = reflectedValue(default = emptyList()) {
+            clazz?.declaredConstructors.orEmpty().map { it to "<init>" + Type.getConstructorDescriptor(it) }
+        }
+        return ClassFile(
+            metadata = null,
+            isSynthetic = clazz?.isSynthetic == true,
+            classDeprecation = clazz?.let { deprecationOf(it) },
+            deprecatedMethods = (methods + constructors).mapNotNull { (member, signature) ->
+                deprecationOf(member)?.let { signature to it }
+            }.toMap()
+        )
+    }
 
     /**
      * The lookups of the recently found classes by their binary names, also of the ones not found,

@@ -968,9 +968,9 @@ class ClassLoaderIntrospectionTest {
         val signatures = List(2) { introspector.resolve(target) }
 
         // then
-        // the deprecations are not known while the class file cannot be read
-        assert(signatures[0] != null && "fun hiddenMember(): Int" in signatures[0]!!)
-        assert(signatures[1] != null && "hiddenMember" !in signatures[1]!!)
+        // the deprecations are reflected while the class file cannot be read, and read from it once it can
+        assert(signatures[0] != null && "hiddenMember" !in signatures[0]!!)
+        assert(signatures[1] == signatures[0])
         assert(classLoader.reads[target] == 2)
     }
 
@@ -1006,9 +1006,10 @@ class ClassLoaderIntrospectionTest {
         val signatures = List(2) { introspector.resolve(target) }
 
         // then
-        // the hidden constructor is not known while the class file cannot be read, so the class seems subclassable
-        assert(signatures[0] != null && "protected fun protectedMember()" in signatures[0]!!)
-        assert(signatures[1] != null && "protectedMember" !in signatures[1]!!)
+        // the hidden constructor is reflected while the class file cannot be read, and read from it once it can
+        assert(signatures[0] != null && "protectedMember" !in signatures[0]!!)
+        assert(signatures[1] == signatures[0])
+        assert(classLoader.reads[target] == 2)
     }
 
     @Test
@@ -2250,6 +2251,29 @@ class ClassLoaderIntrospectionTest {
         deprecated sameAsKotlin """
             // com.xemantic.kotlin.introspection.isolated.DeprecatedNestedHolder.Old [page 1/1]
             @Deprecated("Old") class Old
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should tell hidden declarations of class whose class file is not served as a resource`() {
+        // given
+        val root = isolatedTestFixturesCopy("unservedHiddenConstructor")
+        val classLoader = object : URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader) {
+            override fun getResourceAsStream(name: String): InputStream? =
+                if (name.endsWith("/HiddenConstructorBase.class")) null else super.getResourceAsStream(name)
+        }
+        val introspector = KotlinIntrospector(classLoader)
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.HiddenConstructorBase")
+
+        // then
+        // their deprecations are reflected, telling that the class cannot be subclassed, and so has no protected members
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.HiddenConstructorBase [page 1/1]
+            open class HiddenConstructorBase private constructor() {
+                fun visible()
+            }
         """.trimIndent()
     }
 
