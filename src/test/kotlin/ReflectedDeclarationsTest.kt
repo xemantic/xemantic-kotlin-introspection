@@ -19,6 +19,7 @@
 package com.xemantic.kotlin.introspection
 
 import com.xemantic.kotlin.introspection.test.ContextParametersSample
+import com.xemantic.kotlin.introspection.test.DefinitelyNonNullDefaults
 import com.xemantic.kotlin.introspection.test.GenericInnerTypes
 import com.xemantic.kotlin.introspection.test.KeywordMembersSample
 import com.xemantic.kotlin.introspection.test.NonGenericInnerTypes
@@ -31,6 +32,7 @@ import kotlin.metadata.KmClassifier
 import kotlin.metadata.KmType
 import kotlin.metadata.KmTypeParameter
 import kotlin.metadata.KmVariance
+import kotlin.metadata.isDefinitelyNonNull
 import kotlin.metadata.isNullable
 import kotlin.reflect.KFunction
 import kotlin.reflect.KProperty
@@ -120,6 +122,31 @@ class ReflectedDeclarationsTest {
     }
 
     @Test
+    fun `should enhance the types of the JDK methods which the compiler enhances as definitely not nullable`() {
+        // given - the enhanced JDK signatures of kotlin-reflect, the same as of the compiler, of the classes which are not final
+        val info = Class.forName("kotlin.reflect.jvm.internal.impl.load.java.typeEnhancement.PredefinedEnhancementInfoKt")
+        val bySignature = info.getDeclaredField("PREDEFINED_FUNCTION_ENHANCEMENT_INFO_BY_SIGNATURE")
+            .apply { isAccessible = true }.get(null) as Map<*, *>
+        fun Any.property(name: String): Any? = javaClass.getMethod(name).invoke(this)
+        fun definitelyNotNull(typeInfo: Any?): Set<Int> = (typeInfo?.property("getMap") as Map<*, *>?).orEmpty()
+            .filterValues { it?.property("getDefinitelyNotNull") == true }.keys.mapTo(HashSet()) { it as Int }
+
+        // when
+        val enhanced = bySignature.mapKeys { it.key as String }.filterKeys { signature ->
+            val className = signature.substringBefore('.').replace('/', '.')
+            !java.lang.reflect.Modifier.isFinal(Class.forName(className).modifiers)
+        }.mapValues { (_, functionInfo) ->
+            val parameters = functionInfo!!.property("getParametersInfo") as List<*>
+            // the return type at -1
+            (parameters.withIndex().associate { (position, typeInfo) -> position to definitelyNotNull(typeInfo) } +
+                (-1 to definitelyNotNull(functionInfo.property("getReturnTypeInfo")))).filterValues { it.isNotEmpty() }
+        }.filterValues { it.isNotEmpty() }
+
+        // then
+        assert(enhanced == DEFINITELY_NOT_NULL_JDK_TYPES)
+    }
+
+    @Test
     fun `should render element type of Java vararg as nullable like its platform type`() {
         // given - Object... is seen in Kotlin as vararg of Any!, accepting null elements
         val format = JavaUnnamedParameters::class.memberFunctions.single { it.name == "format" }
@@ -173,6 +200,70 @@ class ReflectedDeclarationsTest {
 
         // then
         assert(!type.isNullable && (type.classifier as? KmClassifier.TypeParameter)?.id == 0)
+    }
+
+    @Test
+    fun `should render type parameter used as definitely not nullable`() {
+        // given
+        val orDefault = DefinitelyNonNullDefaults::class.memberFunctions.single { it.name == "orDefault" }
+
+        // when
+        val rendered = introspector.formatReflectedFunction(orDefault)
+
+        // then
+        assert(rendered == "fun orDefault(value: T, default: T & Any): T & Any")
+    }
+
+    @Test
+    fun `should not render type parameter of nullable bounds as definitely not nullable`() {
+        // given
+        val first = DefinitelyNonNullDefaults::class.memberFunctions.single { it.name == "first" }
+
+        // when
+        val rendered = introspector.formatReflectedFunction(first)
+
+        // then
+        assert(rendered == "fun <S> first(value: S): S where S : CharSequence?, S : Comparable<S>")
+    }
+
+    @Test
+    fun `should not convert type parameter of Java override of mapped member to definitely not nullable`() {
+        // given - kotlin-reflect gives the E of TreeSet.add as not a platform type, like the one of MutableSet.add it overrides
+        val add = java.util.TreeSet::class.memberFunctions.single { it.name == "add" }
+        val typeParameters = ReflectedTypeParameters.classTypeParameters(listOf(KmTypeParameter("E", 0, KmVariance.INVARIANT)))
+
+        // when
+        val type = add.toKmFunction(typeParameters).valueParameters.single().type
+
+        // then
+        assert(!type.isDefinitelyNonNull)
+    }
+
+    @Test
+    fun `should convert Java class type parameter enhanced as not nullable to definitely not nullable`() {
+        // given - K2 enhances the signature of java.util.Map.merge to take the value as V & Any, but not the key
+        val merge = java.util.AbstractMap::class.memberFunctions.single { it.name == "merge" }
+        val typeParameters = ReflectedTypeParameters.classTypeParameters(
+            listOf(KmTypeParameter("K", 0, KmVariance.INVARIANT), KmTypeParameter("V", 1, KmVariance.INVARIANT))
+        )
+
+        // when
+        val types = merge.toKmFunction(typeParameters).valueParameters.map { it.type }
+
+        // then
+        assert(types.map { it.isDefinitelyNonNull } == listOf(false, true, false))
+        assert(types[2].arguments.map { it.type?.isDefinitelyNonNull } == listOf(true, true, false))
+    }
+
+    @Test
+    fun `should leave parameterless Java-only members of built-in type described by kotlin-reflect to the JVM-only ones`() {
+        // when - like fillInStackTrace(), getLocalizedMessage(), or printStackTrace(), declared next to printStackTrace(arg0)
+        val throwable = Throwable::class.toKmBuiltinClass("kotlin/Throwable")
+        val collection = Collection::class.toKmBuiltinClass("kotlin/collections/Collection")
+
+        // then - like stream(), referring to a Java type, which no built-in declaration does
+        assert(throwable.functions.map { it.name }.isEmpty())
+        assert(collection.functions.map { it.name }.sorted() == listOf("contains", "containsAll", "isEmpty", "iterator"))
     }
 
     @Test

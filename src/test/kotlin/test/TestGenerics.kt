@@ -62,3 +62,17 @@ class GenericInnerTypes(
 class JavaGenericOuterString : JavaGenericOuter<String>() {
     inner class Sub : JavaGenericOuter<String>.Inner<Int>()
 }
+
+// A type parameter used as definitely not nullable
+open class DefinitelyNonNullDefaults<T> {
+    fun orDefault(value: T, default: T & Any): T & Any = value ?: default
+    fun <S> first(value: S): S where S : CharSequence?, S : Comparable<S> = value
+}
+
+// T & Any of a type argument not nullable, like U, is just U, the intersection with Any of it does not compile
+class InheritedDefinitelyNonNullDefaults<X> : DefinitelyNonNullDefaults<X>()
+
+class NotNullDefinitelyNonNullDefaults<U : Any> : DefinitelyNonNullDefaults<U>()
+
+// a type parameter bounded by another one not nullable is not nullable either
+class BoundNotNullDefinitelyNonNullDefaults<A : Any, B : A> : DefinitelyNonNullDefaults<B>()

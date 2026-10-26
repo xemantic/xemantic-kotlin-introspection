@@ -192,8 +192,8 @@ internal class ReflectedTypeParameters(private val ids: Map<String, Int>) {
  *
  * kotlin-reflect describes the JVM class, like `java.lang.String`, so that the declaration is approximate:
  * its supertypes are only the Kotlin ones, its members are the ones the JVM class declares,
- * but the ones whose parameter names are not known, like `initCause(arg0: Throwable?)`, see [hasSyntheticParameterNames],
- * which are Java-only, and left to the JVM-only members, like when the declarations of the built-ins are read,
+ * but the Java-only ones, see [javaOnlyFunctions], like `initCause(arg0: Throwable?)`, or `fillInStackTrace()`,
+ * left to the JVM-only members, like when the declarations of the built-ins are read,
  * so that they are hidden by extensions, and overridden, alike,
  * and the ones Kotlin does not call, see [isUnsupportedByCompiler],
  * and its constructors are the ones of the JVM class whose parameter names are known, like `String()`,
@@ -208,8 +208,10 @@ internal fun KClass<*>.toKmBuiltinClass(name: String): KmClass {
             .map { it.toKmType(typeParameters) }
     }
     val typeParameters = ReflectedTypeParameters.classTypeParameters(kmClass.typeParameters)
-    declaredMemberFunctions
-        .filter { '$' !in it.name && !hasSyntheticParameterNames(it) && !isUnsupportedByCompiler(it) }
+    val functions = declaredMemberFunctions.filter { '$' !in it.name && !isUnsupportedByCompiler(it) }
+    val javaOnly = javaOnlyFunctions(functions)
+    functions
+        .filter { it !in javaOnly }
         .mapTo(kmClass.functions) { function ->
             function.toKmFunction(typeParameters).also { it.modality = it.modality.finalIn(kmClass) }
         }
@@ -231,6 +233,34 @@ internal fun KClass<*>.toKmBuiltinClass(name: String): KmClass {
         }
     return kmClass
 }
+
+/**
+ * The Java-only ones of the [functions] of a built-in type described by kotlin-reflect, see [toKmBuiltinClass],
+ * which it does not tell apart from the ones the built-in type declares, both backed by the JDK methods:
+ * the ones whose parameter names are not known, like `initCause(arg0: Throwable?)`, see [hasSyntheticParameterNames],
+ * the ones referring to a platform type, like `fillInStackTrace(): Throwable!`, or to a Java class,
+ * like `stream(): java.util.stream.Stream<E>` of `Collection`, which no built-in declaration does,
+ * and the overloads of these, like `printStackTrace()`, as a built-in type never overloads a JDK method it does not map.
+ */
+private fun javaOnlyFunctions(functions: List<KFunction<*>>): Set<KFunction<*>> {
+    val javaOnly = functions.filterTo(HashSet()) { function ->
+        hasSyntheticParameterNames(function) || reflectedValue(default = false) {
+            (function.parameters.filter { it.kind == KParameter.Kind.VALUE }.map { it.type } + function.returnType)
+                .any { it.refersToJavaType() }
+        }
+    }
+    val javaOnlyNames = javaOnly.mapTo(HashSet()) { it.name }
+    return functions.filterTo(javaOnly) { it.name in javaOnlyNames }
+}
+
+/**
+ * Whether this type, or one of its type arguments, is a platform type, see [isPlatformNullable], or a Java class,
+ * one not of the `kotlin.*` packages, see [javaOnlyFunctions].
+ */
+private fun KType.refersToJavaType(): Boolean =
+    isPlatformNullable ||
+        (classifier as? KClass<*>)?.qualifiedName?.startsWith("kotlin.") == false ||
+        arguments.any { it.type?.refersToJavaType() == true }
 
 /**
  * The declaration of this Java class in the Kotlin metadata, named like `java/util/ArrayList`, as kotlin-reflect describes it,
@@ -294,7 +324,64 @@ internal fun KFunction<*>.toKmFunction(typeParameters: ReflectedTypeParameters):
         parameter.toKmValueParameter(position, scope, ownTypeParameters = this.typeParameters)
     }
     function.returnType = returnType.toKmType(scope)
+    enhanceDefinitelyNotNull(function)
     return function
+}
+
+/**
+ * The types of the JDK methods which K2 enhances as definitely not nullable, like `V & Any`,
+ * by the JVM signatures of the methods, like `java/util/Map.merge(…)`, see [jvmSignature],
+ * and the positions of their value parameters, like `1` of the value of `merge`,
+ * by the positions of the types in each one, the type itself first, then its type arguments, in depth-first order,
+ * like `1` and `2` of the `V` and `V` of `BiFunction<V, V, V>`:
+ * the definitely not nullable ones of `PREDEFINED_FUNCTION_ENHANCEMENT_INFO_BY_SIGNATURE` of the compiler,
+ * but the ones of `java.util.Optional`, a final class, whose members are never listed,
+ * compared with the copy of kotlin-reflect by `ReflectedDeclarationsTest`.
+ * kotlin-reflect applies them too, though its public API does not tell such a type apart from a type parameter
+ * of a Java method overriding a mapped member, like `E` of `add` of `java.util.TreeSet`, which is not enhanced so.
+ */
+internal val DEFINITELY_NOT_NULL_JDK_TYPES: Map<String, Map<Int, Set<Int>>> = mapOf(
+    "java/util/Map.computeIfPresent(Ljava/lang/Object;Ljava/util/function/BiFunction;)Ljava/lang/Object;" to
+        mapOf(1 to setOf(2)),
+    "java/util/Map.merge(Ljava/lang/Object;Ljava/lang/Object;Ljava/util/function/BiFunction;)Ljava/lang/Object;" to
+        mapOf(1 to setOf(0), 2 to setOf(1, 2))
+)
+
+// telling most functions apart without resolving their JVM methods
+private val definitelyNotNullJdkMethodNames: Set<String> =
+    DEFINITELY_NOT_NULL_JDK_TYPES.keys.mapTo(HashSet()) { it.substringAfter('.').substringBefore('(') }
+
+/**
+ * Marks the types of the value parameters of the [function], converted from this one,
+ * which K2 enhances as definitely not nullable, see [DEFINITELY_NOT_NULL_JDK_TYPES],
+ * also of a method overriding the JDK one, like `merge` of `java.util.HashMap`, which inherits the enhancement,
+ * when they are type parameters, like the `V` of the value of `merge`, unlike a type argument given by a subclass.
+ */
+private fun KFunction<*>.enhanceDefinitelyNotNull(function: KmFunction) {
+    if (name !in definitelyNotNullJdkMethodNames) return
+    val method = reflectedValue(default = null) { javaMethod } ?: return
+    val mapClass = java.util.Map::class.java
+    if (!mapClass.isAssignableFrom(method.declaringClass)) return
+    val signature = AsmType.getInternalName(mapClass) + "." + method.name + AsmType.getMethodDescriptor(method)
+    DEFINITELY_NOT_NULL_JDK_TYPES[signature]?.forEach { (position, indices) ->
+        val types = function.valueParameters.getOrNull(position)?.type?.depthFirst().orEmpty()
+        indices.mapNotNull { types.getOrNull(it) }.filter { it.classifier is KmClassifier.TypeParameter }.forEach { type ->
+            type.isNullable = false
+            type.isDefinitelyNonNull = true
+        }
+    }
+}
+
+/**
+ * This type and its type arguments, in depth-first order, a star projection standing for `null`,
+ * see [DEFINITELY_NOT_NULL_JDK_TYPES].
+ */
+private fun KmType.depthFirst(): List<KmType?> = buildList {
+    fun visit(type: KmType?) {
+        add(type)
+        type?.arguments?.forEach { visit(it.type) }
+    }
+    visit(this@depthFirst)
 }
 
 /**
@@ -424,6 +511,23 @@ private val KType.isPlatformNullable: Boolean
 private val nullableNothing: KType = typeOf<Nothing?>()
 
 /**
+ * Whether this type of a type parameter of a Kotlin declaration is written definitely not nullable, like `T & Any`,
+ * which only a type parameter of nullable bounds can be, like by its implicit `Any?` bound,
+ * and which kotlin-reflect tells only by its being a subtype of `Any`, unlike the type parameter itself.
+ * The type parameter of a Java declaration, of the `Any!` bound, which is not marked nullable, is never told so,
+ * as its uses described by kotlin-reflect are not definitely not nullable, but the enhanced ones of some JDK methods,
+ * see [DEFINITELY_NOT_NULL_JDK_TYPES].
+ */
+private val KType.isDefinitelyNonNull: Boolean
+    get() {
+        val typeParameter = classifier as? KTypeParameter ?: return false
+        return !isMarkedNullable && typeParameter.upperBounds.all { it.isMarkedNullable } &&
+            reflectedValue(default = false) { isSubtypeOf(anyType) }
+    }
+
+private val anyType: KType = typeOf<Any>()
+
+/**
  * The type of the Kotlin metadata described by this [KType], where the type parameters are in the [scope].
  *
  * A platform type of Java, like `Any!`, see [isPlatformNullable], which cannot be rendered as valid Kotlin,
@@ -439,6 +543,7 @@ private val nullableNothing: KType = typeOf<Nothing?>()
 internal fun KType.toKmType(scope: ReflectedTypeParameters, platformAsNullable: Boolean = false): KmType {
     val type = KmType()
     type.isNullable = isMarkedNullable || (platformAsNullable && isPlatformNullable)
+    type.isDefinitelyNonNull = isDefinitelyNonNull
     val classifier = classifier
     val isSuspendFunctionType = isSuspendFunctionType
     // a FunctionN is only guessed to be a function type, which an undecodable shape does not confirm

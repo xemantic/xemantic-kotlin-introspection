@@ -119,6 +119,55 @@ class BuiltinsWithoutDeclarationsTest {
     }
 
     @Test
+    fun `should not resolve parameterless Java-only member described by kotlin-reflect overridden in user class`() {
+        // when - fillInStackTrace() overrides the one of java.lang.Throwable
+        val signatures = introspector.resolve(
+            "com.xemantic.kotlin.introspection.test.StacklessException.fillInStackTrace"
+        )
+
+        // then
+        signatures should {
+            have(lines().any { it.endsWith("fun fillInStackTrace(): Throwable") })
+            have(lines().none { it.startsWith("// inherited from") })
+        }
+    }
+
+    @Test
+    fun `should resolve member of Java collection overriding mapped member taking its type parameters as declared`() {
+        // when
+        val add = introspector.resolve("com.xemantic.kotlin.introspection.test.InheritedGenericJavaTreeSet.add")
+        val put = introspector.resolve("com.xemantic.kotlin.introspection.test.InheritedGenericJavaTreeMap.put")
+        val computeIfAbsent = introspector.resolve("com.xemantic.kotlin.introspection.test.InheritedGenericJavaTreeMap.computeIfAbsent")
+
+        // then
+        add should { have(lines().any { it.endsWith("fun add(arg0: E): Boolean") }) }
+        put should { have(lines().any { it.endsWith("fun put(arg0: K, arg1: V): V?") }) }
+        computeIfAbsent should { have(lines().any { it.endsWith("fun computeIfAbsent(arg0: K, arg1: java.util.function.Function<in K, out V>): V") }) }
+    }
+
+    @Test
+    fun `should resolve member of Java map enhanced by the compiler as taking value definitely not nullable`() {
+        // when
+        val merge = introspector.resolve("com.xemantic.kotlin.introspection.test.InheritedGenericJavaHashMap.merge")
+
+        // then
+        merge should {
+            have(lines().any { it.endsWith("fun merge(arg0: String, arg1: V & Any, arg2: java.util.function.BiFunction<in V & Any, in V & Any, out V?>): V?") })
+        }
+    }
+
+    @Test
+    fun `should resolve member of Java map enhanced by the compiler of type argument not nullable as declared`() {
+        // when
+        val merge = introspector.resolve("com.xemantic.kotlin.introspection.test.InheritedHashtable.merge")
+
+        // then
+        merge should {
+            have(lines().any { it.endsWith("fun merge(arg0: K, arg1: V, arg2: java.util.function.BiFunction<in V, in V, out V?>): V?") })
+        }
+    }
+
+    @Test
     fun `should list extensions of companion object of built-in type described by kotlin-reflect`() {
         // given - the extensions are indexed by scanning the classpath
         val introspector = DefaultKotlinIntrospector(readBuiltinClasses = { emptyMap() })

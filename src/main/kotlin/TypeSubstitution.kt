@@ -66,26 +66,30 @@ import kotlin.metadata.visibility
  * This type with the type arguments of the [substitution], by the ids of the type parameters they are given for,
  * substituted for these type parameters, or this very type, when it refers to none of them.
  * A type argument is nullable also when the type parameter is used as nullable, like `T?`,
- * and not nullable when the type parameter is used as definitely not nullable, like `T & Any`.
+ * and not nullable when the type parameter is used as definitely not nullable, like `T & Any`,
+ * which stays so for a type argument which is a type parameter itself, like `U & Any`,
+ * but one of the [notNullable] ones, by their ids, whose bounds are not nullable, like `U : Any`,
+ * where `U & Any` does not compile, being just `U`.
  */
-internal fun KmType.substituted(substitution: Map<Int, KmType>): KmType {
+internal fun KmType.substituted(substitution: Map<Int, KmType>, notNullable: Set<Int> = emptySet()): KmType {
     if (substitution.isEmpty()) return this
     val classifier = classifier
     if (classifier is KmClassifier.TypeParameter) {
         val argument = substitution[classifier.id] ?: return this
         return argument.copy().also { type ->
             type.isNullable = !isDefinitelyNonNull && (isNullable || argument.isNullable)
-            // only a type parameter can be definitely not nullable
-            type.isDefinitelyNonNull = argument.classifier is KmClassifier.TypeParameter &&
+            // only a type parameter of nullable bounds can be definitely not nullable
+            val argumentClassifier = argument.classifier
+            type.isDefinitelyNonNull = argumentClassifier is KmClassifier.TypeParameter && argumentClassifier.id !in notNullable &&
                 (isDefinitelyNonNull || argument.isDefinitelyNonNull)
         }
     }
     val arguments = arguments.map { projection ->
         val type = projection.type ?: return@map projection
-        val substituted = type.substituted(substitution)
+        val substituted = type.substituted(substitution, notNullable)
         if (substituted === type) projection else KmTypeProjection(projection.variance, substituted)
     }
-    val outerType = outerType?.let { it.substituted(substitution) }
+    val outerType = outerType?.let { it.substituted(substitution, notNullable) }
     if (outerType === this.outerType && arguments.indices.all { arguments[it] === this.arguments[it] }) return this
     // the abbreviation of a typealias, and the upper bound of a flexible type, neither of them rendered,
     // would tell the type arguments not substituted
@@ -151,9 +155,13 @@ private fun KmType.copy(
  * named by the [names], by their ids, see [renameApartFrom].
  */
 @OptIn(ExperimentalContextParameters::class)
-internal fun KmFunction.substituted(substitution: Map<Int, KmType>, names: Map<Int, String>): KmFunction {
+internal fun KmFunction.substituted(
+    substitution: Map<Int, KmType>,
+    names: Map<Int, String>,
+    notNullable: Set<Int> = emptySet()
+): KmFunction {
     if (substitution.isEmpty()) return this
-    return copy(type = { it.substituted(substitution) }).also { function ->
+    return copy(type = { it.substituted(substitution, notNullable) }).also { function ->
         val types = function.contextParameters.map { it.type } + listOfNotNull(function.receiverParameterType) +
             function.valueParameters.flatMap { listOfNotNull(it.type, it.varargElementType) } + function.returnType
         function.typeParameters.renameApartFrom(types, names)
@@ -204,7 +212,11 @@ private fun KmFunction.copy(
  * This property with the type arguments of the [substitution] substituted, see [KmType.substituted].
  */
 @OptIn(ExperimentalContextParameters::class)
-internal fun KmProperty.substituted(substitution: Map<Int, KmType>, names: Map<Int, String>): KmProperty {
+internal fun KmProperty.substituted(
+    substitution: Map<Int, KmType>,
+    names: Map<Int, String>,
+    notNullable: Set<Int> = emptySet()
+): KmProperty {
     if (substitution.isEmpty()) return this
     val original = this
     return KmProperty(name).also { property ->
@@ -220,11 +232,11 @@ internal fun KmProperty.substituted(substitution: Map<Int, KmType>, names: Map<I
         property.isExpect = isExpect
         getter.copyTo(property.getter)
         property.setter = setter?.let { setter -> KmPropertyAccessorAttributes().also { setter.copyTo(it) } }
-        property.setterParameter = setterParameter?.copy { it.substituted(substitution) }
-        typeParameters.mapTo(property.typeParameters) { typeParameter -> typeParameter.copy { it.substituted(substitution) } }
-        contextParameters.mapTo(property.contextParameters) { parameter -> parameter.copy { it.substituted(substitution) } }
-        property.receiverParameterType = receiverParameterType?.substituted(substitution)
-        property.returnType = original.returnType.substituted(substitution)
+        property.setterParameter = setterParameter?.copy { it.substituted(substitution, notNullable) }
+        typeParameters.mapTo(property.typeParameters) { typeParameter -> typeParameter.copy { it.substituted(substitution, notNullable) } }
+        contextParameters.mapTo(property.contextParameters) { parameter -> parameter.copy { it.substituted(substitution, notNullable) } }
+        property.receiverParameterType = receiverParameterType?.substituted(substitution, notNullable)
+        property.returnType = original.returnType.substituted(substitution, notNullable)
         property.getterSignature = getterSignature
         property.setterSignature = setterSignature
         val types = property.contextParameters.map { it.type } + listOfNotNull(property.receiverParameterType) +

@@ -418,6 +418,11 @@ internal abstract class TypeNotation<T> {
     protected abstract fun isMarkedNullable(type: T): Boolean
 
     /**
+     * Tells if the [type] is a type parameter used as definitely not nullable, like `T & Any`.
+     */
+    protected abstract fun isDefinitelyNonNull(type: T): Boolean
+
+    /**
      * The name of a function type parameter of the given [type], like `id` in `(id: Int) -> Unit`, if declared.
      */
     protected abstract fun parameterName(type: T): String?
@@ -436,7 +441,8 @@ internal abstract class TypeNotation<T> {
 
     /**
      * Formats a receiver [type], parenthesizing a function type, like `(() -> Unit)`,
-     * which would otherwise absorb the following `.name`.
+     * which would otherwise absorb the following `.name`, or a definitely not nullable one, like `(T & Any)`,
+     * as `T & Any.name` does not parse.
      * A nullable one is parenthesized anyway, like `(() -> Unit)?`.
      */
     fun formatReceiver(type: T): String = format(type, asReceiver = true)
@@ -448,6 +454,8 @@ internal abstract class TypeNotation<T> {
             functionType != null -> formatFunctionType(functionType)
             // an unexpected shape, the runtime type is printed, still marked as suspend
             isMarkedSuspend(type) -> "suspend " + formatClassType(type, nullable = false)
+            // a type parameter used as definitely not nullable, never marked nullable as well
+            isDefinitelyNonNull(type) -> formatClassType(type, nullable = false) + " & Any"
             else -> return formatClassType(type, nullable)
         }
         return when {

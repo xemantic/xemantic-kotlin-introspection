@@ -231,6 +231,15 @@ class InheritedJavaArrayList : java.util.ArrayList<String>()
 
 class InheritedJavaHashMap : java.util.HashMap<String, Int>()
 
+class InheritedGenericJavaHashMap<V> : java.util.HashMap<String, V>()
+
+// the Java overrides of the mapped members take the type parameters as declared by the Kotlin ones, never definitely not nullable
+class InheritedGenericJavaTreeSet<E> : java.util.TreeSet<E>()
+
+class InheritedGenericJavaTreeMap<K, V> : java.util.TreeMap<K, V>()
+
+class InheritedNullableJavaHashMap : java.util.HashMap<String?, Int?>()
+
 class InheritedFromJava : com.xemantic.kotlin.introspection.test.other.JavaInheritedMid<String>()
 
 open class OpenInheritedFromJava : com.xemantic.kotlin.introspection.test.other.JavaInheritedMid<String>()

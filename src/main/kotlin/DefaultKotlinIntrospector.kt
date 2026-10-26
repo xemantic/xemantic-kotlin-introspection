@@ -1552,9 +1552,10 @@ internal class DefaultKotlinIntrospector(
 
         /**
          * This member with the type arguments of the [substitution] substituted, see [KmType.substituted],
-         * its own type parameters renamed apart from the ones of the [names] the type arguments refer to.
+         * its own type parameters renamed apart from the ones of the [names] the type arguments refer to,
+         * the type arguments of the [notNullable] type parameters never definitely not nullable.
          */
-        fun substituted(substitution: Map<Int, KmType>, names: Map<Int, String>): Member
+        fun substituted(substitution: Map<Int, KmType>, names: Map<Int, String>, notNullable: Set<Int>): Member
 
         /**
          * @param declaration the [property] as declared, unless it is rendered with substituted type arguments.
@@ -1576,8 +1577,8 @@ internal class DefaultKotlinIntrospector(
             override fun signature(classTypeParameters: Map<Int, String>): String =
                 memberSignature(property, classTypeParameters + positionalNames(property.typeParameters))
 
-            override fun substituted(substitution: Map<Int, KmType>, names: Map<Int, String>): Member =
-                Property(property.substituted(substitution, names), declaration)
+            override fun substituted(substitution: Map<Int, KmType>, names: Map<Int, String>, notNullable: Set<Int>): Member =
+                Property(property.substituted(substitution, names, notNullable), declaration)
 
         }
 
@@ -1601,8 +1602,8 @@ internal class DefaultKotlinIntrospector(
             override fun signature(classTypeParameters: Map<Int, String>): String =
                 memberSignature(function, classTypeParameters + positionalNames(function.typeParameters))
 
-            override fun substituted(substitution: Map<Int, KmType>, names: Map<Int, String>): Member =
-                Function(function.substituted(substitution, names), declaration)
+            override fun substituted(substitution: Map<Int, KmType>, names: Map<Int, String>, notNullable: Set<Int>): Member =
+                Function(function.substituted(substitution, names, notNullable), declaration)
 
         }
 
@@ -1812,6 +1813,9 @@ internal class DefaultKotlinIntrospector(
         val inheritingTypeParameters = typeParametersInScope(kmClass, declarations)
         val inheritingNames = inheritingTypeParameters.mapKeys { (id, _) -> inheritingTypeParameterId(id) }
         val inheriting = inheritingTypeParameters.keys.associateWith { typeParameterType(inheritingTypeParameterId(it)) }
+        // the ones of bounds not nullable, never definitely not nullable, like `U` for the `T & Any` of a `Box<T>`,
+        // inherited as `Box<U>`, of `U : Any`, see notNullableTypeParameters
+        val notNullableInheriting = notNullableTypeParameters(kmClass.typeParameters).mapTo(HashSet()) { inheritingTypeParameterId(it) }
         val visited = hashSetOf(kmClass.name, ANY_CLASS_NAME)
         val pending = ArrayDeque(kmClass.supertypes.map { it.substituted(inheriting) })
         val candidates = mutableListOf<InheritedCandidate>()
@@ -1842,7 +1846,7 @@ internal class DefaultKotlinIntrospector(
             ).forEach { declared ->
                 val overridden = (superDeclarations as? JavaClass)?.overriddenMembers(declared)
                     ?: declared.overridden(overrideResolver, superKmClass)
-                val member = declared.substituted(substitution, inheritingNames)
+                val member = declared.substituted(substitution, inheritingNames, notNullableInheriting)
                 candidates += InheritedCandidate(
                     superKmClass, superDeclarations, member, declared.key(superKmClass), overridden,
                     signature = member.signature(inheritingNames),
@@ -1922,7 +1926,13 @@ internal class DefaultKotlinIntrospector(
                 (candidate.member as? Member.Function)?.let { collectJavaOverrides(candidate.kmClass, it.declaration) }
             }
         }
+        // the signatures of the declared members, and of the ones overriding members which are not told,
+        // the former also overriding the Java members of the same signature as rendered, with the type arguments of the supertypes substituted,
+        // though neither the metadata, nor the JVM signature, of the declared function tells, like `addFirst(element: String)`
+        // of a subclass of `AbstractMutableList<String>` compiled against JDK 17, taking `String` on the JVM,
+        // not the `Object` of the erased `E` of `addFirst` of `java.util.List` since JDK 21
         val declaredSignatures = HashSet<String>()
+        val untoldOverrideSignatures = HashSet<String>()
         // also a hidden one, hiding the member it overrides, which cannot be called on the class either
         apiMembersNamed(kmClass, declarations, memberName, scope, includingHidden = true).forEach { member ->
             if (member is Member.Function && hasJavaCandidates) {
@@ -1930,13 +1940,16 @@ internal class DefaultKotlinIntrospector(
             }
             val keys = member.overridden(overrideResolver, kmClass)
             overridden += keys
-            if (keys.isEmpty() && member.isOverride(overrideResolver, kmClass)) {
-                declaredSignatures += member.signature(inheritingTypeParameters)
-            }
+            val signature = member.signature(inheritingTypeParameters)
+            declaredSignatures += signature
+            if (keys.isEmpty() && member.isOverride(overrideResolver, kmClass)) untoldOverrideSignatures += signature
         }
         val survivors = candidates.filter {
-            !it.isHidden && it.key !in overridden && it.signature !in declaredSignatures &&
-                it.jvmMethod?.key !in overriddenJavaMembers && it.jvmMethod?.signature !in overridingJvmSignatures
+            !it.isHidden && it.key !in overridden && it.signature !in untoldOverrideSignatures &&
+                (it.jvmMethod == null || (
+                    it.jvmMethod.key !in overriddenJavaMembers && it.jvmMethod.signature !in overridingJvmSignatures &&
+                        it.signature !in declaredSignatures
+                    ))
         }
         val inherited = survivors.filterIndexed { index, candidate ->
             survivors.withIndex().none { (rivalIndex, rival) ->
@@ -1971,6 +1984,27 @@ internal class DefaultKotlinIntrospector(
                 )
             )
         }
+    }
+
+    /**
+     * The ids of the [typeParameters] of a class whose bounds are not nullable, like `U : Any`, or `B : A` of `A : Any`,
+     * which cannot be used as definitely not nullable, like `U & Any`, being so already,
+     * but the ones bounded by a type parameter of an outer class, whose bounds are not told.
+     */
+    private fun notNullableTypeParameters(typeParameters: List<KmTypeParameter>): Set<Int> {
+        val byId = typeParameters.associateBy { it.id }
+        val notNullable = HashMap<Int, Boolean>()
+        fun isNotNullable(typeParameter: KmTypeParameter): Boolean = notNullable[typeParameter.id] ?: run {
+            // a cycle of bounds, which does not compile, is not nullable
+            notNullable[typeParameter.id] = false
+            typeParameter.upperBounds.any { bound ->
+                !bound.isNullable && when (val classifier = bound.classifier) {
+                    is KmClassifier.TypeParameter -> bound.isDefinitelyNonNull || byId[classifier.id]?.let(::isNotNullable) == true
+                    else -> true
+                }
+            }.also { notNullable[typeParameter.id] = it }
+        }
+        return typeParameters.filterTo(HashSet(), ::isNotNullable).mapTo(HashSet()) { it.id }
     }
 
     /**
@@ -4535,6 +4569,8 @@ internal class DefaultKotlinIntrospector(
         override fun isMarkedSuspend(type: KmType): Boolean = type.isSuspend
 
         override fun isMarkedNullable(type: KmType): Boolean = type.isNullable
+
+        override fun isDefinitelyNonNull(type: KmType): Boolean = type.isDefinitelyNonNull
 
         override fun parameterName(type: KmType): String? = type.parameterName
 

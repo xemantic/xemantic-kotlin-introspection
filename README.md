@@ -140,6 +140,8 @@ com.example.AnnotationTestClass
   as the JDK is compiled without their names, which Kotlin does not let a call to a Java method name anyway,
   and whose parameters of the platform types of Java, like `Throwable!`, accepting `null`, are nullable,
   like `Throwable.initCause(arg0: Throwable?): Throwable`,
+  and whose types the compiler enhances as definitely not nullable are rendered so,
+  like `MutableMap.merge(arg0: K, arg1: V & Any, arg2: java.util.function.BiFunction<in V & Any, in V & Any, out V?>): V?`,
   but the JDK members newer than the ones mapped to the built-in type, like `String.indent(Int)` or `String.strip()`,
   which the compiler does not call, and kotlin-reflect tells deprecated as "not fully supported by Kotlin compiler",
   and the ones the compiler hides, like `Enum.getDeclaringClass()`, or `List.reversed()` of JDK 21,

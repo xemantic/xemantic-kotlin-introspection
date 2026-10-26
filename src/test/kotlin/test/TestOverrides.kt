@@ -478,6 +478,12 @@ abstract class JdkMutableList : AbstractMutableList<String>() {
     override fun replaceAll(operator: java.util.function.UnaryOperator<String>) {}
 }
 
+// compiled against a JDK older than 21, like the libraries targeting old JVMs, without List.addFirst to override,
+// so that the JVM method takes String, not the Object of the erased E of java.util.List, and no bridge is generated
+abstract class SequencedStringList : AbstractMutableList<String>() {
+    fun addFirst(element: String) {}
+}
+
 abstract class JdkMap : MutableMap<String, Int> {
     override fun putIfAbsent(key: String, value: Int): Int? = null
 }
