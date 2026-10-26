@@ -171,9 +171,9 @@ class BoundedReceiverRank : BoundedReceiverOrdered<BoundedReceiverRank> {
     override fun compareTo(other: BoundedReceiverRank): Int = 0
 }
 
-// the extensions on Comparable of a library other than the standard library, not listed for a user class,
-// like the other generic extensions on the types of the standard library
-fun <T : Comparable<T>> T.isBetween(low: T, high: T): Boolean = this in low..high
+// the extensions on Comparable of the package of a class, listed for it, like the ones of the standard library,
+// unlike the ones of another package, like isAtLeast, see CustomTypes, or the ones it cannot be called with
+fun <E : Comparable<in E>> E.isBetween(low: E, high: E): Boolean = this >= low && this <= high
 
 fun Comparable<Int>.comparedToZero(): Int = compareTo(0)
 
@@ -266,3 +266,22 @@ fun BoundedReceiverSink<Int>.sinkInt() {}
 
 // a type argument of a Java class, which is not a String
 class BoundedReceiverFiles : BoundedReceiverSource<java.io.File>
+
+// the supertypes of the Kotlin classes mapped to Java classes, like java.io.Serializable, only told by the Java classes
+class BoundedReceiverIoErrors : BoundedReceiverSource<java.io.IOException>
+
+class BoundedReceiverStrings : BoundedReceiverSource<String>
+
+class BoundedReceiverArrays : BoundedReceiverSource<Array<String>>
+
+class BoundedReceiverSerializableSink : BoundedReceiverSink<java.io.Serializable>
+
+fun BoundedReceiverSource<java.io.Serializable>.firstSerializable() {}
+
+fun BoundedReceiverSource<Cloneable>.firstCloneable() {}
+
+// a Java interface without superinterfaces, which is not a String
+class BoundedReceiverRunnables : BoundedReceiverSource<Runnable>
+
+// a type parameter bounded by the class of other type arguments, not standing for the class
+abstract class BoundedReceiverStarred<X, T : BoundedReceiverStarred<String, T>> : Comparable<T>

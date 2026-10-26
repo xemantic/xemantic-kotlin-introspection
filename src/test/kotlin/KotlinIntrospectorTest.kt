@@ -1886,6 +1886,8 @@ class KotlinIntrospectorTest {
             class OverrideTestClass : Comparable<OverrideTestClass> {
                 override operator fun compareTo(other: OverrideTestClass): Int
             }
+            // from com.xemantic.kotlin.introspection.test
+            fun <E : Comparable<in E>> E.isBetween(low: E, high: E): Boolean
             // from kotlin
             inline infix fun <T> Comparable<T>.compareTo(other: T): Int
             // from kotlin.ranges
@@ -2110,6 +2112,8 @@ class KotlinIntrospectorTest {
                 override fun hashCode(): Int
                 override fun toString(): String
             }
+            // from com.xemantic.kotlin.introspection.test
+            fun <E : Comparable<in E>> E.isBetween(low: E, high: E): Boolean
             // from kotlin
             inline infix fun <T> Comparable<T>.compareTo(other: T): Int
             // from kotlin.ranges
@@ -5324,7 +5328,8 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve class comparable to itself with stdlib extensions on Comparable`() {
-        // unlike the other generic extensions of the standard library, few and widely used
+        // unlike the other generic extensions of the standard library, few and widely used,
+        // next to the ones of its own package, but not the ones of another package, like isAtLeast
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.BoundedReceiverVersion"
         ) sameAsKotlin """
@@ -5333,6 +5338,8 @@ class KotlinIntrospectorTest {
                 override operator fun compareTo(other: BoundedReceiverVersion): Int
                 fun coerceAtMost(maximumValue: BoundedReceiverVersion): BoundedReceiverVersion
             }
+            // from com.xemantic.kotlin.introspection.test
+            fun <E : Comparable<in E>> E.isBetween(low: E, high: E): Boolean
             // from kotlin
             inline infix fun <T> Comparable<T>.compareTo(other: T): Int
             // from kotlin.ranges
@@ -5385,7 +5392,8 @@ class KotlinIntrospectorTest {
         // BoundedReceiverEntity<BoundedReceiverUser> is Comparable<BoundedReceiverUser>,
         // pinning T : Comparable<T> to the final class, so that its member coerceAtMost is called instead
         resolver.resolve(
-            "com.xemantic.kotlin.introspection.test.BoundedReceiverUser"
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverUser",
+            pageSize = 1000
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.BoundedReceiverUser [page 1/1]
             class BoundedReceiverUser : BoundedReceiverEntity<BoundedReceiverUser> {
@@ -5393,6 +5401,7 @@ class KotlinIntrospectorTest {
                 fun coerceAtMost(maximumValue: BoundedReceiverUser): BoundedReceiverUser
             }
             // from com.xemantic.kotlin.introspection.test
+            fun <E : Comparable<in E>> E.isBetween(low: E, high: E): Boolean
             fun <E : BoundedReceiverEntity<E>> E.save(): E
             // from kotlin
             inline infix fun <T> Comparable<T>.compareTo(other: T): Int
@@ -5449,12 +5458,14 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve class without extension on covariant supertype of other type argument than Java class`() {
-        // java.io.File, without the Kotlin metadata, is not a String
+        // java.io.File, without the Kotlin metadata, is not a String, but a java.io.Serializable
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.BoundedReceiverFiles"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.BoundedReceiverFiles [page 1/1]
             class BoundedReceiverFiles : BoundedReceiverSource<java.io.File>
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverSource<java.io.Serializable>.firstSerializable()
         """.trimIndent()
     }
 
@@ -5486,9 +5497,76 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should not resolve extension on Comparable of other library as member of class comparable to itself`() {
-        // like in the listing of BoundedReceiverVersion, listing only the ones of the standard library
-        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.BoundedReceiverVersion.isBetween") == null)
+    fun `should not resolve extension on Comparable of other package as member of class comparable to itself`() {
+        // like in the listing of BoundedReceiverVersion, listing only the ones of the standard library, and of its package
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.BoundedReceiverVersion.isAtLeast") == null)
+    }
+
+    @Test
+    fun `should resolve class with extension on supertype of Java type argument of Kotlin class mapped to Java class`() {
+        // java.io.IOException is a java.io.Serializable through kotlin.Throwable, mapped to java.lang.Throwable
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverIoErrors"
+        ) should {
+            have("fun BoundedReceiverSource<java.io.Serializable>.firstSerializable()" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve class with extensions on JVM supertypes of built-in type argument`() {
+        // String is java.io.Serializable on the JVM, like Array is also Cloneable, unlike told by the built-in declarations
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverStrings"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverStrings [page 1/1]
+            class BoundedReceiverStrings : BoundedReceiverSource<String>
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverSource<java.io.Serializable>.firstSerializable()
+            fun BoundedReceiverSource<String>.firstString(): String
+        """.trimIndent()
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverArrays"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverArrays [page 1/1]
+            class BoundedReceiverArrays : BoundedReceiverSource<Array<String>>
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverSource<Cloneable>.firstCloneable()
+            fun BoundedReceiverSource<java.io.Serializable>.firstSerializable()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extension on contravariant supertype of built-in type argument of JVM supertype`() {
+        // a BoundedReceiverSink<java.io.Serializable> is a BoundedReceiverSink<Int>, but not a BoundedReceiverSink<Any>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverSerializableSink"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverSerializableSink [page 1/1]
+            class BoundedReceiverSerializableSink : BoundedReceiverSink<java.io.Serializable>
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverSink<Int>.sinkInt()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extensions on supertypes of other type arguments than Java interface`() {
+        // java.lang.Runnable, a Java interface without superinterfaces, is neither a String, nor a java.io.Serializable
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverRunnables"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverRunnables [page 1/1]
+            class BoundedReceiverRunnables : BoundedReceiverSource<java.lang.Runnable>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve generic class without stdlib extensions on Comparable of type parameter bounded by class of other type arguments`() {
+        // T : BoundedReceiverStarred<String, T> stands for a subclass of other type arguments than BoundedReceiverStarred<X, T>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverStarred"
+        ) should {
+            have(lines().none { "coerceAtLeast" in it })
+        }
     }
 
     @Test
@@ -5547,6 +5625,7 @@ class KotlinIntrospectorTest {
             // from com.xemantic.kotlin.introspection.test
             fun <T> BoundedReceiverBox<T>.anyBox()
             fun BoundedReceiverSource<Number>.firstNumber(): Number
+            fun BoundedReceiverSource<java.io.Serializable>.firstSerializable()
             fun <T, B> B.sameElements() where B : BoundedReceiverBox<T>, B : BoundedReceiverSource<T>
             fun BoundedReceiverBox<Int>.sumOfInts(): Int
             fun BoundedReceiverBox<out Number>.sumOfNumbers(): Double
@@ -5564,6 +5643,7 @@ class KotlinIntrospectorTest {
             class BoundedReceiverMixedBox : BoundedReceiverBox<Int>, BoundedReceiverSource<String>
             // from com.xemantic.kotlin.introspection.test
             fun <T> BoundedReceiverBox<T>.anyBox()
+            fun BoundedReceiverSource<java.io.Serializable>.firstSerializable()
             fun BoundedReceiverSource<String>.firstString(): String
             fun BoundedReceiverBox<Int>.sumOfInts(): Int
             fun BoundedReceiverBox<out Number>.sumOfNumbers(): Double
