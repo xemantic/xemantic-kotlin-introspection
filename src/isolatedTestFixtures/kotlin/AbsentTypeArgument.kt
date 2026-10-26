@@ -212,6 +212,15 @@ class MissingMidHolder<A> {
     }
 }
 
+// tests leave the class file of the middle class out, which is nested, not inner, in the generic outermost one
+class NestedMidHolder<X> {
+    class Mid<T> {
+        inner class Leaf : Comparable<T> {
+            override fun compareTo(other: T): Int = 0
+        }
+    }
+}
+
 // the Java superclass cannot be loaded, so that its members and its generic supertypes are read from its class file
 abstract class AbsentGenericJavaLeaf : AbsentGenericJavaMid<String>() {
     override fun process(item: String) {}

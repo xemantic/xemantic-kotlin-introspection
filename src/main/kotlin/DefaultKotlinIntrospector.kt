@@ -2502,7 +2502,7 @@ internal class DefaultKotlinIntrospector(
     }
 
     /**
-     * An outer class of an inner class, by its metadata [name], with the names of its [typeParameters] by their ids,
+     * An outer class of an inner class, by its located [name], see [locatedNameOf], with the names of its [typeParameters] by their ids,
      * which the inner class can refer to.
      */
     private class OuterTypeParameters(val name: String, val typeParameters: Map<Int, String>) {
@@ -2538,6 +2538,9 @@ internal class DefaultKotlinIntrospector(
             val outerName = enclosingClassNames(currentName).lastOrNull() ?: break
             val outer = loadKmClass(outerName)
             val typeParameters = outer?.typeParameters?.namesById().orEmpty()
+            // past an outer class which cannot be read, whose being inner is not known,
+            // an outer class read is one only when the inner class refers to its type parameters
+            if (current == null && outer != null && typeParameters.keys.none { it in unknown!! }) break
             if (outer == null && unknown == null) {
                 val known = kmClass.typeParameters.mapTo(HashSet()) { it.id } + outers.flatMap { it.typeParameters.keys }
                 unknown = (referencedTypeParameterIds(kmClass) - known).toMutableSet()
@@ -3557,9 +3560,10 @@ internal class DefaultKotlinIntrospector(
                 // while the ones of objects can be imported, which is decided once all the enclosing classes are known
                 val isObject = kmClass.kind == ClassKind.OBJECT || kmClass.kind == ClassKind.COMPANION_OBJECT
                 // by the located name, so that a class relocated by shading is indexed next to the original one
-                classes.getOrPut(locatedNameOf(className, kmClass.name)) {
+                val locatedName = locatedNameOf(className, kmClass.name)
+                classes.getOrPut(locatedName) {
                     // the object to import them from, by the name it is found by, see locatedNameOf
-                    val source = locatedNameOf(className, kmClass.name).replace('/', '.')
+                    val source = locatedName.replace('/', '.')
                     IndexedClass(
                         name = kmClass.name,
                         binaryName = className,

@@ -848,6 +848,26 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should not qualify inner class with outer class of its nested outer class without class file`() {
+        // given
+        val introspector = introspectorWithoutAbsentClass("NestedMidHolder\$Mid.class")
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.NestedMidHolder.Mid.Leaf"
+        )
+
+        // then
+        // the type parameters of the outermost class are not referred to, as the missing class is not inner
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.NestedMidHolder.Mid.Leaf [page 1/1]
+            inner class Mid<T1>.Leaf : Comparable<T1> {
+                override operator fun compareTo(other: T1): Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve nested class which cannot be loaded, as read from its class file`() {
         // given
         val introspector = introspectorWithoutAbsentClass()
