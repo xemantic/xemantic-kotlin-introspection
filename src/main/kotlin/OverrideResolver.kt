@@ -194,14 +194,15 @@ internal class OverrideResolver(
          * as its own override in the same module, or as the bridge to its own override in a friend module,
          * which is the only trace of a friend module.
          * When a shrinker, like R8, removed the JVM method of the overriding member, the bridge might be removed too,
+         * and when the JVM methods of the overriding class can be neither read nor reflected, the bridge cannot be seen,
          * so that the modality of the member is the evidence in a final class instead, like for an [Unmangled] one,
          * while a friend-module override in a class which is not final is not told.
          *
          * @param jvmMethod the JVM name followed by the descriptor of the member.
          * @param isSameModuleName whether the module of the member has the same name as the one of the overriding class,
-         *   the evidence when the JVM methods of the overriding class do not tell otherwise:
-         *   when they can be neither read nor reflected, or when the overriding member is shrunk in a class
-         *   which is not final; a module of the same name is likely the same module,
+         *   the evidence when the JVM methods of the overriding class do not tell otherwise in a class which is not final:
+         *   when they can be neither read nor reflected, or when the overriding member is shrunk;
+         *   a module of the same name is likely the same module,
          *   while for a module of another name an override is claimed only on evidence.
          */
         data class Mangled(val jvmMethod: String, val isSameModuleName: Boolean) : MemberVisibility
@@ -211,6 +212,9 @@ internal class OverrideResolver(
      * A member of a supertype, which can be overridden.
      *
      * @param isJava whether the member is a Java method, matched by the erasure of its parameter types.
+     * @param isPlatform whether the member is a Java method of a platform class, like `Throwable.toString()`,
+     *   also of the JVM type of a built-in type, like `java.util.List.sort`, which a shrinker never removes,
+     *   so that it is no evidence for a shrunk override, see [shrunkOverridden].
      * @param declaresDefaultValues the indices of the value parameters declaring a default value,
      *   which only a Kotlin function can.
      * @param key the key of a member of a Kotlin supertype, see [memberKey], telling which one is overridden.
@@ -221,6 +225,7 @@ internal class OverrideResolver(
         val parameters: List<MemberType>,
         val typeParameterCount: Int,
         val isJava: Boolean,
+        val isPlatform: Boolean = false,
         val visibility: MemberVisibility = MemberVisibility.Visible,
         val declaresDefaultValues: Set<Int> = emptySet(),
         val key: String? = null,
@@ -309,6 +314,15 @@ internal class OverrideResolver(
     private val servesStdlibClassFiles: Boolean by lazy { classLoader.hasClassFile("kotlin.KotlinVersion") }
 
     /**
+     * Whether this class is a platform class, like `java.lang.Throwable`, defined by the bootstrap or the platform class loader,
+     * which is not shrunk with an app.
+     */
+    private val Class<*>.isPlatformClass: Boolean
+        get() = classLoader.let { it == null || it === platformClassLoader }
+
+    private val platformClassLoader: ClassLoader? = ClassLoader.getPlatformClassLoader()
+
+    /**
      * The Kotlin class names of the built-in types, like `kotlin/collections/Map.Entry`,
      * mapped to their JVM classes.
      */
@@ -360,13 +374,14 @@ internal class OverrideResolver(
         val signature = overridables.signature(function)
         val matching = candidates.filter { it.matches(signature) }
         val overridden = matching.asSequence().filter { overridables.isVisible(it, owner, function.modality) }
+            .ifEmpty {
+                val evidence = matching.ifEmpty { candidates.filter { it.isJava && !it.isPlatform } }
+                overridables.shrunkOverridden(evidence, owner, function.modality, function.signature)
+            }
         return when {
             !withDefaultValues -> if (overridden.any()) noDefaultValues else null
             else -> overridden.toList().takeIf { it.isNotEmpty() }
                 ?.let { FunctionOverride(inheritedDefaultValues(it, signature)) }
-        } ?: noDefaultValues.takeIf {
-            val evidence = matching.ifEmpty { candidates.filter { it.isJava } }
-            overridables.isShrunkOverride(evidence, owner, function.modality, function.signature)
         }
     }
 
@@ -522,10 +537,12 @@ internal class OverrideResolver(
         val javaGetters = getter?.let { overridables.functions[it.name] }.orEmpty().filter { it.isJava }
         // a Java method taking other parameters than the receiver is not a getter
         val evidence = matching.ifEmpty {
-            javaGetters.filter { it.parameters.size == (if (property.receiverParameterType != null) 1 else 0) }
+            javaGetters.filter {
+                !it.isPlatform && it.parameters.size == (if (property.receiverParameterType != null) 1 else 0)
+            }
         }
         return javaGetters.any { it.matches(signature) } ||
-            overridables.isShrunkOverride(evidence, owner, property.modality, property.getterSignature)
+            overridables.shrunkOverridden(evidence, owner, property.modality, property.getterSignature).any()
     }
 
     /**
@@ -553,7 +570,7 @@ internal class OverrideResolver(
                 val declaresJvmMethod = ownerJvmMethods?.contains(visibility.jvmMethod)
                 when {
                     declaresJvmMethod == true -> true
-                    isShrunk && owner.modality == Modality.FINAL -> modality != Modality.FINAL
+                    (isShrunk || declaresJvmMethod == null) && owner.modality == Modality.FINAL -> modality != Modality.FINAL
                     declaresJvmMethod == false && !isShrunk -> false
                     else -> visibility.isSameModuleName
                 }
@@ -561,29 +578,33 @@ internal class OverrideResolver(
         }
 
     /**
-     * Whether a member of the [modality] of the [owner], overriding no visible supertype member,
-     * is still taken for an override of one of the [evidence] members, as its JVM method, the [signature],
-     * is shrunk, see [isShrunk].
+     * The [evidence] members which a member of the [modality] of the [owner], overriding no visible supertype member,
+     * is still taken to override, as its JVM method, the [signature], is shrunk, see [isShrunk],
+     * telling also the default values the member inherits from them, or none, if it is not taken for an override.
      * The evidence are the supertype members of the same signature, if there are any,
      * otherwise the Java ones of the same name, including the ones of a Kotlin supertype without metadata,
      * as the overridden JVM method might be removed by a shrinker as well,
-     * while the members of a Kotlin supertype are known by its metadata, whether shrunk or not.
+     * while the members of a Kotlin supertype are known by its metadata, whether shrunk or not,
+     * and the ones of a platform class are never shrunk, see [Overridable.isPlatform].
      * A member is the evidence only if it is visible to the [owner], see [isVisible],
      * so that an internal member of another module does not make a member of the same signature an override.
      * The JVM methods of the [owner] are read only when an evidence member is visible, or is a mangled internal one.
      */
-    private fun Overridables.isShrunkOverride(
+    private fun Overridables.shrunkOverridden(
         evidence: List<Overridable>,
         owner: KmClass,
         modality: Modality,
         signature: JvmMethodSignature?
-    ): Boolean = evidence.any { isVisible(it, owner, modality, isShrunk = true) } && isShrunk(signature)
+    ): Sequence<Overridable> {
+        val visible = evidence.filter { isVisible(it, owner, modality, isShrunk = true) }
+        return if (visible.isNotEmpty() && isShrunk(signature)) visible.asSequence() else emptySequence()
+    }
 
     /**
      * Whether the JVM method of a member, declared in the metadata, has been removed from the class file of its owner,
      * like by R8, so that it cannot be told from an overload of a supertype member,
      * which is then assumed to be overridden, as one of the same signature, or a Java one of the same name, is known,
-     * see [isShrunkOverride].
+     * see [shrunkOverridden].
      * A member whose owner JVM methods can be neither read nor reflected is not considered shrunk.
      */
     private fun Overridables.isShrunk(signature: JvmMethodSignature?): Boolean =
@@ -727,7 +748,8 @@ internal class OverrideResolver(
 
             declaration.java?.let { javaClass ->
                 val substitution = javaSubstitution(javaClass, supertype)
-                javaMethods(javaClass, ownerPackage, substitution).forEach { (name, method) ->
+                val isPlatform = javaClass.isPlatformClass
+                javaMethods(javaClass, ownerPackage, substitution, isPlatform).forEach { (name, method) ->
                     if (name !in declaration.hiddenJavaMethods) {
                         functions.getOrPut(name) { mutableListOf() } += method
                     }
@@ -1265,11 +1287,12 @@ internal class OverrideResolver(
     private fun javaMethods(
         javaClass: Class<*>,
         ownerPackage: String,
-        substitution: JavaSubstitution
+        substitution: JavaSubstitution,
+        isPlatform: Boolean
     ): List<Pair<String, Overridable>> {
         // a method signature might refer to a class missing from the classpath
         val methods = reflectOrNull { javaClass.declaredMethods }
-            ?: return asmMethods(javaClass, ownerPackage, substitution)
+            ?: return asmMethods(javaClass, ownerPackage, substitution, isPlatform)
         val overridables = methods
             .filter { method ->
                 val modifiers = method.modifiers
@@ -1279,19 +1302,26 @@ internal class OverrideResolver(
                         javaClass.packageName == ownerPackage)
             }
         // a generic type, like a wildcard or a type variable bound, might refer to a class missing from the classpath
-        return reflectOrNull { overridables.map { method -> method.name to javaOverridable(javaClass, method, substitution) } }
-            ?: asmMethods(javaClass, ownerPackage, substitution)
+        return reflectOrNull {
+            overridables.map { method -> method.name to javaOverridable(javaClass, method, substitution, isPlatform) }
+        } ?: asmMethods(javaClass, ownerPackage, substitution, isPlatform)
     }
 
     /**
      * The generic types are resolved lazily, so this might throw when they refer to a class missing from the classpath.
      */
-    private fun javaOverridable(javaClass: Class<*>, method: Method, substitution: JavaSubstitution): Overridable =
+    private fun javaOverridable(
+        javaClass: Class<*>,
+        method: Method,
+        substitution: JavaSubstitution,
+        isPlatform: Boolean
+    ): Overridable =
         Overridable(
             receiver = null,
             parameters = method.genericParameterTypes.map { javaType(it, substitution, method) },
             typeParameterCount = method.typeParameters.size,
             isJava = true,
+            isPlatform = isPlatform,
             javaKey = javaMemberKey(javaClass.name, method.name, AsmType.getMethodDescriptor(method))
         )
 
@@ -1401,12 +1431,15 @@ internal class OverrideResolver(
     private fun asmMethods(
         javaClass: Class<*>,
         ownerPackage: String,
-        substitution: JavaSubstitution
+        substitution: JavaSubstitution,
+        isPlatform: Boolean
     ): List<Pair<String, Overridable>> {
         val bytes = readClassBytesByMetadataName(kotlinClassName(javaClass)) ?: return emptyList()
         // the methods of a class file which cannot be parsed are unknown
         val methods = readMethods(bytes) ?: return emptyList()
-        return asmMethods(methods, javaClass.packageName, ownerPackage, substitution, className = javaClass.name)
+        return asmMethods(
+            methods, javaClass.packageName, ownerPackage, substitution, className = javaClass.name, isPlatform = isPlatform
+        )
     }
 
     /**
@@ -1414,13 +1447,15 @@ internal class OverrideResolver(
      * matched by the erasure of the parameter types.
      *
      * @param className the binary name of the Java class, telling the keys of its methods, see [javaMemberKey].
+     * @param isPlatform whether the Java class is a platform class, see [Overridable.isPlatform].
      */
     private fun asmMethods(
         methods: List<DeclaredMethod>,
         packageName: String,
         ownerPackage: String,
         substitution: JavaSubstitution,
-        className: String? = null
+        className: String? = null,
+        isPlatform: Boolean = false
     ): List<Pair<String, Overridable>> {
         return methods.mapNotNull { method ->
             val access = method.access
@@ -1443,6 +1478,7 @@ internal class OverrideResolver(
                 parameters = parameters,
                 typeParameterCount = generic?.typeParameters?.size ?: 0,
                 isJava = true,
+                isPlatform = isPlatform,
                 javaKey = className?.let { javaMemberKey(it, method.name, method.descriptor) }
             )
         }
