@@ -24,6 +24,7 @@ import com.xemantic.kotlin.introspection.test.other.JavaClassBoundBase
 import com.xemantic.kotlin.introspection.test.other.JavaDollarBase
 import com.xemantic.kotlin.introspection.test.other.JavaFunctionTaker
 import com.xemantic.kotlin.introspection.test.other.JavaGetterBase
+import com.xemantic.kotlin.introspection.test.other.JavaLocalizedNameBase
 import com.xemantic.kotlin.introspection.test.other.JavaLabelBase
 import com.xemantic.kotlin.introspection.test.other.JavaOuterBase
 import com.xemantic.kotlin.introspection.test.other.JavaPrimitiveBase
@@ -199,6 +200,11 @@ interface StringProcessorInterface : Processor<String> {
 // An interface overloading a member of its superinterface, compiled without DefaultImpls
 interface OverloadingProcessorInterface : Processor<String> {
     fun process(item: Int)
+}
+
+// An interface overloading a member of a Java superinterface, compiled without DefaultImpls
+interface OverloadingRunnableInterface : Runnable {
+    fun run(times: Int)
 }
 
 // A type parameter of the class passed as a type argument of its supertype
@@ -803,4 +809,9 @@ class OverloadedInternalSubclass : com.xemantic.kotlin.introspection.othermodule
 // A member overloading both an internal member of a class of another module and a public one
 class OverloadingInternalSubclass : com.xemantic.kotlin.introspection.othermodule.OverloadedInternalBase() {
     fun reset(name: String) {}
+}
+
+// A property named like a Java method taking a parameter, which is not its getter
+class JavaLocalizedNameSubclass : JavaLocalizedNameBase() {
+    val name: String get() = ""
 }

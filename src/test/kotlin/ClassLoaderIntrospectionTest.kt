@@ -2061,6 +2061,25 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should not mark shrunk properties named like Java methods taking parameters as override`() {
+        // given
+        val className = "com.xemantic.kotlin.introspection.test.JavaLocalizedNameSubclass"
+        val introspector = shrunkIntrospector(className, "getName")
+
+        // when
+        val signature = introspector.resolve(className)
+
+        // then
+        // a getter takes no parameters, unless the property has a receiver
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaLocalizedNameSubclass [page 1/1]
+            class JavaLocalizedNameSubclass : com.xemantic.kotlin.introspection.test.other.JavaLocalizedNameBase {
+                val name: String
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should mark shrunk overrides of internal members of superclass of a friend module in final class`() {
         // given
         val className = "com.xemantic.kotlin.introspection.friendmodule.FriendModuleSubclass"
@@ -2297,23 +2316,22 @@ class ClassLoaderIntrospectionTest {
         val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
 
         // when
-        // the JVM methods of an interface owning an overload are read, also the ones relocated to DefaultImpls,
-        // which most interfaces do not have, compiled with the default -jvm-default
-        val greeter = introspector.resolve("com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsGreeter")
-        val processor = introspector.resolve("com.xemantic.kotlin.introspection.test.OverloadingProcessorInterface")
+        // the JVM methods of an interface owning an overload of a Java member are read,
+        // also the ones relocated to DefaultImpls, which most interfaces do not have, compiled with the default -jvm-default
+        val runner = introspector.resolve("com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsRunner")
+        val runnable = introspector.resolve("com.xemantic.kotlin.introspection.test.OverloadingRunnableInterface")
 
         // then
-        greeter sameAsKotlin """
-            // com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsGreeter [page 1/1]
-            interface DefaultImplsGreeter : DefaultImplsBase {
-                open override val label: String
-                open override fun greet(name: String): String
+        runner sameAsKotlin """
+            // com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsRunner [page 1/1]
+            interface DefaultImplsRunner : java.lang.Runnable {
+                open fun run(times: Int)
             }
         """.trimIndent()
-        processor sameAsKotlin """
-            // com.xemantic.kotlin.introspection.test.OverloadingProcessorInterface [page 1/1]
-            interface OverloadingProcessorInterface : Processor<String> {
-                fun process(item: Int)
+        runnable sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OverloadingRunnableInterface [page 1/1]
+            interface OverloadingRunnableInterface : java.lang.Runnable {
+                fun run(times: Int)
             }
         """.trimIndent()
         assert(requestedClasses.none { it.endsWith("\$DefaultImpls") })
@@ -2322,7 +2340,7 @@ class ClassLoaderIntrospectionTest {
     @Test
     fun `should not load DefaultImpls class of interface whose class file is served without the one of DefaultImpls`() {
         // given
-        val defaultImplsName = "com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsOverloader\$DefaultImpls"
+        val defaultImplsName = "com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsRunner\$DefaultImpls"
         val requestedClasses = Collections.synchronizedList(mutableListOf<String>())
         val classLoader = object : ClassLoader(javaClass.classLoader) {
             override fun loadClass(name: String, resolve: Boolean): Class<*> {
@@ -2339,14 +2357,14 @@ class ClassLoaderIntrospectionTest {
         val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
 
         // when
-        // the JVM methods of the interface are read to tell whether its overload of a supertype member is shrunk
-        val greeter = introspector.resolve("com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsOverloader")
+        // the JVM methods of the interface are read to tell whether its overload of a Java member is shrunk
+        val runner = introspector.resolve("com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsRunner")
 
         // then
-        greeter sameAsKotlin """
-            // com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsOverloader [page 1/1]
-            interface DefaultImplsOverloader : DefaultImplsBase {
-                open fun greet(times: Int): String
+        runner sameAsKotlin """
+            // com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsRunner [page 1/1]
+            interface DefaultImplsRunner : java.lang.Runnable {
+                open fun run(times: Int)
             }
         """.trimIndent()
         // the class file of the interface is served, so the absence of the one of DefaultImpls tells there is none
@@ -2375,23 +2393,23 @@ class ClassLoaderIntrospectionTest {
         val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
 
         // when
-        // the JVM methods of an interface owning an overload are reflected, also the ones relocated to DefaultImpls,
-        // which only an interface with member bodies might have, as its metadata tells
-        val greeter = introspector.resolve("com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsGreeter")
-        val processor = introspector.resolve("com.xemantic.kotlin.introspection.test.OverloadingProcessorInterface")
+        // the JVM methods of an interface owning an overload of a Java member are reflected,
+        // also the ones relocated to DefaultImpls, which only an interface with member bodies might have,
+        // as its metadata tells
+        val runner = introspector.resolve("com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsRunner")
+        val runnable = introspector.resolve("com.xemantic.kotlin.introspection.test.OverloadingRunnableInterface")
 
         // then
-        greeter sameAsKotlin """
-            // com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsGreeter [page 1/1]
-            interface DefaultImplsGreeter : DefaultImplsBase {
-                open override val label: String
-                open override fun greet(name: String): String
+        runner sameAsKotlin """
+            // com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsRunner [page 1/1]
+            interface DefaultImplsRunner : java.lang.Runnable {
+                open fun run(times: Int)
             }
         """.trimIndent()
-        processor sameAsKotlin """
-            // com.xemantic.kotlin.introspection.test.OverloadingProcessorInterface [page 1/1]
-            interface OverloadingProcessorInterface : Processor<String> {
-                fun process(item: Int)
+        runnable sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OverloadingRunnableInterface [page 1/1]
+            interface OverloadingRunnableInterface : java.lang.Runnable {
+                fun run(times: Int)
             }
         """.trimIndent()
         assert(failedLoads.none { it.endsWith("\$DefaultImpls") })

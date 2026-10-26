@@ -308,15 +308,18 @@ com.example.AnnotationTestClass
   This has known limitations:
   - in a class which is not final, a public override of a `@PublishedApi internal` member in a friend module
     is not marked `override`, and does not inherit the default values of its parameters,
-    as it cannot be told from a member of the same name of an unrelated module;
-  - in such a class, a member named like a `@PublishedApi internal` member of an unrelated module of the same name,
+    as it cannot be told from a member of the same signature of an unrelated module;
+  - in such a class, a member of the same signature as a `@PublishedApi internal` member of an unrelated module of the same name,
     like two modules both compiled with the default `main`, is marked `override`,
     as that module cannot be told from the same one;
   - in a final class, a member of the same signature as a `@PublishedApi internal` member of a supertype,
     or, when shrunk, as any internal member, marked `open` in vain, is marked `override`,
     while its override marked `final override` in vain is not;
   - in a class which is not final, an override in a friend module is not marked
-    when a shrinker removed the bridge telling it.
+    when a shrinker removed the bridge telling it;
+  - a member whose JVM method a shrinker removed, overloading a Java member of the same name,
+    or one of a Kotlin supertype without the metadata, is marked `override`,
+    as the shrinker might have removed the overridden JVM method as well.
 * The whole classpath visible to the given class loader is scanned on creation, which takes a while,
   so the instance should be created once and reused.
   The scan can be disabled with `KotlinIntrospector(scanEntireClasspath = false)`,

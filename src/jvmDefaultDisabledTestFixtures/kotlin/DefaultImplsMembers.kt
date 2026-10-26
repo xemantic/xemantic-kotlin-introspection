@@ -37,6 +37,14 @@ interface DefaultImplsOverloader : DefaultImplsBase {
     fun greet(times: Int): String = "hello".repeat(times)
 }
 
+// an overload of a Java supertype member, which a shrunk JVM method would not tell from its override,
+// so that the JVM methods of the interface are read, also the ones relocated to its DefaultImpls
+interface DefaultImplsRunner : Runnable {
+    fun run(times: Int) {
+        repeat(times) { run() }
+    }
+}
+
 // the synthetic methods for the annotations of the interface properties are in its DefaultImpls class
 interface DefaultImplsHiddenProperties {
     val visible: Int

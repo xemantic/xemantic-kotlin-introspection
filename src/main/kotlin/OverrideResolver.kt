@@ -508,8 +508,12 @@ internal class OverrideResolver(
         // which a private or a @JvmField property does not have, and which might be renamed or mangled
         val getter = property.getterSignature?.takeIf { property.visibility.isOverridable }
         val javaGetters = getter?.let { overridables.functions[it.name] }.orEmpty().filter { it.isJava }
+        // a Java method taking other parameters than the receiver is not a getter
+        val evidence = matching.ifEmpty {
+            javaGetters.filter { it.parameters.size == (if (property.receiverParameterType != null) 1 else 0) }
+        }
         return javaGetters.any { it.matches(signature) } ||
-            overridables.isShrunkOverride(matching.ifEmpty { javaGetters }, owner, property.modality, property.getterSignature)
+            overridables.isShrunkOverride(evidence, owner, property.modality, property.getterSignature)
     }
 
     /**
@@ -566,7 +570,8 @@ internal class OverrideResolver(
     /**
      * Whether the JVM method of a member, declared in the metadata, has been removed from the class file of its owner,
      * like by R8, so that it cannot be told from an overload of a supertype member,
-     * which is then assumed to be overridden, as one with the same name is known, see [isShrunkOverride].
+     * which is then assumed to be overridden, as one of the same signature, or a Java one of the same name, is known,
+     * see [isShrunkOverride].
      * A member whose owner JVM methods can be neither read nor reflected is not considered shrunk.
      */
     private fun Overridables.isShrunk(signature: JvmMethodSignature?): Boolean =
