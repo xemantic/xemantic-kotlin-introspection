@@ -44,6 +44,8 @@ import java.util.jar.Manifest
 import kotlin.io.path.createDirectories
 import kotlin.io.path.outputStream
 import kotlin.io.path.writeBytes
+import kotlin.metadata.KmClassifier
+import kotlin.metadata.KmType
 import kotlin.metadata.jvm.KotlinModuleMetadata
 import kotlin.test.Test
 
@@ -1557,6 +1559,51 @@ class ClassLoaderIntrospectionTest {
                 fun compareTo(other: Int): Int
             }
         """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member inherited through Java superclass which cannot be loaded, as read from its class file`() {
+        // given
+        val introspector = introspectorWithoutAbsentClass()
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.AbsentKotlinInterfaceJavaLeaf.greet"
+        )
+
+        // then
+        // the Kotlin interface is told by the class file of the Java superclass, whose own members are not
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.AbsentKotlinInterfaceJavaLeaf.greet [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.isolated.AbsentReachedGreeter
+            fun greet(): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member inherited through cyclic supertypes once`() {
+        // given
+        fun type(name: String) = KmType().apply { classifier = KmClassifier.Class("com/xemantic/kotlin/introspection/isolated/$name") }
+        val root = isolatedTestFixturesCopy("cyclic") { fileName, bytes ->
+            when (fileName) {
+                "CyclicFirst.class" -> withSupertypesInMetadata(bytes, type("CyclicSecond"))
+                "CyclicSecond.class" -> withSupertypesInMetadata(bytes, type("CyclicFirst"))
+                else -> bytes
+            }
+        }
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val second = introspector.resolve("com.xemantic.kotlin.introspection.isolated.CyclicLeaf.second")
+        val missing = introspector.resolve("com.xemantic.kotlin.introspection.isolated.CyclicLeaf.missing")
+
+        // then
+        second sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.CyclicLeaf.second [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.isolated.CyclicSecond
+            fun second()
+        """.trimIndent()
+        assert(missing == null)
     }
 
     @Test

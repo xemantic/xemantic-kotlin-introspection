@@ -97,13 +97,27 @@ com.example.AnnotationTestClass
   The members a class inherits from its supertypes, without redeclaring them, are not listed, not to bloat the listing,
   but they are resolved by its name, after the members it declares, which override them, and before the extensions,
   each as declared by the nearest supertype declaring it, under its `// inherited from` header,
+  with the type arguments the class gives for the type parameters of the supertype substituted,
   like `kotlin.collections.MutableList.get`, rendered as `operator fun get(index: Int): E` of `kotlin.collections.List`,
-  the type arguments of the supertype not substituted.
+  or the `get` of a class extending `java.util.AbstractList<String>`, rendered as `operator fun get(index: Int): String`,
+  while a type parameter of the member named like a type parameter of the class it refers to is renamed apart from it,
+  like `fun <U1> thenApply(arg0: Function<in U, out U1>?)` for a class extending `java.util.concurrent.CompletableFuture<U>`.
   An override wins over the member it overrides, while the overloads it does not override are inherited too,
   and of the members of the same signature of unrelated supertypes, the one of the most specific return type wins,
-  like `MutableCollection.iterator(): MutableIterator<E>` over `List.iterator(): Iterator<E>` for `MutableList`.
+  like `MutableCollection.iterator(): MutableIterator<E>` over `List.iterator(): Iterator<E>` for `MutableList`,
+  also of the types related only through a Java class, like `java.util.ArrayList`, a subtype of `MutableList`.
+  A member with a body of an interface is rendered as `open`, also when inherited by a final class,
+  telling it apart from an abstract one.
+  The methods which a Java supertype declares are inherited too, as kotlin-reflect describes them,
+  like `fun ensureCapacity(arg0: Int)` of `java.util.ArrayList`,
+  but the ones overriding a member of a Kotlin supertype, like the `get` of `java.util.ArrayList`,
+  for which the Kotlin member is inherited instead, declared with the names of its parameters, which the JDK does not tell,
+  unless the Java method makes it more visible, like the public `clone()` of the protected one of `kotlin.Cloneable`,
+  or returns a more specific type,
+  and the ones overriding a JDK method which the built-in type does not have, like the `sort(Comparator)` of `java.util.List`,
+  as Kotlin calls the `MutableList<T>.sort(comparator)` extension instead.
   A typealias to a Java class, like `kotlin.collections.ArrayList`, `kotlin.collections.HashMap`, or `kotlin.text.StringBuilder`,
-  is not resolved yet.
+  is not resolved yet, like any other typealias.
 * The Kotlin built-in types, like `kotlin.String` or `kotlin.collections.List`,
   which are mapped to the JVM types and have no class files of their own,
   are rendered like any other class from their declarations in the `.kotlin_builtins` metadata of the standard library,

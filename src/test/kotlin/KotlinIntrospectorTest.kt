@@ -25,6 +25,7 @@ import com.xemantic.kotlin.test.should
 import org.junit.jupiter.api.Assumptions.assumeFalse
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import java.lang.reflect.Method
+import kotlin.reflect.full.allSupertypes
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
 
@@ -3619,7 +3620,7 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.test.InheritedAnyHolder.h [page 1/1]
             fun h(x: T)
             // inherited from com.xemantic.kotlin.introspection.test.InheritedNumberHolder
-            fun h(x: T)
+            fun h(x: Int)
         """.trimIndent()
     }
 
@@ -3762,15 +3763,359 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should resolve member inherited from generic interface as declared there`() {
-        // the type argument String of the supertype is not substituted, T is rendered under the header naming its class
+    fun `should resolve member inherited from generic interface with its type argument substituted`() {
+        // T is not in scope of the inheriting class, which gives String for it
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.InheritedStringContainer.take"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.InheritedStringContainer.take [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.InheritedContainer
-            fun take(): T
+            fun take(): String
         """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member inherited through chain of generic supertypes with type arguments substituted`() {
+        // the T of InheritedContainer is the List<E> of InheritedContainerOf, whose E is the Int of the inheriting class
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedIntListContainer.put"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedIntListContainer.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.InheritedContainer
+            fun put(item: List<Int>)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member inherited from generic supertype with type parameter of inheriting class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedContainerOf.take"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedContainerOf.take [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.InheritedContainer
+            fun take(): List<E>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member with body of interface inherited by final class as open`() {
+        // like within the interface, telling it apart from an abstract member
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedDefaultGreeterImpl.hello"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedDefaultGreeterImpl.hello [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.InheritedDefaultGreeter
+            open fun hello(): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve members of unrelated supertypes of the same signature once its type argument is substituted`() {
+        // accept(x: T) of InheritedGenericConsumer<String> is the same member as accept(x: String) of InheritedStringConsumer
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedBothConsumer.accept"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedBothConsumer.accept [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.InheritedGenericConsumer
+            fun accept(x: String)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve inherited member of return type more specific through Java mapping`() {
+        // java.util.ArrayList is seen in Kotlin as a subtype of MutableList
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedBothListReturn.items"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedBothListReturn.items [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.InheritedJavaListReturn
+            fun items(): java.util.ArrayList<String>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve inherited overloads of inner class told apart by type parameters of outer class`() {
+        // Middle overrides only f(x: T), f(x: U) is still inherited from Base
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedOuter.Leaf.f"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedOuter.Leaf.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.InheritedOuter.Middle
+            override fun f(x: T)
+            // inherited from com.xemantic.kotlin.introspection.test.InheritedOuter.Base
+            fun f(x: U)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve method declared only by Java superclass`() {
+        // the JDK is compiled without parameter names
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaArrayList.ensureCapacity"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaArrayList.ensureCapacity [page 1/1]
+            // inherited from java.util.ArrayList
+            fun ensureCapacity(arg0: Int)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of built-in type overridden by Java superclass as declared by built-in type`() {
+        // java.util.ArrayList overrides get, but the declaration of the built-in type tells the parameter names
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaArrayList.get"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaArrayList.get [page 1/1]
+            // inherited from kotlin.collections.List
+            operator fun get(index: Int): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve members of built-in type overridden by Java superclasses with parameters of platform types once`() {
+        // add(E) of java.util.AbstractList, taking an E!, overrides the add(element: E) of MutableList
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaArrayList.add"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaArrayList.add [page 1/1]
+            // inherited from kotlin.collections.MutableList
+            override fun add(element: String): Boolean
+            fun add(index: Int, element: String)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java method with own type parameter renamed apart from type parameter of inheriting class`() {
+        // the T of CompletableFuture is the U of InheritedFuture, which the own U of thenApply would capture
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedFuture.thenApply"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedFuture.thenApply [page 1/1]
+            // inherited from java.util.concurrent.CompletableFuture
+            override fun <U1> thenApply(arg0: java.util.function.Function<in U, out U1>?): java.util.concurrent.CompletableFuture<U1>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member with own type parameter renamed apart from type parameter of inheriting class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedRenamingBox.map"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedRenamingBox.map [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.InheritedBox
+            fun <T1> map(transform: (T) -> T1): InheritedBox<T1>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve JVM-only member of mutable collection overridden by Java superclass as declared by built-in type`() {
+        // removeIf of java.util.ArrayList overrides the one of java.util.Collection, a JVM-only member of MutableCollection
+        assumeNoParameterNames(Collection::class.java.getMethod("removeIf", java.util.function.Predicate::class.java))
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaArrayList.removeIf") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaArrayList.removeIf [page 1/1]
+            // inherited from kotlin.collections.MutableCollection
+            open fun removeIf(arg0: java.util.function.Predicate<in String>): Boolean
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve JVM-only member of mutable map overridden by Java superclass as declared by built-in type`() {
+        // putIfAbsent of java.util.HashMap overrides the one of java.util.Map, a JVM-only member of MutableMap
+        assumeNoParameterNames(Map::class.java.getMethod("putIfAbsent", Any::class.java, Any::class.java))
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaHashMap.putIfAbsent") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaHashMap.putIfAbsent [page 1/1]
+            // inherited from kotlin.collections.MutableMap
+            open fun putIfAbsent(arg0: String, arg1: Int): Int?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve JVM-only member of mutable list of JDK 21 overridden by Java superclass as declared by built-in type`() {
+        assumeTrue(runCatching { List::class.java.getMethod("addFirst", Any::class.java) }.isSuccess, "JDK 21+")
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaArrayList.addFirst") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaArrayList.addFirst [page 1/1]
+            // inherited from kotlin.collections.MutableList
+            open fun addFirst(arg0: String)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve Java method overriding JDK method which built-in type does not expose`() {
+        // Kotlin calls the MutableList<T>.sort extension instead, the JDK sort of java.util.List is not a member of MutableList
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaArrayList.sort") == null)
+    }
+
+    @Test
+    fun `should not resolve method of Java superclass implemented by its Java subclass`() {
+        // greet() of JavaGreeterMid implements the abstract one of JavaAbstractGreeterBase, and the one of InheritedGreeter
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedFromJavaGreeter.greet"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedFromJavaGreeter.greet [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.InheritedGreeter
+            fun greet(): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve method of Java superclass overridden by its Java subclass as member of Kotlin supertype`() {
+        // size() of java.util.Dictionary is implemented by java.util.Hashtable, seen in Kotlin as the size of Map
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedHashtable.size"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedHashtable.size [page 1/1]
+            // inherited from kotlin.collections.Map
+            val size: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve method of Java superclass overridden by its Java subclass overriding member of Kotlin supertype`() {
+        // get(Object) of java.util.Dictionary, returning V, is overridden by java.util.Hashtable, overriding the get of Map
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedHashtable.get"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedHashtable.get [page 1/1]
+            // inherited from kotlin.collections.Map
+            operator fun get(key: K): V?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve Java method overriding JDK method which Kotlin hides`() {
+        // reversed() of java.util.LinkedList, returning a LinkedList, overrides the reversed() of java.util.List,
+        // which Kotlin hides, see HIDDEN_JDK_METHODS, also in the subclasses,
+        // so that linkedList.reversed() calls the Iterable<T>.reversed() extension, typed as a List
+        assumeTrue(Runtime.version().feature() >= 21, "reversed() is a member of java.util.List since JDK 21")
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedLinkedList.reversed") == null)
+    }
+
+    @Test
+    fun `should resolve member of Any overridden by Java superclass of mapped built-in type as declared by Any`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaArrayList.equals"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaArrayList.equals [page 1/1]
+            // inherited from kotlin.Any
+            operator fun equals(other: Any?): Boolean
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of Kotlin interface taking nullable parameter overridden by Java superclass as declared by interface`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedFromNullableTaker.take"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedFromNullableTaker.take [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.InheritedNullableTaker
+            fun take(x: String?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve protected field of Java superclass as var`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.OpenInheritedJavaArrayList.modCount"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OpenInheritedJavaArrayList.modCount [page 1/1]
+            // inherited from java.util.AbstractList
+            protected var modCount: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve method of Java superclass making member of Kotlin supertype more visible`() {
+        // the public clone() of java.util.ArrayList overrides the protected one of kotlin.Cloneable
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaArrayList.clone"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaArrayList.clone [page 1/1]
+            // inherited from java.util.ArrayList
+            override fun clone(): Any
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve method of Java superclass of superclass with type argument substituted`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedFromJava.first"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedFromJava.first [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaInheritedBase
+            fun first(arg0: List<String>?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve method of Java superclass overriding method of its own Java superclass`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedFromJava.accept"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedFromJava.accept [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaInheritedMid
+            override fun accept(arg0: String)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of Any overridden by Java superclass as declared by Any`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedFromJava.toString"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedFromJava.toString [page 1/1]
+            // inherited from kotlin.Any
+            fun toString(): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve protected method of Java superclass inherited by open class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.OpenInheritedFromJava.protectedHelper"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OpenInheritedFromJava.protectedHelper [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaInheritedBase
+            protected open fun protectedHelper()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve protected method of Java superclass inherited by final class`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedFromJava.protectedHelper") == null)
+    }
+
+    @Test
+    fun `should not resolve package-private method of Java superclass of another package`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedFromJava.packagePrivateHelper") == null)
+    }
+
+    @Test
+    fun `should not resolve static method of Java superclass as member`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedFromJava.staticHelper") == null)
+    }
+
+    @Test
+    fun `should resolve public method of package-private Java superclass bridged by its public subclass`() {
+        // javac generates a bridge of hello() in JavaPublicGreeterMid, which is not an override
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedThroughPublicJavaMid.hello"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedThroughPublicJavaMid.hello [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaPackagePrivateGreeterBase
+            fun hello(): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve member of Any for Nothing`() {
+        // Nothing has no instances, and no members, which the listing of its class does not show either
+        assert(resolver.resolve("kotlin.Nothing.toString") == null)
+    }
+
+    @Test
+    fun `should not resolve inherited member through name of missing nested class`() {
+        // the qualified member name names no member, so the supertypes are not walked
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedLeaf.Missing.toString") == null)
     }
 
     @Test
@@ -3863,7 +4208,7 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.InheritedJavaList.get [page 1/1]
             // inherited from kotlin.collections.List
-            operator fun get(index: Int): E
+            operator fun get(index: Int): String
         """.trimIndent()
     }
 
@@ -5008,13 +5353,14 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve stdlib extension on type parameter with multiple bounds of the standard library as member of class satisfying them`() {
-        // like in the listing of BoundedReceiverRange, after the member contains(value: T) inherited from ClosedRange
+        // like in the listing of BoundedReceiverRange, after the member contains(value: Int) inherited from ClosedRange<Int>,
+        // whose body makes it open, like within the interface
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.BoundedReceiverRange.contains"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.BoundedReceiverRange.contains [page 1/1]
             // inherited from kotlin.ranges.ClosedRange
-            operator fun contains(value: T): Boolean
+            open operator fun contains(value: Int): Boolean
             // from kotlin.ranges
             inline operator fun <T : Comparable<T>, R> R.contains(element: T?): Boolean where R : ClosedRange<T>, R : Iterable<T>
         """.trimIndent()
@@ -5405,6 +5751,22 @@ class KotlinIntrospectorTest {
         // an inherited member of a class which cannot be subclassed is rendered without the open modifier,
         // following its annotations, like the @Deprecated of a JDK member
         fun withoutModality(line: String) = line.replaceFirst(Regex("^((?:@.*\\) )?)open "), "$1")
+        // an inherited member is rendered with the type arguments which the inheriting type gives
+        // for the type parameters of its supertype substituted, like `fun forEach(arg0: Consumer<in UByte>?)`
+        // of `fun forEach(arg0: Consumer<in T>?)` of `Iterable<T>`, so that they are substituted in the listing line too,
+        // as told by kotlin-reflect, and named like in the listings, without their `kotlin.*` packages
+        fun substituted(line: String, type: String, supertype: String): String {
+            val superClass = DefaultKotlinIntrospector.builtinTypes[supertype] ?: return line
+            val inherited = DefaultKotlinIntrospector.builtinTypes[type]?.allSupertypes
+                ?.firstOrNull { it.classifier == superClass }
+                ?: return line
+            val arguments = superClass.typeParameters.zip(inherited.arguments).associate { (typeParameter, argument) ->
+                typeParameter.name to (argument.type?.toString() ?: "*")
+                    .replace(Regex("\\bkotlin\\.(?:[a-z]\\w*\\.)*"), "")
+                    .replace("!", "")
+            }
+            return line.replace(Regex("\\b\\w+\\b")) { arguments[it.value] ?: it.value }
+        }
 
         // when
         val unlisted = memberNames.flatMap { (type, names) ->
@@ -5426,7 +5788,9 @@ class KotlinIntrospectorTest {
                     }
                     .filter { (listedType, line) ->
                         val listing = listingOf(listedType)
-                        !listing.shows(line) && listing.lines.none { withoutModality(it) == line }
+                        !listing.shows(line) && listing.lines.none {
+                            withoutModality(substituted(it, type, listedType)) == withoutModality(line)
+                        }
                     }
                     .map { (_, line) -> "$type.$name: $line" }
             }
@@ -7033,7 +7397,7 @@ class KotlinIntrospectorTest {
         resolver.resolve("com.xemantic.kotlin.introspection.test.JdkMutableList.addFirst") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.JdkMutableList.addFirst [page 1/1]
             // inherited from kotlin.collections.MutableList
-            open fun addFirst(arg0: E)
+            open fun addFirst(arg0: String)
         """.trimIndent()
     }
 
