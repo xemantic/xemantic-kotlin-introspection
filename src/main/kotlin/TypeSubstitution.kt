@@ -67,7 +67,10 @@ import kotlin.metadata.visibility
  * This type with the type arguments of the [substitution], by the ids of the type parameters they are given for,
  * substituted for these type parameters, or this very type, when it refers to none of them.
  * A type argument is nullable also when the type parameter is used as nullable, like `T?`,
- * and not nullable when the type parameter is used as definitely not nullable, like `T & Any`.
+ * and not nullable when the type parameter is used as definitely not nullable, like `T & Any`,
+ * which a type argument which is a type parameter itself stays, like `U & Any`, unless it is used as nullable, like `U?`,
+ * whether it is rendered so decided by the bounds of the type parameters in scope, see [notNullableTypeParameters],
+ * as the substitution does not tell them, like the `U : Any` of a class inheriting the member, whose `U & Any` does not compile.
  */
 internal fun KmType.substituted(substitution: Map<Int, KmType>): KmType {
     if (substitution.isEmpty()) return this
@@ -76,8 +79,8 @@ internal fun KmType.substituted(substitution: Map<Int, KmType>): KmType {
         val argument = substitution[classifier.id] ?: return this
         return argument.copy().also { type ->
             type.isNullable = !isDefinitelyNonNull && (isNullable || argument.isNullable)
-            // only a type parameter can be definitely not nullable
-            type.isDefinitelyNonNull = argument.classifier is KmClassifier.TypeParameter &&
+            // only a type parameter can be definitely not nullable, and not when used as nullable, (U & Any)? being U?
+            type.isDefinitelyNonNull = argument.classifier is KmClassifier.TypeParameter && !type.isNullable &&
                 (isDefinitelyNonNull || argument.isDefinitelyNonNull)
         }
     }
@@ -93,6 +96,31 @@ internal fun KmType.substituted(substitution: Map<Int, KmType>): KmType {
     return copy(arguments, outerType).also {
         it.abbreviatedType = null
         it.flexibleTypeUpperBound = null
+    }
+}
+
+/**
+ * The ids of the [typeParameters], declared in one scope, like the ones of a class and of its outer classes,
+ * or the ones of a member, whose bounds are not nullable, like `U : Any`, `B : A` of `A : Any`, or `R : String`,
+ * so that their uses as definitely not nullable are rendered as just these type parameters, like `U`,
+ * as `U & Any` does not compile, it requires a type parameter of nullable bounds,
+ * also the ids of the [notNullable] type parameters of an enclosing scope, like of the class of a member,
+ * which the [typeParameters] might be bounded by.
+ * A type parameter of the enclosing scope which is not known to be not nullable is told nullable,
+ * like the one of its implicit `Any?` bound.
+ */
+internal fun notNullableTypeParameters(typeParameters: List<KmTypeParameter>, notNullable: Set<Int> = emptySet()): Set<Int> {
+    if (typeParameters.isEmpty()) return notNullable
+    val result = HashSet(notNullable)
+    fun KmType.isNotNullable(): Boolean = !isNullable && when (val classifier = classifier) {
+        is KmClassifier.TypeParameter -> isDefinitelyNonNull || classifier.id in result
+        else -> true
+    }
+    // until no more is found, as a bound might be declared after the type parameter it bounds, a cycle never being one
+    while (true) {
+        val found = typeParameters.filter { it.id !in result && it.upperBounds.any { bound -> bound.isNotNullable() } }
+        if (found.isEmpty()) return result
+        found.mapTo(result) { it.id }
     }
 }
 

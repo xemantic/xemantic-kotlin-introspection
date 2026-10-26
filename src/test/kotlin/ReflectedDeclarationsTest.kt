@@ -31,6 +31,7 @@ import kotlin.metadata.KmClassifier
 import kotlin.metadata.KmType
 import kotlin.metadata.KmTypeParameter
 import kotlin.metadata.KmVariance
+import kotlin.metadata.isDefinitelyNonNull
 import kotlin.metadata.isNullable
 import kotlin.reflect.KFunction
 import kotlin.reflect.KProperty
@@ -117,6 +118,76 @@ class ReflectedDeclarationsTest {
 
         // then
         assert(notFinal.toSet() == HIDDEN_JDK_METHODS)
+    }
+
+    @Test
+    fun `should enhance the types of the JDK methods which the compiler enhances as definitely not nullable`() {
+        // given - the enhanced JDK signatures of kotlin-reflect, the same as of the compiler, of the classes which are not final
+        val info = Class.forName("kotlin.reflect.jvm.internal.impl.load.java.typeEnhancement.PredefinedEnhancementInfoKt")
+        val bySignature = info.getDeclaredField("PREDEFINED_FUNCTION_ENHANCEMENT_INFO_BY_SIGNATURE")
+            .apply { isAccessible = true }.get(null) as Map<*, *>
+        fun Any.property(name: String): Any? = javaClass.getMethod(name).invoke(this)
+        fun definitelyNotNull(typeInfo: Any?): Set<Int> = (typeInfo?.property("getMap") as Map<*, *>?).orEmpty()
+            .filterValues { it?.property("getDefinitelyNotNull") == true }.keys.mapTo(HashSet()) { it as Int }
+
+        // when
+        val enhanced = bySignature.mapKeys { it.key as String }.filterKeys { signature ->
+            val className = signature.substringBefore('.').replace('/', '.')
+            !java.lang.reflect.Modifier.isFinal(Class.forName(className).modifiers)
+        }.mapValues { (_, functionInfo) ->
+            val parameters = functionInfo!!.property("getParametersInfo") as List<*>
+            // the return type at -1
+            (parameters.withIndex().associate { (position, typeInfo) -> position to definitelyNotNull(typeInfo) } +
+                (-1 to definitelyNotNull(functionInfo.property("getReturnTypeInfo")))).filterValues { it.isNotEmpty() }
+        }.filterValues { it.isNotEmpty() }
+
+        // then
+        assert(enhanced == DEFINITELY_NOT_NULL_JDK_TYPES)
+    }
+
+    @Test
+    fun `should enhance only value parameters of methods of java util Map as definitely not nullable`() {
+        // given - the enhancement is applied to the value parameters of the methods of java.util.Map, and of their overrides,
+        // so that an entry of another class, or of a return type, at -1, would be dropped, and needs to be implemented first
+        val signatures = DEFINITELY_NOT_NULL_JDK_TYPES
+
+        // when
+        val owners = signatures.keys.mapTo(HashSet()) { it.substringBefore('.') }
+        val positions = signatures.values.flatMapTo(HashSet()) { it.keys }
+
+        // then
+        assert(owners == setOf("java/util/Map"))
+        assert(positions.all { it >= 0 })
+    }
+
+    @Test
+    fun `should convert type parameter of JDK method enhanced as not nullable to definitely not nullable`() {
+        // given - K2 enhances the signature of java.util.Map.merge, overridden by java.util.AbstractMap, to take the value as V & Any
+        val merge = java.util.HashMap::class.memberFunctions.single { it.name == "merge" }
+        val typeParameters = ReflectedTypeParameters.classTypeParameters(
+            listOf(KmTypeParameter("K", 0, KmVariance.INVARIANT), KmTypeParameter("V", 1, KmVariance.INVARIANT))
+        )
+
+        // when
+        val types = merge.toKmFunction(typeParameters).valueParameters.map { it.type }
+
+        // then
+        assert(types.map { it.isDefinitelyNonNull } == listOf(false, true, false))
+        assert(types[2].arguments.map { it.type?.isDefinitelyNonNull } == listOf(true, true, false))
+    }
+
+    @Test
+    fun `should not convert type parameter of Java override of mapped member to definitely not nullable`() {
+        // given - kotlin-reflect gives the E of TreeSet.add as not a platform type, like the one of MutableSet.add it overrides,
+        // which K2 does not enhance as definitely not nullable
+        val add = java.util.TreeSet::class.memberFunctions.single { it.name == "add" }
+        val typeParameters = ReflectedTypeParameters.classTypeParameters(listOf(KmTypeParameter("E", 0, KmVariance.INVARIANT)))
+
+        // when
+        val type = add.toKmFunction(typeParameters).valueParameters.single().type
+
+        // then
+        assert(!type.isDefinitelyNonNull)
     }
 
     @Test

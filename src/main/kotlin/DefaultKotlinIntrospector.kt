@@ -1561,8 +1561,12 @@ internal class DefaultKotlinIntrospector(
     ): List<List<String>> {
         val isOpenForOverrides = isOpenForOverrides(kmClass, apiClass)
         val typeParameters = typeParametersInScope(kmClass, declarations)
+        val notNullable = notNullableTypeParametersInScope(kmClass, declarations)
         return members.map { member ->
-            formatMember(member, kmClass, declarations, apiClass, contextPackage, isOpenForOverrides, typeParameters = typeParameters)
+            formatMember(
+                member, kmClass, declarations, apiClass, contextPackage, isOpenForOverrides,
+                typeParameters = typeParameters, notNullable = notNullable
+            )
         }
     }
 
@@ -1724,6 +1728,8 @@ internal class DefaultKotlinIntrospector(
      *
      * @param inheritedBy the kind of the class inheriting the [member], see [inheritedMembers],
      *   or `null` if it is listed as a member of the [kmClass] itself.
+     * @param typeParameters the names of the type parameters the [member] refers to, by their ids.
+     * @param notNullable the ids of the ones whose bounds are not nullable, see [notNullableTypeParameters].
      */
     private fun formatMember(
         member: Member,
@@ -1733,7 +1739,8 @@ internal class DefaultKotlinIntrospector(
         contextPackage: String,
         isOwnerOpenForOverrides: Boolean,
         inheritedBy: ClassKind? = null,
-        typeParameters: Map<Int, String> = typeParametersInScope(kmClass, declarations)
+        typeParameters: Map<Int, String>,
+        notNullable: Set<Int>
     ): List<String> {
         // a member inherited by an interface is rendered as within it, like the ones of kotlin.Any
         val isInterface = kmClass.kind == ClassKind.INTERFACE || inheritedBy == ClassKind.INTERFACE
@@ -1746,13 +1753,15 @@ internal class DefaultKotlinIntrospector(
             is Member.Property -> formatApiProperty(
                 member.property, scope, declarations,
                 inInterface = isInterface, owner = owner, contextPackage = contextPackage, classTypeParameters = typeParameters,
+                classNotNullable = notNullable,
                 isOwnerOpenForOverrides = isOwnerOpenForOverrides, isInheritedByFinalClass = isInheritedByFinalClass,
                 declaration = member.declaration
             )
             is Member.Function -> listOf(
                 formatFunction(
                     member.function, inInterface = isInterface, owner = owner, contextPackage = contextPackage,
-                    classTypeParameters = typeParameters, deprecation = declarations.deprecation(member.declaration),
+                    classTypeParameters = typeParameters, classNotNullable = notNullable,
+                    deprecation = declarations.deprecation(member.declaration),
                     isOwnerOpenForOverrides = isOwnerOpenForOverrides, isInheritedByFinalClass = isInheritedByFinalClass,
                     declaration = member.declaration
                 )
@@ -1778,6 +1787,8 @@ internal class DefaultKotlinIntrospector(
      * @param signature the signature of the [member] as rendered, see [Member.signature],
      *   the same for the members of the same signature of unrelated supertypes.
      * @param typeParameters the names of the type parameters the [member] refers to, by their ids.
+     * @param notNullable the ids of the ones whose bounds are not nullable, see [notNullableTypeParameters],
+     *   like the `U` of a `U : Any` of the inheriting class, given for the `T` of a `T & Any` of the [member].
      * @param isHidden whether the [member] is deprecated as hidden, so that it is not inherited,
      *   while it still hides the members it overrides,
      *   and the members merged with it, when the compiler picks it of them, see [inheritedCandidates].
@@ -1792,6 +1803,7 @@ internal class DefaultKotlinIntrospector(
         val overridden: Set<String>,
         val signature: String,
         val typeParameters: Map<Int, String>,
+        val notNullable: Set<Int>,
         val isHidden: Boolean,
         val jvmMethod: JvmMethod?
     ) {
@@ -1934,7 +1946,8 @@ internal class DefaultKotlinIntrospector(
                     candidate.renderedMember, candidate.kmClass, candidate.declarations, scope, contextPackage,
                     isOwnerOpenForOverrides = isOpenForOverrides,
                     inheritedBy = kmClass.kind,
-                    typeParameters = candidate.typeParameters
+                    typeParameters = candidate.typeParameters,
+                    notNullable = candidate.notNullable
                 )
             )
         }
@@ -1977,6 +1990,9 @@ internal class DefaultKotlinIntrospector(
         val inheritingTypeParameters = typeParametersInScope(kmClass, declarations)
         val inheritingNames = inheritingTypeParameters.mapKeys { (id, _) -> inheritingTypeParameterId(id) }
         val inheriting = inheritingTypeParameters.keys.associateWith { typeParameterType(inheritingTypeParameterId(it)) }
+        val inheritingNotNullable = notNullableTypeParametersInScope(kmClass, declarations).mapTo(HashSet()) {
+            inheritingTypeParameterId(it)
+        }
         val visited = hashSetOf(kmClass.name, ANY_CLASS_NAME)
         val pending = ArrayDeque(kmClass.supertypes.map { it.substituted(inheriting) })
         val candidates = mutableListOf<InheritedCandidate>()
@@ -2007,6 +2023,7 @@ internal class DefaultKotlinIntrospector(
                 jvmOnlyFunctions
             }
             val typeParameters = typeParametersInScope(superKmClass, superDeclarations) + inheritingNames
+            val notNullable = notNullableTypeParametersInScope(superKmClass, superDeclarations) + inheritingNotNullable
             apiMembersIncludingHidden(
                 superKmClass, superDeclarations, memberName, scope, jvmOnlyFunctionsNotHidden
             ).forEach { apiMember ->
@@ -2018,6 +2035,7 @@ internal class DefaultKotlinIntrospector(
                     superKmClass, superDeclarations, member, declared.key(superKmClass), overridden,
                     signature = member.signature(inheritingNames),
                     typeParameters = typeParameters,
+                    notNullable = notNullable,
                     isHidden = apiMember.isHidden,
                     // a JVM-only member, or a member of a Java class, is a Java method of its own, which the Kotlin members are not
                     jvmMethod = (declared as? Member.Function)?.function?.let { function ->
@@ -3222,12 +3240,15 @@ internal class DefaultKotlinIntrospector(
         val apiClass = apiClasses.apiClass(kmClass.name) ?: return emptyList()
         val contextPackage = contextPackageOf(declarations, kmClass)
         val isOpenForOverrides = isOpenForOverrides(kmClass, apiClass)
+        val typeParameters = typeParametersInScope(kmClass, declarations)
+        val notNullable = notNullableTypeParametersInScope(kmClass, declarations)
         val declared = apiMembersNamed(kmClass, declarations, memberName, apiClass).map { member ->
             ListingItem.InheritedMember(
                 KFUNCTION_CLASS_NAME,
                 formatMember(
                     member, kmClass, declarations, apiClass, contextPackage,
-                    isOwnerOpenForOverrides = isOpenForOverrides, inheritedBy = ClassKind.INTERFACE
+                    isOwnerOpenForOverrides = isOpenForOverrides, inheritedBy = ClassKind.INTERFACE,
+                    typeParameters = typeParameters, notNullable = notNullable
                 )
             )
         }
@@ -3385,6 +3406,7 @@ internal class DefaultKotlinIntrospector(
         val isAnnotation = kmClass.kind == ClassKind.ANNOTATION_CLASS
         val isSealed = kmClass.modality == Modality.SEALED
         val typeParameters = typeParametersInScope(kmClass, foundClass)
+        val notNullable = notNullableTypeParametersInScope(kmClass, foundClass)
 
         // Extract the package name for context-aware type formatting
         val contextPackage = contextPackageOf(foundClass, kmClass)
@@ -3536,7 +3558,7 @@ internal class DefaultKotlinIntrospector(
                 .map { property ->
                     property.name to formatMember(
                         Member.Property(property), kmClass, foundClass, apiClass, contextPackage, isOpenForOverrides,
-                        typeParameters = typeParameters
+                        typeParameters = typeParameters, notNullable = notNullable
                     )
                 }
 
@@ -3554,7 +3576,7 @@ internal class DefaultKotlinIntrospector(
             val functionItems = functions.map { function ->
                 function.name to formatMember(
                     Member.Function(function), kmClass, foundClass, apiClass, contextPackage, isOpenForOverrides,
-                    typeParameters = typeParameters
+                    typeParameters = typeParameters, notNullable = notNullable
                 )
             }
 
@@ -3563,7 +3585,7 @@ internal class DefaultKotlinIntrospector(
                 // reading like members, the constructors first, like in the source of the standard library
                 constructorItems.forEach { add(ListingItem.Declaration(it)) }
                 (propertyItems + functionItems +
-                    builtinBodyItems(kmClass, foundClass, apiClass, typeParameters, listedExtensions, bodyExtensions))
+                    builtinBodyItems(kmClass, foundClass, apiClass, typeParameters, notNullable, listedExtensions, bodyExtensions))
                     .sortedBy { (name, _) -> name }
                     .forEach { (_, lines) -> add(ListingItem.Declaration(lines)) }
             } else {
@@ -3778,12 +3800,14 @@ internal class DefaultKotlinIntrospector(
      * like in its lookup, see [jvmOnlyFunctionsNotHidden], and the [bodyExtensions], see [bodyExtensionsOf].
      *
      * @param typeParameters the names of the type parameters in scope of the [kmClass].
+     * @param notNullable the ids of the ones whose bounds are not nullable, see [notNullableTypeParameters].
      */
     private fun builtinBodyItems(
         kmClass: KmClass,
         declarations: ClassDeclarations,
         apiClass: ApiClass,
         typeParameters: Map<Int, String>,
+        notNullable: Set<Int>,
         listedExtensions: ListedExtensions,
         bodyExtensions: ListedExtensions
     ): List<Pair<String, List<String>>> {
@@ -3794,7 +3818,7 @@ internal class DefaultKotlinIntrospector(
         val jvmOnlyProperties = builtinClass?.jvmOnlyProperties.orEmpty().inApi(apiClass, declarations).map { property ->
             property.name to formatMember(
                 Member.Property(property), kmClass, declarations, apiClass, contextPackage, isOpenForOverrides,
-                typeParameters = typeParameters
+                typeParameters = typeParameters, notNullable = notNullable
             )
         }
         val jvmOnlyFunctions = jvmOnlyFunctionsNotHidden(kmClass, declarations, listedExtensions.functions)
@@ -3802,7 +3826,7 @@ internal class DefaultKotlinIntrospector(
             .map { function ->
                 function.name to formatMember(
                     Member.Function(function), kmClass, declarations, apiClass, contextPackage, isOpenForOverrides,
-                    typeParameters = typeParameters
+                    typeParameters = typeParameters, notNullable = notNullable
                 )
             }
         val bodyExtensionProperties = bodyExtensions.properties.map { extension ->
@@ -4066,9 +4090,13 @@ internal class DefaultKotlinIntrospector(
 
     /**
      * An outer class of an inner class, by its located [name], see [locatedNameOf], with the names of its [typeParameters] by their ids,
-     * which the inner class can refer to.
+     * which the inner class can refer to, as its [declarations] declare them, unless its declaration cannot be read.
      */
-    private class OuterTypeParameters(val name: String, val typeParameters: Map<Int, String>) {
+    private class OuterTypeParameters(
+        val name: String,
+        val typeParameters: Map<Int, String>,
+        val declarations: List<KmTypeParameter> = emptyList()
+    ) {
 
         /**
          * The type parameters as the type arguments qualifying the inner class, like `<T>` of `Outer<T>.Inner`,
@@ -4114,7 +4142,7 @@ internal class DefaultKotlinIntrospector(
                 unreadableIndex = outers.size
             }
             unknown?.removeAll(typeParameters.keys)
-            outers += OuterTypeParameters(outerName, typeParameters)
+            outers += OuterTypeParameters(outerName, typeParameters, outer?.typeParameters.orEmpty())
             outer?.let { readOuters += it }
             currentName = outerName
             current = outer
@@ -4487,6 +4515,8 @@ internal class DefaultKotlinIntrospector(
 
     /**
      * @param owner the class declaring the [function], to tell whether it is an override.
+     * @param classNotNullable the ids of the type parameters of the class whose bounds are not nullable,
+     *   see [notNullableTypeParameters], like the ones of a class inheriting the [function], given for the ones of its class.
      * @param bodyReceiverSubstitution the substitution of an extension listed in the body of its receiver class,
      *   rendered without its receiver, see [bodyReceiverSubstitution], or `null` to render the receiver.
      * @param deprecation the deprecation of the [function], see [formatDeprecation].
@@ -4504,6 +4534,7 @@ internal class DefaultKotlinIntrospector(
         owner: OverrideResolver.Owner? = null,
         contextPackage: String? = null,
         classTypeParameters: Map<Int, String> = emptyMap(),
+        classNotNullable: Set<Int> = emptySet(),
         bodyReceiverSubstitution: Map<Int, String>? = null,
         deprecation: Deprecation? = null,
         companionDeprecation: Deprecation? = null,
@@ -4512,12 +4543,13 @@ internal class DefaultKotlinIntrospector(
         declaration: KmFunction = function
     ): String = buildString {
         val typeParameters = classTypeParameters + function.typeParameters.namesById() + bodyReceiverSubstitution.orEmpty()
+        val notNullable = notNullableTypeParameters(function.typeParameters, classNotNullable)
         // the type parameters standing for the ones of the class are not declared
         val declaredTypeParameters = function.typeParameters.filter { it.id !in bodyReceiverSubstitution.orEmpty() }
 
         +formatDeprecation(deprecation)
         +formatCompanionDeprecation(companionDeprecation)
-        +formatContextParameters(function.contextParameters, contextPackage, typeParameters)
+        +formatContextParameters(function.contextParameters, contextPackage, typeParameters, notNullable)
         +formatVisibility(function.visibility)
 
         val override = override(owner, declaration)
@@ -4531,13 +4563,13 @@ internal class DefaultKotlinIntrospector(
         if (function.isOperator) +"operator "
 
         +"fun "
-        formatTypeParameters(declaredTypeParameters, typeParameters, contextPackage).let {
+        formatTypeParameters(declaredTypeParameters, typeParameters, contextPackage, notNullable).let {
             if (it.isNotEmpty()) +"$it "
         }
 
         // the receiver of an extension function, unless listed in the body of its receiver class
         function.receiverParameterType?.takeIf { bodyReceiverSubstitution == null }?.let { receiverType ->
-            +formatReceiverType(receiverType, contextPackage, typeParameters)
+            +formatReceiverType(receiverType, contextPackage, typeParameters, notNullable)
             +"."
         }
 
@@ -4547,20 +4579,22 @@ internal class DefaultKotlinIntrospector(
         // an override cannot declare a default value, but inherits the one of the overridden function
         val inheritedDefaultValues = override?.inheritedDefaultValues.orEmpty()
         +(function.valueParameters.withIndex().joinToString(", ") { (index, param) ->
-            formatValueParameter(param, contextPackage, typeParameters, hasDefaultValue = index in inheritedDefaultValues)
+            formatValueParameter(
+                param, contextPackage, typeParameters, notNullable, hasDefaultValue = index in inheritedDefaultValues
+            )
         })
 
         +")"
 
         function.returnType.let { returnType ->
-            val typeName = formatType(returnType, contextPackage, typeParameters)
+            val typeName = formatType(returnType, contextPackage, typeParameters, notNullable)
             if (typeName != "Unit") {
                 +": "
                 +typeName
             }
         }
 
-        +formatWhereClause(declaredTypeParameters, typeParameters, contextPackage)
+        +formatWhereClause(declaredTypeParameters, typeParameters, contextPackage, notNullable)
     }
 
     /**
@@ -4578,6 +4612,7 @@ internal class DefaultKotlinIntrospector(
         parameter: KmValueParameter,
         contextPackage: String? = null,
         typeParameters: Map<Int, String> = emptyMap(),
+        notNullable: Set<Int> = emptySet(),
         prefix: String = "",
         modifiers: String = "",
         hasDefaultValue: Boolean = false,
@@ -4589,7 +4624,7 @@ internal class DefaultKotlinIntrospector(
         +escapeIdentifier(parameter.name)
         +": "
         // a vararg parameter is typed as an array, like Array<out T>, while its element type is rendered
-        +formatType(parameter.varargElementType ?: parameter.type, contextPackage, typeParameters)
+        +formatType(parameter.varargElementType ?: parameter.type, contextPackage, typeParameters, notNullable)
         if (parameter.declaresDefaultValue || hasDefaultValue) {
             +" = "
             +(defaultValue() ?: DEFAULT_VALUE_MARKER)
@@ -4602,8 +4637,9 @@ internal class DefaultKotlinIntrospector(
     private fun formatContextParameters(
         parameters: List<KmValueParameter>,
         contextPackage: String?,
-        typeParameters: Map<Int, String>
-    ): String = formatContextParameters(parameters.map { it.name to formatType(it.type, contextPackage, typeParameters) })
+        typeParameters: Map<Int, String>,
+        notNullable: Set<Int>
+    ): String = formatContextParameters(parameters.map { it.name to formatType(it.type, contextPackage, typeParameters, notNullable) })
 
     /**
      * Format a [property] of the API in the [scope], see [formatProperty],
@@ -4618,6 +4654,7 @@ internal class DefaultKotlinIntrospector(
         owner: OverrideResolver.Owner? = null,
         contextPackage: String? = null,
         classTypeParameters: Map<Int, String> = emptyMap(),
+        classNotNullable: Set<Int> = emptySet(),
         isOwnerOpenForOverrides: Boolean = isOpenForOverridesByDefault(owner?.kmClass),
         isInheritedByFinalClass: Boolean = false,
         declaration: KmProperty = property
@@ -4625,7 +4662,7 @@ internal class DefaultKotlinIntrospector(
         val deprecation = deprecations?.deprecation(declaration)
         return formatProperty(
             property, property.apiSetterVisibility(scope, deprecation), inInterface, owner, contextPackage, classTypeParameters,
-            deprecation = deprecation, isOwnerOpenForOverrides = isOwnerOpenForOverrides,
+            classNotNullable = classNotNullable, deprecation = deprecation, isOwnerOpenForOverrides = isOwnerOpenForOverrides,
             isInheritedByFinalClass = isInheritedByFinalClass, declaration = declaration
         )
     }
@@ -4638,6 +4675,7 @@ internal class DefaultKotlinIntrospector(
      *   see [apiSetterVisibility], otherwise the property is rendered as a `val`,
      *   unless it overrides a `var`, see [propertyDeclaration].
      * @param owner the class declaring the [property], to tell whether it is an override.
+     * @param classNotNullable the ids of the type parameters of the class whose bounds are not nullable, like for [formatFunction].
      * @param bodyReceiverSubstitution the substitution of an extension listed in the body of its receiver class,
      *   like for [formatFunction].
      * @param deprecation the deprecation of the [property], see [formatDeprecation].
@@ -4653,6 +4691,7 @@ internal class DefaultKotlinIntrospector(
         owner: OverrideResolver.Owner? = null,
         contextPackage: String? = null,
         classTypeParameters: Map<Int, String> = emptyMap(),
+        classNotNullable: Set<Int> = emptySet(),
         bodyReceiverSubstitution: Map<Int, String>? = null,
         deprecation: Deprecation? = null,
         companionDeprecation: Deprecation? = null,
@@ -4661,6 +4700,7 @@ internal class DefaultKotlinIntrospector(
         declaration: KmProperty = property
     ): List<String> = buildList {
         val typeParameters = classTypeParameters + property.typeParameters.namesById() + bodyReceiverSubstitution.orEmpty()
+        val notNullable = notNullableTypeParameters(property.typeParameters, classNotNullable)
         // the type parameters standing for the ones of the class are not declared
         val declaredTypeParameters = property.typeParameters.filter { it.id !in bodyReceiverSubstitution.orEmpty() }
         val isOverride = isOverride(owner, declaration)
@@ -4669,27 +4709,27 @@ internal class DefaultKotlinIntrospector(
         add(buildString {
             +formatDeprecation(propertyDeclaration.deprecation)
             +formatCompanionDeprecation(companionDeprecation)
-            +formatContextParameters(property.contextParameters, contextPackage, typeParameters)
+            +formatContextParameters(property.contextParameters, contextPackage, typeParameters, notNullable)
             +formatVisibility(property.visibility)
 
             +formatModalityModifiers(property.modality, isOverride, inInterface, isOwnerOpenForOverrides, isInheritedByFinalClass)
             if (property.isConst) +"const "
 
             +(if (renderedSetterVisibility != null) "var " else "val ")
-            formatTypeParameters(declaredTypeParameters, typeParameters, contextPackage).let {
+            formatTypeParameters(declaredTypeParameters, typeParameters, contextPackage, notNullable).let {
                 if (it.isNotEmpty()) +"$it "
             }
 
             // the receiver of an extension property, unless listed in the body of its receiver class
             property.receiverParameterType?.takeIf { bodyReceiverSubstitution == null }?.let { receiverType ->
-                +formatReceiverType(receiverType, contextPackage, typeParameters)
+                +formatReceiverType(receiverType, contextPackage, typeParameters, notNullable)
                 +"."
             }
 
             +escapeIdentifier(property.name)
             +": "
-            +formatType(property.returnType, contextPackage, typeParameters)
-            +formatWhereClause(declaredTypeParameters, typeParameters, contextPackage)
+            +formatType(property.returnType, contextPackage, typeParameters, notNullable)
+            +formatWhereClause(declaredTypeParameters, typeParameters, contextPackage, notNullable)
         })
         // a setter narrower than the property, like a protected one of a public property of an open class
         if (renderedSetterVisibility != null && renderedSetterVisibility != property.visibility) {
@@ -4738,6 +4778,13 @@ internal class DefaultKotlinIntrospector(
         outerTypeParametersOf(kmClass, declarations).flatMap { it.typeParameters.entries }.associate { it.key to it.value } +
             kmClass.typeParameters.namesById()
 
+    /**
+     * The ids of the type parameters which the [kmClass] can refer to, see [typeParametersInScope],
+     * whose bounds are not nullable, see [notNullableTypeParameters], like the `T` of an outer class `Outer<T : Any>`.
+     */
+    private fun notNullableTypeParametersInScope(kmClass: KmClass, declarations: ClassDeclarations): Set<Int> =
+        notNullableTypeParameters(outerTypeParametersOf(kmClass, declarations).flatMap { it.declarations } + kmClass.typeParameters)
+
     private fun KmType.isNullableAny(): Boolean =
         (classifier as? KmClassifier.Class)?.name == "kotlin/Any" && isNullable
 
@@ -4748,7 +4795,8 @@ internal class DefaultKotlinIntrospector(
     private fun formatTypeParameters(
         declarations: List<KmTypeParameter>,
         typeParameters: Map<Int, String>,
-        contextPackage: String? = null
+        contextPackage: String? = null,
+        notNullable: Set<Int> = emptySet()
     ): String {
         if (declarations.isEmpty()) return ""
         return declarations.joinToString(", ", prefix = "<", postfix = ">") { typeParameter ->
@@ -4762,7 +4810,7 @@ internal class DefaultKotlinIntrospector(
                 +escapeIdentifier(typeParameter.name)
                 typeParameter.upperBounds.singleOrNull()?.takeUnless { it.isNullableAny() }?.let {
                     +" : "
-                    +formatType(it, contextPackage, typeParameters)
+                    +formatType(it, contextPackage, typeParameters, notNullable)
                 }
             }
         }
@@ -4771,10 +4819,13 @@ internal class DefaultKotlinIntrospector(
     private fun formatWhereClause(
         declarations: List<KmTypeParameter>,
         typeParameters: Map<Int, String>,
-        contextPackage: String? = null
+        contextPackage: String? = null,
+        notNullable: Set<Int> = emptySet()
     ): String {
         val constraints = declarations.filter { it.upperBounds.size > 1 }.flatMap { typeParameter ->
-            typeParameter.upperBounds.map { "${escapeIdentifier(typeParameter.name)} : ${formatType(it, contextPackage, typeParameters)}" }
+            typeParameter.upperBounds.map {
+                "${escapeIdentifier(typeParameter.name)} : ${formatType(it, contextPackage, typeParameters, notNullable)}"
+            }
         }
         return if (constraints.isEmpty()) "" else " where ${constraints.joinToString(", ")}"
     }
@@ -4799,8 +4850,9 @@ internal class DefaultKotlinIntrospector(
     internal fun formatType(
         type: KmType,
         contextPackage: String? = null,
-        typeParameters: Map<Int, String> = emptyMap()
-    ): String = MetadataTypeNotation(contextPackage, typeParameters).format(type)
+        typeParameters: Map<Int, String> = emptyMap(),
+        notNullable: Set<Int> = emptySet()
+    ): String = MetadataTypeNotation(contextPackage, typeParameters, notNullable).format(type)
 
     /**
      * Formats a receiver [type], parenthesizing a function type, see [TypeNotation.formatReceiver].
@@ -4808,18 +4860,23 @@ internal class DefaultKotlinIntrospector(
     private fun formatReceiverType(
         type: KmType,
         contextPackage: String?,
-        typeParameters: Map<Int, String>
-    ): String = MetadataTypeNotation(contextPackage, typeParameters).formatReceiver(type)
+        typeParameters: Map<Int, String>,
+        notNullable: Set<Int>
+    ): String = MetadataTypeNotation(contextPackage, typeParameters, notNullable).formatReceiver(type)
 
     /**
      * The notation of the types of the Kotlin metadata.
      *
      * @param contextPackage the package of the rendered declaration, whose types are written with simple names.
      * @param typeParameters the names of the type parameters in scope, by their ids.
+     * @param notNullable the ids of the type parameters in scope whose bounds are not nullable, see [notNullableTypeParameters],
+     *   whose uses as definitely not nullable are written as just these type parameters, like `U` of `U : Any`,
+     *   while the ones of the other type parameters are written so, like `T & Any`.
      */
     private inner class MetadataTypeNotation(
         private val contextPackage: String?,
-        private val typeParameters: Map<Int, String>
+        private val typeParameters: Map<Int, String>,
+        private val notNullable: Set<Int>
     ) : TypeNotation<KmType>() {
 
         override fun decodeFunctionType(type: KmType): FunctionType<KmType>? = type.decodeFunctionType()
@@ -4827,6 +4884,11 @@ internal class DefaultKotlinIntrospector(
         override fun isMarkedSuspend(type: KmType): Boolean = type.isSuspend
 
         override fun isMarkedNullable(type: KmType): Boolean = type.isNullable
+
+        override fun isDefinitelyNonNull(type: KmType): Boolean {
+            val classifier = type.classifier as? KmClassifier.TypeParameter ?: return false
+            return type.isDefinitelyNonNull && !type.isNullable && classifier.id !in notNullable
+        }
 
         override fun parameterName(type: KmType): String? = type.parameterName
 
