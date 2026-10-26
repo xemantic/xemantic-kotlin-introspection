@@ -9558,6 +9558,159 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should not resolve merged member hidden in first supertype`() {
+        // of the members of HiddenMergedLeft and HiddenMergedRight, equally specific, the compiler picks the hidden one of the first
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenMergedJoin.f") == null)
+    }
+
+    @Test
+    fun `should resolve merged member hidden in second supertype`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedJoinReversed.f"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedJoinReversed.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.HiddenMergedRight
+            override fun f(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve merged member hidden in first supertype and overridden by second supertype`() {
+        // the visible override of HiddenMergedRestored does not override the hidden one which the first supertype contributes
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenMergedJoinRestored.f") == null)
+    }
+
+    @Test
+    fun `should not resolve merged member hidden in first supertype and overridden by supertype of second supertype`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenMergedJoinRestoredSub.f") == null)
+    }
+
+    @Test
+    fun `should not resolve merged member hidden in supertype of first supertype`() {
+        // HiddenMergedVia contributes the hidden member of HiddenMergedLeft, though HiddenMergedRight is reached first breadth-first
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenMergedNested.f") == null)
+    }
+
+    @Test
+    fun `should not resolve member merged by direct supertype picking hidden one`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenMergedNestedSub.f") == null)
+    }
+
+    @Test
+    fun `should not resolve member merged by first direct supertype picking hidden one`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenMergedNestedJoin.f") == null)
+    }
+
+    @Test
+    fun `should not resolve member merged by superclass picking hidden one`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenMergedClassJoinSub.f") == null)
+    }
+
+    @Test
+    fun `should not resolve merged property hidden in first supertype`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenMergedPropertyJoin.p") == null)
+    }
+
+    @Test
+    fun `should not resolve merged member hidden of more specific return type in second supertype`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenMergedHiddenSpecificJoin.h") == null)
+    }
+
+    @Test
+    fun `should resolve extension on pinned type parameter of member merged with hidden override of superclass`() {
+        // the extension is not shadowed by the inherited member, as the member the compiler picks is hidden
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedPinned.member"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedPinned.member [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            fun <T : HiddenMergedSelf<T>> T.member(): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension of merged member hidden in first supertype`() {
+        // the extension is called, as the member the compiler picks is hidden
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedExtended.f"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedExtended.f [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            fun HiddenMergedExtended.f(): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve merged member hidden in second supertype and overridden by first supertype`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedJoinRestoredSubReversed.f"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedJoinRestoredSubReversed.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.HiddenMergedRestored
+            override fun f(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve merged member of more specific return type than hidden one of first supertype`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedSpecificJoin.h"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedSpecificJoin.h [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.HiddenMergedStringRight
+            override fun h(): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve merged member of more specific return type than hidden one of second supertype`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedSpecificJoinReversed.h"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedSpecificJoinReversed.h [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.HiddenMergedStringRight
+            override fun h(): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve member merged with hidden override of superclass`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenMergedOverride.member") == null)
+    }
+
+    @Test
+    fun `should not resolve member merged with hidden member of generic interface of substituted signature`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenMergedGenericJoin.g") == null)
+    }
+
+    @Test
+    fun `should not resolve member merged with hidden member of generic superclass of substituted signature`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenMergedGenericClassJoin.o") == null)
+    }
+
+    @Test
+    fun `should resolve member merged with hidden member of generic superclass declared second`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedGenericClassJoinReversed.o"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedGenericClassJoinReversed.o [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.HiddenMergedStringParameter
+            fun o(x: String)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of same signature as written as hidden one but other type arguments`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedArguments.f"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedArguments.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.HiddenMergedArgumentsB
+            open fun f(x: Int)
+        """.trimIndent()
+    }
+
+    @Test
     fun `should render annotation class property deprecated with hidden level as parameter only`() {
         // @Deprecated cannot annotate the parameter, only the property is hidden, the argument can still be passed
         resolver.resolve(

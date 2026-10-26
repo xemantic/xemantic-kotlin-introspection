@@ -233,3 +233,185 @@ open class HiddenOverride : HiddenOverrideBase() {
 
 // inheriting the hidden overrides, so that neither can be called on it either
 class HiddenOverrideSub : HiddenOverride()
+
+// the members of the same signature merged from several supertypes, one of them hidden:
+// the compiler picks the one of the most specific return type, or else the one of the first direct supertype,
+// in the order of declaration, and none can be called when the picked one is hidden
+interface HiddenMergedRoot {
+    fun f(): Int
+}
+
+interface HiddenMergedLeft : HiddenMergedRoot {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    override fun f(): Int
+}
+
+interface HiddenMergedRight : HiddenMergedRoot {
+    override fun f(): Int
+}
+
+// join.f() does not compile
+interface HiddenMergedJoin : HiddenMergedLeft, HiddenMergedRight
+
+interface HiddenMergedJoinReversed : HiddenMergedRight, HiddenMergedLeft
+
+// a visible override of the hidden one, which the compiler still does not prefer over the hidden one of the first supertype
+interface HiddenMergedRestored : HiddenMergedLeft {
+    override fun f(): Int
+}
+
+interface HiddenMergedRestoredSub : HiddenMergedRestored
+
+// join.f() does not compile
+interface HiddenMergedJoinRestored : HiddenMergedLeft, HiddenMergedRestored
+
+// join.f() does not compile
+interface HiddenMergedJoinRestoredSub : HiddenMergedLeft, HiddenMergedRestoredSub
+
+interface HiddenMergedJoinRestoredSubReversed : HiddenMergedRestoredSub, HiddenMergedLeft
+
+// the visible override of a more specific return type wins in either order
+interface HiddenMergedAnyRoot {
+    fun h(): Any
+}
+
+interface HiddenMergedAnyLeft : HiddenMergedAnyRoot {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    override fun h(): Any
+}
+
+interface HiddenMergedStringRight : HiddenMergedAnyRoot {
+    override fun h(): String
+}
+
+interface HiddenMergedSpecificJoin : HiddenMergedAnyLeft, HiddenMergedStringRight
+
+interface HiddenMergedSpecificJoinReversed : HiddenMergedStringRight, HiddenMergedAnyLeft
+
+// unrelated to the hidden override of the superclass, holder.member() does not compile
+interface HiddenMergedMember {
+    fun member(): Int
+}
+
+class HiddenMergedOverride : HiddenOverride(), HiddenMergedMember
+
+// with the type arguments of the supertypes substituted, join.g("") does not compile
+interface HiddenMergedGeneric<T> {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    fun g(x: T)
+}
+
+interface HiddenMergedString {
+    fun g(x: String)
+}
+
+interface HiddenMergedGenericJoin : HiddenMergedGeneric<String>, HiddenMergedString
+
+// holder.o("") does not compile
+open class HiddenMergedGenericClass<T> {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    open fun o(x: T) {}
+}
+
+interface HiddenMergedStringParameter {
+    fun o(x: String)
+}
+
+class HiddenMergedGenericClassJoin : HiddenMergedGenericClass<String>(), HiddenMergedStringParameter
+
+class HiddenMergedGenericClassJoinReversed : HiddenMergedStringParameter, HiddenMergedGenericClass<String>()
+
+// the same signature as written, but not with the type arguments substituted, so holder.f(1) compiles,
+// the bound telling apart the JVM signatures, so that the class does not override the final method on the JVM
+abstract class HiddenMergedArgumentsA<T> {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    fun f(@Suppress("unused") x: T) {}
+}
+
+interface HiddenMergedArgumentsB<T : Number> {
+    fun f(@Suppress("unused") x: T) {}
+}
+
+class HiddenMergedArguments : HiddenMergedArgumentsA<String>(), HiddenMergedArgumentsB<Int>
+
+// the hidden member contributed through an intermediate supertype, which picks it as the first of its own supertypes,
+// so that nested.f() does not compile, neither on its subtypes
+interface HiddenMergedVia : HiddenMergedLeft
+
+interface HiddenMergedNested : HiddenMergedVia, HiddenMergedRight
+
+interface HiddenMergedNestedSub : HiddenMergedNested
+
+interface HiddenMergedOther
+
+interface HiddenMergedNestedJoin : HiddenMergedNested, HiddenMergedOther
+
+// the same through a superclass, holder.f() does not compile
+abstract class HiddenMergedLeftClass : HiddenMergedLeft
+
+abstract class HiddenMergedClassJoin : HiddenMergedLeftClass(), HiddenMergedRight
+
+abstract class HiddenMergedClassJoinSub : HiddenMergedClassJoin()
+
+// a property, join.p does not compile
+interface HiddenMergedPropertyRoot {
+    val p: Int
+}
+
+interface HiddenMergedPropertyLeft : HiddenMergedPropertyRoot {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    override val p: Int
+}
+
+interface HiddenMergedPropertyRight : HiddenMergedPropertyRoot {
+    override val p: Int
+}
+
+interface HiddenMergedPropertyJoin : HiddenMergedPropertyLeft, HiddenMergedPropertyRight
+
+// the hidden member of the more specific return type wins over the visible one of the first supertype,
+// so that join.h() does not compile
+interface HiddenMergedHiddenStringLeft : HiddenMergedAnyRoot {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    override fun h(): String
+}
+
+interface HiddenMergedAnyRight : HiddenMergedAnyRoot {
+    override fun h(): Any
+}
+
+interface HiddenMergedHiddenSpecificJoin : HiddenMergedAnyRight, HiddenMergedHiddenStringLeft
+
+// the extension is called, as the member picked is hidden
+interface HiddenMergedExtended : HiddenMergedLeft, HiddenMergedRight
+
+fun HiddenMergedExtended.f(): String = ""
+
+// the same for an extension on a type parameter pinned to the final class, which an inherited member would shadow
+interface HiddenMergedSelf<T>
+
+class HiddenMergedPinned : HiddenOverride(), HiddenMergedMember, HiddenMergedSelf<HiddenMergedPinned>
+
+fun <T : HiddenMergedSelf<T>> T.member(): String = ""
+
+// compiles, as the merged members picked are not hidden
+@Suppress("unused")
+private fun callMergedMembers(
+    joinReversed: HiddenMergedJoinReversed,
+    restoredSubReversed: HiddenMergedJoinRestoredSubReversed,
+    specific: HiddenMergedSpecificJoin,
+    specificReversed: HiddenMergedSpecificJoinReversed,
+    genericClassReversed: HiddenMergedGenericClassJoinReversed,
+    arguments: HiddenMergedArguments,
+    extended: HiddenMergedExtended,
+    pinned: HiddenMergedPinned
+) {
+    joinReversed.f()
+    restoredSubReversed.f()
+    specific.h()
+    specificReversed.h()
+    genericClassReversed.o("")
+    arguments.f(1)
+    extended.f().length
+    pinned.member().length
+}
