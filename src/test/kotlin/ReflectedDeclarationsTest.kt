@@ -176,6 +176,24 @@ class ReflectedDeclarationsTest {
     }
 
     @Test
+    fun `should render Java collection of contravariant wildcard as mutable collection`() {
+        // given - Collection<? super T> is seen in Kotlin as (Mutable)Collection<in T!>!,
+        // while Collection<in T> conflicts with the out variance of the read-only Collection<out E>
+        val functions = JavaUnnamedParameters::class.memberFunctions.filter { it.name == "drainTo" || it.name == "addInts" }
+
+        // when
+        val rendered = functions.sortedBy { it.name }.map { introspector.formatReflectedFunction(it) }
+
+        // then - Map<K, out V> takes an in projection of its invariant K, but not of its V
+        assert(
+            rendered == listOf(
+                "fun addInts(arg0: MutableList<in Int>?)",
+                "fun <T> drainTo(arg0: MutableCollection<in T>?, arg1: MutableMap<String, in T>?): Int"
+            )
+        )
+    }
+
+    @Test
     fun `should degrade vararg of unknown array type to the array type`() {
         // given - no such vararg type today, but a future standard library could declare one
         val arrayType = KmType().also { it.classifier = KmClassifier.Class("kotlin/FutureArray") }

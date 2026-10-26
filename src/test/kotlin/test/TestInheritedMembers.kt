@@ -269,3 +269,24 @@ class InheritedHashtable<K : Any, V : Any> : java.util.Hashtable<K, V>()
 
 // A Java override of reversed() of List since JDK 21, which Kotlin hides, with a more specific return type
 class InheritedLinkedList<E> : java.util.LinkedList<E>()
+
+// A Java superclass whose members kotlin-reflect cannot describe since JDK 21, failing on its inherited clone()
+class InheritedLinkedHashSet<E> : java.util.LinkedHashSet<E>()
+
+// Abstract members of kotlin.Number implemented by a Java superclass, java.util.concurrent.atomic.AtomicInteger,
+// but toByte() and toShort(), mapped to the methods of java.lang.Number, which Kotlin sees as abstract
+abstract class InheritedAtomicInteger : java.util.concurrent.atomic.AtomicInteger()
+
+// Methods of a Java superclass merged with the members of the same signatures of a Kotlin interface
+interface InheritedTaker {
+    fun take(x: String)
+    fun mixed(a: Any, b: String?)
+}
+
+class InheritedFromJavaTakeBase : com.xemantic.kotlin.introspection.test.other.JavaTakeBase(), InheritedTaker
+
+// An abstract member of kotlin.Number implemented by a Java class, and declared abstract again by its Java subclass
+abstract class InheritedReabstractedNumber : com.xemantic.kotlin.introspection.test.other.JavaReabstractedNumberMid()
+
+// A public method of a public Java class nested in a package-private one, inherited through its public Java subclass
+class InheritedThroughPublicNestedJavaMid : com.xemantic.kotlin.introspection.test.other.JavaPublicNestedGreeterMid()

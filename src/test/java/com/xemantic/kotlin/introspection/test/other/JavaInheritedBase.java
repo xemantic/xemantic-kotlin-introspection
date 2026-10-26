@@ -35,6 +35,10 @@ public class JavaInheritedBase<T> {
     protected void protectedHelper() {
     }
 
+    @Deprecated
+    public void legacyHelper() {
+    }
+
     void packagePrivateHelper() {
     }
 

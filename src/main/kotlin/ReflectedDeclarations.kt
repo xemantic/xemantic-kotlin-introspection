@@ -459,6 +459,10 @@ internal fun KType.toKmType(scope: ReflectedTypeParameters, platformAsNullable: 
         else -> KmClassifier.Class("kotlin/Any")
     }
     val arguments = arguments.map { it.toKmTypeProjection(scope) }
+    val mutableName = (type.classifier as? KmClassifier.Class)?.name?.let { MUTABLE_COLLECTION_TYPES[it] }
+    if (mutableName != null && classifier is KClass<*> && isContravariantlyProjected(classifier, arguments)) {
+        type.classifier = KmClassifier.Class(mutableName)
+    }
     // kotlin-reflect lists the type arguments of the outer classes of an inner class, like `Outer<String>.Inner<Int>`,
     // after its own ones, while the metadata keeps them in the outer type
     val innerClass = (classifier as? KClass<*>)?.takeIf { it.isInner }
@@ -490,6 +494,29 @@ internal fun KType.toKmType(scope: ReflectedTypeParameters, platformAsNullable: 
         }
     }
     return type
+}
+
+/**
+ * The mutable counterparts of the read-only collection types, by their class names,
+ * like `kotlin/collections/MutableCollection` of `kotlin/collections/Collection`.
+ */
+private val MUTABLE_COLLECTION_TYPES: Map<String, String> = listOf(
+    "Iterable", "Collection", "List", "Set", "Map", "Iterator", "ListIterator"
+).associate { "kotlin/collections/$it" to "kotlin/collections/Mutable$it" } +
+    ("kotlin/collections/Map.Entry" to "kotlin/collections/MutableMap.MutableEntry")
+
+/**
+ * Whether the type of the read-only collection [kClass], like `Collection<out E>`, described by kotlin-reflect,
+ * takes an `in` projection, the [arguments], of a type parameter it declares `out`, like `Collection<in E>`,
+ * which conflicts with its variance, so that it stands for a Java type seen as a flexible collection type,
+ * like `(Mutable)Collection<in E!>!` of `Collection<? super E>`, callable only as its mutable counterpart,
+ * like `MutableCollection<in E>`, see [MUTABLE_COLLECTION_TYPES].
+ */
+private fun isContravariantlyProjected(kClass: KClass<*>, arguments: List<KmTypeProjection>): Boolean {
+    val typeParameters = kClass.typeParameters
+    return arguments.withIndex().any { (index, argument) ->
+        argument.variance == KmVariance.IN && typeParameters.getOrNull(index)?.variance == KVariance.OUT
+    }
 }
 
 /**

@@ -26,6 +26,7 @@ import kotlin.metadata.KmType
 import kotlin.metadata.KmTypeParameter
 import kotlin.metadata.KmTypeProjection
 import kotlin.metadata.KmValueParameter
+import kotlin.metadata.Modality
 import kotlin.metadata.declaresDefaultValue
 import kotlin.metadata.hasConstant
 import kotlin.metadata.hasNonStableParameterNames
@@ -171,6 +172,11 @@ internal fun KmFunction.substituted(substitution: Map<Int, KmType>, names: Map<I
 internal fun KmFunction.withNotNullableParameters(): KmFunction = copy(
     valueParameterType = { type -> if (type.isNullable) type.notNullable() else type }
 )
+
+/**
+ * This function of the [modality], like an abstract member implemented by a Java class.
+ */
+internal fun KmFunction.withModality(modality: Modality): KmFunction = copy().also { it.modality = modality }
 
 /**
  * This function, its types, but the ones of its value parameters, given by the [type],

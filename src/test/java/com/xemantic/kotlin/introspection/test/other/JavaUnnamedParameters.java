@@ -45,4 +45,11 @@ public class JavaUnnamedParameters {
         return null;
     }
 
+    public <T> int drainTo(java.util.Collection<? super T> target, java.util.Map<String, ? super T> byName) {
+        return 0;
+    }
+
+    public void addInts(java.util.List<? super Integer> target) {
+    }
+
 }

@@ -4122,6 +4122,77 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should substitute type arguments through Java superclass whose members cannot be described`() {
+        // kotlin-reflect fails on the members of java.util.LinkedHashSet since JDK 21, but not on its supertypes,
+        // which still tell the E given for the T of Iterable
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedLinkedHashSet.forEach"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedLinkedHashSet.forEach [page 1/1]
+            // inherited from kotlin.collections.Iterable
+            open fun forEach(arg0: java.util.function.Consumer<in E>?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve abstract member of Kotlin superclass implemented by Java superclass as not abstract`() {
+        // intValue() of java.util.concurrent.atomic.AtomicInteger implements the abstract toInt() of kotlin.Number
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedAtomicInteger.toInt"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedAtomicInteger.toInt [page 1/1]
+            // inherited from kotlin.Number
+            open fun toInt(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve abstract member of Kotlin superclass implemented by Java class and declared abstract again below as abstract`() {
+        // intValue() of JavaNumberBase implements the toInt() of kotlin.Number, but JavaReabstractedNumberMid declares it abstract
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedReabstractedNumber.toInt"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedReabstractedNumber.toInt [page 1/1]
+            // inherited from kotlin.Number
+            abstract fun toInt(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve abstract member of Kotlin superclass not implemented by Java superclass as abstract`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedAtomicInteger.toByte"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedAtomicInteger.toByte [page 1/1]
+            // inherited from kotlin.Number
+            abstract fun toByte(): Byte
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve method of Java superclass merged with member of Kotlin interface once`() {
+        // take(String) of JavaTakeBase implements the take(x: String) of InheritedTaker on the JVM
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedFromJavaTakeBase.take"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedFromJavaTakeBase.take [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.InheritedTaker
+            fun take(x: String)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve method of Java superclass of mixed nullability merged with member of Kotlin interface once`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedFromJavaTakeBase.mixed"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedFromJavaTakeBase.mixed [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.InheritedTaker
+            fun mixed(a: Any, b: String?)
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve member of Any overridden by Java superclass of mapped built-in type as declared by Any`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.InheritedJavaArrayList.equals"
@@ -4211,6 +4282,18 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve deprecated method of Java superclass with deprecation reported by compiler`() {
+        // Kotlin warns on the use of a Java method annotated with java.lang.Deprecated, with this very message
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedFromJava.legacyHelper"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedFromJava.legacyHelper [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaInheritedBase
+            @Deprecated("Deprecated in Java") fun legacyHelper()
+        """.trimIndent()
+    }
+
+    @Test
     fun `should not resolve protected method of Java superclass inherited by final class`() {
         assert(resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedFromJava.protectedHelper") == null)
     }
@@ -4227,13 +4310,26 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve public method of package-private Java superclass bridged by its public subclass`() {
-        // javac generates a bridge of hello() in JavaPublicGreeterMid, which is not an override
+        // javac generates a bridge of hello() in JavaPublicGreeterMid, which is not an override,
+        // and the user code cannot name JavaPackagePrivateGreeterBase, so that the method is inherited from the public class
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.InheritedThroughPublicJavaMid.hello"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.InheritedThroughPublicJavaMid.hello [page 1/1]
-            // inherited from com.xemantic.kotlin.introspection.test.other.JavaPackagePrivateGreeterBase
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaPublicGreeterMid
             fun hello(): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve public method of public Java class nested in package-private one as inherited from public subclass`() {
+        // the user code cannot name JavaHiddenOuter.Base, as it cannot access its outer class
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedThroughPublicNestedJavaMid.hi"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedThroughPublicNestedJavaMid.hi [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaPublicNestedGreeterMid
+            fun hi(): String
         """.trimIndent()
     }
 
