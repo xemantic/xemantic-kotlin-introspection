@@ -25,6 +25,7 @@ import org.objectweb.asm.ClassReader
 import org.objectweb.asm.ClassVisitor
 import org.objectweb.asm.MethodVisitor
 import org.objectweb.asm.Opcodes
+import org.objectweb.asm.Type
 import java.io.File
 import java.io.IOException
 import java.net.URI
@@ -100,7 +101,15 @@ internal class IndexedClass(
     val scope: ClassScope,
     val extensions: List<IndexedExtension>,
     val extensionProperties: List<IndexedExtensionProperty>
-)
+) {
+    /**
+     * The metadata name in the package of the binary name, see [locatedNameOf], by which the classes are indexed.
+     */
+    val locatedName: String get() = locatedNameOf(binaryName, name)
+}
+
+// the visibilities of the constructors which do not make a class subclassable, see classScope
+private val PRIVATE_VISIBILITIES = setOf(Visibility.PRIVATE, Visibility.PRIVATE_TO_THIS, Visibility.LOCAL)
 
 /**
  * The [ClassScope] of the [kmClass], whose declarations have the [deprecations].
@@ -111,15 +120,17 @@ private fun classScope(kmClass: KmClass, isUsable: Boolean, deprecations: Deprec
     // a sealed class cannot be extended outside its own module, and an interface cannot have protected members
     val isOpenClass = kmClass.kind == ClassKind.CLASS &&
         (kmClass.modality == Modality.OPEN || kmClass.modality == Modality.ABSTRACT)
-    val privateVisibilities = setOf(Visibility.PRIVATE, Visibility.PRIVATE_TO_THIS, Visibility.LOCAL)
     return ClassScope(
         visibility = kmClass.visibility,
-        isCompanion = kmClass.kind == ClassKind.COMPANION_OBJECT,
+        kind = kmClass.kind,
         isUsable = isUsable,
         isSubclassable = isOpenClass && kmClass.constructors.any {
-            it.visibility !in privateVisibilities && !deprecations.isHidden(it)
+            it.visibility !in PRIVATE_VISIBILITIES && !deprecations.isHidden(it)
         },
-        sealedSubclasses = if (kmClass.kind == ClassKind.CLASS && kmClass.modality == Modality.SEALED) {
+        // also of a sealed interface, which the user code can implement through an open subclass
+        sealedSubclasses = if (
+            (kmClass.kind == ClassKind.CLASS || kmClass.kind == ClassKind.INTERFACE) && kmClass.modality == Modality.SEALED
+        ) {
             kmClass.sealedSubclasses
         } else emptyList()
     )
@@ -187,9 +198,18 @@ private fun KmProperty.apiSetterVisibility(scope: DeclarationScope, deprecation:
 private val KmProperty.declaredSetterVisibility: Visibility? get() = if (isVar) setter?.visibility ?: visibility else null
 
 /**
- * Whether the [owner] of a member might be subclassed, unless told otherwise, see `mightBeSubclassed`.
+ * Whether the user code might override the members of the [owner], unless told otherwise, see [ApiClass.isOpen],
+ * never for a final one, like an object.
  */
 private fun isOpenForOverridesByDefault(owner: KmClass?): Boolean = owner != null && owner.modality != Modality.FINAL
+
+/**
+ * Whether the user code can override the members of the [kmClass], the [apiClass] of the API:
+ * the ones of an interface which it can implement, unless sealed, or else through an open subclass,
+ * or the ones of a class which it can subclass, see [ApiClass.isOpen].
+ */
+private fun isOpenForOverrides(kmClass: KmClass, apiClass: ApiClass): Boolean =
+    (kmClass.kind == ClassKind.INTERFACE && kmClass.modality != Modality.SEALED) || apiClass.isOpen
 
 /**
  * Whether this is a data class, or a value class, which cannot be declared without a property for each parameter
@@ -457,8 +477,12 @@ internal class DefaultKotlinIntrospector(
                 is KotlinClassMetadata.Class -> {
                     val kmClass = metadata.kmClass
                     // neither a class which is not part of the API, nor anything declared within it, is resolved,
-                    // while its name might still be a member of the outer class, like an extension property
-                    val apiClass = apiClasses.apiClass(kmClass.name) ?: continue
+                    // while its name might still be a member of the outer class, like an extension property,
+                    // the class told by its own scope, and the enclosing ones by its binary name, see locatedNameOf,
+                    // as it might not be the one of its metadata name, like when relocated by shading
+                    val apiClass = foundClass.scope?.let {
+                        apiClasses.apiClass(locatedNameOf(foundClass.binaryName, kmClass.name), it)
+                    } ?: continue
                     if (memberName != null) {
                         resolveMember(kmClass, apiClass, className, foundClass, memberName)
                     } else {
@@ -511,11 +535,6 @@ internal class DefaultKotlinIntrospector(
         val clazz: Class<*>?
 
         /**
-         * The class file, if read, telling whether an enum class is final.
-         */
-        val classFile: ClassFile?
-
-        /**
          * The deprecation of the class itself.
          */
         val classDeprecation: Deprecation?
@@ -543,7 +562,7 @@ internal class DefaultKotlinIntrospector(
          * and for the deprecations of the declarations, see [deprecation],
          * read again after a failure which might be transient, see [FinalOnce].
          */
-        override val classFile: ClassFile? get() = classFileRead.value
+        val classFile: ClassFile? get() = classFileRead.value
 
         private val classFileRead = FinalOnce {
             if (readFile != null) TransientFailures.Outcome(readFile, isFinal = true) else readClassFile(binaryName)
@@ -575,14 +594,16 @@ internal class DefaultKotlinIntrospector(
 
         private val defaultImplsFileRead = FinalOnce { readClassFile("$binaryName\$$DEFAULT_IMPLS") }
 
-        // the deprecation of a declaration of this class, see ClassFile, never when the class file cannot be read
+        // the deprecation of a declaration of this class, see ClassFile, reflected when the class file cannot be read,
+        // see reflectedClassFile, like the one of a hidden constructor, telling whether the class can be subclassed
 
-        override fun deprecation(function: KmFunction): Deprecation? = classFile?.deprecation(function)
+        override fun deprecation(function: KmFunction): Deprecation? = (classFile ?: reflectedClassFile).deprecation(function)
 
-        override fun deprecation(constructor: KmConstructor): Deprecation? = classFile?.deprecation(constructor)
+        override fun deprecation(constructor: KmConstructor): Deprecation? =
+            (classFile ?: reflectedClassFile).deprecation(constructor)
 
         override fun deprecation(property: KmProperty): Deprecation? {
-            val classFile = classFile ?: return null
+            val classFile = classFile ?: return reflectedClassFile.deprecation(property)
             // the synthetic method for the annotations of an interface property is rather in its DefaultImpls
             val annotationsFile = if (classFile.hasAnnotationsInDefaultImpls(property)) defaultImplsFile else classFile
             return classFile.deprecation(property, annotationsDeprecation = annotationsFile?.annotationsDeprecation(property))
@@ -650,8 +671,6 @@ internal class DefaultKotlinIntrospector(
         private val kClass: KClass<*>? by lazy { reflectedBuiltinClass(name) }
 
         override val clazz: Class<*>? get() = null
-
-        override val classFile: ClassFile? get() = null
 
         override val classDeprecation: Deprecation? get() = null
 
@@ -821,21 +840,33 @@ internal class DefaultKotlinIntrospector(
     /**
      * The flags of a class whose class file cannot be read, like one an in-memory class loader does not serve,
      * reflected from the [clazz], if loaded: [Class.isSynthetic], reporting the flags of the `InnerClasses` attribute
-     * for a nested class, and its deprecation, see [reflectedDeprecation],
+     * for a nested class, its deprecation, and the ones of its methods and constructors, see [reflectedDeprecation],
      * each annotation read on its own, never failing the resolve.
      */
-    private fun reflectedClassFile(clazz: Class<*>?): ClassFile = ClassFile(
-        metadata = null,
-        isSynthetic = clazz?.isSynthetic == true,
-        classDeprecation = clazz?.let {
-            reflectedDeprecation(
-                listOfNotNull(
-                    reflectedValue(default = null) { clazz.getAnnotation(Deprecated::class.java) },
-                    reflectedValue(default = null) { clazz.getAnnotation(DeprecatedSinceKotlin::class.java) }
-                )
+    private fun reflectedClassFile(clazz: Class<*>?): ClassFile {
+        fun deprecationOf(element: java.lang.reflect.AnnotatedElement): Deprecation? = reflectedDeprecation(
+            listOfNotNull(
+                reflectedValue(default = null) { element.getAnnotation(Deprecated::class.java) },
+                reflectedValue(default = null) { element.getAnnotation(DeprecatedSinceKotlin::class.java) }
             )
+        )
+        // by their JVM signatures, like the ones read from a class file, see ClassFile.deprecatedMethods,
+        // each member reflected on its own, while none of them is, when a type of any of them cannot be loaded
+        val methods = reflectedValue(default = emptyList()) { clazz?.declaredMethods.orEmpty().toList() }.map { method ->
+            method to { method.name + Type.getMethodDescriptor(method) }
         }
-    )
+        val constructors = reflectedValue(default = emptyList()) { clazz?.declaredConstructors.orEmpty().toList() }.map {
+            constructor -> constructor to { "<init>" + Type.getConstructorDescriptor(constructor) }
+        }
+        return ClassFile(
+            metadata = null,
+            isSynthetic = clazz?.isSynthetic == true,
+            classDeprecation = clazz?.let { deprecationOf(it) },
+            deprecatedMethods = (methods + constructors).mapNotNull { (member, signature) ->
+                reflectedValue(default = null) { deprecationOf(member)?.let { signature() to it } }
+            }.toMap()
+        )
+    }
 
     /**
      * The lookups of the recently found classes by their binary names, also of the ones not found,
@@ -1075,7 +1106,7 @@ internal class DefaultKotlinIntrospector(
         val contextPackage = contextPackageOf(declarations, kmClass)
         val members = declaredMembers(kmClass, declarations, memberName, apiClass, contextPackage)
 
-        val companionMembers = apiCompanionOf(kmClass)?.let { companion ->
+        val companionMembers = apiCompanionOf(kmClass, apiClass)?.let { companion ->
             val signatures = companion.propertiesNamed(memberName).map {
                 formatCompanionProperty(it, companion, contextPackage)
             } + companion.functionsNamed(memberName).map {
@@ -1114,7 +1145,7 @@ internal class DefaultKotlinIntrospector(
         apiClass: ApiClass,
         contextPackage: String
     ): List<List<String>> {
-        val isOpenForOverrides = mightBeSubclassed(kmClass, declarations)
+        val isOpenForOverrides = isOpenForOverrides(kmClass, apiClass)
         return apiMembersNamed(kmClass, declarations, memberName, apiClass).map { member ->
             formatMember(member, kmClass, declarations, apiClass, contextPackage, isOpenForOverrides)
         }
@@ -1160,10 +1191,12 @@ internal class DefaultKotlinIntrospector(
         scope: ApiClass,
         contextPackage: String,
         isOwnerOpenForOverrides: Boolean,
-        isInheritedByFinalClass: Boolean = false
+        isInheritedByFinalClass: Boolean = false,
+        isInheritedByInterface: Boolean = false
     ): List<String> {
-        val isInterface = kmClass.kind == ClassKind.INTERFACE
-        val typeParameters = typeParametersInScope(kmClass)
+        // a member inherited by an interface is rendered as within it, like the ones of kotlin.Any
+        val isInterface = kmClass.kind == ClassKind.INTERFACE || isInheritedByInterface
+        val typeParameters = typeParametersInScope(kmClass, declarations)
         return when (member) {
             is Member.Property -> formatApiProperty(
                 member.property, scope, declarations,
@@ -1223,7 +1256,7 @@ internal class DefaultKotlinIntrospector(
      * or the first one, when they are equally specific, while all of them are inherited when they cannot be compared.
      * The members are rendered as declared in the supertype, with its own type parameters, like `fun get(index: Int): E`
      * of `kotlin.collections.List`, the type arguments of the supertype not substituted,
-     * and, inherited by a class which cannot be subclassed, see [mightBeSubclassed], neither `open`, nor `final`,
+     * and, inherited by a class which the user code cannot subclass, see [ApiClass.isOpen], neither `open`, nor `final`,
      * like its own members.
      * A Java supertype, which is not rendered, is walked through to its supertypes,
      * like `java.util.List`, seen in Kotlin as the built-in `kotlin.collections.MutableList`.
@@ -1306,15 +1339,17 @@ internal class DefaultKotlinIntrospector(
             }
         }
 
-        val isOpenForOverrides = mightBeSubclassed(kmClass, declarations)
+        val isOpenForOverrides = isOpenForOverrides(kmClass, scope)
         return inherited.map { candidate ->
             ListingItem.InheritedMember(
                 candidate.kmClass.name.replace('/', '.'),
                 formatMember(
                     candidate.member, candidate.kmClass, candidate.declarations, scope, contextPackage,
                     isOwnerOpenForOverrides = isOpenForOverrides,
-                    // unlike an own member of a final class, whose open modifier tells an override which cannot be told
-                    isInheritedByFinalClass = !isOpenForOverrides
+                    // also the open member of an interface, unless inherited by an interface,
+                    // where it is rendered as open, like its own members, telling it apart from an abstract one
+                    isInheritedByFinalClass = !isOpenForOverrides && kmClass.kind != ClassKind.INTERFACE,
+                    isInheritedByInterface = kmClass.kind == ClassKind.INTERFACE
                 )
             )
         }
@@ -1492,8 +1527,7 @@ internal class DefaultKotlinIntrospector(
             .firstOrNull { apiClass.scopes[it].visibility == Visibility.PROTECTED }
             ?: return null
         val protectedName = names[index]
-        // a class which cannot be read is never protected, see ApiClasses
-        val kind = loadKmClass(protectedName)?.kind?.let(::formatClassKind) ?: return null
+        val kind = formatClassKind(apiClass.scopes[index].kind)
         return "// in protected $kind${escapeQualifiedName(protectedName.substringAfterLast('/'))}"
     }
 
@@ -1527,10 +1561,12 @@ internal class DefaultKotlinIntrospector(
     /**
      * The companion object of the [kmClass], see [ApiCompanion], or `null` if it has none which is part of the API,
      * like a hidden, or a synthetic one, whose members cannot be referred to either.
+     *
+     * @param outer the [kmClass] as a class of the API, which the companion object is derived from.
      */
-    private fun apiCompanionOf(kmClass: KmClass): ApiCompanion? {
+    private fun apiCompanionOf(kmClass: KmClass, outer: ApiClass): ApiCompanion? {
         val name = "${kmClass.name}.${kmClass.companionObject ?: return null}"
-        val apiClass = apiClasses.apiClass(name) ?: return null
+        val apiClass = apiClasses.nestedApiClass(outer, name) ?: return null
         val companionClass = classDeclarations(name) ?: return null
         return ApiCompanion(companionClass.kmClass ?: return null, companionClass, apiClass)
     }
@@ -1841,9 +1877,9 @@ internal class DefaultKotlinIntrospector(
     private fun formatJvmInline(isJvmInline: Boolean): String = if (isJvmInline) "@JvmInline " else ""
 
     /**
-     * The modifiers and the kind of the class, like `data class ` or `object `.
+     * The modifiers and the [kind] of the class, like `data class ` or `object `.
      */
-    private fun formatClassPrefix(kmClass: KmClass): String = buildString {
+    private fun formatClassPrefix(kmClass: KmClass, kind: ClassKind): String = buildString {
         val isInterface = kmClass.kind == ClassKind.INTERFACE
 
         // a value class with multiple underlying properties (-Xvalue-classes) is not annotated
@@ -1861,7 +1897,7 @@ internal class DefaultKotlinIntrospector(
         // a lambda can be passed for a fun interface, by SAM conversion
         if (kmClass.isFunInterface) +"fun "
 
-        +formatClassKind(kmClass.kind)
+        +formatClassKind(kind)
     }
 
     /**
@@ -1983,7 +2019,7 @@ internal class DefaultKotlinIntrospector(
         val isEnum = kmClass.kind == ClassKind.ENUM_CLASS
         val isAnnotation = kmClass.kind == ClassKind.ANNOTATION_CLASS
         val isSealed = kmClass.modality == Modality.SEALED
-        val typeParameters = typeParametersInScope(kmClass)
+        val typeParameters = typeParametersInScope(kmClass, foundClass)
 
         // Extract the package name for context-aware type formatting
         val contextPackage = contextPackageOf(foundClass, kmClass)
@@ -1996,8 +2032,8 @@ internal class DefaultKotlinIntrospector(
         val constructors = constructorsOf(kmClass, apiClass, foundClass)
         val declaredConstructor = constructors.header as? HeaderConstructor.Declared
         val secondaryConstructors = constructors.secondary
-        // whether the final modality of an override is not redundant, see mightBeSubclassed
-        val isOpenForOverrides = mightBeSubclassed(kmClass, foundClass)
+        // whether the user code can override the members, see formatModalityModifiers
+        val isOpenForOverrides = isOpenForOverrides(kmClass, apiClass)
         // The properties declared by the parameters of the rendered constructor, by the parameter name,
         // also the ones which are not part of the API of a data class, or a value class,
         // whose parameters must all declare properties, like `private val rawValue: Long`
@@ -2085,7 +2121,7 @@ internal class DefaultKotlinIntrospector(
             kmClass.kind == ClassKind.COMPANION_OBJECT && it == DEFAULT_COMPANION_NAME
         } ?: ""
         val header = formatClassHeader(
-            kmClass, escapeIdentifier(name), contextPackage, typeParameters, constructorDeclaration,
+            kmClass, formatResolvedClassName(kmClass, foundClass, name), contextPackage, typeParameters, constructorDeclaration,
             foundClass.classDeprecation
         )
 
@@ -2095,16 +2131,16 @@ internal class DefaultKotlinIntrospector(
         }
 
         // The companion object, unless it is not part of the API, with its members which are
-        val companion = apiCompanionOf(kmClass)
+        val companion = apiCompanionOf(kmClass, apiClass)
         // the ones which are also sealed subclasses of this class are listed as such
         val companionNestedClasses = if (companion != null) {
-            listedNestedClasses(companion.kmClass, kmClass.sealedSubclasses.toSet())
+            listedNestedClasses(companion.kmClass, companion.apiClass, kmClass.sealedSubclasses.toSet())
         } else {
             emptyList()
         }
 
         val sealedSubclasses = if (isSealed) listedSealedSubclasses(kmClass) else SealedSubclasses.NONE
-        val nestedClasses = listedNestedClasses(kmClass)
+        val nestedClasses = listedNestedClasses(kmClass, apiClass)
 
         val members = buildList<ListingItem.ClassBodyItem> {
             // The sealed subclasses first, then the other nested classes, only referenced,
@@ -2270,9 +2306,9 @@ internal class DefaultKotlinIntrospector(
         bodyExtensions: ListedExtensions
     ): List<Pair<String, List<String>>> {
         val isInterface = kmClass.kind == ClassKind.INTERFACE
-        val typeParameters = typeParametersInScope(kmClass)
+        val typeParameters = typeParametersInScope(kmClass, declarations)
         val contextPackage = contextPackageOf(declarations, kmClass)
-        val isOpenForOverrides = mightBeSubclassed(kmClass, declarations)
+        val isOpenForOverrides = isOpenForOverrides(kmClass, apiClass)
         val builtinClass = declarations as? BuiltinClass
         val jvmOnlyProperties = builtinClass?.jvmOnlyProperties.orEmpty().inApi(apiClass, declarations).map { property ->
             property.name to formatApiProperty(
@@ -2399,6 +2435,7 @@ internal class DefaultKotlinIntrospector(
      * @param typeParameters the names of the type parameters in scope, including the ones
      *   of the outer class of an inner class.
      * @param deprecation the deprecation of the class, see [formatDeprecation].
+     * @param kind the kind of the class to render, like the one of a listed companion object, see [formatListedClassHeader].
      */
     private fun formatClassHeader(
         kmClass: KmClass,
@@ -2406,11 +2443,12 @@ internal class DefaultKotlinIntrospector(
         contextPackage: String,
         typeParameters: Map<Int, String> = kmClass.typeParameters.namesById(),
         constructor: String = "",
-        deprecation: Deprecation? = null
+        deprecation: Deprecation? = null,
+        kind: ClassKind = kmClass.kind
     ): String = buildString {
         +formatDeprecation(deprecation)
         // the prefix ends with a space, like in `companion object `
-        +formatClassPrefix(kmClass).let { if (name.isEmpty()) it.trimEnd() else it + name }
+        +formatClassPrefix(kmClass, kind).let { if (name.isEmpty()) it.trimEnd() else it + name }
         +formatTypeParameters(kmClass.typeParameters, typeParameters, contextPackage)
         +constructor
         val supertypes = formatSupertypes(kmClass, contextPackage, typeParameters)
@@ -2422,32 +2460,156 @@ internal class DefaultKotlinIntrospector(
     }
 
     /**
-     * The header of a [listed] class, like a nested class, see [formatClassHeader], without its constructor.
+     * The header of a [listed] class, like a nested class, see [formatClassHeader], without its constructor,
+     * where the companion object of another class, listed as a sealed subclass, is referred to as an object,
+     * like `object Holder.Companion : Sealed`, as a companion object can only be declared in its own class.
      */
     private fun formatListedClassHeader(listed: ListedClass, contextPackage: String): String =
         formatClassHeader(
-            listed.kmClass, formatListedClassName(listed), contextPackage, typeParametersInScope(listed.kmClass),
-            deprecation = listed.foundClass.classDeprecation
+            listed.kmClass, formatListedClassName(listed), contextPackage, typeParametersInScope(listed.kmClass, listed.foundClass),
+            deprecation = listed.foundClass.classDeprecation,
+            kind = listed.kmClass.kind.takeUnless { it == ClassKind.COMPANION_OBJECT } ?: ClassKind.OBJECT
         )
 
     /**
      * The name of a [listed] class, escaped, where the outer classes qualifying an inner class are rendered
      * with the type parameters it can refer to, like `Outer<T>.Inner`, the way Kotlin writes its type,
-     * as the listing class does not declare them, like for a sealed subclass declared in another class.
+     * as the listing class does not declare them, like for a sealed subclass declared in another class,
+     * see [outerTypeParametersOf].
      */
     private fun formatListedClassName(listed: ListedClass): String {
         val segments = listed.name.split('.')
         val typeArguments = arrayOfNulls<String>(segments.size)
-        var current = listed.kmClass
-        var index = segments.lastIndex - 1
-        while (index >= 0 && current.isInner) {
-            val outer = enclosingClassNames(current.name).lastOrNull()?.let { loadKmClass(it) } ?: break
-            typeArguments[index] = outer.typeParameters.takeIf { it.isNotEmpty() }
-                ?.joinToString(", ", "<", ">") { escapeIdentifier(it.name) }
-            current = outer
-            index--
+        outerTypeParametersOf(listed.kmClass, listed.foundClass).forEachIndexed { index, outer ->
+            val segment = segments.lastIndex - 1 - index
+            if (segment >= 0) typeArguments[segment] = outer.formatTypeArguments()
         }
         return segments.indices.joinToString(".") { escapeIdentifier(segments[it]) + typeArguments[it].orEmpty() }
+    }
+
+    /**
+     * The [name] of the [kmClass] resolved directly, escaped, qualified, when it is an inner class,
+     * with its outer classes declaring the type parameters it can refer to, like `Outer<T>.Inner`,
+     * up to the outermost one declaring any, like a listed class, see [formatListedClassName],
+     * as nothing else declares them, also for the classes listed in it, like `inner class Leaf : Map.Entry<A, B>`
+     * of `inner class Holder<A>.Mid<B>`.
+     */
+    private fun formatResolvedClassName(kmClass: KmClass, declarations: ClassDeclarations, name: String): String {
+        val outers = outerTypeParametersOf(kmClass, declarations)
+        val qualifying = outers.take(outers.indexOfLast { it.typeParameters.isNotEmpty() } + 1).asReversed()
+        return (qualifying.map { escapeIdentifier(simpleClassName(it.name)) + it.formatTypeArguments().orEmpty() } +
+            escapeIdentifier(name)).joinToString(".")
+    }
+
+    /**
+     * An outer class of an inner class, by its located [name], see [locatedNameOf], with the names of its [typeParameters] by their ids,
+     * which the inner class can refer to.
+     */
+    private class OuterTypeParameters(val name: String, val typeParameters: Map<Int, String>) {
+
+        /**
+         * The type parameters as the type arguments qualifying the inner class, like `<T>` of `Outer<T>.Inner`,
+         * or `null` if there are none.
+         */
+        fun formatTypeArguments(): String? =
+            typeParameters.values.takeIf { it.isNotEmpty() }?.joinToString(", ", "<", ">") { escapeIdentifier(it) }
+
+    }
+
+    /**
+     * The outer classes of the [kmClass], from the innermost one, as long as the class enclosed by each is inner,
+     * and can therefore refer to its type parameters, see [OuterTypeParameters],
+     * looked up by their located names, see [locatedNameOf], like the ones of a class relocated by shading,
+     * the [kmClass] being the one of the [declarations].
+     * The names of the type parameters of an outer class whose declaration cannot be read,
+     * like when its class file is absent from the classpath, are not known, nor whether it is inner itself,
+     * so that the ones the [kmClass] refers to, which are not of the other outer classes read,
+     * like the ones of an outer class of the outer class which cannot be read, are given to it,
+     * named by their ids, like `T0`, see [referencedTypeParameterIds].
+     */
+    private fun outerTypeParametersOf(kmClass: KmClass, declarations: ClassDeclarations): List<OuterTypeParameters> {
+        val outers = mutableListOf<OuterTypeParameters>()
+        var currentName = (declarations as? FoundClass)?.binaryName?.let { locatedNameOf(it, kmClass.name) } ?: kmClass.name
+        var current: KmClass? = kmClass
+        // the ids referred to which are not told by the outer classes read, once one cannot be read, at that index
+        var unknown: MutableSet<Int>? = null
+        var unreadableIndex = -1
+        while (current?.isInner ?: unknown!!.isNotEmpty()) {
+            val outerName = enclosingClassNames(currentName).lastOrNull() ?: break
+            val outer = loadKmClass(outerName)
+            val typeParameters = outer?.typeParameters?.namesById().orEmpty()
+            // past an outer class which cannot be read, whose being inner is not known,
+            // an outer class read is one only when the inner class refers to its type parameters
+            if (current == null && outer != null && typeParameters.keys.none { it in unknown!! }) break
+            if (outer == null && unknown == null) {
+                val known = kmClass.typeParameters.mapTo(HashSet()) { it.id } + outers.flatMap { it.typeParameters.keys }
+                unknown = (referencedTypeParameterIds(kmClass) - known).toMutableSet()
+                unreadableIndex = outers.size
+            }
+            unknown?.removeAll(typeParameters.keys)
+            outers += OuterTypeParameters(outerName, typeParameters)
+            currentName = outerName
+            current = outer
+        }
+        if (unknown != null) {
+            outers[unreadableIndex] = OuterTypeParameters(
+                outers[unreadableIndex].name, unknown.sorted().associateWith { "T$it" }
+            )
+        }
+        return outers
+    }
+
+    /**
+     * The ids of the type parameters which the types of the [kmClass] refer to, in its header, and in its members,
+     * but the ones its members declare themselves, like `R` of `fun <R> map(f: (T) -> R): R`,
+     * computed once per class, as it is needed for each of its members rendered.
+     */
+    private fun referencedTypeParameterIds(kmClass: KmClass): Set<Int> =
+        referencedTypeParameters.getOrCompute(kmClass.name) {
+            BoundedCache.Computed(computeReferencedTypeParameterIds(kmClass), isCacheable = true)
+        }.value
+
+    // the referencedTypeParameterIds of the inner classes whose outer classes cannot be read, by their metadata names
+    private val referencedTypeParameters = BoundedCache<String, Set<Int>>(capacity = 256)
+
+    @OptIn(ExperimentalContextParameters::class)
+    private fun computeReferencedTypeParameterIds(kmClass: KmClass): Set<Int> {
+        val ids = HashSet<Int>()
+        val declared = HashSet<Int>()
+        fun visitType(type: KmType?) {
+            if (type == null) return
+            (type.classifier as? KmClassifier.TypeParameter)?.let { ids += it.id }
+            type.arguments.forEach { visitType(it.type) }
+            visitType(type.outerType)
+        }
+        fun visitTypeParameters(typeParameters: List<KmTypeParameter>) =
+            typeParameters.forEach { typeParameter -> typeParameter.upperBounds.forEach(::visitType) }
+        fun visitValueParameters(parameters: List<KmValueParameter>) =
+            parameters.forEach { visitType(it.type); visitType(it.varargElementType) }
+        fun visitCallable(
+            typeParameters: List<KmTypeParameter>,
+            receiver: KmType?,
+            contextParameters: List<KmValueParameter>,
+            valueParameters: List<KmValueParameter>,
+            returnType: KmType
+        ) {
+            typeParameters.mapTo(declared) { it.id }
+            visitTypeParameters(typeParameters)
+            visitType(receiver)
+            visitValueParameters(contextParameters)
+            visitValueParameters(valueParameters)
+            visitType(returnType)
+        }
+        visitTypeParameters(kmClass.typeParameters)
+        kmClass.supertypes.forEach(::visitType)
+        kmClass.constructors.forEach { visitValueParameters(it.valueParameters) }
+        kmClass.functions.forEach {
+            visitCallable(it.typeParameters, it.receiverParameterType, it.contextParameters, it.valueParameters, it.returnType)
+        }
+        kmClass.properties.forEach {
+            visitCallable(it.typeParameters, it.receiverParameterType, it.contextParameters, emptyList(), it.returnType)
+        }
+        return ids - declared
     }
 
     /**
@@ -2611,11 +2773,13 @@ internal class DefaultKotlinIntrospector(
      * Unlike the sealed subclasses, the ones which cannot be found are not told,
      * as a `when` expression need not cover them.
      *
+     * @param apiClass the [kmClass] as a class of the API, which the nested classes are derived from.
      * @param sealedSubclasses the declared sealed subclasses to exclude, the ones of the [kmClass],
      *   or of the class enclosing a companion object, which might be nested in that companion object.
      */
     private fun listedNestedClasses(
         kmClass: KmClass,
+        apiClass: ApiClass,
         sealedSubclasses: Set<String> = kmClass.sealedSubclasses.toSet()
     ): List<ListedClass> = kmClass.nestedClasses
         .map { "${kmClass.name}.$it" }
@@ -2623,7 +2787,7 @@ internal class DefaultKotlinIntrospector(
         .mapNotNull { name ->
             val nestedClass = classDeclarations(name) ?: return@mapNotNull null
             val nested = nestedClass.kmClass ?: return@mapNotNull null
-            if (nested.kind == ClassKind.COMPANION_OBJECT || apiClasses.apiClass(name) == null) return@mapNotNull null
+            if (nested.kind == ClassKind.COMPANION_OBJECT || apiClasses.nestedApiClass(apiClass, name) == null) return@mapNotNull null
             ListedClass(simpleClassName(name), nested, nestedClass)
         }
 
@@ -2712,8 +2876,8 @@ internal class DefaultKotlinIntrospector(
      * @param bodyReceiverSubstitution the substitution of an extension listed in the body of its receiver class,
      *   rendered without its receiver, see [bodyReceiverSubstitution], or `null` to render the receiver.
      * @param deprecation the deprecation of the [function], see [formatDeprecation].
-     * @param isOwnerOpenForOverrides whether the [owner] might be subclassed, see [mightBeSubclassed],
-     *   by default unless final, which an enum class is in the metadata, even when its entries subclass it.
+     * @param isOwnerOpenForOverrides whether the user code might override the members of the [owner],
+     *   see [formatModalityModifiers], by default unless final.
      */
     @OptIn(ExperimentalContextParameters::class)
     private fun formatFunction(
@@ -2854,7 +3018,7 @@ internal class DefaultKotlinIntrospector(
      * @param bodyReceiverSubstitution the substitution of an extension listed in the body of its receiver class,
      *   like for [formatFunction].
      * @param deprecation the deprecation of the [property], see [formatDeprecation].
-     * @param isOwnerOpenForOverrides whether the [owner] might be subclassed, like for [formatFunction].
+     * @param isOwnerOpenForOverrides whether the user code might override the members of the [owner], like for [formatFunction].
      */
     @OptIn(ExperimentalContextParameters::class)
     private fun formatProperty(
@@ -2939,13 +3103,12 @@ internal class DefaultKotlinIntrospector(
 
     /**
      * The names of the type parameters which the [kmClass] can refer to, by their ids,
-     * including the ones of its outer classes when it is an inner class,
+     * including the ones of its outer classes when it is an inner class, see [outerTypeParametersOf],
      * which can be declared in a class other than the one listing it, like a sealed subclass.
      */
-    private fun typeParametersInScope(kmClass: KmClass): Map<Int, String> {
-        val outerClass = if (kmClass.isInner) enclosingClassNames(kmClass.name).lastOrNull()?.let { loadKmClass(it) } else null
-        return outerClass?.let { typeParametersInScope(it) }.orEmpty() + kmClass.typeParameters.namesById()
-    }
+    private fun typeParametersInScope(kmClass: KmClass, declarations: ClassDeclarations): Map<Int, String> =
+        outerTypeParametersOf(kmClass, declarations).flatMap { it.typeParameters.entries }.associate { it.key to it.value } +
+            kmClass.typeParameters.namesById()
 
     private fun KmType.isNullableAny(): Boolean =
         (classifier as? KmClassifier.Class)?.name == "kotlin/Any" && isNullable
@@ -3118,8 +3281,10 @@ internal class DefaultKotlinIntrospector(
      * Format the modality and `override` modifiers of a member, like `abstract override `,
      * in the order of the Kotlin coding conventions.
      *
-     * An override is implicitly open, therefore its `final` is rendered,
-     * unless the owner class cannot be subclassed, see [mightBeSubclassed], which makes all its members final.
+     * An override is implicitly open, therefore its `final` is rendered, and so is the `open` of any other member,
+     * only when the user code can subclass the owner class, see [ApiClass.isOpen], like its protected members,
+     * as all its members are final to the user code otherwise,
+     * like the ones of a sealed class without an open subclass, or of an enum class, even when its entries override them.
      * The members of an interface are implicitly abstract, so the ones with a default body are rendered as open,
      * also when overriding, like `open override fun f()`, telling it apart from an abstract `override fun f()`,
      * which might make abstract again the `f()` with a default body of a superinterface.
@@ -3135,20 +3300,12 @@ internal class DefaultKotlinIntrospector(
     ): String = buildString {
         when (modality) {
             Modality.ABSTRACT -> if (!inInterface) +"abstract "
-            Modality.OPEN -> if ((!isOverride || inInterface) && !isInheritedByFinalClass) +"open "
+            Modality.OPEN -> if (((!isOverride && isOwnerOpenForOverrides) || inInterface) && !isInheritedByFinalClass) +"open "
             Modality.FINAL -> if (isOverride && isOwnerOpenForOverrides) +"final "
             Modality.SEALED -> {}
         }
         if (isOverride) +"override "
     }
-
-    /**
-     * Whether the [kmClass] might be subclassed, unless final, except for an enum class, final in the metadata
-     * even when its entries have bodies subclassing it, which only its JVM class tells, final without them,
-     * which they are assumed to have when its class file cannot be read.
-     */
-    private fun mightBeSubclassed(kmClass: KmClass, foundClass: ClassDeclarations): Boolean =
-        kmClass.modality != Modality.FINAL || (kmClass.kind == ClassKind.ENUM_CLASS && foundClass.classFile?.isFinal != true)
 
     /**
      * Whether this property might be declared by the constructor [parameter], like `class Foo(val x: Int)`.
@@ -3220,14 +3377,21 @@ internal class DefaultKotlinIntrospector(
         val propIndex = scanner.propIndex
         val classes = scanner.classes
 
-        // the same classes of the API as the ones resolved, see the apiClasses of the introspector
+        // the same classes of the API as the ones resolved, see the apiClasses of the introspector,
+        // where every class file of the classpath is read, or skipped, see ClasspathScanner.scan, before deciding it,
+        // while an enclosing class might still be served by the class loader from elsewhere, read then on its own
+        val outsideScopes = HashMap<String, ClassScope?>()
         val apiClasses = ApiClasses(
-            scopeOf = { name -> classes[name]?.scope },
-            // every class file of the classpath is read, or skipped, see ClasspathScanner.scan, before deciding it
-            isAbsent = { name -> !scanner.isScanned(binaryNameOf(name)) }
+            scopeOf = { name ->
+                classes[name]?.scope ?: if (scanner.isScanned(binaryNameOf(name))) null else {
+                    // also when it cannot be read, kept as null
+                    if (name in outsideScopes) outsideScopes[name] else readClassScope(binaryNameOf(name)).also { outsideScopes[name] = it }
+                }
+            },
+            isAbsent = { name -> !scanner.isScanned(binaryNameOf(name)) && !classLoader.hasClassFile(binaryNameOf(name)) }
         )
         val classesOfApi = classes.values.mapNotNull { indexedClass ->
-            apiClasses.apiClass(indexedClass.name)?.let { indexedClass to it }
+            apiClasses.apiClass(indexedClass.locatedName)?.let { indexedClass to it }
         }
 
         // the member extensions of public objects, which can be imported like the top-level ones,
@@ -3245,8 +3409,9 @@ internal class DefaultKotlinIntrospector(
             .map { (indexedClass, _) -> indexedClass }
             .filter { !it.scope.isCompanion }
             .forEach { indexedClass ->
-                // the Kotlin name, like com.example.Outer.Nested, which can be resolved
-                val kotlinName = indexedClass.name.replace('/', '.')
+                // the Kotlin name, like com.example.Outer.Nested, which can be resolved, in the package of its binary name,
+                // which might not be the one of its metadata name, like when relocated by shading, see locatedNameOf
+                val kotlinName = indexedClass.locatedName.replace('/', '.')
                 val simpleName = kotlinName.substringAfterLast('.').lowercase()
                 clsIndex.getOrPut(simpleName) { mutableListOf() }.add(kotlinName)
             }
@@ -3352,19 +3517,22 @@ internal class DefaultKotlinIntrospector(
                     if (collectSkippedClassFiles) skippedClassFiles += classFile.name
                 } else {
                     readClassFileCount++
-                    indexClass(classFile.read(), nestedClassFiles)
+                    indexClass(classFile.name, classFile.read(), nestedClassFiles)
                 }
             }
         }
 
         /**
-         * Indexes the class read from the [bytes], unless a class of the same name is already indexed,
-         * telling the [nestedClassFiles], if any, about its nested classes.
+         * Indexes the class read from the [bytes] of the class file of the [path], unless a class of the same name
+         * is already indexed, telling the [nestedClassFiles], if any, about its nested classes.
+         * A class file which cannot be parsed still shadows the class of the same name in the next roots,
+         * and is not absent from the classpath, like when resolving its nested classes, see [isAbsent].
          */
-        private fun indexClass(bytes: ByteArray, nestedClassFiles: NestedClassFiles?) {
+        private fun indexClass(path: String, bytes: ByteArray, nestedClassFiles: NestedClassFiles?) {
             val reader = try {
                 ClassReader(bytes)
             } catch (_: Exception) {
+                indexedClasses.add(path.replace('/', '.'))
                 return
             }
             val className = reader.className.replace('/', '.')
@@ -3391,8 +3559,11 @@ internal class DefaultKotlinIntrospector(
                 // the member extensions of classes can be called only in the scope of their dispatch receiver,
                 // while the ones of objects can be imported, which is decided once all the enclosing classes are known
                 val isObject = kmClass.kind == ClassKind.OBJECT || kmClass.kind == ClassKind.COMPANION_OBJECT
-                classes.getOrPut(kmClass.name) {
-                    val source = kmClass.name.replace('/', '.')
+                // by the located name, so that a class relocated by shading is indexed next to the original one
+                val locatedName = locatedNameOf(className, kmClass.name)
+                classes.getOrPut(locatedName) {
+                    // the object to import them from, by the name it is found by, see locatedNameOf
+                    val source = locatedName.replace('/', '.')
                     IndexedClass(
                         name = kmClass.name,
                         binaryName = className,
@@ -3422,6 +3593,16 @@ internal class DefaultKotlinIntrospector(
             )
         }
 
+    }
+
+    /**
+     * The scope of the class of this JVM [binaryName], read from its class file served by the [classLoader],
+     * like one outside the classpath roots, see [scanClasspath], or `null` if it cannot be read, see [ClassScope].
+     */
+    private fun readClassScope(binaryName: String): ClassScope? {
+        val classFile = readClassFile(binaryName, classLoader.readClassBytes(binaryName)) ?: return null
+        val kmClass = (classFile.metadata?.let(::parseMetadata) as? KotlinClassMetadata.Class)?.kmClass ?: return null
+        return classScope(kmClass, isUsableClass(kmClass, classFile), classFile)
     }
 
     /**
@@ -3698,7 +3879,6 @@ internal class DefaultKotlinIntrospector(
         return ClassFile(
             metadata = metadata,
             isSynthetic = reader.access and Opcodes.ACC_SYNTHETIC != 0,
-            isFinal = reader.access and Opcodes.ACC_FINAL != 0,
             isInterface = isInterface,
             classDeprecation = classAnnotations?.deprecationOf(::isSince),
             nesting = memberClasses?.let { members ->
@@ -3727,8 +3907,6 @@ internal class DefaultKotlinIntrospector(
     /**
      * What is read from a class file, without loading the class.
      *
-     * @property isFinal whether the JVM class is final, which, unlike the metadata, tells that an enum class
-     *   has no entries with bodies, compiled to its subclasses.
      * @property classDeprecation the deprecation of the class itself.
      * @property nesting what the class file tells about the classes nested in this class,
      *   read only by the classpath scan, see [NestedClassFiles].
@@ -3742,7 +3920,6 @@ internal class DefaultKotlinIntrospector(
     private class ClassFile(
         val metadata: Metadata?,
         val isSynthetic: Boolean,
-        val isFinal: Boolean = false,
         val isInterface: Boolean = false,
         val classDeprecation: Deprecation? = null,
         val nesting: Nesting? = null,

@@ -119,3 +119,28 @@ open class InheritedNumberHolder<T : Number> {
 class InheritedAnyHolder<T> : InheritedNumberHolder<Int>() {
     fun h(x: T) {}
 }
+
+// The members inherited by a sealed interface, with an open subclass, or without one
+interface SealedInheritedBase {
+    fun f() {}
+}
+
+sealed interface OpenSealedInheriting : SealedInheritedBase
+
+open class OpenSealedInheritingImpl : OpenSealedInheriting
+
+sealed interface ClosedSealedInheriting : SealedInheritedBase
+
+class ClosedSealedInheritingImpl : ClosedSealedInheriting
+
+// A member of Any inherited by a sealed class with an open subclass, which the user code can override
+sealed class OpenSealedInheritingClass {
+    open class Sub : OpenSealedInheritingClass()
+}
+
+// The members of Any inherited by a sealed interface without an open subclass
+sealed interface SealedAnyInheriting {
+    fun g(): Int = 1
+}
+
+class SealedAnyInheritingImpl : SealedAnyInheriting

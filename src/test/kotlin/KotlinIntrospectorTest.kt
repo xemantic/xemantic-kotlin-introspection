@@ -2184,8 +2184,8 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should keep final modality of override in enum class with entry bodies`() {
-        // an enum class is final in the metadata, even when its entries subclass it
+    fun `should not mark override in enum class with entry bodies as final`() {
+        // its entries can override its members, but the user code cannot subclass it
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.EntryBodiesEnum"
         ) sameAsKotlin """
@@ -2194,7 +2194,55 @@ class KotlinIntrospectorTest {
                 A,
                 B;
                 override fun f(): Int
-                final override fun g()
+                override fun g()
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark neither open member nor final override of open class with only private constructor`() {
+        // like its protected members, which are not listed, as the user code cannot subclass it
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.PrivateConstructorModality"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PrivateConstructorModality [page 1/1]
+            open class PrivateConstructorModality private constructor() : ModalityBase {
+                fun f()
+                override fun finalized()
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve open member of open class with only private constructor without open modifier`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.PrivateConstructorModality.f") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PrivateConstructorModality.f [page 1/1]
+            fun f()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not mark open member of sealed class without open subclass as open`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ClosedSealedModality"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ClosedSealedModality [page 1/1]
+            sealed class ClosedSealedModality {
+                class Sub : ClosedSealedModality
+                fun f()
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark open member of sealed class with open subclass as open`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.OpenSealedModality"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OpenSealedModality [page 1/1]
+            sealed class OpenSealedModality {
+                open class Sub : OpenSealedModality
+                open fun f()
             }
         """.trimIndent()
     }
@@ -2254,14 +2302,15 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should keep abstract and final modality of override in sealed class`() {
+    fun `should keep abstract modality of override in sealed class, but not final one, without open subclass`() {
+        // the user code cannot subclass it
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.SealedModalityOverrides"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.SealedModalityOverrides [page 1/1]
             sealed class SealedModalityOverrides : ModalityBase {
                 abstract override fun abstracted()
-                final override fun finalized()
+                override fun finalized()
                 override fun reopened()
             }
         """.trimIndent()
@@ -3603,6 +3652,44 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve member with body inherited by sealed interface with open subclass as open`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OpenSealedInheriting.f") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OpenSealedInheriting.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.SealedInheritedBase
+            open fun f()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member with body inherited by sealed interface without open subclass as open`() {
+        // within an interface, telling it apart from an abstract member, like the own members of an interface
+        resolver.resolve("com.xemantic.kotlin.introspection.test.ClosedSealedInheriting.f") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ClosedSealedInheriting.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.SealedInheritedBase
+            open fun f()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of Any inherited by sealed interface as open`() {
+        // rendered as within the interface, where a member with a body is open, telling it apart from an abstract one
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SealedAnyInheriting.hashCode") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SealedAnyInheriting.hashCode [page 1/1]
+            // inherited from kotlin.Any
+            open fun hashCode(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of Any inherited by sealed class with open subclass as open`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OpenSealedInheritingClass.hashCode") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OpenSealedInheritingClass.hashCode [page 1/1]
+            // inherited from kotlin.Any
+            open fun hashCode(): Int
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve member of mapped built-in type inherited through Java superclass`() {
         // java.util.AbstractList is not rendered, but it implements java.util.List, seen in Kotlin as MutableList
         resolver.resolve(
@@ -4092,11 +4179,12 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve inner class with type parameters of the outer class`() {
+        // qualified with the outer class declaring them, like an inner class listed in another class
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.TypeParametersNestedHolder.Cursor"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.TypeParametersNestedHolder.Cursor [page 1/1]
-            inner class Cursor : Iterator<K> {
+            inner class TypeParametersNestedHolder<K>.Cursor : Iterator<K> {
                 override operator fun hasNext(): Boolean
                 override operator fun next(): K
             }
@@ -6103,9 +6191,28 @@ class KotlinIntrospectorTest {
     fun `should resolve inner class of inner class with outer type parameters`() {
         resolver.resolve("com.xemantic.kotlin.introspection.test.InnerOfInnerHolder.Mid.Leaf") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.InnerOfInnerHolder.Mid.Leaf [page 1/1]
-            inner class Leaf(override val key: A, override val value: B) : Map.Entry<A, B> {
+            inner class InnerOfInnerHolder<A>.Mid<B>.Leaf(override val key: A, override val value: B) : Map.Entry<A, B> {
                 fun pair(): Pair<A, B>
             }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve inner class qualified with outer type parameters of its listed inner class`() {
+        // the type parameter of the outermost class, which the listed inner class refers to, is declared by the header
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InnerOfInnerHolder.Mid") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InnerOfInnerHolder.Mid [page 1/1]
+            inner class InnerOfInnerHolder<A>.Mid<B> {
+                inner class Leaf : Map.Entry<A, B>
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve inner sealed subclass qualified with type parameters of its outer class`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.GenericSealedOuter.Sub") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GenericSealedOuter.Sub [page 1/1]
+            inner class GenericSealedOuter<T>.Sub : GenericSealedHolder<T>
         """.trimIndent()
     }
 
@@ -6123,13 +6230,14 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should list companion object of another class as sealed subclass`() {
-        // the own companion object is rendered as such, while the one of another class is a branch of a when expression
+        // the own companion object is rendered as such, while the one of another class is a branch of a when expression,
+        // referred to as an object, as a companion object can only be declared in its own class
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.CompanionSealedHolder"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.CompanionSealedHolder [page 1/1]
             sealed class CompanionSealedHolder {
-                companion object CompanionSealedSubclassHolder.Companion : CompanionSealedHolder
+                object CompanionSealedSubclassHolder.Companion : CompanionSealedHolder
                 class Sub : CompanionSealedHolder
                 companion object : CompanionSealedHolder
             }
@@ -7936,6 +8044,19 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.test.HiddenSetterOverride [page 1/1]
             class HiddenSetterOverride : HiddenSetterOverrideBase {
                 @set:Deprecated("replaced", level = DeprecationLevel.HIDDEN) override var value: Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render protected override of var with setter deprecated with hidden level without setter line`() {
+        // the setter has the visibility of the property, so no line implies a setter wider than the property
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ProtectedHiddenSetterOverride"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ProtectedHiddenSetterOverride [page 1/1]
+            open class ProtectedHiddenSetterOverride : ProtectedHiddenSetterOverrideBase {
+                @set:Deprecated("replaced", level = DeprecationLevel.HIDDEN) protected override var value: Int
             }
         """.trimIndent()
     }

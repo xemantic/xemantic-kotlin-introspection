@@ -32,6 +32,7 @@ import org.objectweb.asm.Opcodes
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
+import java.net.URL
 import java.net.URLClassLoader
 import java.nio.file.Path
 import java.util.Collections
@@ -42,6 +43,7 @@ import java.util.jar.JarOutputStream
 import java.util.jar.Manifest
 import kotlin.io.path.createDirectories
 import kotlin.io.path.outputStream
+import kotlin.io.path.writeBytes
 import kotlin.test.Test
 
 /**
@@ -129,6 +131,150 @@ class ClassLoaderIntrospectionTest {
             }
         }
         return root
+    }
+
+    @Test
+    fun `should resolve and find class relocated without its metadata`() {
+        // given
+        // like by shading, relocating the binary name of the class, but not its name in the Kotlin metadata
+        val root = isolatedTestFixturesCopy("relocated", "IsolatedTestClass.class")
+        relocatedCopy(root, "IsolatedTestClass.class")
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("shaded.com.xemantic.kotlin.introspection.isolated.IsolatedTestClass")
+        val searchResult = introspector.search("IsolatedTestClass")
+
+        // then
+        signature sameAsKotlin """
+            // shaded.com.xemantic.kotlin.introspection.isolated.IsolatedTestClass [page 1/1]
+            class IsolatedTestClass(val value: Int)
+        """.trimIndent()
+        // found by the name it is resolved by
+        searchResult sameAs """
+            // search results for "IsolatedTestClass" [page 1/1]
+            shaded.com.xemantic.kotlin.introspection.isolated.IsolatedTestClass
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should qualify relocated inner class with type parameters of its relocated outer class`() {
+        // given
+        val classFiles = arrayOf("RelocatedGenericOuter.class", "RelocatedGenericOuter\$Cursor.class")
+        val root = isolatedTestFixturesCopy("relocatedInner", *classFiles)
+        relocatedCopy(root, *classFiles)
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("shaded.com.xemantic.kotlin.introspection.isolated.RelocatedGenericOuter.Cursor")
+
+        // then
+        // the outer class is found by its relocated binary name, telling the names of its type parameters
+        signature sameAsKotlin """
+            // shaded.com.xemantic.kotlin.introspection.isolated.RelocatedGenericOuter.Cursor [page 1/1]
+            inner class RelocatedGenericOuter<K>.Cursor : Comparable<K> {
+                override operator fun compareTo(other: K): Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should list member extensions of relocated object from its relocated name`() {
+        // given
+        val root = isolatedTestFixturesCopy("relocatedObject", "RelocatedExtensions.class")
+        relocatedCopy(root, "RelocatedExtensions.class")
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.RelocatedExtensionTarget.relocatedExtension")
+
+        // then
+        // imported from the object by the name it can be resolved by
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.RelocatedExtensionTarget.relocatedExtension [page 1/1]
+            // from shaded.com.xemantic.kotlin.introspection.isolated.RelocatedExtensions
+            fun RelocatedExtensionTarget.relocatedExtension(): Int
+        """.trimIndent()
+    }
+
+    /**
+     * A copy of the isolated test fixture class files named [fileNames], in the [root] directory,
+     * relocated to the `shaded` package, like by shading, which does not rewrite their Kotlin metadata.
+     */
+    private fun relocatedCopy(root: Path, vararg fileNames: String) {
+        fileNames.forEach { fileName ->
+            val original = isolatedTestFixtures
+                .map { it.resolve("com/xemantic/kotlin/introspection/isolated/$fileName") }
+                .single { it.exists() }
+            val relocatedName = "shaded/com/xemantic/kotlin/introspection/isolated/${fileName.removeSuffix(".class")}"
+            val relocated = root.resolve("$relocatedName.class")
+            relocated.parent.createDirectories()
+            relocated.writeBytes(withClassName(original.readBytes(), relocatedName))
+        }
+    }
+
+    @Test
+    fun `should find both class relocated without its metadata and the original one`() {
+        // given
+        // the relocated copy is scanned first
+        val shadedRoot = tempDir.resolve("shadedFirst")
+        relocatedCopy(shadedRoot, "IsolatedTestClass.class")
+        val root = isolatedTestFixturesCopy("original")
+        val introspector = KotlinIntrospector(
+            URLClassLoader(arrayOf(shadedRoot.toUri().toURL(), root.toUri().toURL()), javaClass.classLoader)
+        )
+
+        // when
+        val searchResult = introspector.search("IsolatedTestClass")
+
+        // then
+        searchResult sameAs """
+            // search results for "IsolatedTestClass" [page 1/1]
+            com.xemantic.kotlin.introspection.isolated.IsolatedTestClass
+            shaded.com.xemantic.kotlin.introspection.isolated.IsolatedTestClass
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should neither resolve nor find class relocated without its metadata nested in internal class`() {
+        // given
+        val root = isolatedTestFixturesCopy(
+            "relocatedNested",
+            "RelocatedInternalOuter.class",
+            "RelocatedInternalOuter\$PublicNested.class"
+        )
+        relocatedCopy(root, "RelocatedInternalOuter.class", "RelocatedInternalOuter\$PublicNested.class")
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("shaded.com.xemantic.kotlin.introspection.isolated.RelocatedInternalOuter.PublicNested")
+        val searchResult = introspector.search("PublicNested")
+
+        // then
+        // the outer class is found by its relocated binary name, telling it is internal
+        assert(signature == null)
+        assert(searchResult?.contains("RelocatedInternalOuter") != true)
+    }
+
+    /**
+     * The class bytes with the class renamed to the [internalName], like `com/example/Foo`,
+     * referring to the other classes as they are.
+     */
+    private fun withClassName(bytes: ByteArray, internalName: String): ByteArray {
+        val writer = ClassWriter(0)
+        ClassReader(bytes).accept(object : ClassVisitor(Opcodes.ASM9, writer) {
+            override fun visit(
+                version: Int,
+                access: Int,
+                name: String,
+                signature: String?,
+                superName: String?,
+                interfaces: Array<out String>?
+            ) {
+                super.visit(version, access, internalName, signature, superName, interfaces)
+            }
+        }, 0)
+        return writer.toByteArray()
     }
 
     /**
@@ -530,6 +676,54 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should neither resolve nor find nested class of outer class whose class file cannot be parsed`() {
+        // given
+        val root = isolatedTestFixturesCopy("corruptOuter") { fileName, bytes ->
+            if (fileName == "MissingOuter.class") bytes.copyOf(16) else bytes
+        }
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.MissingOuter.Nested")
+        val searchResult = introspector.search("Nested", pageSize = 1000)
+
+        // then
+        // the outer class might be private, as its class file is there, but cannot be read, also by the classpath scan
+        assert(signature == null)
+        assert(searchResult?.contains("MissingOuter") != true)
+    }
+
+    @Test
+    fun `should neither resolve nor find nested class of private outer class served outside the classpath roots`() {
+        // given
+        val root = isolatedTestFixturesCopy("withoutPrivateOuter", "StrippedOuter.class")
+        val outside = isolatedTestFixturesCopy("privateOuterOnly", isAbsent = { it != "StrippedOuter.class" })
+        val outsideLoader = URLClassLoader(arrayOf(outside.toUri().toURL()), null)
+        // like a class loader serving some classes from elsewhere than its classpath roots, which the scan cannot list
+        val classLoader = object : URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader) {
+            override fun findResource(name: String): URL? = super.findResource(name) ?: outsideLoader.findResource(name)
+
+            override fun findClass(name: String): Class<*> = try {
+                super.findClass(name)
+            } catch (e: ClassNotFoundException) {
+                val bytes = outsideLoader.getResourceAsStream(name.replace('.', '/') + ".class")?.use { it.readBytes() }
+                    ?: throw e
+                defineClass(name, bytes, 0, bytes.size)
+            }
+        }
+        val introspector = KotlinIntrospector(classLoader)
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.StrippedOuter.Nested")
+        val searchResult = introspector.search("Nested", pageSize = 1000)
+
+        // then
+        // the outer class is private, as both the resolve and the classpath scan tell, by its class file
+        assert(signature == null)
+        assert(searchResult?.contains("StrippedOuter") != true)
+    }
+
+    @Test
     fun `should tell sealed subclass without metadata as not read`() {
         // given
         val introspector = introspectorWithoutMetadata("StrippedSealed\$Stripped.class")
@@ -608,6 +802,68 @@ class ClassLoaderIntrospectionTest {
         member sameAsKotlin """
             // com.xemantic.kotlin.introspection.isolated.MissingOuter.Nested.f [page 1/1]
             fun f()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should declare type parameters of inner class whose outer class has no class file`() {
+        // given
+        val introspector = introspectorWithoutAbsentClass("MissingGenericOuter.class")
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.MissingGenericOuter.Inner"
+        )
+
+        // then
+        // the names of the type parameters of the outer class are not known, only the ones the inner class refers to
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.MissingGenericOuter.Inner [page 1/1]
+            inner class MissingGenericOuter<T0>.Inner : Comparable<T0> {
+                override operator fun compareTo(other: T0): Int
+                fun <R> map(f: (T0) -> R): R
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should declare type parameters of inner class whose outer class of its outer class has a class file`() {
+        // given
+        val introspector = introspectorWithoutAbsentClass("MissingMidHolder\$Mid.class")
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.MissingMidHolder.Mid.Leaf"
+        )
+
+        // then
+        // the type parameter of the outermost class is known, and the remaining one is given to the missing class
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.MissingMidHolder.Mid.Leaf [page 1/1]
+            inner class MissingMidHolder<A>.Mid<T1>.Leaf : Comparable<T1> {
+                override operator fun compareTo(other: T1): Int
+                fun pair(): Pair<A, T1>
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not qualify inner class with outer class of its nested outer class without class file`() {
+        // given
+        val introspector = introspectorWithoutAbsentClass("NestedMidHolder\$Mid.class")
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.NestedMidHolder.Mid.Leaf"
+        )
+
+        // then
+        // the type parameters of the outermost class are not referred to, as the missing class is not inner
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.NestedMidHolder.Mid.Leaf [page 1/1]
+            inner class Mid<T1>.Leaf : Comparable<T1> {
+                override operator fun compareTo(other: T1): Int
+            }
         """.trimIndent()
     }
 
@@ -839,7 +1095,9 @@ class ClassLoaderIntrospectionTest {
     @Test
     fun `should read class file again after a transient IOException, to hide the members deprecated as HIDDEN`() {
         // given
-        val target = "com.xemantic.kotlin.introspection.test.HiddenDeprecationTarget"
+        // the deprecations of the properties of an interface compiled without the JVM default methods are told
+        // only by the class files, of the interface and of its DefaultImpls, not by the reflection of the interface
+        val target = "com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsHiddenProperties"
         val classLoader = CountingClassLoader(javaClass.classLoader, unreadableOnce = setOf(target))
         val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
 
@@ -847,9 +1105,8 @@ class ClassLoaderIntrospectionTest {
         val signatures = List(2) { introspector.resolve(target) }
 
         // then
-        // the deprecations are not known while the class file cannot be read
-        assert(signatures[0] != null && "fun hiddenMember(): Int" in signatures[0]!!)
-        assert(signatures[1] != null && "hiddenMember" !in signatures[1]!!)
+        assert(signatures[0] != null && "val hiddenAbstract: Int" in signatures[0]!!)
+        assert(signatures[1] != null && "hiddenAbstract" !in signatures[1]!!)
         assert(classLoader.reads[target] == 2)
     }
 
@@ -885,9 +1142,10 @@ class ClassLoaderIntrospectionTest {
         val signatures = List(2) { introspector.resolve(target) }
 
         // then
-        // the hidden constructor is not known while the class file cannot be read, so the class seems subclassable
-        assert(signatures[0] != null && "protected fun protectedMember()" in signatures[0]!!)
-        assert(signatures[1] != null && "protectedMember" !in signatures[1]!!)
+        // the hidden constructor is reflected while the class file cannot be read, and read from it once it can
+        assert(signatures[0] != null && "protectedMember" !in signatures[0]!!)
+        assert(signatures[1] == signatures[0])
+        assert(classLoader.reads[target] == 2)
     }
 
     @Test
@@ -1498,11 +1756,11 @@ class ClassLoaderIntrospectionTest {
 
         // then
         // only the method of the mismatched signature is matched by its descriptor, erasing T to Object,
-        // so its override, implicitly open, is not told
+        // so its override is not told, rendered like any other member of the final class
         signature sameAsKotlin """
             // com.xemantic.kotlin.introspection.isolated.AbsentJavaSubclass [page 1/1]
             class AbsentJavaSubclass : AbsentJavaBase<String> {
-                open fun process(item: String)
+                fun process(item: String)
                 fun process(item: Int)
                 override fun run()
                 fun run(times: Int)
@@ -1650,7 +1908,7 @@ class ClassLoaderIntrospectionTest {
         friendModule sameAsKotlin """
             // com.xemantic.kotlin.introspection.friendmodule.UnreflectableFriendModuleSubclass [page 1/1]
             class UnreflectableFriendModuleSubclass : com.xemantic.kotlin.introspection.othermodule.InternalBase {
-                open val state: Int
+                val state: Int
                 fun take(marker: com.xemantic.kotlin.introspection.othermodule.OtherModuleMarker)
             }
         """.trimIndent()
@@ -1740,18 +1998,18 @@ class ClassLoaderIntrospectionTest {
 
         // then
         // the methods of the superclass are unknown, so the overrides cannot be told,
-        // and are rendered as open, as an override is implicitly open
+        // and are rendered like any other member of the final class
         signature sameAsKotlin """
             // com.xemantic.kotlin.introspection.isolated.AbsentJavaSubclass [page 1/1]
             class AbsentJavaSubclass : AbsentJavaBase<String> {
-                open fun process(item: String)
+                fun process(item: String)
                 fun process(item: Int)
-                open fun run()
+                fun run()
                 fun run(times: Int)
                 fun prim(x: Int?)
-                open fun <S : String> bounded(x: S)
+                fun <S : String> bounded(x: S)
                 fun <S : Number> bounded(x: S)
-                open fun take(nested: DollarHolder.`Dollar${'$'}Nested`)
+                fun take(nested: DollarHolder.`Dollar${'$'}Nested`)
             }
         """.trimIndent()
     }
@@ -1966,13 +2224,14 @@ class ClassLoaderIntrospectionTest {
 
         // then
         // the method of the malformed signature is matched by its descriptor, erasing T to Object,
-        // and the method of the malformed descriptor is unknown, so their overrides, implicitly open, are not told
+        // and the method of the malformed descriptor is unknown, so their overrides are not told,
+        // rendered like any other member of the final class
         signature sameAsKotlin """
             // com.xemantic.kotlin.introspection.isolated.AbsentJavaSubclass [page 1/1]
             class AbsentJavaSubclass : AbsentJavaBase<String> {
-                open fun process(item: String)
+                fun process(item: String)
                 fun process(item: Int)
-                open fun run()
+                fun run()
                 fun run(times: Int)
                 fun prim(x: Int?)
                 override fun <S : String> bounded(x: S)
@@ -2128,6 +2387,29 @@ class ClassLoaderIntrospectionTest {
         deprecated sameAsKotlin """
             // com.xemantic.kotlin.introspection.isolated.DeprecatedNestedHolder.Old [page 1/1]
             @Deprecated("Old") class Old
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should tell hidden declarations of class whose class file is not served as a resource`() {
+        // given
+        val root = isolatedTestFixturesCopy("unservedHiddenConstructor")
+        val classLoader = object : URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader) {
+            override fun getResourceAsStream(name: String): InputStream? =
+                if (name.endsWith("/HiddenConstructorBase.class")) null else super.getResourceAsStream(name)
+        }
+        val introspector = KotlinIntrospector(classLoader)
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.HiddenConstructorBase")
+
+        // then
+        // their deprecations are reflected, telling that the class cannot be subclassed, and so has no protected members
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.HiddenConstructorBase [page 1/1]
+            open class HiddenConstructorBase private constructor() {
+                fun visible()
+            }
         """.trimIndent()
     }
 

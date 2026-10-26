@@ -76,7 +76,8 @@ class ReflectedDeclarationsTest {
         val rendered = introspector.formatReflectedFunction(format)
 
         // then
-        assert(rendered == "open fun format(vararg arg0: Any?): String")
+        // without the owner, which the user code might subclass, a member is not rendered as open
+        assert(rendered == "fun format(vararg arg0: Any?): String")
     }
 
     @Test

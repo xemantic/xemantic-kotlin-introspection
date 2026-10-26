@@ -117,6 +117,17 @@ class HiddenSetterOverride : HiddenSetterOverrideBase() {
         set
 }
 
+// the same for a protected one, whose setter has the visibility of the property
+open class ProtectedHiddenSetterOverrideBase {
+    protected open var value: Int = 0
+}
+
+open class ProtectedHiddenSetterOverride : ProtectedHiddenSetterOverrideBase() {
+    override var value: Int = 0
+        @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+        set
+}
+
 @set:Deprecated("replaced", level = DeprecationLevel.HIDDEN)
 var HiddenSetterHolder.hiddenSetterExtension: Int
     get() = inBody
