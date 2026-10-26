@@ -127,7 +127,10 @@ private fun classScope(kmClass: KmClass, isUsable: Boolean, deprecations: Deprec
         isSubclassable = isOpenClass && kmClass.constructors.any {
             it.visibility !in PRIVATE_VISIBILITIES && !deprecations.isHidden(it)
         },
-        sealedSubclasses = if (kmClass.kind == ClassKind.CLASS && kmClass.modality == Modality.SEALED) {
+        // also of a sealed interface, which the user code can implement through an open subclass
+        sealedSubclasses = if (
+            (kmClass.kind == ClassKind.CLASS || kmClass.kind == ClassKind.INTERFACE) && kmClass.modality == Modality.SEALED
+        ) {
             kmClass.sealedSubclasses
         } else emptyList()
     )
@@ -202,11 +205,11 @@ private fun isOpenForOverridesByDefault(owner: KmClass?): Boolean = owner != nul
 
 /**
  * Whether the user code can override the members of the [kmClass], the [apiClass] of the API:
- * the ones of an interface, unless sealed, which the user code can implement,
- * or else the ones of a class which it can subclass, see [ApiClass.isOpen].
+ * the ones of an interface which it can implement, unless sealed, or else through an open subclass,
+ * or the ones of a class which it can subclass, see [ApiClass.isOpen].
  */
 private fun isOpenForOverrides(kmClass: KmClass, apiClass: ApiClass): Boolean =
-    if (kmClass.kind == ClassKind.INTERFACE) kmClass.modality != Modality.SEALED else apiClass.isOpen
+    (kmClass.kind == ClassKind.INTERFACE && kmClass.modality != Modality.SEALED) || apiClass.isOpen
 
 /**
  * Whether this is a data class, or a value class, which cannot be declared without a property for each parameter
@@ -1340,8 +1343,9 @@ internal class DefaultKotlinIntrospector(
                 formatMember(
                     candidate.member, candidate.kmClass, candidate.declarations, scope, contextPackage,
                     isOwnerOpenForOverrides = isOpenForOverrides,
-                    // also the open member of an interface, which an own member of an interface is rendered with
-                    isInheritedByFinalClass = !isOpenForOverrides
+                    // also the open member of an interface, unless inherited by an interface,
+                    // where it is rendered as open, like its own members, telling it apart from an abstract one
+                    isInheritedByFinalClass = !isOpenForOverrides && kmClass.kind != ClassKind.INTERFACE
                 )
             )
         }

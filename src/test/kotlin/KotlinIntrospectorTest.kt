@@ -3652,6 +3652,34 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve member with body inherited by sealed interface with open subclass as open`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OpenSealedInheriting.f") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OpenSealedInheriting.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.SealedInheritedBase
+            open fun f()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member with body inherited by sealed interface without open subclass as open`() {
+        // within an interface, telling it apart from an abstract member, like the own members of an interface
+        resolver.resolve("com.xemantic.kotlin.introspection.test.ClosedSealedInheriting.f") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ClosedSealedInheriting.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.SealedInheritedBase
+            open fun f()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of Any inherited by sealed class with open subclass as open`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OpenSealedInheritingClass.hashCode") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OpenSealedInheritingClass.hashCode [page 1/1]
+            // inherited from kotlin.Any
+            open fun hashCode(): Int
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve member of mapped built-in type inherited through Java superclass`() {
         // java.util.AbstractList is not rendered, but it implements java.util.List, seen in Kotlin as MutableList
         resolver.resolve(
