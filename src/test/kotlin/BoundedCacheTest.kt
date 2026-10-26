@@ -144,4 +144,37 @@ class BoundedCacheTest {
         assert(missing == null && put == "put" && cache.getIfCached("key") == null)
     }
 
+    @Test
+    fun `should put value only if absent, keeping one cached or being computed`() {
+        // given
+        val cache = BoundedCache<String, String>(capacity = 3)
+        cache.put("cached", "cached")
+        val computing = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        var computedValue: String? = null
+        val computation = testThread {
+            computedValue = cache.getOrPut("computed") {
+                computing.countDown()
+                awaitOrFail(release)
+                "computed"
+            }
+        }
+        awaitOrFail(computing)
+
+        // when
+        try {
+            cache.putIfAbsent("cached", "replacing")
+            cache.putIfAbsent("computed", "replacing")
+            cache.putIfAbsent("absent", "put")
+        } finally {
+            release.countDown()
+        }
+        joinOrFail(computation)
+
+        // then
+        assert(cache.getIfCached("cached") == "cached")
+        assert(computedValue == "computed" && cache.getIfCached("computed") == "computed")
+        assert(cache.getIfCached("absent") == "put")
+    }
+
 }

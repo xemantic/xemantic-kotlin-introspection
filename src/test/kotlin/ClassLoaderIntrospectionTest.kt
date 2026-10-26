@@ -1679,6 +1679,148 @@ class ClassLoaderIntrospectionTest {
         assert(nested != null && "class Sorted<T>" in nested!!)
     }
 
+    /**
+     * A class loader hiding the class [hidden] from the threads started by [thread] as hidden,
+     * failing their requests of it with a `ClassNotFoundException`, without its class file served,
+     * like a class loader not serving it yet, while blocking the first request of it by a thread
+     * started with a [Gate], until the gate is released.
+     */
+    private class ThreadHidingClassLoader(parent: ClassLoader, private val hidden: String) : ClassLoader(parent) {
+        class Gate {
+            val entered = java.util.concurrent.CountDownLatch(1)
+            val release = java.util.concurrent.CountDownLatch(1)
+        }
+        // the requests of the class hidden, by any thread
+        val requests = java.util.concurrent.atomic.AtomicInteger()
+        private val hiddenFrom: MutableSet<Thread> = ConcurrentHashMap.newKeySet()
+        private val gates = ConcurrentHashMap<Thread, Gate>()
+        private val hiddenResource = hidden.replace('.', '/') + ".class"
+        private val isHidden get() = Thread.currentThread() in hiddenFrom
+        override fun loadClass(name: String, resolve: Boolean): Class<*> {
+            if (name == hidden) {
+                requests.incrementAndGet()
+                gates.remove(Thread.currentThread())?.let { gate ->
+                    gate.entered.countDown()
+                    awaitOrFail(gate.release)
+                }
+                if (isHidden) throw ClassNotFoundException(name)
+            }
+            return super.loadClass(name, resolve)
+        }
+        override fun getResource(name: String): java.net.URL? =
+            if (name == hiddenResource && isHidden) null else super.getResource(name)
+        override fun getResourceAsStream(name: String): InputStream? =
+            if (name == hiddenResource && isHidden) null else super.getResourceAsStream(name)
+        /**
+         * Starts a thread running the [block], from which the class is hidden if [isHidden],
+         * its first request of the class blocked by the [gate], if any.
+         */
+        fun thread(isHidden: Boolean, gate: Gate? = null, block: () -> Unit): TestThread = TestThread(block).also {
+            if (isHidden) hiddenFrom += it
+            if (gate != null) gates[it] = gate
+            it.start()
+        }
+    }
+
+    @Test
+    fun `should look class up on its own after misses of two concurrent lookups by name in a row`() {
+        // given
+        val outer = "com.xemantic.kotlin.introspection.test.TypeParametersNestedHolder"
+        val classLoader = ThreadHidingClassLoader(javaClass.classLoader, hidden = outer)
+        val gates = List(2) { ThreadHidingClassLoader.Gate() }
+        val byName = arrayOfNulls<TestThread>(2)
+        val receivedMisses = java.util.concurrent.atomic.AtomicInteger()
+        lateinit var introspector: DefaultKotlinIntrospector
+        introspector = DefaultKotlinIntrospector(classLoader, scanEntireClasspath = false, onUnprobedMissReceived = { name ->
+            // the second lookup by name takes the cache entry before the lookup of the nested class does again,
+            // once the first one is over, so that it does not receive the miss of the first one instead
+            if (name == outer && receivedMisses.incrementAndGet() == 1) {
+                joinOrFail(byName[0]!!)
+                byName[1] = classLoader.thread(isHidden = true, gates[1]) { introspector.resolve(outer) }
+                awaitOrFail(gates[1].entered)
+            }
+        })
+        // the outer class resolved by name, whose miss is not probed
+        byName[0] = classLoader.thread(isHidden = true, gates[0]) { introspector.resolve(outer) }
+        awaitOrFail(gates[0].entered)
+        var nested: String? = null
+        val lookup = testThread { nested = introspector.resolve("$outer.Sorted") }
+
+        // when
+        // each lookup by name failing after the lookup of the outer class by the lookup of the nested class waits for it,
+        // the second one entering only once the first one has failed
+        gates.forEach { gate ->
+            awaitOrFail(gate.entered)
+            try {
+                pollUntil { !lookup.isAlive || lookup.isWaitingForComputation() }
+            } finally {
+                gate.release.countDown()
+            }
+        }
+        joinOrFail(lookup)
+        // started by the lookup of the nested class, so known only once it is over
+        joinOrFail(*byName.requireNoNulls())
+        val signature = introspector.resolve(outer)
+
+        // then
+        assert(receivedMisses.get() == 2)
+        // the outer class is looked up on its own after the two misses, and found, rather than assumed missing
+        assert(nested != null && "class Sorted<T>" in nested!!)
+        // and cached, rather than loaded again
+        assert(classLoader.requests.get() == 3)
+        assert(signature != null && "class TypeParametersNestedHolder" in signature)
+    }
+
+    @Test
+    fun `should not replace class found meanwhile with miss of lookup on its own after misses of two concurrent lookups by name`() {
+        // given
+        val outer = "com.xemantic.kotlin.introspection.test.TypeParametersNestedHolder"
+        val classLoader = ThreadHidingClassLoader(javaClass.classLoader, hidden = outer)
+        val gates = List(2) { ThreadHidingClassLoader.Gate() }
+        val byName = arrayOfNulls<TestThread>(3)
+        val receivedMisses = java.util.concurrent.atomic.AtomicInteger()
+        lateinit var introspector: DefaultKotlinIntrospector
+        introspector = DefaultKotlinIntrospector(classLoader, scanEntireClasspath = false, onUnprobedMissReceived = { name ->
+            if (name == outer) when (receivedMisses.incrementAndGet()) {
+                // the second lookup by name takes the cache entry before the lookup of the nested class does again
+                1 -> {
+                    joinOrFail(byName[0]!!)
+                    byName[1] = classLoader.thread(isHidden = true, gates[1]) { introspector.resolve(outer) }
+                    awaitOrFail(gates[1].entered)
+                }
+                // the third one finds the class, and caches it, before the lookup on its own misses it
+                2 -> {
+                    joinOrFail(byName[1]!!)
+                    byName[2] = classLoader.thread(isHidden = false) { introspector.resolve(outer) }
+                    joinOrFail(byName[2]!!)
+                }
+            }
+        })
+        byName[0] = classLoader.thread(isHidden = true, gates[0]) { introspector.resolve(outer) }
+        awaitOrFail(gates[0].entered)
+        val lookup = classLoader.thread(isHidden = true) { introspector.resolve("$outer.Sorted") }
+
+        // when
+        gates.forEach { gate ->
+            awaitOrFail(gate.entered)
+            try {
+                pollUntil { !lookup.isAlive || lookup.isWaitingForComputation() }
+            } finally {
+                gate.release.countDown()
+            }
+        }
+        joinOrFail(lookup)
+        // started by the lookup of the nested class, so known only once it is over
+        joinOrFail(*byName.requireNoNulls())
+        val signature = introspector.resolve(outer)
+
+        // then
+        assert(receivedMisses.get() == 2)
+        // the class found by the third lookup by name is kept, rather than replaced with the later miss of the lookup on its own
+        assert(signature != null && "class TypeParametersNestedHolder" in signature)
+        assert(classLoader.requests.get() == 4)
+    }
+
     @Test
     fun `should mark overrides of Java superclass which cannot be loaded, as read from its class file`() {
         // given

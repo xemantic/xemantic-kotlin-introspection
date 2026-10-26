@@ -70,6 +70,16 @@ internal class BoundedCache<K : Any, V>(private val capacity: Int) {
     }
 
     /**
+     * Caches the [value] of the [key], unless one is cached, or being computed, see [getOrCompute],
+     * like a value computed outside the cache, which might be older than the one cached meanwhile.
+     */
+    fun putIfAbsent(key: K, value: V) {
+        synchronized(entries) {
+            entries.putIfAbsent(key, lazyOf(Computed(value, isCacheable = true)))
+        }
+    }
+
+    /**
      * The value of the [key], computed if absent, and then cached, unless it is not cacheable,
      * while the requests waiting for the same computation receive it anyway,
      * telling whether it is cacheable, so that they do not cache what they compute from it either.
