@@ -3671,6 +3671,16 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve member of Any inherited by sealed interface as open`() {
+        // rendered as within the interface, where a member with a body is open, telling it apart from an abstract one
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SealedAnyInheriting.hashCode") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SealedAnyInheriting.hashCode [page 1/1]
+            // inherited from kotlin.Any
+            open fun hashCode(): Int
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve member of Any inherited by sealed class with open subclass as open`() {
         resolver.resolve("com.xemantic.kotlin.introspection.test.OpenSealedInheritingClass.hashCode") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.OpenSealedInheritingClass.hashCode [page 1/1]

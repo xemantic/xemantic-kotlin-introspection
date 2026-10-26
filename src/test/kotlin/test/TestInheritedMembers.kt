@@ -137,3 +137,10 @@ class ClosedSealedInheritingImpl : ClosedSealedInheriting
 sealed class OpenSealedInheritingClass {
     open class Sub : OpenSealedInheritingClass()
 }
+
+// The members of Any inherited by a sealed interface without an open subclass
+sealed interface SealedAnyInheriting {
+    fun g(): Int = 1
+}
+
+class SealedAnyInheritingImpl : SealedAnyInheriting

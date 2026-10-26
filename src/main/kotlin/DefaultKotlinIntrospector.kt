@@ -1191,9 +1191,11 @@ internal class DefaultKotlinIntrospector(
         scope: ApiClass,
         contextPackage: String,
         isOwnerOpenForOverrides: Boolean,
-        isInheritedByFinalClass: Boolean = false
+        isInheritedByFinalClass: Boolean = false,
+        isInheritedByInterface: Boolean = false
     ): List<String> {
-        val isInterface = kmClass.kind == ClassKind.INTERFACE
+        // a member inherited by an interface is rendered as within it, like the ones of kotlin.Any
+        val isInterface = kmClass.kind == ClassKind.INTERFACE || isInheritedByInterface
         val typeParameters = typeParametersInScope(kmClass)
         return when (member) {
             is Member.Property -> formatApiProperty(
@@ -1346,7 +1348,8 @@ internal class DefaultKotlinIntrospector(
                     isOwnerOpenForOverrides = isOpenForOverrides,
                     // also the open member of an interface, unless inherited by an interface,
                     // where it is rendered as open, like its own members, telling it apart from an abstract one
-                    isInheritedByFinalClass = !isOpenForOverrides && kmClass.kind != ClassKind.INTERFACE
+                    isInheritedByFinalClass = !isOpenForOverrides && kmClass.kind != ClassKind.INTERFACE,
+                    isInheritedByInterface = kmClass.kind == ClassKind.INTERFACE
                 )
             )
         }
