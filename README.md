@@ -314,7 +314,8 @@ com.example.AnnotationTestClass
   - in a final class, a member of the same name as a `@PublishedApi internal` member of a supertype,
     marked `open` in vain, is marked `override`,
     while its override marked `final override` in vain is not;
-  - an override in a friend module is not marked when a shrinker, like R8, removed the bridge telling it.
+  - an override in a friend module is not marked when a shrinker, like R8, removed the bridge telling it,
+    unless the modality tells it in a final class.
 * The whole classpath visible to the given class loader is scanned on creation, which takes a while,
   so the instance should be created once and reused.
   The scan can be disabled with `KotlinIntrospector(scanEntireClasspath = false)`,

@@ -794,3 +794,8 @@ class VarargConstructorOverride(vararg override val xs: Int) : HasXs
 class PublishedApiSubclass : com.xemantic.kotlin.introspection.othermodule.PublishedApiBase() {
     fun publish() {}
 }
+
+// A member of the same signature as an internal member of a class of another module, overloaded by a public one
+class OverloadedInternalSubclass : com.xemantic.kotlin.introspection.othermodule.OverloadedInternalBase() {
+    fun reset() {}
+}

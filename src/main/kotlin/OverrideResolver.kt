@@ -192,15 +192,19 @@ internal class OverrideResolver(
         /**
          * An internal member with a mangled [jvmMethod], visible if the overriding class declares the [jvmMethod]:
          * as its own override in the same module, or as the bridge to its own override in a friend module,
-         * which is the only trace of a friend module,
-         * so a friend-module override whose bridge is removed, like by a shrinker, is not told.
+         * which is the only trace of a friend module.
+         * When a shrinker, like R8, removed the JVM method of the overriding member, the bridge might be removed too,
+         * so that the modality of the member is the evidence in a final class instead, like for an [Unmangled] one,
+         * while a friend-module override in a class which is not final is not told.
          *
          * @param jvmMethod the JVM name followed by the descriptor of the member.
-         * @param isVisibleWhenUnknown whether the member is visible when the JVM methods of the overriding class
-         *   can be neither read nor reflected: for a module of the same name, likely the same module,
-         *   but not for a module of another name, as an override is then claimed only on evidence.
+         * @param isSameModuleName whether the module of the member has the same name as the one of the overriding class,
+         *   the evidence when the JVM methods of the overriding class do not tell otherwise:
+         *   when they can be neither read nor reflected, or when the overriding member is shrunk in a class
+         *   which is not final; a module of the same name is likely the same module,
+         *   while for a module of another name an override is claimed only on evidence.
          */
-        data class Mangled(val jvmMethod: String, val isVisibleWhenUnknown: Boolean) : MemberVisibility
+        data class Mangled(val jvmMethod: String, val isSameModuleName: Boolean) : MemberVisibility
     }
 
     /**
@@ -362,7 +366,8 @@ internal class OverrideResolver(
             else -> overridden.toList().takeIf { it.isNotEmpty() }
                 ?.let { FunctionOverride(inheritedDefaultValues(it, signature)) }
         } ?: noDefaultValues.takeIf {
-            overridables.isShrunkOverride(candidates, owner, function.modality, function.signature)
+            val matching = candidates.filter { it.matches(signature) }
+            overridables.isShrunkOverride(candidates, matching, owner, function.modality, function.signature)
         }
     }
 
@@ -497,15 +502,26 @@ internal class OverrideResolver(
         val overridesGetter = getter != null && overridables.functions[getter.name].orEmpty().any {
             it.isJava && it.matches(contexts, receiver, emptyList(), property.typeParameters.size, isSuspend = false)
         }
+        val matching = candidates.filter {
+            it.matches(contexts, receiver, emptyList(), property.typeParameters.size, isSuspend = false)
+        }
         return overridesProperty || overridesGetter ||
-            overridables.isShrunkOverride(candidates, owner, property.modality, property.getterSignature)
+            overridables.isShrunkOverride(candidates, matching, owner, property.modality, property.getterSignature)
     }
 
     /**
      * Whether the [overridable] member is visible to the [owner] declaring a member of the [modality], see [MemberVisibility],
      * checked only after matching the signature, as it might read the class file of the owner.
+     *
+     * @param isShrunk whether the JVM method of the member of the [owner] is removed, see [isShrunk],
+     *   so that the JVM methods of the [owner] might not tell a mangled [overridable] either.
      */
-    private fun Overridables.isVisible(overridable: Overridable, owner: KmClass, modality: Modality): Boolean =
+    private fun Overridables.isVisible(
+        overridable: Overridable,
+        owner: KmClass,
+        modality: Modality,
+        isShrunk: Boolean = false
+    ): Boolean =
         when (val visibility = overridable.visibility) {
             MemberVisibility.Visible -> true
             is MemberVisibility.Unmangled ->
@@ -514,26 +530,35 @@ internal class OverrideResolver(
                 } else {
                     visibility.isSameModuleName
                 }
-            is MemberVisibility.Mangled ->
-                ownerJvmMethods?.contains(visibility.jvmMethod) ?: visibility.isVisibleWhenUnknown
+            is MemberVisibility.Mangled -> {
+                val declaresJvmMethod = ownerJvmMethods?.contains(visibility.jvmMethod)
+                when {
+                    declaresJvmMethod == true -> true
+                    isShrunk && owner.modality == Modality.FINAL -> modality != Modality.FINAL
+                    declaresJvmMethod == false && !isShrunk -> false
+                    else -> visibility.isSameModuleName
+                }
+            }
         }
 
     /**
-     * Whether a member of the [modality], whose JVM method is the [signature], is taken for an override
-     * of one of the [candidates] of the same name, as its JVM method is shrunk, see [isShrunk].
-     * Only a candidate which might be visible to the [owner] is taken, see [MemberVisibility],
-     * the mangled one also when the JVM methods of the [owner] do not tell it, as a shrinker might remove its bridge too,
-     * so that an internal member of another module does not make a member of the same name an override,
-     * and the JVM methods of the [owner] are not read for it, unless it is mangled.
+     * Whether a member of the [modality] of the [owner], overriding none of the [candidates] of the same name,
+     * is still taken for an override of one of them, as its JVM method, the [signature], is shrunk, see [isShrunk].
+     * The [matching] candidates, of the same signature, are the evidence, if there are any,
+     * otherwise any of the candidates, as the overridden member might be known only by the JVM methods
+     * of a supertype, from which a shrinker removed it as well.
+     * A candidate is the evidence only if it is visible to the [owner], see [isVisible],
+     * so that an internal member of another module does not make a member of the same name an override.
+     * The JVM methods of the [owner] are read only when a candidate is visible, or is a mangled internal member.
      */
     private fun Overridables.isShrunkOverride(
         candidates: List<Overridable>,
+        matching: List<Overridable>,
         owner: KmClass,
         modality: Modality,
         signature: JvmMethodSignature?
-    ): Boolean = candidates.any {
-        (it.visibility as? MemberVisibility.Mangled)?.isVisibleWhenUnknown == true || isVisible(it, owner, modality)
-    } && isShrunk(signature)
+    ): Boolean = matching.ifEmpty { candidates }.any { isVisible(it, owner, modality, isShrunk = true) } &&
+        isShrunk(signature)
 
     /**
      * Whether the JVM method of a member, declared in the metadata, has been removed from the class file of its owner,
@@ -632,7 +657,7 @@ internal class OverrideResolver(
                     val suffix = mangledSuffix
                     return when {
                         signature != null && suffix != null && signature.name.endsWith(suffix) ->
-                            MemberVisibility.Mangled(signature.toString(), isVisibleWhenUnknown = isSameModuleName)
+                            MemberVisibility.Mangled(signature.toString(), isSameModuleName)
                         else -> MemberVisibility.Unmangled(isSameModuleName)
                     }
                 }

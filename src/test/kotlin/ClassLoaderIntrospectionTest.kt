@@ -1986,33 +1986,37 @@ class ClassLoaderIntrospectionTest {
         """.trimIndent()
     }
 
-    @Test
-    fun `should not mark shrunk members named like internal members of superclass of another module as override`() {
-        // given
-        val shrunkMethods = mapOf(
-            "com/xemantic/kotlin/introspection/test/OtherModuleSubclass.class" to setOf("reset()V", "getState()I"),
-            "com/xemantic/kotlin/introspection/test/PublishedApiSubclass.class" to setOf("publish()V")
-        )
-        // like R8 removing the JVM methods of the members, keeping the metadata
+    /**
+     * An introspector of the class named [className], whose JVM methods named like the [shrunkMembers]
+     * are removed, together with their bridges, the names mangled with a module name, like R8 might,
+     * while keeping the metadata.
+     */
+    private fun shrunkIntrospector(className: String, vararg shrunkMembers: String): KotlinIntrospector {
+        val shrunkResource = className.replace('.', '/') + ".class"
         val classLoader = object : ClassLoader(javaClass.classLoader) {
             override fun getResourceAsStream(name: String): InputStream? {
                 val stream = super.getResourceAsStream(name) ?: return null
-                val removed = shrunkMethods[name] ?: return stream
-                return withoutMethods(stream.use { it.readBytes() }) { methodName, descriptor ->
-                    methodName + descriptor in removed
+                if (name != shrunkResource) return stream
+                return withoutMethods(stream.use { it.readBytes() }) { methodName, _ ->
+                    methodName.substringBefore('$') in shrunkMembers
                 }.inputStream()
             }
         }
-        val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
+        return KotlinIntrospector(classLoader, scanEntireClasspath = false)
+    }
+
+    @Test
+    fun `should not mark shrunk members named like internal members of superclass of another module as override`() {
+        // given
+        val className = "com.xemantic.kotlin.introspection.test.OtherModuleSubclass"
+        val introspector = shrunkIntrospector(className, "reset", "getState")
 
         // when
-        val otherModuleSubclass = introspector.resolve("com.xemantic.kotlin.introspection.test.OtherModuleSubclass")
-        val publishedApiSubclass = introspector.resolve("com.xemantic.kotlin.introspection.test.PublishedApiSubclass")
+        val signature = introspector.resolve(className)
 
         // then
-        // the internal members of another module are not visible, whether mangled or not,
-        // so a supertype member of the same name does not make a shrunk member an override
-        otherModuleSubclass sameAsKotlin """
+        // the internal members of another module are not visible, so the shrunk members are not overrides
+        signature sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.OtherModuleSubclass [page 1/1]
             class OtherModuleSubclass : com.xemantic.kotlin.introspection.othermodule.InternalBase {
                 val state: Int
@@ -2020,10 +2024,118 @@ class ClassLoaderIntrospectionTest {
                 override fun keep()
             }
         """.trimIndent()
-        publishedApiSubclass sameAsKotlin """
+    }
+
+    @Test
+    fun `should not mark shrunk members named like PublishedApi internal members of superclass of another module as override`() {
+        // given
+        val className = "com.xemantic.kotlin.introspection.test.PublishedApiSubclass"
+        val introspector = shrunkIntrospector(className, "publish")
+
+        // when
+        val signature = introspector.resolve(className)
+
+        // then
+        signature sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.PublishedApiSubclass [page 1/1]
             class PublishedApiSubclass : com.xemantic.kotlin.introspection.othermodule.PublishedApiBase {
                 fun publish()
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not mark shrunk overloads of public members as override when internal member of another module is matched`() {
+        // given
+        val className = "com.xemantic.kotlin.introspection.test.OverloadedInternalSubclass"
+        val introspector = shrunkIntrospector(className, "reset")
+
+        // when
+        val signature = introspector.resolve(className)
+
+        // then
+        // the shrunk member matches the signature of the internal member, not of the public overload
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OverloadedInternalSubclass [page 1/1]
+            class OverloadedInternalSubclass : com.xemantic.kotlin.introspection.othermodule.OverloadedInternalBase {
+                fun reset()
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark shrunk overrides of internal members of superclass of a friend module in final class`() {
+        // given
+        val className = "com.xemantic.kotlin.introspection.friendmodule.FriendModuleSubclass"
+        // the bridge telling the friend module is removed as well
+        val introspector = shrunkIntrospector(className, "getState")
+
+        // when
+        val signature = introspector.resolve(className)
+
+        // then
+        // only an override is open in a final class
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.friendmodule.FriendModuleSubclass [page 1/1]
+            class FriendModuleSubclass : com.xemantic.kotlin.introspection.othermodule.InternalBase {
+                override val state: Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark shrunk overrides of PublishedApi internal members of superclass of a friend module in final class`() {
+        // given
+        val className = "com.xemantic.kotlin.introspection.friendmodule.FriendModulePublishedApiSubclass"
+        val introspector = shrunkIntrospector(className, "publish")
+
+        // when
+        val signature = introspector.resolve(className)
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.friendmodule.FriendModulePublishedApiSubclass [page 1/1]
+            class FriendModulePublishedApiSubclass : com.xemantic.kotlin.introspection.othermodule.PublishedApiBase {
+                override fun publish()
+            }
+        """.trimIndent()
+    }
+
+    // the accepted trade-off of an unshrunk member applies, see the KotlinIntrospectorTest
+    @Test
+    fun `should not mark shrunk overrides of PublishedApi internal members of superclass of a friend module in open class`() {
+        // given
+        val className = "com.xemantic.kotlin.introspection.friendmodule.FriendModuleOpenPublishedApiSubclass"
+        val introspector = shrunkIntrospector(className, "publish")
+
+        // when
+        val signature = introspector.resolve(className)
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.friendmodule.FriendModuleOpenPublishedApiSubclass [page 1/1]
+            open class FriendModuleOpenPublishedApiSubclass : com.xemantic.kotlin.introspection.othermodule.PublishedApiBase {
+                open fun publish()
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not mark shrunk final members named like internal members of superclass of another module of the same name as override`() {
+        // given
+        val className = "com.xemantic.kotlin.introspection.otherdefaultmodule.OtherDefaultModuleSubclass"
+        val introspector = shrunkIntrospector(className, "reset", "getState")
+
+        // when
+        val signature = introspector.resolve(className)
+
+        // then
+        // a final member of a final class is not an override, though the module of the same name cannot be told
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.otherdefaultmodule.OtherDefaultModuleSubclass [page 1/1]
+            class OtherDefaultModuleSubclass : com.xemantic.kotlin.introspection.defaultmodule.DefaultModuleBase {
+                val state: Int
+                fun reset()
             }
         """.trimIndent()
     }
