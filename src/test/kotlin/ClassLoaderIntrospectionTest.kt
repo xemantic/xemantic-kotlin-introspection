@@ -202,6 +202,71 @@ class ClassLoaderIntrospectionTest {
         """.trimIndent()
     }
 
+    @Test
+    fun `should list nested classes and companion object of relocated class`() {
+        // given
+        val classFiles = arrayOf("RelocatedHolder.class", "RelocatedHolder\$Nested.class", "RelocatedHolder\$Companion.class")
+        val root = isolatedTestFixturesCopy("relocatedHolder", *classFiles)
+        relocatedCopy(root, *classFiles)
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("shaded.com.xemantic.kotlin.introspection.isolated.RelocatedHolder")
+        val member = introspector.resolve("shaded.com.xemantic.kotlin.introspection.isolated.RelocatedHolder.create")
+
+        // then
+        // looked up by their relocated names, unlike the ones of the metadata,
+        // which the types still refer to, qualified, as they are not in the package of the relocated class
+        signature sameAsKotlin """
+            // shaded.com.xemantic.kotlin.introspection.isolated.RelocatedHolder [page 1/1]
+            class RelocatedHolder {
+                class Nested
+                companion object {
+                    fun create(): com.xemantic.kotlin.introspection.isolated.RelocatedHolder
+                }
+            }
+        """.trimIndent()
+        member sameAsKotlin """
+            // shaded.com.xemantic.kotlin.introspection.isolated.RelocatedHolder.create [page 1/1]
+            companion object {
+                fun create(): com.xemantic.kotlin.introspection.isolated.RelocatedHolder
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should list sealed subclasses of relocated sealed class, open through its relocated open subclass`() {
+        // given
+        val classFiles = arrayOf(
+            "RelocatedSealed.class",
+            "RelocatedSealed\$Leaf.class",
+            "RelocatedSealed\$ProtectedNested.class",
+            "RelocatedOpenSubclass.class"
+        )
+        val root = isolatedTestFixturesCopy("relocatedSealed", *classFiles)
+        relocatedCopy(root, *classFiles)
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("shaded.com.xemantic.kotlin.introspection.isolated.RelocatedSealed")
+        val searchResult = introspector.search("ProtectedNested")
+
+        // then
+        // the protected declarations can be used by a subclass of the open subclass,
+        // whose supertype is still the one of the metadata
+        signature sameAsKotlin """
+            // shaded.com.xemantic.kotlin.introspection.isolated.RelocatedSealed [page 1/1]
+            sealed class RelocatedSealed {
+                class Leaf : com.xemantic.kotlin.introspection.isolated.RelocatedSealed
+                open class RelocatedOpenSubclass : com.xemantic.kotlin.introspection.isolated.RelocatedSealed
+                protected class ProtectedNested
+                protected fun hook()
+            }
+        """.trimIndent()
+        // also by the classpath scan
+        assert(searchResult?.lines()?.contains("shaded.com.xemantic.kotlin.introspection.isolated.RelocatedSealed.ProtectedNested") == true)
+    }
+
     /**
      * A copy of the isolated test fixture class files named [fileNames], in the [root] directory,
      * relocated to the `shaded` package, like by shading, which does not rewrite their Kotlin metadata.

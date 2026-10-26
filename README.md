@@ -224,9 +224,9 @@ com.example.AnnotationTestClass
   A class nested in a class whose class file is absent from the classpath is assumed to be part of the API,
   unlike the one nested in a class whose class file cannot be read.
   A class relocated by shading, whose Kotlin metadata keeps its original name,
-  is resolved and found by its relocated name, together with its enclosing classes,
-  but listed without its nested classes, its companion object, and its sealed subclasses,
-  which are still looked up by their original names.
+  is resolved, found, and listed by its relocated name,
+  together with its enclosing classes, its nested classes, its companion object, and its sealed subclasses,
+  while the types its declarations refer to keep their original names.
   A declaration within a protected class, like a protected companion object,
   resolved directly, follows a comment telling that class,
   like `// in protected companion object Outer.Named`,
