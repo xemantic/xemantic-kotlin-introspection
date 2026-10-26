@@ -444,7 +444,7 @@ internal class OverrideResolver(
         val overridables = overridables(owner)
         val candidates = overridables.functions[function.name] ?: return emptySet()
         val signature = overridables.signature(function)
-        return candidates.filter { it.javaKey != null && it.matches(signature) && overridables.isVisible(it) }
+        return candidates.filter { it.javaKey != null && it.matches(signature) && overridables.isVisible(it, owner, function.modality) }
             .mapTo(HashSet()) { it.javaKey!! }
     }
 
