@@ -18,11 +18,19 @@
 
 package com.xemantic.kotlin.introspection.isolated
 
-// A test adds the context receivers to the metadata of LegacyContextReceiverClass,
+// A test adds the context receivers to the metadata of these classes,
 // like of `context(LegacyLogger, Comparator<T>) class LegacyContextReceiverClass<T>`
 // compiled with -Xcontext-receivers by a Kotlin compiler before 2.2, as the current one no longer compiles it
 interface LegacyLogger
 
 class LegacyContextReceiverClass<T> {
     fun log() {}
+}
+
+@Deprecated("Use LegacyContextReceiverClass")
+@JvmInline
+value class LegacyContextReceiverValue(val value: Int)
+
+class LegacyContextReceiverOuter<T> {
+    inner class Inner
 }

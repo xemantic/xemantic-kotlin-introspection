@@ -119,8 +119,15 @@ class RenderedDeclarationsParseTest {
 
     @Test
     fun `should parse legacy context receivers of class`() {
-        // given - rendered only for a class compiled with -Xcontext-receivers, which is not on the classpath of the tests
-        val listing = "context(LegacyLogger, Comparator<T>) class LegacyContextReceiverClass<T> {\n    fun log()\n}"
+        // given - like rendered by ClassLoaderIntrospectionTest, for the classes compiled with -Xcontext-receivers,
+        // which are not on the classpath introspected here, as the current compiler no longer compiles them
+        val listing = """
+            context(LegacyLogger, Comparator<T>) class LegacyContextReceiverClass<T> {
+                fun log()
+                context(Comparator<T>) inner class Inner
+            }
+            @Deprecated("Use LegacyContextReceiverClass") @JvmInline context(LegacyLogger) value class LegacyContextReceiverValue(val value: Int)
+        """.trimIndent()
 
         // when
         val errors = parseErrors(toParsableKotlin(listing))

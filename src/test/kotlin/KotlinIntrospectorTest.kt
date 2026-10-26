@@ -1307,7 +1307,7 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve function types in arrow notation`() {
-        // KFunction1 and KSuspendFunction1 are function reference types, not function types
+        // KFunction1, KFunction0 and KSuspendFunction1 are function reference types, not function types
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.FunctionTypesSample",
             pageSize = 20
