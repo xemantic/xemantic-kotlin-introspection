@@ -68,6 +68,7 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 
 - kotlin-reflect reports a synthetic `@Deprecated("This member is not fully supported by Kotlin compiler, …")` on the JDK members of the built-in types newer than the mapped ones, like `String.strip()` or `describeConstable()`,
   mirroring the K1 warning; K2 rejects them outright, see `isUnsupportedByCompiler`.
+  The JDK members the compiler hides, like `Enum.getDeclaringClass()` or JDK 21 `List.reversed()`, kotlin-reflect lists with no marker at all — see `HIDDEN_JDK_METHODS`.
 
 ## Anti-patterns to avoid
 

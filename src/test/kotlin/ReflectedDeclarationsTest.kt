@@ -72,6 +72,50 @@ class ReflectedDeclarationsTest {
     }
 
     @Test
+    fun `should tell member whose annotations cannot be read unsupported by compiler`() {
+        // given - like a member which kotlin-reflect cannot describe, failing with KotlinReflectionInternalError
+        val toString: KFunction<String> = Any::toString
+        val unreadable = object : KFunction<String> by toString {
+            override val annotations: List<Annotation> get() = throw NoClassDefFoundError("Unreadable")
+        }
+
+        // when
+        val unsupported = isUnsupportedByCompiler(unreadable)
+
+        // then
+        assert(unsupported)
+    }
+
+    @Test
+    fun `should tell JVM member of built-in type which the compiler hides unsupported by compiler`() {
+        // given - kotlin-reflect lists Enum.getDeclaringClass() without telling that Kotlin hides it
+        val getDeclaringClass = Enum::class.memberFunctions.single { it.name == "getDeclaringClass" }
+
+        // when
+        val unsupported = isUnsupportedByCompiler(getDeclaringClass)
+
+        // then
+        assert(unsupported)
+    }
+
+    @Test
+    fun `should hide the JDK methods of the built-in types which the compiler hides`() {
+        // given - the hidden JDK methods of kotlin-reflect, the same as of the compiler, of the classes it does not leave out
+        val signatures = Class.forName("kotlin.reflect.jvm.internal.impl.builtins.jvm.JvmBuiltInsSignatures")
+        val instance = signatures.getField("INSTANCE").get(null)
+        val hidden = signatures.getMethod("getHIDDEN_METHOD_SIGNATURES").invoke(instance) as Set<*>
+
+        // when
+        val notFinal = hidden.filterIsInstance<String>().filter { signature ->
+            val className = signature.substringBefore('.').replace('/', '.')
+            !java.lang.reflect.Modifier.isFinal(Class.forName(className).modifiers)
+        }
+
+        // then
+        assert(notFinal.toSet() == HIDDEN_JDK_METHODS)
+    }
+
+    @Test
     fun `should render element type of Java vararg as nullable like its platform type`() {
         // given - Object... is seen in Kotlin as vararg of Any!, accepting null elements
         val format = JavaUnnamedParameters::class.memberFunctions.single { it.name == "format" }
