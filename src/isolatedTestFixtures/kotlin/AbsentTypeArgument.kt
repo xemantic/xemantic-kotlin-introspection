@@ -186,6 +186,14 @@ sealed interface KeywordSubclassSealed {
     class `in` : KeywordSubclassSealed
 }
 
+// tests leave the class Absent out, and fail reading this class file, so that its members cannot be reflected
+open class AbsentParameterHidden @Deprecated("replaced", level = DeprecationLevel.HIDDEN) constructor(absent: Absent) {
+    protected fun forSubclasses() {}
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    fun hidden(absent: Absent) {}
+    fun visible() {}
+}
+
 // tests leave the class file of the outer class out
 class MissingOuter {
     class Nested {

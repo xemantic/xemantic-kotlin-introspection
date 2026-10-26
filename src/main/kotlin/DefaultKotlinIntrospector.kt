@@ -28,6 +28,7 @@ import org.objectweb.asm.Opcodes
 import org.objectweb.asm.Type as AsmType
 import java.io.File
 import java.io.IOException
+import java.lang.reflect.AnnotatedElement
 import java.net.URI
 import java.net.URL
 import java.net.URLClassLoader
@@ -594,6 +595,17 @@ internal class DefaultKotlinIntrospector(
         // the flags reflected once, and only when the class file cannot be read, see reflectedClassFile
         val reflectedClassFile: ClassFile by lazy { reflectedClassFile(clazz) }
 
+        // the deprecations of the members reflected once, and only when needed, see reflectedMembersFile
+        private val reflectedMembersFile: ClassFile by lazy { reflectedMembersFile(clazz) }
+
+        // the ones of the DefaultImpls class of an interface, when its class file cannot be read either
+        private val reflectedDefaultImplsFile: ClassFile by lazy {
+            val defaultImpls = reflectedValue(default = null) {
+                Class.forName("$binaryName\$$DEFAULT_IMPLS", false, clazz?.classLoader ?: classLoader)
+            }
+            reflectedMembersFile(defaultImpls)
+        }
+
         /**
          * The deprecation of the class itself, read from its class file,
          * or reflected, when the class file cannot be read, see [reflectedClassFile].
@@ -626,18 +638,23 @@ internal class DefaultKotlinIntrospector(
         private val defaultImplsFileRead = FinalOnce { readClassFile("$binaryName\$$DEFAULT_IMPLS") }
 
         // the deprecation of a declaration of this class, see ClassFile, reflected when the class file cannot be read,
-        // see reflectedClassFile, like the one of a hidden constructor, telling whether the class can be subclassed
+        // see reflectedMembersFile, like the one of a hidden constructor, telling whether the class can be subclassed
 
-        override fun deprecation(function: KmFunction): Deprecation? = (classFile ?: reflectedClassFile).deprecation(function)
+        override fun deprecation(function: KmFunction): Deprecation? = (classFile ?: reflectedMembersFile).deprecation(function)
 
         override fun deprecation(constructor: KmConstructor): Deprecation? =
-            (classFile ?: reflectedClassFile).deprecation(constructor)
+            (classFile ?: reflectedMembersFile).deprecation(constructor)
 
         override fun deprecation(property: KmProperty): Deprecation? {
-            val classFile = classFile ?: return reflectedClassFile.deprecation(property)
-            // the synthetic method for the annotations of an interface property is rather in its DefaultImpls
-            val annotationsFile = if (classFile.hasAnnotationsInDefaultImpls(property)) defaultImplsFile else classFile
-            return classFile.deprecation(property, annotationsDeprecation = annotationsFile?.annotationsDeprecation(property))
+            val classFile = classFile ?: reflectedMembersFile
+            // the synthetic method for the annotations of an interface property is rather in its DefaultImpls,
+            // reflected as well when its class file cannot be read
+            val annotationsFile = if (classFile.hasAnnotationsInDefaultImpls(property)) {
+                defaultImplsFile ?: reflectedDefaultImplsFile
+            } else {
+                classFile
+            }
+            return classFile.deprecation(property, annotationsDeprecation = annotationsFile.annotationsDeprecation(property))
         }
 
         /**
@@ -878,33 +895,57 @@ internal class DefaultKotlinIntrospector(
     /**
      * The flags of a class whose class file cannot be read, like one an in-memory class loader does not serve,
      * reflected from the [clazz], if loaded: [Class.isSynthetic], reporting the flags of the `InnerClasses` attribute
-     * for a nested class, its deprecation, and the ones of its methods and constructors, see [reflectedDeprecation],
-     * each annotation read on its own, never failing the resolve.
+     * for a nested class, and its deprecation, see [reflectedDeprecationOf],
+     * but not the deprecations of its members, see [reflectedMembersFile], never failing the resolve.
      */
-    private fun reflectedClassFile(clazz: Class<*>?): ClassFile {
-        fun deprecationOf(element: java.lang.reflect.AnnotatedElement): Deprecation? = reflectedDeprecation(
-            listOfNotNull(
-                reflectedValue(default = null) { element.getAnnotation(Deprecated::class.java) },
-                reflectedValue(default = null) { element.getAnnotation(DeprecatedSinceKotlin::class.java) }
-            )
-        )
-        // by their JVM signatures, like the ones read from a class file, see ClassFile.deprecatedMethods,
-        // each member reflected on its own, while none of them is, when a type of any of them cannot be loaded
-        val methods = reflectedValue(default = emptyList()) { clazz?.declaredMethods.orEmpty().toList() }.map { method ->
+    private fun reflectedClassFile(clazz: Class<*>?): ClassFile = ClassFile(
+        metadata = null,
+        isSynthetic = clazz?.isSynthetic == true,
+        classDeprecation = clazz?.let { reflectedDeprecationOf(it) }
+    )
+
+    /**
+     * The deprecations of the methods and constructors of a class whose class file cannot be read, see [reflectedClassFile],
+     * reflected from the [clazz], if loaded, by their JVM signatures, like the ones read from a class file,
+     * see [ClassFile.deprecatedMethods], each member reflected on its own,
+     * while none of the methods, or of the constructors, is, when a type of any of them cannot be loaded,
+     * as the reflection loads the types of all of them at once, also to look one up by its parameter types,
+     * and, of an interface, the synthetic methods for the annotations of its properties, which it declares itself,
+     * see [ClassFile.hasAnnotationsInDefaultImpls].
+     */
+    private fun reflectedMembersFile(clazz: Class<*>?): ClassFile {
+        if (clazz == null) return ClassFile(metadata = null, isSynthetic = false)
+        val methods = reflectedValue(default = emptyList()) { clazz.declaredMethods.toList() }.map { method ->
             method to { method.name + AsmType.getMethodDescriptor(method) }
         }
-        val constructors = reflectedValue(default = emptyList()) { clazz?.declaredConstructors.orEmpty().toList() }.map {
+        val constructors = reflectedValue(default = emptyList()) { clazz.declaredConstructors.toList() }.map {
             constructor -> constructor to { "<init>" + AsmType.getConstructorDescriptor(constructor) }
         }
         return ClassFile(
             metadata = null,
-            isSynthetic = clazz?.isSynthetic == true,
-            classDeprecation = clazz?.let { deprecationOf(it) },
+            isSynthetic = clazz.isSynthetic,
+            isInterface = clazz.isInterface,
             deprecatedMethods = (methods + constructors).mapNotNull { (member, signature) ->
-                reflectedValue(default = null) { deprecationOf(member)?.let { signature() to it } }
-            }.toMap()
+                reflectedValue(default = null) { reflectedDeprecationOf(member)?.let { signature() to it } }
+            }.toMap(),
+            annotationsMethods = if (clazz.isInterface) {
+                methods.mapNotNullTo(HashSet()) { (method, signature) ->
+                    if (method.name.endsWith(ANNOTATIONS_METHOD_SUFFIX)) reflectedValue(default = null) { signature() } else null
+                }
+            } else emptySet()
         )
     }
+
+    /**
+     * The deprecation of a class, or of its member, reflected, see [reflectedDeprecation],
+     * each annotation read on its own.
+     */
+    private fun reflectedDeprecationOf(element: AnnotatedElement): Deprecation? = reflectedDeprecation(
+        listOfNotNull(
+            reflectedValue(default = null) { element.getAnnotation(Deprecated::class.java) },
+            reflectedValue(default = null) { element.getAnnotation(DeprecatedSinceKotlin::class.java) }
+        )
+    )
 
     /**
      * The lookups of the recently found classes by their binary names, also of the ones not found,
@@ -3692,15 +3733,14 @@ internal class DefaultKotlinIntrospector(
         // the same classes of the API as the ones resolved, see the apiClasses of the introspector,
         // where every class file of the classpath is read, or skipped, see ClasspathScanner.scan, before deciding it,
         // while an enclosing class might still be served by the class loader from elsewhere, read then on its own
-        val outsideScopes = HashMap<String, ClassScope?>()
+        val outsideClasses = HashMap<String, OutsideClass>()
+        // also when it cannot be read, or is absent, kept for the scan, read once by its metadata name
+        fun outsideClass(name: String): OutsideClass = outsideClasses.getOrPut(name) { readOutsideClass(binaryNameOf(name)) }
         val apiClasses = ApiClasses(
             scopeOf = { name ->
-                classes[name]?.scope ?: if (scanner.isScanned(binaryNameOf(name))) null else {
-                    // also when it cannot be read, kept as null
-                    if (name in outsideScopes) outsideScopes[name] else readClassScope(binaryNameOf(name)).also { outsideScopes[name] = it }
-                }
+                classes[name]?.scope ?: if (scanner.isScanned(binaryNameOf(name))) null else outsideClass(name).scope
             },
-            isAbsent = { name -> !scanner.isScanned(binaryNameOf(name)) && !classLoader.hasClassFile(binaryNameOf(name)) }
+            isAbsent = { name -> !scanner.isScanned(binaryNameOf(name)) && outsideClass(name).isAbsent }
         )
         val classesOfApi = classes.values.mapNotNull { indexedClass ->
             apiClasses.apiClass(indexedClass.locatedName)?.let { indexedClass to it }
@@ -3927,13 +3967,31 @@ internal class DefaultKotlinIntrospector(
     }
 
     /**
-     * The scope of the class of this JVM [binaryName], read from its class file served by the [classLoader],
-     * like one outside the classpath roots, see [scanClasspath], or `null` if it cannot be read, see [ClassScope].
+     * A class served by the [classLoader] outside the classpath roots, see [scanClasspath],
+     * of the [scope], or `null` if it cannot be read, see [ClassScope],
+     * and whether its class file [isAbsent], neither served, nor failing to be read with an `IOException`,
+     * like for the classes resolved, see [isAbsent].
      */
-    private fun readClassScope(binaryName: String): ClassScope? {
-        val classFile = readClassFile(binaryName, classLoader.readClassBytes(binaryName)) ?: return null
-        val kmClass = (classFile.metadata?.let(::parseMetadata) as? KotlinClassMetadata.Class)?.kmClass ?: return null
-        return classScope(kmClass, isUsableClass(kmClass, classFile), classFile) { locatedNameOf(binaryName, it) }
+    private class OutsideClass(val scope: ClassScope?, val isAbsent: Boolean)
+
+    /**
+     * Reads the class of this JVM [binaryName] from its class file served by the [classLoader], see [OutsideClass],
+     * once more right away after a failure which might be transient, an `IOException`,
+     * as a resolve does on its next attempt, see [readClassBytesOutcome], while the scan decides it once.
+     */
+    private fun readOutsideClass(binaryName: String): OutsideClass {
+        var failure: Exception? = null
+        val bytes = classLoader.readClassBytes(binaryName) { failure = it }
+            ?: if (failure is IOException) {
+                failure = null
+                classLoader.readClassBytes(binaryName) { failure = it }
+            } else null
+        val isAbsent = bytes == null && failure !is IOException
+        val classFile = readClassFile(binaryName, bytes) ?: return OutsideClass(scope = null, isAbsent)
+        val kmClass = (classFile.metadata?.let(::parseMetadata) as? KotlinClassMetadata.Class)?.kmClass
+            ?: return OutsideClass(scope = null, isAbsent)
+        val scope = classScope(kmClass, isUsableClass(kmClass, classFile), classFile) { locatedNameOf(binaryName, it) }
+        return OutsideClass(scope, isAbsent)
     }
 
     /**
