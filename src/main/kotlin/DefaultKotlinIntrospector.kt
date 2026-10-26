@@ -850,19 +850,20 @@ internal class DefaultKotlinIntrospector(
                 reflectedValue(default = null) { element.getAnnotation(DeprecatedSinceKotlin::class.java) }
             )
         )
-        // by their JVM signatures, like the ones read from a class file, see ClassFile.deprecatedMethods
-        val methods = reflectedValue(default = emptyList()) {
-            clazz?.declaredMethods.orEmpty().map { it to it.name + Type.getMethodDescriptor(it) }
+        // by their JVM signatures, like the ones read from a class file, see ClassFile.deprecatedMethods,
+        // each member reflected on its own, while none of them is, when a type of any of them cannot be loaded
+        val methods = reflectedValue(default = emptyList()) { clazz?.declaredMethods.orEmpty().toList() }.map { method ->
+            method to { method.name + Type.getMethodDescriptor(method) }
         }
-        val constructors = reflectedValue(default = emptyList()) {
-            clazz?.declaredConstructors.orEmpty().map { it to "<init>" + Type.getConstructorDescriptor(it) }
+        val constructors = reflectedValue(default = emptyList()) { clazz?.declaredConstructors.orEmpty().toList() }.map {
+            constructor -> constructor to { "<init>" + Type.getConstructorDescriptor(constructor) }
         }
         return ClassFile(
             metadata = null,
             isSynthetic = clazz?.isSynthetic == true,
             classDeprecation = clazz?.let { deprecationOf(it) },
             deprecatedMethods = (methods + constructors).mapNotNull { (member, signature) ->
-                deprecationOf(member)?.let { signature to it }
+                reflectedValue(default = null) { deprecationOf(member)?.let { signature() to it } }
             }.toMap()
         )
     }
@@ -3363,7 +3364,8 @@ internal class DefaultKotlinIntrospector(
         val apiClasses = ApiClasses(
             scopeOf = { name ->
                 classes[name]?.scope ?: if (scanner.isScanned(binaryNameOf(name))) null else {
-                    outsideScopes.computeIfAbsent(name) { readClassScope(binaryNameOf(it)) }
+                    // also when it cannot be read, kept as null
+                    if (name in outsideScopes) outsideScopes[name] else readClassScope(binaryNameOf(name)).also { outsideScopes[name] = it }
                 }
             },
             isAbsent = { name -> !scanner.isScanned(binaryNameOf(name)) && !classLoader.hasClassFile(binaryNameOf(name)) }

@@ -1020,7 +1020,9 @@ class ClassLoaderIntrospectionTest {
     @Test
     fun `should read class file again after a transient IOException, to hide the members deprecated as HIDDEN`() {
         // given
-        val target = "com.xemantic.kotlin.introspection.test.HiddenDeprecationTarget"
+        // the deprecations of the properties of an interface compiled without the JVM default methods are told
+        // only by the class files, of the interface and of its DefaultImpls, not by the reflection of the interface
+        val target = "com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsHiddenProperties"
         val classLoader = CountingClassLoader(javaClass.classLoader, unreadableOnce = setOf(target))
         val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
 
@@ -1028,9 +1030,8 @@ class ClassLoaderIntrospectionTest {
         val signatures = List(2) { introspector.resolve(target) }
 
         // then
-        // the deprecations are reflected while the class file cannot be read, and read from it once it can
-        assert(signatures[0] != null && "hiddenMember" !in signatures[0]!!)
-        assert(signatures[1] == signatures[0])
+        assert(signatures[0] != null && "val hiddenAbstract: Int" in signatures[0]!!)
+        assert(signatures[1] != null && "hiddenAbstract" !in signatures[1]!!)
         assert(classLoader.reads[target] == 2)
     }
 
