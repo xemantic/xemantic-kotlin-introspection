@@ -25,9 +25,12 @@ import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.nio.file.Files
 import java.nio.file.Path
+import java.util.jar.Attributes
 import java.util.jar.JarEntry
 import java.util.jar.JarOutputStream
+import java.util.jar.Manifest
 import kotlin.io.path.outputStream
 import kotlin.io.path.readBytes
 import kotlin.io.path.writeBytes
@@ -63,7 +66,7 @@ class ClasspathScanTest {
         // given
         // a class loader of a directory root does not serve the class versions, so that a class only in
         // META-INF/versions cannot be loaded by its name, neither from this jar, without Multi-Release: true
-        // in its manifest; the one of a multi-release jar does, which its scan, skipping META-INF, does not follow
+        // in its manifest, unlike from a multi-release jar, see the tests below
         val root = directoryRoot("classes", prefix = "META-INF/versions/9/")
         val jar = tempDir.resolve("versions.jar")
         JarOutputStream(jar.outputStream()).use { out ->
@@ -84,6 +87,111 @@ class ClasspathScanTest {
         assert(directoryScan.extensionIndex.isEmpty())
         assert(directoryScan.classIndex.isEmpty())
         directoryScan.indexDump() sameAs jarScan.indexDump()
+    }
+
+    /**
+     * A jar of the class [entries], by their paths, with `Multi-Release: true` in its manifest.
+     */
+    private fun multiReleaseJar(name: String, entries: List<Pair<String, ByteArray>>): Path =
+        tempDir.resolve(name).also { jar ->
+            val manifest = Manifest().apply {
+                mainAttributes[Attributes.Name.MANIFEST_VERSION] = "1.0"
+                mainAttributes[Attributes.Name.MULTI_RELEASE] = "true"
+            }
+            JarOutputStream(jar.outputStream(), manifest).use { out ->
+                entries.forEach { (path, bytes) ->
+                    out.putNextEntry(JarEntry(path))
+                    out.write(bytes)
+                    out.closeEntry()
+                }
+            }
+        }
+
+    @Test
+    fun `should index class versions of multi-release jar served by class loader without base entries`() {
+        // given
+        val jar = multiReleaseJar(
+            "multi-release.jar",
+            isolatedClassFiles.map { (path, file) -> "META-INF/versions/9/$path" to file.readBytes() }
+        )
+        val directoryScan = scan(directoryRoot("classes"))
+
+        // when
+        val jarScan = scan(jar)
+
+        // then
+        val (path, file) = isolatedClassFiles.first()
+        val served = rootsClassLoader(jar).use { loader -> loader.getResourceAsStream(path)?.use { it.readBytes() } }
+        assert(served contentEquals file.readBytes())
+        assert(jarScan.readClassFileCount == 2)
+        jarScan.indexDump() sameAs directoryScan.indexDump()
+    }
+
+    @Test
+    fun `should index class versions of multi-release jar served by class loader instead of base entries`() {
+        // given
+        // the base entries cannot be parsed, so that a class indexed from them is not
+        val jar = multiReleaseJar(
+            "multi-release.jar",
+            isolatedClassFiles.map { (path, _) -> path to ByteArray(64) } +
+                isolatedClassFiles.map { (path, file) -> "META-INF/versions/9/$path" to file.readBytes() }
+        )
+        val directoryScan = scan(directoryRoot("classes"))
+
+        // when
+        val jarScan = scan(jar)
+
+        // then
+        val (path, file) = isolatedClassFiles.first()
+        val served = rootsClassLoader(jar).use { loader -> loader.getResourceAsStream(path)?.use { it.readBytes() } }
+        assert(served contentEquals file.readBytes())
+        assert(jarScan.readClassFileCount == 2)
+        jarScan.indexDump() sameAs directoryScan.indexDump()
+    }
+
+    @Test
+    fun `should not index class versions of multi-release jar newer than running JDK`() {
+        // given
+        val newerVersion = Runtime.version().feature() + 1
+        val jar = multiReleaseJar(
+            "multi-release.jar",
+            isolatedClassFiles.map { (path, file) -> "META-INF/versions/$newerVersion/$path" to file.readBytes() }
+        )
+
+        // when
+        val scan = scan(jar)
+
+        // then
+        val (path, _) = isolatedClassFiles.first()
+        val served = rootsClassLoader(jar).use { loader -> loader.getResource(path) }
+        assert(served == null)
+        assert(scan.readClassFileCount == 0)
+        assert(scan.extensionIndex.isEmpty())
+        assert(scan.classIndex.isEmpty())
+    }
+
+    @Test
+    fun `should scan each directory of directory root once through symbolic link cycle`() {
+        // given
+        val root = directoryRoot("classes")
+        val directoryScan = scan(root)
+        // like pkg/loop -> .., reaching the package directory again through com/xemantic/.../isolated/loop/isolated
+        val link = root.resolve("$isolatedPackage/loop")
+        val isLinked = try {
+            Files.createSymbolicLink(link, link.parent.parent)
+            true
+        } catch (_: Exception) {
+            // like on Windows without the privilege to create symbolic links
+            false
+        }
+        assumeTrue(isLinked, "the symbolic link cannot be created")
+
+        // when
+        val scan = scan(root)
+
+        // then
+        assert(scan.readClassFileCount == 2)
+        scan.indexDump() sameAs directoryScan.indexDump()
     }
 
     @Test

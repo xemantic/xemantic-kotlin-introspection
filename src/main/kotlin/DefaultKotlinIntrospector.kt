@@ -38,6 +38,7 @@ import java.util.IdentityHashMap
 import java.util.concurrent.ConcurrentHashMap
 import java.util.jar.Attributes
 import java.util.jar.JarFile
+import java.util.zip.ZipFile
 import kotlin.metadata.*
 import kotlin.metadata.jvm.JvmMethodSignature
 import kotlin.metadata.jvm.KotlinClassMetadata
@@ -4686,13 +4687,21 @@ internal class DefaultKotlinIntrospector(
     /**
      * Scans the class files of the directory [root], one directory at a time, listing each of them once,
      * as the class files of a nested class are in the directory of its outer class, the one of their package.
-     * The `META-INF` directory is skipped, like in a jar, see [scanJarFile],
-     * as the class versions of a multi-release root are not loaded from a directory, see [JarFile.isMultiRelease].
+     * The `META-INF` directory is skipped, as the class versions of a multi-release root are loaded only from a jar,
+     * see [scanJarFile], and each directory is listed once, also when reached again through a symbolic link.
      */
     private fun scanDirectory(root: File, scanner: ClasspathScanner) {
+        // the canonical paths of the directories scanned, so that a symbolic link cycle, like pkg/loop -> .., is not followed
+        val visitedDirectories = mutableSetOf<File>()
         val directories = ArrayDeque(listOf(root))
         while (directories.isNotEmpty()) {
             val directory = directories.removeFirst()
+            val canonicalDirectory = try {
+                directory.canonicalFile
+            } catch (_: IOException) {
+                directory
+            }
+            if (!visitedDirectories.add(canonicalDirectory)) continue
             val (subdirectories, files) = directory.listFiles().orEmpty().partition { it.isDirectory }
             directories.addAll(if (directory == root) subdirectories.filter { it.name != "META-INF" } else subdirectories)
             scanner.scan(
@@ -4947,9 +4956,15 @@ internal class DefaultKotlinIntrospector(
      */
     private fun nestingDepth(path: String): Int = path.substringAfterLast('/').count { it == '$' }
 
+    /**
+     * Scans the class files of the [jarFile], the ones served by a class loader for the running JDK,
+     * which, for a multi-release jar, are the latest class versions not newer than it, see [JarFile.versionedStream],
+     * named by their base entries, while the other entries of the `META-INF` directory are skipped.
+     */
     private fun scanJarFile(jarFile: File, roots: ArrayDeque<File>, scanner: ClasspathScanner) {
         try {
-            JarFile(jarFile).use { jar ->
+            // opened like by a URLClassLoader
+            JarFile(jarFile, true, ZipFile.OPEN_READ, JarFile.runtimeVersion()).use { jar ->
                 // the Class-Path of a manifest, like the one of a pathing jar, also belongs to the classpath
                 jar.manifest?.mainAttributes?.getValue(Attributes.Name.CLASS_PATH)
                     ?.split(' ')
@@ -4962,8 +4977,8 @@ internal class DefaultKotlinIntrospector(
                         }
                     }
                 scanner.scan(
-                    jar.entries().asSequence()
-                        // skip the class versions of multi-release jars
+                    jar.versionedStream().iterator().asSequence()
+                        // the name of a class version is the one of its base entry, the real one being under META-INF
                         .filter { !it.name.startsWith("META-INF/") }
                         .filter { isIndexedClassFile(it.name.substringAfterLast('/')) }
                         .map { entry ->
