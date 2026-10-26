@@ -628,7 +628,7 @@ internal class DefaultKotlinIntrospector(
          * by its located name, see [located], telling its relocation, if any,
          * or `null` if it is not a Kotlin class, or its metadata cannot be read.
          */
-        val overrideOwner: OverrideResolver.Owner? get() = kmClass?.let { OverrideResolver.Owner(it, located(it.name)) }
+        val overrideOwner: OverrideResolver.Owner?
 
     }
 
@@ -744,6 +744,9 @@ internal class DefaultKotlinIntrospector(
         }
 
         override fun located(metadataName: String): String = locatedNameOf(binaryName, metadataName)
+
+        // made once, and only when needed, as it is needed for each member rendered
+        override val overrideOwner: OverrideResolver.Owner? by lazy { kmClass?.let { OverrideResolver.Owner(it, located(it.name)) } }
 
     }
 

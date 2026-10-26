@@ -682,8 +682,8 @@ internal class OverrideResolver(
      */
     private fun collectOverridables(owner: Owner): Overridables {
         val ownerClass = owner.kmClass
-        // the Java types, named by their JVM names, are relocated, unlike the types of the Kotlin metadata,
-        // so they are matched, and looked up, by the names the metadata refers to them by
+        // the Java types, named by their JVM names, might be relocated, unlike the types of the Kotlin metadata,
+        // so they are looked up, and matched, also by the names the metadata would refer to them by, see unlocated
         val relocation = owner.relocation
         val ownerSubstitution = ownerSubstitution(owner)
         // the JVM package, telling which package-private Java methods are visible, of the located name
@@ -781,7 +781,7 @@ internal class OverrideResolver(
                 val substitution = javaSubstitution(javaClass, supertype)
                 javaMethods(javaClass, ownerPackage, substitution).forEach { (name, method) ->
                     if (name !in declaration.hiddenJavaMethods) {
-                        functions.getOrPut(name) { mutableListOf() } += method.unlocated(relocation)
+                        functions.getOrPut(name) { mutableListOf() } += method.withUnlocated(relocation)
                     }
                 }
                 // the supertypes of a built-in type are known from its Kotlin declaration
@@ -794,7 +794,7 @@ internal class OverrideResolver(
                 val signature = classFile.signature?.let { genericClassSignature(it) }
                 val substitution = classFileSubstitution(signature, supertype)
                 asmMethods(classFile.methods, classFile.packageName, ownerPackage, substitution).forEach { (name, method) ->
-                    functions.getOrPut(name) { mutableListOf() } += method.unlocated(relocation)
+                    functions.getOrPut(name) { mutableListOf() } += method.withUnlocated(relocation)
                 }
                 classFileSupertypes(classFile, signature, substitution).forEach { pending += it.unlocated(relocation) }
             }
@@ -806,9 +806,10 @@ internal class OverrideResolver(
         return Overridables(ownerSubstitution, functions, properties, FinalOnce {
             // a transient failure is marked on this thread by the lookup failing, telling the caller not to cache
             val failureCount = transientFailures.count()
-            // the descriptors of a relocated class file are compared with the JVM signatures of its metadata, which are not
+            // the descriptors of a relocated class file, compared with the JVM signatures of its metadata, which are not,
+            // also as they are, as a type of a package starting like the relocation prefix might not be relocated
             val jvmMethods = jvmMethods(ownerName, hasDefaultImpls)?.let { methods ->
-                if (relocation == null) methods else methods.mapTo(HashSet()) { relocation.unlocatedDescriptor(it) }
+                if (relocation == null) methods else methods.flatMapTo(HashSet()) { listOf(it, relocation.unlocatedDescriptor(it)) }
             }
             TransientFailures.Outcome(jvmMethods, isFinal = transientFailures.count() == failureCount)
         })
@@ -1178,29 +1179,51 @@ internal class OverrideResolver(
     }
 
     /**
-     * This type of a Java member, or this Java supertype, named by its JVM name, which the [relocation] might have relocated,
-     * named by the name the Kotlin metadata refers to it by, see [Relocation.unlocated], like the types of the Kotlin members.
+     * This Java supertype, named by its JVM name, which the [relocation] might have relocated,
+     * named by the name the Kotlin metadata would refer to it by, see [Relocation.unlocated],
+     * which is safe, as it is looked up by its located name first, see [declaration],
+     * while its type arguments are kept, as a type of a package starting like the relocation prefix might not be relocated.
      */
-    private fun ClassType.unlocated(relocation: Relocation?): ClassType = if (relocation == null) this else copy(
-        name = relocation.unlocated(name),
-        arguments = arguments.map { it.copy(type = it.type.unlocatedType(relocation)) },
-        outer = outer?.unlocated(relocation)
-    )
+    private fun ClassType.unlocated(relocation: Relocation?): ClassType =
+        if (relocation == null) this else copy(name = relocation.unlocated(name))
 
-    private fun MemberType.unlocatedType(relocation: Relocation): MemberType = if (this is ClassType) unlocated(relocation) else this
+    private fun MemberType.unlocatedType(relocation: Relocation): MemberType = when (this) {
+        is ClassType -> copy(
+            name = relocation.unlocated(name),
+            arguments = arguments.map { it.copy(type = it.type.unlocatedType(relocation)) },
+            outer = outer?.unlocatedType(relocation) as ClassType?
+        )
+        else -> this
+    }
 
-    private fun Overridable.unlocated(relocation: Relocation?): Overridable = if (relocation == null) this else Overridable(
-        contexts = contexts.map { it.unlocatedType(relocation) },
-        receiver = receiver?.unlocatedType(relocation),
-        parameters = parameters.map { it.unlocatedType(relocation) },
-        typeParameterCount = typeParameterCount,
-        isJava = isJava,
-        isPlatform = isPlatform,
-        visibility = visibility,
-        declaresDefaultValues = declaresDefaultValues,
-        key = key,
-        javaKey = javaKey
-    )
+    /**
+     * This Java member, with its types named by their JVM names, followed by the same member with its types named
+     * by the names the Kotlin metadata would refer to them by, see [Relocation.unlocated], if any of them differs,
+     * so that it is matched either way, as a type of a package starting like the relocation prefix might not be relocated,
+     * like `com/google/gson/JsonElement` of a class relocated to `com/acme/probe` from `acme/probe`.
+     */
+    private fun Overridable.withUnlocated(relocation: Relocation?): List<Overridable> {
+        if (relocation == null) return listOf(this)
+        val contexts = contexts.map { it.unlocatedType(relocation) }
+        val receiver = receiver?.unlocatedType(relocation)
+        val parameters = parameters.map { it.unlocatedType(relocation) }
+        if (contexts == this.contexts && receiver == this.receiver && parameters == this.parameters) return listOf(this)
+        return listOf(
+            this,
+            Overridable(
+                contexts = contexts,
+                receiver = receiver,
+                parameters = parameters,
+                typeParameterCount = typeParameterCount,
+                isJava = isJava,
+                isPlatform = isPlatform,
+                visibility = visibility,
+                declaresDefaultValues = declaresDefaultValues,
+                key = key,
+                javaKey = javaKey
+            )
+        )
+    }
 
     private fun findDeclaration(name: String): Declaration {
         val builtinClass = builtinClasses()[name]
@@ -2147,7 +2170,11 @@ private fun KmType.memberKeyType(typeParameters: Map<Int, String>): String = bui
  * when the relocation prepends a [prefix] to the package, like `shaded/`, prepended to the other packages too,
  * while a class excluded from the relocation is still found by its metadata name, see `OverrideResolver`.
  */
-internal class Relocation private constructor(private val metadataPackage: String, private val locatedPackage: String) {
+internal class Relocation private constructor(
+    private val metadataPackage: String,
+    private val locatedPackage: String,
+    private val locatedBinaryName: String
+) {
 
     /**
      * The prefix prepended to the package, like `shaded/` of `shaded/com/example`, or `null` if the package is renamed.
@@ -2167,7 +2194,7 @@ internal class Relocation private constructor(private val metadataPackage: Strin
         val localPrefix = if (metadataName.startsWith('.')) "." else ""
         val name = metadataName.removePrefix(".")
         return when {
-            packageOf(name) == metadataPackage -> localPrefix + inPackage(locatedPackage, name)
+            packageOf(name) == metadataPackage -> locatedNameOf(locatedBinaryName, metadataName)
             prefix != null && !name.startsWith(prefix) -> localPrefix + prefix + name
             else -> null
         }
@@ -2181,7 +2208,10 @@ internal class Relocation private constructor(private val metadataPackage: Strin
         val localPrefix = if (locatedName.startsWith('.')) "." else ""
         val name = locatedName.removePrefix(".")
         return localPrefix + when {
-            packageOf(name) == locatedPackage -> inPackage(metadataPackage, name)
+            packageOf(name) == locatedPackage -> {
+                val simpleName = name.substringAfterLast('/')
+                if (metadataPackage.isEmpty()) simpleName else "$metadataPackage/$simpleName"
+            }
             prefix != null && name.startsWith(prefix) -> name.removePrefix(prefix)
             else -> name
         }
@@ -2198,11 +2228,6 @@ internal class Relocation private constructor(private val metadataPackage: Strin
         }
     }
 
-    private fun inPackage(packageName: String, name: String): String {
-        val simpleName = name.substringAfterLast('/')
-        return if (packageName.isEmpty()) simpleName else "$packageName/$simpleName"
-    }
-
     companion object {
 
         /**
@@ -2211,7 +2236,8 @@ internal class Relocation private constructor(private val metadataPackage: Strin
         fun of(metadataName: String, locatedName: String): Relocation? {
             val metadataPackage = packageOf(metadataName.removePrefix("."))
             val locatedPackage = packageOf(locatedName.removePrefix("."))
-            return if (metadataPackage == locatedPackage) null else Relocation(metadataPackage, locatedPackage)
+            return if (metadataPackage == locatedPackage) null
+            else Relocation(metadataPackage, locatedPackage, binaryNameOf(locatedName.removePrefix(".")))
         }
 
         private fun packageOf(name: String): String = name.substringBeforeLast('/', "")

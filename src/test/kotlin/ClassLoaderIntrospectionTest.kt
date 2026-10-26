@@ -270,6 +270,30 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should not take type of real package starting like relocation prefix for relocated one`() {
+        // given
+        // relocated to com/com/xemantic/…, so that the prefix com/ is the first segment of the packages not relocated,
+        // like com/xemantic/… of IsolatedTestClass and RelocatedHolder
+        val classFiles = arrayOf("RelocatedPrefixListener.class", "RelocatedPrefixListenerImpl.class")
+        val root = isolatedTestFixturesCopy("relocatedByPrefixOfRealPackage", *classFiles)
+        relocatedCopy(root, *classFiles, prefix = "com/")
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("com.com.xemantic.kotlin.introspection.isolated.RelocatedPrefixListenerImpl")
+
+        // then
+        // neither the parameter type of the Java method, nor the ones of the JVM methods, are taken for relocated ones
+        signature sameAsKotlin """
+            // com.com.xemantic.kotlin.introspection.isolated.RelocatedPrefixListenerImpl [page 1/1]
+            class RelocatedPrefixListenerImpl : com.xemantic.kotlin.introspection.isolated.RelocatedPrefixListener {
+                override fun on(value: com.xemantic.kotlin.introspection.isolated.IsolatedTestClass)
+                fun on(value: com.xemantic.kotlin.introspection.isolated.RelocatedHolder)
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should list member extensions of relocated object from its relocated name`() {
         // given
         val root = isolatedTestFixturesCopy("relocatedObject", "RelocatedExtensions.class")
@@ -355,20 +379,20 @@ class ClassLoaderIntrospectionTest {
 
     /**
      * A copy of the isolated test fixture class files named [fileNames], in the [root] directory,
-     * relocated to the `shaded` package, like by shading, which does not rewrite their Kotlin metadata,
+     * relocated to the package prepended with the [prefix], like by shading, which does not rewrite their Kotlin metadata,
      * while it rewrites the references to the relocated classes, see [withRelocatedNames],
      * the other classes referred to as they are.
      */
-    private fun relocatedCopy(root: Path, vararg fileNames: String) {
+    private fun relocatedCopy(root: Path, vararg fileNames: String, prefix: String = "shaded/") {
         val relocatedNames = fileNames.associate {
             val name = "com/xemantic/kotlin/introspection/isolated/${it.removeSuffix(".class")}"
-            name to "shaded/$name"
+            name to "$prefix$name"
         }
         fileNames.forEach { fileName ->
             val original = isolatedTestFixtures
                 .map { it.resolve("com/xemantic/kotlin/introspection/isolated/$fileName") }
                 .single { it.exists() }
-            val relocatedName = "shaded/com/xemantic/kotlin/introspection/isolated/${fileName.removeSuffix(".class")}"
+            val relocatedName = "${prefix}com/xemantic/kotlin/introspection/isolated/${fileName.removeSuffix(".class")}"
             val relocated = root.resolve("$relocatedName.class")
             relocated.parent.createDirectories()
             relocated.writeBytes(withRelocatedNames(original.readBytes(), relocatedNames::get))

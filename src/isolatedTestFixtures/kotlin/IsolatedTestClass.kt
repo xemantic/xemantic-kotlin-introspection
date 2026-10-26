@@ -87,3 +87,9 @@ class RelocatedListenerImpl : RelocatedListener {
     override fun on(event: RelocatedEvent) {}
     fun on(event: RelocatedOther) {}
 }
+
+// tests relocate it, like shading, together with the Java interface, but not the parameter types
+class RelocatedPrefixListenerImpl : RelocatedPrefixListener {
+    override fun on(value: IsolatedTestClass) {}
+    fun on(value: RelocatedHolder) {}
+}
