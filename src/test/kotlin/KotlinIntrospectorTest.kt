@@ -8157,6 +8157,17 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve function of JVM-only member signature with type argument substituted as not inheriting it`() {
+        // compiled against JDK 17, the addFirst(String) takes String on the JVM, not the Object of the erased E of java.util.List,
+        // still called instead of the addFirst(E) of JDK 21 on the class
+        assumeTrue(runCatching { List::class.java.getMethod("addFirst", Any::class.java) }.isSuccess, "JDK 21+")
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SequencedStringList.addFirst") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SequencedStringList.addFirst [page 1/1]
+            fun addFirst(element: String)
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve JVM-only member of mutable list`() {
         assumeNoParameterNames(List::class.java.getMethod("replaceAll", java.util.function.UnaryOperator::class.java))
         resolver.resolve("kotlin.collections.MutableList.replaceAll") sameAsKotlin """

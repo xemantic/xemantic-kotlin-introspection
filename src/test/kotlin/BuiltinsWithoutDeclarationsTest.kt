@@ -119,6 +119,20 @@ class BuiltinsWithoutDeclarationsTest {
     }
 
     @Test
+    fun `should not resolve parameterless Java-only member described by kotlin-reflect overridden in user class`() {
+        // when - fillInStackTrace() overrides the one of java.lang.Throwable
+        val signatures = introspector.resolve(
+            "com.xemantic.kotlin.introspection.test.StacklessException.fillInStackTrace"
+        )
+
+        // then
+        signatures should {
+            have(lines().any { it.endsWith("fun fillInStackTrace(): Throwable") })
+            have(lines().none { it.startsWith("// inherited from") })
+        }
+    }
+
+    @Test
     fun `should list extensions of companion object of built-in type described by kotlin-reflect`() {
         // given - the extensions are indexed by scanning the classpath
         val introspector = DefaultKotlinIntrospector(readBuiltinClasses = { emptyMap() })

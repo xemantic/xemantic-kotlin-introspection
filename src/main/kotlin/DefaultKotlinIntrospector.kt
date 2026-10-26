@@ -865,9 +865,9 @@ internal class DefaultKotlinIntrospector(
         /**
          * The functions of the JVM class only, not declared in the [kmClass], like `String.chars()`,
          * sorted by their signatures, as kotlin-reflect does not guarantee their order,
-         * also the Java-only ones, whose parameter names are not known, like `Throwable.initCause(arg0: Throwable?)`,
-         * see [hasSyntheticParameterNames], as Kotlin calls them all the same,
-         * and never lets a call to a Java method name its arguments anyway,
+         * also the Java-only ones, like `Throwable.initCause(arg0: Throwable?)`, or `Throwable.fillInStackTrace()`,
+         * which a built-in type described by kotlin-reflect leaves out of the [kmClass] too, see [toKmBuiltinClass],
+         * as Kotlin calls them all the same, and never lets a call to a Java method name its arguments anyway,
          * listed and resolved alike, unless hidden by an extension, see [jvmOnlyFunctionsNotHidden],
          * but the ones Kotlin does not call, like `String.indent(Int)`, see [isUnsupportedByCompiler].
          */
@@ -1910,6 +1910,8 @@ internal class DefaultKotlinIntrospector(
      * A qualified [memberName], like `Nested.member`, names no member, so the supertypes are not walked then.
      * The JVM-only members of a built-in supertype, see [BuiltinClass.jvmOnlyFunctions], and the members of a Java supertype,
      * are overridden like the Java members, see [OverrideResolver.overriddenJavaMembers], or by a function of the same JVM signature,
+     * or by a declared function of the same signature as rendered, with the type arguments of the supertypes substituted,
+     * like `addFirst(element: String)` of an `AbstractMutableList<String>` compiled against JDK 17, taking `String` on the JVM,
      * and a JVM-only member is never inherited when hidden by an extension, see [jvmOnlyFunctionsNotHidden],
      * while the extension called instead of a member, at least for some arguments, is added to the [hidingExtensions],
      * like `fun Throwable.addSuppressed(exception: Throwable)` for a subclass of `Exception`.
@@ -2095,7 +2097,14 @@ internal class DefaultKotlinIntrospector(
                 (candidate.member as? Member.Function)?.let { collectJavaOverrides(candidate.declarations.overrideOwner, it.declaration) }
             }
         }
+        // the signatures of the declared members, collected only when there are Java candidates, which they override
+        // when of the same signature as rendered, with the type arguments of the supertypes substituted,
+        // though neither the metadata, nor the JVM signature, of the declared function tells, like `addFirst(element: String)`
+        // of a subclass of `AbstractMutableList<String>` compiled against JDK 17, taking `String` on the JVM,
+        // not the `Object` of the erased `E` of `addFirst` of `java.util.List` since JDK 21,
+        // and the signatures of the declared overrides whose overridden members are not told, overriding any candidate alike
         val declaredSignatures = HashSet<String>()
+        val untoldOverrideSignatures = HashSet<String>()
         val owner = declarations.overrideOwner
         // also a hidden one, hiding the member it overrides, which cannot be called on the class either
         apiMembersIncludingHidden(kmClass, declarations, memberName, scope).map { it.member }.forEach { member ->
@@ -2104,13 +2113,20 @@ internal class DefaultKotlinIntrospector(
             }
             val keys = member.overridden(overrideResolver, owner)
             overridden += keys
-            if (keys.isEmpty() && member.isOverride(overrideResolver, owner)) {
-                declaredSignatures += member.signature(inheritingTypeParameters)
+            val isUntoldOverride = keys.isEmpty() && member.isOverride(overrideResolver, owner)
+            if (hasJavaCandidates || isUntoldOverride) {
+                val signature = member.signature(inheritingTypeParameters)
+                if (hasJavaCandidates) declaredSignatures += signature
+                if (isUntoldOverride) untoldOverrideSignatures += signature
             }
         }
+        // the declared signatures, of a Java candidate not hidden, include the ones of the untold overrides
         val survivors = candidates.filter {
-            !it.isHidden && it.key !in overridden && it.signature !in declaredSignatures &&
-                it.jvmMethod?.key !in overriddenJavaMembers && it.jvmMethod?.signature !in overridingJvmSignatures
+            !it.isHidden && it.key !in overridden && when (it.jvmMethod) {
+                null -> it.signature !in untoldOverrideSignatures
+                else -> it.jvmMethod.key !in overriddenJavaMembers && it.jvmMethod.signature !in overridingJvmSignatures &&
+                    it.signature !in declaredSignatures
+            }
         }
         // whether the member a wins over the merged member b, of a less specific return type, or else declared later
         fun wins(a: InheritedCandidate, aIndex: Int, b: InheritedCandidate, bIndex: Int): Boolean =

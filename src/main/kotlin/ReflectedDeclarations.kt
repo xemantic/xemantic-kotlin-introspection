@@ -57,10 +57,10 @@ import kotlin.reflect.typeOf
  * see [toKmBuiltinClass].
  * Only the exact positional name is matched, as real Kotlin names like `args` or `argument` are common.
  *
- * The parameter names are the only signal available here:
- * the Kotlin members of the built-in types are also backed by the same JDK methods,
+ * The Kotlin members of the built-in types are also backed by the same JDK methods,
  * so the presence of the parameter names in the Java reflection cannot tell them apart,
- * while their Kotlin names come from the built-in declarations.
+ * while their Kotlin names come from the built-in declarations,
+ * and a parameterless Java-only method is told by its signature instead, see [javaOnlyFunctions].
  */
 internal fun hasSyntheticParameterNames(function: KFunction<*>): Boolean =
     function.parameters.filter { it.kind == KParameter.Kind.VALUE }.withIndex().any { (position, parameter) ->
@@ -192,8 +192,8 @@ internal class ReflectedTypeParameters(private val ids: Map<String, Int>) {
  *
  * kotlin-reflect describes the JVM class, like `java.lang.String`, so that the declaration is approximate:
  * its supertypes are only the Kotlin ones, its members are the ones the JVM class declares,
- * but the ones whose parameter names are not known, like `initCause(arg0: Throwable?)`, see [hasSyntheticParameterNames],
- * which are Java-only, and left to the JVM-only members, like when the declarations of the built-ins are read,
+ * but the Java-only ones, see [javaOnlyFunctions], like `initCause(arg0: Throwable?)`, or `fillInStackTrace()`,
+ * left to the JVM-only members, like when the declarations of the built-ins are read,
  * so that they are hidden by extensions, and overridden, alike,
  * and the ones Kotlin does not call, see [isUnsupportedByCompiler],
  * and its constructors are the ones of the JVM class whose parameter names are known, like `String()`,
@@ -208,8 +208,10 @@ internal fun KClass<*>.toKmBuiltinClass(name: String): KmClass {
             .map { it.toKmType(typeParameters) }
     }
     val typeParameters = ReflectedTypeParameters.classTypeParameters(kmClass.typeParameters)
-    declaredMemberFunctions
-        .filter { '$' !in it.name && !hasSyntheticParameterNames(it) && !isUnsupportedByCompiler(it) }
+    val functions = declaredMemberFunctions.filter { '$' !in it.name && !isUnsupportedByCompiler(it) }
+    val javaOnly = javaOnlyFunctions(functions)
+    functions
+        .filter { it !in javaOnly }
         .mapTo(kmClass.functions) { function ->
             function.toKmFunction(typeParameters).also { it.modality = it.modality.finalIn(kmClass) }
         }
@@ -231,6 +233,35 @@ internal fun KClass<*>.toKmBuiltinClass(name: String): KmClass {
         }
     return kmClass
 }
+
+/**
+ * The Java-only ones of the [functions] of a built-in type described by kotlin-reflect, see [toKmBuiltinClass],
+ * which it does not tell apart from the ones the built-in type declares, both backed by the JDK methods:
+ * the ones whose parameter names are not known, like `initCause(arg0: Throwable?)`, see [hasSyntheticParameterNames],
+ * the ones referring to a platform type, like `fillInStackTrace(): Throwable!`, or to a Java class,
+ * like `stream(): java.util.stream.Stream<E>` of `Collection`, which no built-in declaration does,
+ * and the overloads of these, like `printStackTrace()`, as a built-in type never overloads a JDK method it does not map.
+ */
+private fun javaOnlyFunctions(functions: List<KFunction<*>>): Set<KFunction<*>> {
+    val javaOnly = functions.filterTo(HashSet()) { function ->
+        // a function whose types cannot be read is no built-in member, which always has readable types
+        hasSyntheticParameterNames(function) || reflectedValue(default = true) {
+            (function.parameters.filter { it.kind == KParameter.Kind.VALUE }.map { it.type } + function.returnType)
+                .any { it.refersToJavaType() }
+        }
+    }
+    val javaOnlyNames = javaOnly.mapTo(HashSet()) { it.name }
+    return functions.filterTo(javaOnly) { it.name in javaOnlyNames }
+}
+
+/**
+ * Whether this type, or one of its type arguments, is a platform type, see [isPlatformNullable], or a Java class,
+ * one not of the `kotlin.*` packages, see [javaOnlyFunctions].
+ */
+private fun KType.refersToJavaType(): Boolean =
+    isPlatformNullable ||
+        (classifier as? KClass<*>)?.qualifiedName?.startsWith("kotlin.") == false ||
+        arguments.any { it.type?.refersToJavaType() == true }
 
 /**
  * The declaration of this Java class in the Kotlin metadata, named like `java/util/ArrayList`, as kotlin-reflect describes it,
