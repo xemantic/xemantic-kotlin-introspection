@@ -71,6 +71,10 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 
 - Reflecting the members of a class one by one does not get around a missing parameter type, see `reflectedMembersFile`.
 
+- A Java method never shadows a same-named extension on a type parameter pinned to the class:
+  K2 picks the Java member for `leaf.linkTo(leaf)`, but `leaf.linkTo(next = leaf)` calls the extension, as a Java method takes no named argument —
+  so the extension stays listed, see `BoundedReceiverJavaLeaf`.
+
 ## Anti-patterns to avoid
 
 - Do not add content to this file that is already discoverable by reading the source or build scripts — that inflates context without adding signal, reducing AI agent task success rates (see [arxiv 2602.11988](https://arxiv.org/abs/2602.11988)).

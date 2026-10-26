@@ -68,7 +68,7 @@ import kotlin.metadata.jvm.Metadata as jvmMetadata
  */
 internal data class IndexedExtension(
     val function: KmFunction,
-    val sourceClass: String,  // fully qualified class name where it's defined
+    override val sourceClass: String,  // fully qualified class name where it's defined
     override val source: String,  // the package, or the object, to import it from
     val isObjectMember: Boolean,  // whether the source is an object
     val deprecation: Deprecation? = null,  // never a hidden one, as the hidden extensions are not indexed
@@ -100,6 +100,11 @@ internal sealed interface ReceiverBounded {
      */
     val source: String
 
+    /**
+     * The binary name of the class declaring it, like `com.example.UtilsKt`, or `com.example.Outer$Helpers` of an object.
+     */
+    val sourceClass: String
+
 }
 
 /**
@@ -107,7 +112,7 @@ internal sealed interface ReceiverBounded {
  */
 internal data class IndexedExtensionProperty(
     val property: KmProperty,
-    val sourceClass: String,  // fully qualified class name where it's defined
+    override val sourceClass: String,  // fully qualified class name where it's defined
     override val source: String,  // the package, or the object, to import it from
     val isObjectMember: Boolean,  // whether the source is an object
     val setterVisibility: Visibility?,  // when its setter can be called, see apiSetterVisibility
@@ -693,6 +698,19 @@ internal class DefaultKotlinIntrospector(
         }
 
         /**
+         * The type parameters and the supertypes of this class, if it is a loaded Java class, without Kotlin metadata,
+         * as kotlin-reflect describes them, see [toKmJavaClassHeader], without describing its members, unlike [javaClass],
+         * or `null` if kotlin-reflect cannot describe them.
+         */
+        val javaClassHeader: KmClass? by lazy {
+            clazz?.takeIf { metadataAnnotation == null }?.let { clazz ->
+                reflectedValue(default = null) {
+                    clazz.kotlin.toKmJavaClassHeader(kotlinClassName(clazz), ::javaSupertypeMetadataName)
+                }
+            }
+        }
+
+        /**
          * The `DefaultImpls` class file of an interface, or of an annotation class, holding the synthetic methods
          * for the annotations of its properties, unless compiled with `-jvm-default=no-compatibility`,
          * read only when needed, and again after a failure which might be transient, see [FinalOnce].
@@ -1043,11 +1061,7 @@ internal class DefaultKotlinIntrospector(
      */
     private fun reflectedJavaClass(clazz: Class<*>): JavaClass? = reflectedValue(default = null) {
         val kClass = clazz.kotlin
-        val kmClass = kClass.toKmJavaClassHeader(kotlinClassName(clazz)) { supertype ->
-            overrideResolver.builtinNameOfJavaClass(supertype.name)
-                ?: functionTypeOfJvmInterface(supertype.name.replace('.', '/'))
-                ?: kotlinClassName(supertype)
-        }
+        val kmClass = kClass.toKmJavaClassHeader(kotlinClassName(clazz), ::javaSupertypeMetadataName)
         val typeParameters = ReflectedTypeParameters.classTypeParameters(kmClass.typeParameters)
         // kotlin-reflect tells no visibility of a protected Java member, which is also visible within its package
         fun Visibility.orProtected(modifiers: Int?): Visibility =
@@ -1453,8 +1467,9 @@ internal class DefaultKotlinIntrospector(
         isBuiltin: Boolean = false
     ): MemberListing? {
         val contextPackage = contextPackageOf(declarations, kmClass)
-        // like in the listing of the class, also the extensions a built-in type lists in its body, with their receivers
-        val listedExtensions = listedExtensions(kmClass, className, apiClass, declarations, isBuiltin).let { listed ->
+        // like in the listing of the class, also the extensions a built-in type lists in its body, with their receivers,
+        // only the ones of the name, which alone can hide its JVM-only members of the name, see jvmOnlyFunctionsNotHidden
+        val listedExtensions = listedExtensions(kmClass, className, apiClass, declarations, isBuiltin, memberName).let { listed ->
             // Kotlin reports the deprecation of a companion object also for its extensions called on its name,
             // like Foo.Companion.of(), which, resolved directly, unlike in its listing, are not rendered under its header
             val deprecation = declarations.classDeprecation.takeIf { kmClass.kind == ClassKind.COMPANION_OBJECT }
@@ -1489,8 +1504,8 @@ internal class DefaultKotlinIntrospector(
         )
 
         val extensions = extensionSignatures(
-            (listedExtensions.functions.filter { it.function.name == memberName } + hidingExtensions).distinct(),
-            listedExtensions.properties.filter { it.property.name == memberName },
+            (listedExtensions.functions + hidingExtensions).distinct(),
+            listedExtensions.properties,
             contextPackage
         )
         return MemberListing.of(
@@ -2166,13 +2181,16 @@ internal class DefaultKotlinIntrospector(
      *
      * @param apiClass the [kmClass] as a class of the API.
      * @param declarations the declarations of the [kmClass], telling its members, which shadow the extensions.
+     * @param memberName the name of the only extensions to tell, like for [resolveMember], or `null` for all of them,
+     *   filtered by name first, not to tell whether each of the others can be called.
      */
     private fun listedExtensions(
         kmClass: KmClass,
         className: String,
         apiClass: ApiClass,
         declarations: ClassDeclarations,
-        isBuiltin: Boolean
+        isBuiltin: Boolean,
+        memberName: String? = null
     ): ListedExtensions {
         val companion = extendedCompanionOf(kmClass, className, apiClass, declarations)
         val companionName = companion?.name
@@ -2202,9 +2220,12 @@ internal class DefaultKotlinIntrospector(
                 // only the ones of the standard library, like on the other types of the standard library, see userSupertypes,
                 // and of the package of the class, like next to it, but not the ones of the other libraries,
                 // while the ones with multiple bounds, satisfied by the class, are already listed
+                // also the ones of an object of the package, imported from it, told by the JVM package of their class,
+                // like the one of the class
                 val classPackage = contextPackageOf(declarations, kmClass)
                 fun ReceiverBounded.isListed() =
-                    (isBuiltinExtension || source == classPackage) && receiverBounds.all { it in satisfiedBounds }
+                    (isBuiltinExtension || sourceClass.substringBeforeLast('.', "") == classPackage) &&
+                        receiverBounds.all { it in satisfiedBounds }
                 ListedExtensions(
                     (listed.functions + extensionIndex[COMPARABLE_CLASS_NAME].orEmpty().filter { it.isListed() }).distinct(),
                     (listed.properties + extensionPropertyIndex[COMPARABLE_CLASS_NAME].orEmpty().filter { it.isListed() }).distinct()
@@ -2215,12 +2236,14 @@ internal class DefaultKotlinIntrospector(
         }
         val callable = ListedExtensions(
             listed.functions.filter { extension ->
-                extension.function.receiverParameterType
-                    ?.let { supertypes.isCallableOn(it, extension.function.typeParameters) } != false
+                (memberName == null || extension.function.name == memberName) &&
+                    extension.function.receiverParameterType
+                        ?.let { supertypes.isCallableOn(it, extension.function.typeParameters) } != false
             },
             listed.properties.filter { extension ->
-                extension.property.receiverParameterType
-                    ?.let { supertypes.isCallableOn(it, extension.property.typeParameters) } != false
+                (memberName == null || extension.property.name == memberName) &&
+                    extension.property.receiverParameterType
+                        ?.let { supertypes.isCallableOn(it, extension.property.typeParameters) } != false
             }
         )
         val builtinClass = declarations as? BuiltinClass
@@ -2546,7 +2569,8 @@ internal class DefaultKotlinIntrospector(
      * A function type, like `suspend () -> Unit`, is named by its function type class,
      * like `kotlin.coroutines.SuspendFunction0`, see [receiverIndexKeys], and has the supertype `kotlin.Function`.
      *
-     * @param types when given, receives the supertypes told by the Kotlin metadata, by their names,
+     * @param types when given, receives the supertypes told by the Kotlin metadata, or by the generic signatures
+     *   of the Java supertypes, see [javaSupertypeTypes], by their names,
      *   with the type arguments substituted down to the [kmClass], see [ClassSupertypes.types].
      */
     private fun supertypeNames(
@@ -2595,8 +2619,9 @@ internal class DefaultKotlinIntrospector(
                 val substitution = if (isClassItself) emptyMap() else type?.let { substitutionOf(supertypeKmClass, it) }
                 visitSupertypes(supertypeKmClass.supertypes, substitution)
             } else {
+                val javaTypes = if (types != null) javaSupertypeTypes(supertypeName, type) else emptyMap()
                 javaSupertypeNames(supertypeName).forEach { (name, supertypeMetadataName) ->
-                    visit(name, supertypeMetadataName, type = null)
+                    visit(name, supertypeMetadataName, type = javaTypes[name])
                 }
             }
             isClassItself = false
@@ -2617,11 +2642,38 @@ internal class DefaultKotlinIntrospector(
         // each one on its own, not to lose the others when one of them cannot be reflected
         return supertypes.mapNotNull { supertype ->
             reflectedValue(default = null) {
-                val supertypeMetadataName = overrideResolver.builtinNameOfJavaClass(supertype.name)
-                    ?: functionTypeOfJvmInterface(supertype.name.replace('.', '/'))
-                    ?: kotlinClassName(supertype)
+                val supertypeMetadataName = javaSupertypeMetadataName(supertype)
                 supertypeMetadataName.replace('/', '.') to supertypeMetadataName
             }
+        }
+    }
+
+    /**
+     * The metadata name of a supertype of a Java class, like `kotlin/collections/MutableList` of `java.util.List`,
+     * see [OverrideResolver.builtinNameOfJavaClass], or `kotlin/Function1` of `kotlin.jvm.functions.Function1`.
+     */
+    private fun javaSupertypeMetadataName(supertype: Class<*>): String =
+        overrideResolver.builtinNameOfJavaClass(supertype.name)
+            ?: functionTypeOfJvmInterface(supertype.name.replace('.', '/'))
+            ?: kotlinClassName(supertype)
+
+    /**
+     * The direct supertypes of the Java class of the given [metadataName], which has no Kotlin metadata, reached by the [type],
+     * by their names, like [javaSupertypeNames], with the type arguments told by its generic signature,
+     * see [FoundClass.javaClassHeader], and the ones of the [type] substituted for its type parameters,
+     * like `Comparable<Base>` of `class Base implements Comparable<Base>`,
+     * the types they give, as platform types, matching either nullability, see [isNullabilityMatched],
+     * or none, when its type arguments are not known, like of a raw type.
+     */
+    private fun javaSupertypeTypes(metadataName: String, type: KmType?): Map<String, KmType> {
+        val header = findClassByMetadataName(metadataName)?.javaClassHeader ?: return emptyMap()
+        val substitution = when {
+            header.typeParameters.isEmpty() -> emptyMap()
+            type == null -> return emptyMap()
+            else -> substitutionOf(header, type) ?: return emptyMap()
+        }
+        return header.supertypes.associate { supertype ->
+            receiverIndexKeys(supertype).single() to supertype.substituted(substitution).withPlatformArguments()
         }
     }
 
@@ -2648,7 +2700,8 @@ internal class DefaultKotlinIntrospector(
      * @property names the names of all its supertypes, also the ones from `kotlin.*` and `java.*` packages,
      *   unlike the [userSupertypes], telling whether the class satisfies the multiple bounds of a type parameter receiver,
      *   see [receiverBoundsOf].
-     * @property types the supertypes told by the Kotlin metadata, by their names, with the type arguments of the class,
+     * @property types the supertypes told by the Kotlin metadata, or by the generic signatures of the Java supertypes,
+     *   see [javaSupertypeTypes], by their names, with the type arguments of the class,
      *   like `Comparable<User>` of `class User : Entity<User>()`, where `abstract class Entity<E> : Comparable<E>`,
      *   telling whether an extension listed by its receiver name can be called on the class, see [isCallableOn],
      *   while a type parameter of the class, in its type arguments, stands for any type.
@@ -2660,12 +2713,23 @@ internal class DefaultKotlinIntrospector(
          */
         val supertypeNamesOfSupertypes = HashMap<String, Set<String>>()
 
+        /**
+         * The supertypes of the supertypes of the class told by the Kotlin metadata, by their metadata names,
+         * like [types], see [supertypeTypesOf].
+         */
+        val supertypeTypesOfSupertypes = HashMap<String, Map<String, KmType>>()
+
     }
 
+    /**
+     * The supertypes of the [kmClass], also the ones which the JVM classes of its built-in supertypes add,
+     * see [jvmSupertypeNamesOfBuiltins], like `java.io.Serializable` of `kotlin.Throwable`, or of `kotlin.String`.
+     */
     private fun supertypesOf(kmClass: KmClass): ClassSupertypes {
         val types = HashMap<String, KmType>()
         val names = supertypeNames(kmClass, kmClassOf = { builtinClasses[it] ?: loadKmClass(it) }, types = types)
-        return ClassSupertypes(kmClass, names, types)
+        val name = kmClass.name.replace('/', '.')
+        return ClassSupertypes(kmClass, names + jvmSupertypeNamesOfBuiltins(names + name), types)
     }
 
     /**
@@ -2675,7 +2739,7 @@ internal class DefaultKotlinIntrospector(
      * like `coerceAtLeast`, which are few and widely used, unlike the generic extensions
      * on the other types of the standard library, see [userSupertypes].
      * Told by the Kotlin metadata of the class and of its supertypes, see [ClassSupertypes.types],
-     * not through a Java supertype, whose type arguments are not known.
+     * or by the generic signature of a Java supertype, like `class Base implements Comparable<Base>`, see [javaSupertypeTypes].
      * An enum class, comparable to itself through `kotlin.Enum`, is not told to be,
      * as these extensions are rarely called on the enum entries, and would grow the listing of every enum class.
      */
@@ -2710,18 +2774,41 @@ internal class DefaultKotlinIntrospector(
      * also of a Java class, without the Kotlin metadata, told by its JVM class,
      * and the ones the JVM classes of the built-in types among them add, see [jvmSupertypeNamesOfBuiltins].
      */
-    private fun ClassSupertypes.supertypeNamesOf(metadataName: String): Set<String> =
-        supertypeNamesOfSupertypes.getOrPut(metadataName) {
-            val known = if (metadataName == kmClass.name) {
-                names
-            } else {
-                supertypeNames(metadataName, kmClassOf = { builtinClasses[it] ?: loadKmClass(it) }).ifEmpty {
-                    // a loaded Java interface without superinterfaces, like java.lang.Runnable, is still known
-                    if (findClassByMetadataName(metadataName)?.clazz != null) setOf(ANY_RECEIVER_KEY) else emptySet()
-                }
+    private fun ClassSupertypes.supertypeNamesOf(metadataName: String): Set<String> {
+        if (metadataName == kmClass.name) return names
+        return supertypeNamesOfSupertypes.getOrPut(metadataName) {
+            val types = HashMap<String, KmType>()
+            supertypeTypesOfSupertypes[metadataName] = types
+            val known = supertypeNames(metadataName, kmClassOf = { builtinClasses[it] ?: loadKmClass(it) }, types).ifEmpty {
+                // a loaded Java interface without superinterfaces, like java.lang.Runnable, is still known
+                if (findClassByMetadataName(metadataName)?.clazz != null) setOf(ANY_RECEIVER_KEY) else emptySet()
             }
             known + jvmSupertypeNamesOfBuiltins(known + metadataName.replace('/', '.'))
         }
+    }
+
+    /**
+     * The supertypes of the class of the given [metadataName] told by the Kotlin metadata, by their names,
+     * with the type arguments of the class, see [ClassSupertypes.types].
+     */
+    private fun ClassSupertypes.supertypeTypesOf(metadataName: String): Map<String, KmType> {
+        if (metadataName == kmClass.name) return types
+        supertypeNamesOf(metadataName)
+        return supertypeTypesOfSupertypes[metadataName].orEmpty()
+    }
+
+    /**
+     * The supertype of the [type] of the class of the given [supertypeName], with the type arguments of the [type],
+     * like `Comparable<String>` of `String`, or `null` if it is not told, see [ClassSupertypes.types],
+     * like of a supertype reached through a raw Java type, or cannot be substituted, like for a star projection.
+     */
+    private fun ClassSupertypes.supertypeOf(type: KmType, supertypeName: String): KmType? {
+        val name = (type.classifier as? KmClassifier.Class)?.name ?: return null
+        val supertype = supertypeTypesOf(name)[supertypeName.replace('/', '.')] ?: return null
+        val declaration = if (name == kmClass.name) kmClass else builtinClasses[name] ?: loadKmClass(name) ?: return null
+        if (declaration.typeParameters.isEmpty()) return supertype
+        return substitutionOf(declaration, type)?.let { supertype.substituted(it) }
+    }
 
     /**
      * The names of the supertypes which the JVM classes of the built-in types of the given [names] add
@@ -2767,8 +2854,9 @@ internal class DefaultKotlinIntrospector(
      * A type parameter receiver stands for the class, like `T` of `T : Comparable<T>`,
      * or else for its supertype, which satisfies all the bounds, like `User` of `T : Entity<T>` for `class Admin : User()`,
      * where `class User : Entity<User>()`, told by the type arguments of the bounds.
-     * Only what is told by the Kotlin metadata is matched, any other extension can be called,
-     * like on a supertype reached through a Java class, or on a type parameter whose other bounds are not checked.
+     * Only what is told by the Kotlin metadata, or by the generic signatures of the Java supertypes, is matched,
+     * any other extension can be called, like on a supertype reached through a raw Java type,
+     * or on a type parameter whose other bounds are not checked.
      */
     private fun ClassSupertypes.isCallableOn(receiver: KmType, typeParameters: List<KmTypeParameter>): Boolean =
         when (val classifier = receiver.classifier) {
@@ -2819,7 +2907,7 @@ internal class DefaultKotlinIntrospector(
 
     /**
      * Matches the types of an extension, declaring the [typeParameters], against the types of the supertypes of a class,
-     * see [isCallableOn], inferring its type parameters from the first type matched against each of them,
+     * see [isCallableOn], inferring its type parameters from the types matched against each of them, see [infer],
      * and the type parameter receiver of the [receiverTypeParameterId] standing for the class of the metadata name [self].
      */
     private inner class ReceiverMatcher(
@@ -2831,7 +2919,8 @@ internal class DefaultKotlinIntrospector(
 
         private val typeParameterIds = typeParameters.mapTo(HashSet()) { it.id }
 
-        private val inferred = HashMap<Int, Pair<KmType, KmVariance>>()
+        // the classes each type parameter is inferred from, by their metadata names, with the variances of their positions
+        private val inferred = HashMap<Int, MutableList<Pair<String, KmVariance>>>()
 
         /**
          * Whether the class of the type parameter receiver is a subtype of the [bound].
@@ -2872,6 +2961,7 @@ internal class DefaultKotlinIntrospector(
         /**
          * Whether the [expected] type of the extension matches the [actual] one of a supertype of the class:
          * the same, or, in a covariant position, a supertype of it, in a contravariant one, a subtype of it,
+         * of the type arguments matched as well, see [supertypeOf],
          * while a type parameter of the class stands for any type, other than the class itself.
          */
         private fun matches(expected: KmType, actual: KmType, variance: KmVariance): Boolean {
@@ -2888,8 +2978,7 @@ internal class DefaultKotlinIntrospector(
                         isNullabilityMatched(expected, actual, variance) && when (variance) {
                             KmVariance.INVARIANT -> actualClassifier.name == self
                             KmVariance.IN -> supertypes.isSubclass(self, actualClassifier.name)
-                            // the class is not told to be a subtype of the actual type
-                            KmVariance.OUT -> true
+                            KmVariance.OUT -> supertypes.isSubclass(actualClassifier.name, self)
                         }
                     in typeParameterIds -> infer(classifier.id, actual, variance)
                     else -> true
@@ -2898,10 +2987,17 @@ internal class DefaultKotlinIntrospector(
                     isNullabilityMatched(expected, actual, variance) && if (classifier.name == actualClassifier.name) {
                         argumentsMatch(classifier.name, expected.arguments, actual.arguments, variance)
                     } else {
+                        // the type arguments of the supertype matched, like the String of Comparable<String> of String
                         when (variance) {
                             KmVariance.INVARIANT -> false
-                            KmVariance.OUT -> supertypes.isSubclass(actualClassifier.name, classifier.name)
-                            KmVariance.IN -> supertypes.isSubclass(classifier.name, actualClassifier.name)
+                            KmVariance.OUT -> supertypes.isSubclass(actualClassifier.name, classifier.name) &&
+                                supertypes.supertypeOf(actual, classifier.name)?.let { supertype ->
+                                    argumentsMatch(classifier.name, expected.arguments, supertype.arguments, variance)
+                                } != false
+                            KmVariance.IN -> supertypes.isSubclass(classifier.name, actualClassifier.name) &&
+                                supertypes.supertypeOf(expected, actualClassifier.name)?.let { supertype ->
+                                    argumentsMatch(actualClassifier.name, supertype.arguments, actual.arguments, variance)
+                                } != false
                         }
                     }
                 is KmClassifier.TypeAlias -> true
@@ -2910,28 +3006,27 @@ internal class DefaultKotlinIntrospector(
 
         /**
          * Infers the type parameter of the given [id] from the [actual] type in a position of the given [variance],
-         * or tells whether it can be, once inferred from another one: when either of them is invariant,
-         * the other one is its subtype in a covariant position, its supertype in a contravariant one.
+         * telling whether it can be, given the types it is inferred from in the other positions:
+         * a subtype of each type in a contravariant position, or an invariant one,
+         * and a supertype of each type in a covariant position, or an invariant one,
+         * like not `T` of `Pair<in A, out B>` for `Pair<String, Any>`, a subtype of `String`, and a supertype of `Any`,
+         * while the types in the positions of the same variance can be the type parameter inferred
+         * as their common supertype, or subtype.
          */
         private fun infer(id: Int, actual: KmType, variance: KmVariance): Boolean {
-            val (inferredType, inferredVariance) = inferred[id] ?: run {
-                inferred[id] = actual to variance
-                return true
+            val name = (actual.classifier as? KmClassifier.Class)?.name ?: return true
+            val others = inferred.getOrPut(id) { mutableListOf() }
+            val isInferred = others.all { (other, otherVariance) ->
+                if (variance == KmVariance.INVARIANT && otherVariance == KmVariance.INVARIANT) {
+                    name == other
+                } else {
+                    // a subtype of the other one, unless either of them is contravariant, or covariant, respectively
+                    (variance == KmVariance.IN || otherVariance == KmVariance.OUT || supertypes.isSubclass(name, other)) &&
+                        (variance == KmVariance.OUT || otherVariance == KmVariance.IN || supertypes.isSubclass(other, name))
+                }
             }
-            if (variance == KmVariance.INVARIANT) inferred[id] = actual to variance
-            val (type, otherType, otherVariance) = when {
-                inferredVariance == KmVariance.INVARIANT -> Triple(inferredType, actual, variance)
-                variance == KmVariance.INVARIANT -> Triple(actual, inferredType, inferredVariance)
-                // both can be the type parameter inferred as their common supertype, or subtype
-                else -> return true
-            }
-            val name = (type.classifier as? KmClassifier.Class)?.name ?: return true
-            val otherName = (otherType.classifier as? KmClassifier.Class)?.name ?: return true
-            return when (otherVariance) {
-                KmVariance.INVARIANT -> name == otherName
-                KmVariance.OUT -> supertypes.isSubclass(otherName, name)
-                KmVariance.IN -> supertypes.isSubclass(name, otherName)
-            }
+            others += name to variance
+            return isInferred
         }
 
     }
@@ -6021,10 +6116,31 @@ private fun KmVariance.compose(inner: KmVariance): KmVariance = when {
  * Whether the nullability of the [expected] type matches the one of the [actual] type in a position of the [variance],
  * like a nullable one in a covariant position, which is a supertype of the not nullable one.
  */
-private fun isNullabilityMatched(expected: KmType, actual: KmType, variance: KmVariance): Boolean = when (variance) {
-    KmVariance.INVARIANT -> expected.isNullable == actual.isNullable
-    KmVariance.OUT -> expected.isNullable || !actual.isNullable
-    KmVariance.IN -> actual.isNullable || !expected.isNullable
+private fun isNullabilityMatched(expected: KmType, actual: KmType, variance: KmVariance): Boolean = when {
+    // a platform type of Java, see withPlatformArguments
+    actual.flexibleTypeUpperBound != null -> true
+    variance == KmVariance.INVARIANT -> expected.isNullable == actual.isNullable
+    variance == KmVariance.OUT -> expected.isNullable || !actual.isNullable
+    else -> actual.isNullable || !expected.isNullable
+}
+
+/**
+ * This type, a supertype told by a Java class, with its type arguments as the platform types of Java,
+ * like `Comparable<Base!>`, flexible from not nullable to nullable, see [isNullabilityMatched].
+ */
+private fun KmType.withPlatformArguments(): KmType = KmType().also { type ->
+    type.classifier = classifier
+    type.isNullable = isNullable
+    arguments.mapTo(type.arguments) { argument ->
+        val argumentType = argument.type ?: return@mapTo argument
+        KmTypeProjection(argument.variance, argumentType.withPlatformArguments().also { platformType ->
+            if (platformType.classifier is KmClassifier.Class) {
+                platformType.flexibleTypeUpperBound = KmFlexibleTypeUpperBound(
+                    platformType.withPlatformArguments().also { it.isNullable = true }, typeFlexibilityId = null
+                )
+            }
+        })
+    }
 }
 
 /**

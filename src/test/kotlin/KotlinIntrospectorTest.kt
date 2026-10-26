@@ -3388,14 +3388,31 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should erase type parameter of raw built-in supertype of Java class to its bound`() {
+        // the raw Comparable, of Kotlin, a Comparable<Any?>, satisfies the bound T : Comparable<T>, like any Comparable<X>
         resolver.resolve(
-            "com.xemantic.kotlin.introspection.test.JavaRawComparableSubclass"
+            "com.xemantic.kotlin.introspection.test.JavaRawComparableSubclass",
+            pageSize = 1000
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.JavaRawComparableSubclass [page 1/1]
             abstract class JavaRawComparableSubclass : com.xemantic.kotlin.introspection.test.other.JavaRawComparable {
                 override operator fun compareTo(other: Any?): Int
                 fun compareTo(other: String): Int
             }
+            // from com.xemantic.kotlin.introspection.test
+            fun Comparable<Int>.comparedToZero(): Int
+            fun <E : Comparable<in E>> E.isBetween(low: E, high: E): Boolean
+            // from com.xemantic.kotlin.introspection.test.BoundedReceiverComparisons
+            fun Comparable<BoundedReceiverVersion>.isNewerThan(version: BoundedReceiverVersion): Boolean
+            // from kotlin
+            inline infix fun <T> Comparable<T>.compareTo(other: T): Int
+            // from kotlin.ranges
+            fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T): T
+            fun <T : Comparable<T>> T.coerceAtMost(maximumValue: T): T
+            fun <T : Comparable<T>> T.coerceIn(minimumValue: T?, maximumValue: T?): T
+            fun <T : Comparable<T>> T.coerceIn(range: ClosedFloatingPointRange<T>): T
+            fun <T : Comparable<T>> T.coerceIn(range: ClosedRange<T>): T
+            operator fun <T : Comparable<T>> T.rangeTo(that: T): ClosedRange<T>
+            operator fun <T : Comparable<T>> T.rangeUntil(that: T): OpenEndRange<T>
         """.trimIndent()
     }
 
@@ -5397,9 +5414,10 @@ class KotlinIntrospectorTest {
     @Test
     fun `should resolve class comparable to itself with stdlib extensions on Comparable`() {
         // unlike the other generic extensions of the standard library, few and widely used,
-        // next to the ones of its own package, but not the ones of another package, like isAtLeast
+        // next to the ones of its own package, also of its objects, but not the ones of another package, like isAtLeast
         resolver.resolve(
-            "com.xemantic.kotlin.introspection.test.BoundedReceiverVersion"
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverVersion",
+            pageSize = 1000
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.BoundedReceiverVersion [page 1/1]
             class BoundedReceiverVersion(val major: Int) : Comparable<BoundedReceiverVersion> {
@@ -5408,6 +5426,8 @@ class KotlinIntrospectorTest {
             }
             // from com.xemantic.kotlin.introspection.test
             fun <E : Comparable<in E>> E.isBetween(low: E, high: E): Boolean
+            // from com.xemantic.kotlin.introspection.test.BoundedReceiverComparisons
+            fun Comparable<BoundedReceiverVersion>.isNewerThan(version: BoundedReceiverVersion): Boolean
             // from kotlin
             inline infix fun <T> Comparable<T>.compareTo(other: T): Int
             // from kotlin.ranges
@@ -5675,6 +5695,125 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.test.BoundedReceiverRunnables [page 1/1]
             class BoundedReceiverRunnables : BoundedReceiverSource<java.lang.Runnable>
         """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extension on type parameter with self-referential bound of covariant supertype of type argument`() {
+        // a BoundedReceiverChain<Any> is not a BoundedReceiverChain<BoundedReceiverChainOfAny>, nor is Any a BoundedReceiverChain
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverChainOfAny"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverChainOfAny [page 1/1]
+            class BoundedReceiverChainOfAny : BoundedReceiverChain<Any>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extension on type parameter with self-referential bound of covariant subtype type argument`() {
+        // a BoundedReceiverChain<BoundedReceiverChainLink> is a BoundedReceiverChain<BoundedReceiverChainBase>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverChainBase"
+        ) should {
+            have("fun <T : BoundedReceiverChain<T>> T.chain()" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve class with extension on type parameter with self-referential bound satisfied by its supertype of covariant type argument`() {
+        // T is inferred as BoundedReceiverChainBase
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverChainLink"
+        ) should {
+            have("fun <T : BoundedReceiverChain<T>> T.chain()" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve class without extension inferring type parameter from contravariant subtype and covariant supertype type arguments`() {
+        // T would have to be a subtype of String, and a supertype of Any
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverStringToAny"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverStringToAny [page 1/1]
+            class BoundedReceiverStringToAny : BoundedReceiverPair<String, Any>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extension inferring type parameter from contravariant supertype and covariant subtype type arguments`() {
+        // T can be inferred as String, or Any
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverAnyToString"
+        ) should {
+            have("fun <T> BoundedReceiverPair<T, T>.samePair()" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve class without extension on covariant supertype of type argument of other type arguments`() {
+        // String is a Comparable<String>, but not a Comparable<java.io.File>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverComparableStrings"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverComparableStrings [page 1/1]
+            class BoundedReceiverComparableStrings : BoundedReceiverComparables<String>
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverComparables<Comparable<String>>.firstComparableString()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve subclass of Throwable with extension on type parameter bounded by its JVM supertype`() {
+        // kotlin.Throwable is a java.io.Serializable on the JVM
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverThrowable"
+        ) should {
+            have("fun <T> T.boundedByAAndSerializable() where T : BoundedReceiverA, T : java.io.Serializable" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve enum class with extension on type parameter bounded by JVM supertype of Enum`() {
+        // kotlin.Enum is a java.io.Serializable on the JVM
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverEnum"
+        ) should {
+            have("fun <T> T.boundedByAAndSerializable() where T : BoundedReceiverA, T : java.io.Serializable" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve class comparable to itself with extension on Comparable of object of its package`() {
+        // imported from the object, like import com.xemantic.kotlin.introspection.test.BoundedReceiverComparisons.isNewerThan
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverVersion.isNewerThan"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverVersion.isNewerThan [page 1/1]
+            // from com.xemantic.kotlin.introspection.test.BoundedReceiverComparisons
+            fun Comparable<BoundedReceiverVersion>.isNewerThan(version: BoundedReceiverVersion): Boolean
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension on type parameter pinned to class next to same-named method of its Java supertype`() {
+        // the Java method is called by leaf.linkTo(leaf), but takes no named argument, unlike the extension
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverJavaLeaf.linkTo"
+        ) should {
+            have("fun <N : BoundedReceiverNode<N>> N.linkTo(next: N): N" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve class comparable to its Java supertype with stdlib extensions on Comparable`() {
+        // T is inferred as JavaComparableBase, a Comparable<JavaComparableBase>, told by its generic signature
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverJavaComparable"
+        ) should {
+            have("fun <E : Comparable<in E>> E.isBetween(low: E, high: E): Boolean" in lines())
+            have("fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T): T" in lines())
+            have("fun <T : Comparable<T>> T.coerceAtMost(maximumValue: T): T" in lines())
+        }
     }
 
     @Test
