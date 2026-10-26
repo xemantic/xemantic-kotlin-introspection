@@ -25,9 +25,13 @@ import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.nio.file.FileSystemException
+import java.nio.file.Files
 import java.nio.file.Path
+import java.util.jar.Attributes
 import java.util.jar.JarEntry
 import java.util.jar.JarOutputStream
+import java.util.jar.Manifest
 import kotlin.io.path.outputStream
 import kotlin.io.path.readBytes
 import kotlin.io.path.writeBytes
@@ -59,11 +63,11 @@ class ClasspathScanTest {
     }
 
     @Test
-    fun `should not index class files of multi-release versions of directory root, like of jar root`() {
+    fun `should not index class files of multi-release versions of directory root, like of jar root without Multi-Release attribute`() {
         // given
         // a class loader of a directory root does not serve the class versions, so that a class only in
         // META-INF/versions cannot be loaded by its name, neither from this jar, without Multi-Release: true
-        // in its manifest; the one of a multi-release jar does, which its scan, skipping META-INF, does not follow
+        // in its manifest, unlike from a multi-release jar, see the tests below
         val root = directoryRoot("classes", prefix = "META-INF/versions/9/")
         val jar = tempDir.resolve("versions.jar")
         JarOutputStream(jar.outputStream()).use { out ->
@@ -84,6 +88,155 @@ class ClasspathScanTest {
         assert(directoryScan.extensionIndex.isEmpty())
         assert(directoryScan.classIndex.isEmpty())
         directoryScan.indexDump() sameAs jarScan.indexDump()
+    }
+
+    /**
+     * A jar of the class [entries], by their paths, with `Multi-Release: true` in its manifest.
+     */
+    private fun multiReleaseJar(vararg entries: List<Pair<String, ByteArray>>): Path =
+        tempDir.resolve("multi-release.jar").also { jar ->
+            val manifest = Manifest().apply {
+                mainAttributes[Attributes.Name.MANIFEST_VERSION] = "1.0"
+                mainAttributes[Attributes.Name.MULTI_RELEASE] = "true"
+            }
+            JarOutputStream(jar.outputStream(), manifest).use { out ->
+                entries.toList().flatten().forEach { (path, bytes) ->
+                    out.putNextEntry(JarEntry(path))
+                    out.write(bytes)
+                    out.closeEntry()
+                }
+            }
+        }
+
+    /**
+     * The entries of the isolated class files under the [prefix], like `META-INF/versions/9/`,
+     * either [intact], or ones which cannot be parsed, so that a class indexed from them is not.
+     */
+    private fun isolatedEntries(prefix: String = "", intact: Boolean = true): List<Pair<String, ByteArray>> =
+        isolatedClassFiles.map { (path, file) -> prefix + path to if (intact) file.readBytes() else ByteArray(64) }
+
+    /**
+     * Asserts that the class loader serves the intact isolated class files from the [jar],
+     * which are the only ones indexed by the [jarScan], like from a directory root of them.
+     */
+    private fun assertIndexedAsServed(jar: Path, jarScan: DefaultKotlinIntrospector.ClasspathScan) {
+        val (path, file) = isolatedClassFiles.first()
+        val served = rootsClassLoader(jar).use { loader -> loader.getResourceAsStream(path)?.use { it.readBytes() } }
+        assert(served contentEquals file.readBytes())
+        assert(jarScan.readClassFileCount == 2)
+        jarScan.indexDump() sameAs scan(directoryRoot("classes")).indexDump()
+    }
+
+    @Test
+    fun `should index class versions of multi-release jar served by class loader without base entries`() {
+        // given
+        val jar = multiReleaseJar(isolatedEntries("META-INF/versions/9/"))
+
+        // when
+        val scan = scan(jar)
+
+        // then
+        assertIndexedAsServed(jar, scan)
+    }
+
+    @Test
+    fun `should index class versions of multi-release jar served by class loader instead of base entries`() {
+        // given
+        val jar = multiReleaseJar(isolatedEntries(intact = false), isolatedEntries("META-INF/versions/9/"))
+
+        // when
+        val scan = scan(jar)
+
+        // then
+        assertIndexedAsServed(jar, scan)
+    }
+
+    @Test
+    fun `should index latest class versions of multi-release jar not newer than running JDK`() {
+        // given
+        val runningVersion = Runtime.version().feature()
+        val jar = multiReleaseJar(
+            isolatedEntries(intact = false),
+            isolatedEntries("META-INF/versions/9/", intact = false),
+            isolatedEntries("META-INF/versions/$runningVersion/"),
+            isolatedEntries("META-INF/versions/${runningVersion + 1}/", intact = false)
+        )
+
+        // when
+        val scan = scan(jar)
+
+        // then
+        assertIndexedAsServed(jar, scan)
+    }
+
+    @Test
+    fun `should index base entries of multi-release jar instead of class versions newer than running JDK`() {
+        // given
+        val jar = multiReleaseJar(
+            isolatedEntries(),
+            isolatedEntries("META-INF/versions/${Runtime.version().feature() + 1}/", intact = false)
+        )
+
+        // when
+        val scan = scan(jar)
+
+        // then
+        assertIndexedAsServed(jar, scan)
+    }
+
+    /**
+     * Creates the symbolic [link] to the [target], unless it cannot be created, like on Windows without the privilege.
+     */
+    private fun assumeSymbolicLink(link: Path, target: Path) {
+        val isLinked = try {
+            Files.createSymbolicLink(link, target)
+            true
+        } catch (_: UnsupportedOperationException) {
+            false
+        } catch (_: SecurityException) {
+            false
+        } catch (_: FileSystemException) {
+            false
+        }
+        assumeTrue(isLinked, "the symbolic link cannot be created")
+    }
+
+    @Test
+    fun `should scan each directory of directory root once through symbolic link cycle`() {
+        // given
+        val root = directoryRoot("classes")
+        val directoryScan = scan(root)
+        // like pkg/loop -> .., reaching the package directory again through com/xemantic/.../isolated/loop/isolated
+        val link = root.resolve("$isolatedPackage/loop")
+        assumeSymbolicLink(link, link.parent.parent)
+
+        // when
+        val scan = scan(root)
+
+        // then
+        assert(scan.readClassFileCount == 2)
+        scan.indexDump() sameAs directoryScan.indexDump()
+    }
+
+    @Test
+    fun `should shadow class of next root by class file reached also through shallower symbolic link`() {
+        // given
+        // the class file, which cannot be parsed, is reached first through the alias, by a name it is not loaded by,
+        // and then by its own name, under which it shadows the intact one of the next root, like for the class loader
+        val path = "$isolatedPackage/IsolatedTestClass.class"
+        val first = tempDir.resolve("first")
+        first.resolve(path).toFile().apply { parentFile.mkdirs() }.writeBytes(ByteArray(4))
+        assumeSymbolicLink(first.resolve("alias"), first.resolve(isolatedPackage))
+        val second = directoryRoot("second")
+
+        // when
+        val scan = scan(first, second)
+
+        // then
+        val served = rootsClassLoader(first, second).use { loader -> loader.getResourceAsStream(path)?.use { it.readBytes() } }
+        assert(served?.size == 4)
+        assert(scan.extensionIndex.values.flatten().map { it.function.name } == listOf("isolatedExtension"))
+        assert(scan.classIndex["isolatedtestclass"] == null)
     }
 
     @Test
