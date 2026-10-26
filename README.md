@@ -122,7 +122,8 @@ com.example.AnnotationTestClass
   or the ones on a projected receiver whose parameters would read narrower in the body than they are,
   like `fun <T> MutableCollection<in T>.plusAssign(elements: Array<T>)`, taking an array of any subtype of `E`,
   unlike `plusAssign(elements: Iterable<E>)`, read the same in the body of `interface MutableCollection<E>`.
-  Only the extensions of the public `kotlin.*` packages are listed for the built-in types.
+  Only the extensions of the public `kotlin.*` packages are listed for the built-in types,
+  but the ones of any library on their companion objects, like `fun Int.Companion.serializer()` of kotlinx.serialization.
   When the `.kotlin_builtins` resources cannot be read, like when the standard library is a named module,
   whose resources are encapsulated, a warning is logged, and the built-in types are described by `kotlin-reflect` instead,
   approximately, from their JVM types, without their companion objects, and without the mutable collection types,

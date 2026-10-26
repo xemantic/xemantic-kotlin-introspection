@@ -1406,7 +1406,10 @@ internal class DefaultKotlinIntrospector(
      * For a built-in type, or its companion object, when [isBuiltin],
      * only the ones of the public `kotlin.*` packages, see [isPublicKotlinPackageSource],
      * on the class and on all its supertypes, except `Any`, also the ones from the `kotlin.*` packages,
-     * whose extensions are, after all, the ones of the standard library.
+     * whose extensions are, after all, the ones of the standard library,
+     * but the ones of any library on the companion object itself, like `fun Int.Companion.serializer()`
+     * of kotlinx.serialization, as there are few of them, each extending that very type.
+
      * For any other class, all of them, on the class and its [userSupertypes], see [extensionReceiverNames],
      * not to flood its listing with the generic extensions of the standard library.
      * Either way, the ones on a type parameter with multiple bounds only when the class satisfies all of them,
@@ -1428,9 +1431,13 @@ internal class DefaultKotlinIntrospector(
                 it != "kotlin.Any"
             }
             val listed = extensionsListedFor(listOf(className) + supertypeNames, supertypeNames + className)
+            // a library extends the companion object of a built-in type only deliberately, like with serializer()
+            val isCompanion = kmClass.kind == ClassKind.COMPANION_OBJECT
+            fun isListed(sourceClass: String, receiver: KmType?) = isPublicKotlinPackageSource(sourceClass) ||
+                (isCompanion && (receiver?.classifier as? KmClassifier.Class)?.name == kmClass.name)
             ListedExtensions(
-                listed.functions.filter { isPublicKotlinPackageSource(it.sourceClass) },
-                listed.properties.filter { isPublicKotlinPackageSource(it.sourceClass) }
+                listed.functions.filter { isListed(it.sourceClass, it.function.receiverParameterType) },
+                listed.properties.filter { isListed(it.sourceClass, it.property.receiverParameterType) }
             )
         } else {
             extensionsListedFor(extensionReceiverNames(kmClass, className), satisfiedBoundsOf(kmClass, className))

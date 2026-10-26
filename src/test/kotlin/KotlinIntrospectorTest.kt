@@ -7049,6 +7049,25 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve companion object of built-in type with the extensions of any library`() {
+        // a library extends the companion object of a built-in type deliberately, like kotlinx.serialization,
+        // unlike the built-in type itself, whose extensions of the other libraries are not listed
+        resolver.resolve("kotlin.Int.Companion", pageSize = 1000) should {
+            have("// from kotlinx.serialization.builtins" in lines())
+            have("fun Int.Companion.serializer(): kotlinx.serialization.KSerializer<Int>" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve extension of companion object of built-in type from any library`() {
+        resolver.resolve("kotlin.UInt.Companion.serializer") sameAsKotlin """
+            // kotlin.UInt.Companion.serializer [page 1/1]
+            // from kotlinx.serialization.builtins
+            fun UInt.Companion.serializer(): kotlinx.serialization.KSerializer<UInt>
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve member of companion object of built-in type`() {
         resolver.resolve(
             "kotlin.Int.Companion.MAX_VALUE"
