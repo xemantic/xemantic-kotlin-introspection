@@ -46,7 +46,7 @@ class KotlinIntrospectorTest {
         resolver.resolve(
             "kotlin.String"
         ) sameAsKotlin """
-            // kotlin.String [page 1/42]
+            // kotlin.String [page 1/43]
             class String : Comparable<String>, CharSequence {
                 inline fun byteInputStream(charset: java.nio.charset.Charset = …): java.io.ByteArrayInputStream
                 @Deprecated("Use replaceFirstChar instead.", ReplaceWith("replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }")) fun capitalize(): String
@@ -69,7 +69,7 @@ class KotlinIntrospectorTest {
             "kotlin.String",
             page = 2
         ) sameAsKotlin """
-            // kotlin.String [page 2/42]
+            // kotlin.String [page 2/43]
             class String : Comparable<String>, CharSequence {
                 inline fun contentEquals(charSequence: CharSequence): Boolean
                 inline fun contentEquals(stringBuilder: java.lang.StringBuffer): Boolean
@@ -92,7 +92,7 @@ class KotlinIntrospectorTest {
             "kotlin.String",
             page = 3
         ) sameAsKotlin """
-            // kotlin.String [page 3/42]
+            // kotlin.String [page 3/43]
             class String : Comparable<String>, CharSequence {
                 fun encodeToByteArray(startIndex: Int = …, endIndex: Int = …, throwOnInvalidSequence: Boolean = …): ByteArray
                 fun endsWith(suffix: String, ignoreCase: Boolean = …): Boolean
@@ -102,24 +102,21 @@ class KotlinIntrospectorTest {
                 inline fun filterNot(predicate: (Char) -> Boolean): String
                 inline fun format(vararg args: Any?): String
                 inline fun format(locale: java.util.Locale?, vararg args: Any?): String
+                @Deprecated("This member is not fully supported by Kotlin compiler, so it may be absent or have different signature in next major version") fun formatted(vararg arg0: Any?): String
                 override operator fun get(index: Int): Char
-                fun hexToByte(format: HexFormat = …): Byte
             }
         """.trimIndent()
     }
 
     @Test
-    fun `should resolve String as known stdlib class - page 18 (transition page with members and extensions)`() {
-        // page 18 shows the last class members, the companion object, and the first extensions
+    fun `should resolve String as known stdlib class - page 19 (transition page with members and extensions)`() {
+        // page 19 shows the last class members, the companion object, and the first extensions
         resolver.resolve(
             "kotlin.String",
-            page = 18
+            page = 19
         ) sameAsKotlin """
-            // kotlin.String [page 18/42]
+            // kotlin.String [page 19/43]
             class String : Comparable<String>, CharSequence {
-                inline fun trimStart(predicate: (Char) -> Boolean): String
-                fun trimStart(vararg chars: Char): String
-                inline fun trimStart(): String
                 inline fun uppercase(): String
                 inline fun uppercase(locale: java.util.Locale): String
                 companion object
@@ -130,21 +127,21 @@ class KotlinIntrospectorTest {
             fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T): T
             fun <T : Comparable<T>> T.coerceAtMost(maximumValue: T): T
             fun <T : Comparable<T>> T.coerceIn(minimumValue: T?, maximumValue: T?): T
+            fun <T : Comparable<T>> T.coerceIn(range: ClosedFloatingPointRange<T>): T
+            fun <T : Comparable<T>> T.coerceIn(range: ClosedRange<T>): T
+            operator fun <T : Comparable<T>> T.rangeTo(that: T): ClosedRange<T>
         """.trimIndent()
     }
 
     @Test
-    fun `should resolve String as known stdlib class - page 42 (the last)`() {
+    fun `should resolve String as known stdlib class - the last page`() {
         // extension-only pages omit the empty class body
         resolver.resolve(
             "kotlin.String",
-            page = 42
+            page = 43
         ) sameAsKotlin """
-            // kotlin.String [page 42/42]
+            // kotlin.String [page 43/43]
             // from kotlin.text
-            fun <R> CharSequence.windowedSequence(size: Int, step: Int = …, partialWindows: Boolean = …, transform: (CharSequence) -> R): Sequence<R>
-            fun CharSequence.withIndex(): Iterable<IndexedValue<Char>>
-            infix fun CharSequence.zip(other: CharSequence): List<Pair<Char, Char>>
             inline fun <V> CharSequence.zip(other: CharSequence, transform: (a: Char, b: Char) -> V): List<V>
             fun CharSequence.zipWithNext(): List<Pair<Char, Char>>
             inline fun <R> CharSequence.zipWithNext(transform: (a: Char, b: Char) -> R): List<R>
@@ -187,6 +184,7 @@ class KotlinIntrospectorTest {
                 inline fun filterNot(predicate: (Char) -> Boolean): String
                 inline fun format(vararg args: Any?): String
                 inline fun format(locale: java.util.Locale?, vararg args: Any?): String
+                @Deprecated("This member is not fully supported by Kotlin compiler, so it may be absent or have different signature in next major version") fun formatted(vararg arg0: Any?): String
                 override operator fun get(index: Int): Char
                 fun hexToByte(format: HexFormat = …): Byte
                 fun hexToByteArray(format: HexFormat = …): ByteArray
@@ -198,6 +196,9 @@ class KotlinIntrospectorTest {
                 inline fun hexToUInt(format: HexFormat = …): UInt
                 inline fun hexToULong(format: HexFormat = …): ULong
                 inline fun hexToUShort(format: HexFormat = …): UShort
+                @Deprecated("This member is not fully supported by Kotlin compiler, so it may be absent or have different signature in next major version") fun indent(arg0: Int): String
+                @Deprecated("This member is not fully supported by Kotlin compiler, so it may be absent or have different signature in next major version") fun indexOf(arg0: Int, arg1: Int, arg2: Int): Int
+                @Deprecated("This member is not fully supported by Kotlin compiler, so it may be absent or have different signature in next major version") fun indexOf(arg0: String?, arg1: Int, arg2: Int): Int
                 inline fun intern(): String
                 fun isLocalClassName(): Boolean
                 override val length: Int
@@ -235,9 +236,11 @@ class KotlinIntrospectorTest {
                 fun replaceIndentByMargin(newIndent: String = …, marginPrefix: String = …): String
                 inline fun replaceRange(startIndex: Int, endIndex: Int, replacement: CharSequence): String
                 inline fun replaceRange(range: IntRange, replacement: CharSequence): String
+                @Deprecated("This member is not fully supported by Kotlin compiler, so it may be absent or have different signature in next major version") fun resolveConstantDesc(arg0: java.lang.invoke.MethodHandles.Lookup?): String
                 inline fun reversed(): String
                 fun slice(indices: IntRange): String
                 inline fun slice(indices: Iterable<Int>): String
+                @Deprecated("This member is not fully supported by Kotlin compiler, so it may be absent or have different signature in next major version") fun splitWithDelimiters(arg0: String?, arg1: Int): Array<String>
                 fun startsWith(prefix: String, ignoreCase: Boolean = …): Boolean
                 fun startsWith(prefix: String, startIndex: Int, ignoreCase: Boolean = …): Boolean
                 @Deprecated("This member is not fully supported by Kotlin compiler, so it may be absent or have different signature in next major version") fun strip(): String
@@ -320,6 +323,7 @@ class KotlinIntrospectorTest {
                 fun toUShortOrNull(radix: Int): UShort?
                 @Deprecated("Use uppercase() instead.", ReplaceWith("uppercase(Locale.getDefault())"), level = DeprecationLevel.ERROR) inline fun toUpperCase(): String
                 @Deprecated("Use uppercase() instead.", ReplaceWith("uppercase(locale)"), level = DeprecationLevel.ERROR) inline fun toUpperCase(locale: java.util.Locale): String
+                @Deprecated("This member is not fully supported by Kotlin compiler, so it may be absent or have different signature in next major version") fun <R> transform(arg0: java.util.function.Function<in String, out R>?): R
                 @Deprecated("This member is not fully supported by Kotlin compiler, so it may be absent or have different signature in next major version") fun translateEscapes(): String
                 inline fun trim(predicate: (Char) -> Boolean): String
                 fun trim(vararg chars: Char): String
@@ -3334,6 +3338,8 @@ class KotlinIntrospectorTest {
             // kotlin.collections.AbstractCollection.toArray [page 1/1]
             protected open fun toArray(): Array<Any?>
             protected open fun <T> toArray(array: Array<T>): Array<T>
+            // inherited from kotlin.collections.Collection
+            @Deprecated("This member is not fully supported by Kotlin compiler, so it may be absent or have different signature in next major version") open fun <T> toArray(arg0: java.util.function.IntFunction<Array<T>>?): Array<T>
         """.trimIndent()
     }
 
@@ -5146,33 +5152,54 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should not resolve Java-only member of built-in type which its listing leaves out`() {
-        // the JDK is compiled without parameter names, so String.indent(arg0: Int) tells nothing about its parameter
+    fun `should resolve Java-only member of built-in type with synthetic parameter names`() {
+        // the JDK is compiled without parameter names, which Kotlin does not let a call to a Java method name anyway,
+        // and String.indent is newer than the members mapped to kotlin.String, so the compiler warns about it
         assumeNoParameterNames(String::class.java.getMethod("indent", Int::class.java))
-        assert(resolver.resolve("kotlin.String.indent") == null)
+        resolver.resolve("kotlin.String.indent") sameAsKotlin """
+            // kotlin.String.indent [page 1/1]
+            @Deprecated("This member is not fully supported by Kotlin compiler, so it may be absent or have different signature in next major version") fun indent(arg0: Int): String
+        """.trimIndent()
     }
 
     @Test
-    fun `should resolve extension of built-in type without Java-only member of the same name`() {
-        // not with the addSuppressed(arg0: Throwable) of java.lang.Throwable, which the listing leaves out
+    fun `should list Java-only members of built-in type with synthetic parameter names`() {
+        assumeNoParameterNames(Throwable::class.java.getMethod("initCause", Throwable::class.java))
+        resolver.resolve("kotlin.Throwable", pageSize = 10000) should {
+            have("    open fun initCause(arg0: Throwable?): Throwable" in lines())
+            have("    open fun printStackTrace(arg0: java.io.PrintStream?)" in lines())
+            have("    open fun printStackTrace(arg0: java.io.PrintWriter?)" in lines())
+        }
+    }
+
+    @Test
+    fun `should list Java-only member of built-in type next to extension hiding the members of another signature`() {
+        // the @HidesMembers Iterable.forEach is called for a lambda, the member forEach of java.lang.Iterable for a Consumer
+        assumeNoParameterNames(Iterable::class.java.getMethod("forEach", java.util.function.Consumer::class.java))
+        resolver.resolve("kotlin.collections.Iterable", pageSize = 10000) should {
+            have("    inline fun forEach(action: (T) -> Unit)" in lines())
+            have("    open fun forEach(arg0: java.util.function.Consumer<in T>?)" in lines())
+        }
+    }
+
+    @Test
+    fun `should list extension of built-in type hiding Java-only member of the same signature in its body`() {
+        // the @HidesMembers Throwable.addSuppressed is called instead of the member addSuppressed of java.lang.Throwable
+        assumeNoParameterNames(Throwable::class.java.getMethod("addSuppressed", Throwable::class.java))
+        resolver.resolve("kotlin.Throwable", pageSize = 10000) should {
+            have("    fun addSuppressed(exception: Throwable)" in lines())
+            have(lines().none { "addSuppressed(arg0" in it || "Throwable.addSuppressed" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve extension of built-in type hiding Java-only member of the same signature`() {
         assumeNoParameterNames(Throwable::class.java.getMethod("addSuppressed", Throwable::class.java))
         resolver.resolve("kotlin.Throwable.addSuppressed") sameAsKotlin """
             // kotlin.Throwable.addSuppressed [page 1/1]
             // from kotlin
             fun Throwable.addSuppressed(exception: Throwable)
         """.trimIndent()
-    }
-
-    @Test
-    fun `should list no member of built-in type with synthetic parameter names`() {
-        // when
-        val listings = DefaultKotlinIntrospector.builtinTypes.keys.associateWith { type ->
-            resolver.resolve(type, pageSize = 100_000).orEmpty()
-        }
-
-        // then
-        val synthetic = listings.filterValues { listing -> listing.lines().any { "(arg0: " in it || "(vararg arg0: " in it } }
-        assert(synthetic.keys.isEmpty())
     }
 
     @Test
@@ -5192,8 +5219,9 @@ class KotlinIntrospectorTest {
             val lines = resolver.resolve(type, pageSize = 100_000).orEmpty().lines().drop(1)
             Listing(lines.mapTo(HashSet()) { it.trim() }, lines.firstOrNull { !it.startsWith("//") }.orEmpty())
         }
-        // an inherited member of a class which cannot be subclassed is rendered without the open modifier
-        fun withoutModality(line: String) = line.removePrefix("open ")
+        // an inherited member of a class which cannot be subclassed is rendered without the open modifier,
+        // following its annotations, like the @Deprecated of a JDK member
+        fun withoutModality(line: String) = line.replaceFirst(Regex("^((?:@.*\\) )?)open "), "$1")
 
         // when
         val unlisted = memberNames.flatMap { (type, names) ->

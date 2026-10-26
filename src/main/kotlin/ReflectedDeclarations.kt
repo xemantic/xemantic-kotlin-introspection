@@ -49,8 +49,11 @@ import kotlin.reflect.typeOf
  * The JVM classes of the built-in types expose, through kotlin-reflect, also their Java-only methods,
  * and the JDK is compiled without parameter names,
  * so kotlin-reflect names the parameters of these methods after their position, like `arg0`, `arg1`.
- * Such a method would be rendered without telling what its parameters are, therefore it is left out.
+ * Such a method is still rendered with these names, as Kotlin calls it all the same,
+ * while such a constructor tells a JVM constructor, like `Integer(int)`, which has no counterpart in Kotlin,
+ * see [toKmBuiltinClass].
  * Only the exact positional name is matched, as real Kotlin names like `args` or `argument` are common.
+
  *
  * The parameter names are the only signal available here:
  * the Kotlin members of the built-in types are also backed by the same JDK methods,
@@ -101,8 +104,9 @@ internal class ReflectedTypeParameters(private val ids: Map<String, Int>) {
  *
  * kotlin-reflect describes the JVM class, like `java.lang.String`, so that the declaration is approximate:
  * its supertypes are only the Kotlin ones, its members are the ones the JVM class declares,
- * but the ones whose parameter names are not known, see [hasSyntheticParameterNames],
+ * also the ones whose parameter names are not known, like `indent(arg0: Int)`,
  * and its constructors are the ones of the JVM class whose parameter names are known, like `String()`,
+ * see [hasSyntheticParameterNames],
  * as the others, like `Integer(int)`, have no counterpart in Kotlin.
  * Its companion object is not declared.
  */
@@ -127,7 +131,8 @@ internal fun KClass<*>.toKmBuiltinClass(name: String): KmClass {
         .filter { supertype -> (supertype.classifier as? KClass<*>)?.qualifiedName?.startsWith("kotlin.") == true }
         .mapTo(kmClass.supertypes) { it.toKmType(typeParameters) }
     declaredMemberFunctions
-        .filter { '$' !in it.name && !hasSyntheticParameterNames(it) }
+        .filter { '$' !in it.name }
+
         .mapTo(kmClass.functions) { function ->
             function.toKmFunction(typeParameters).also { it.modality = it.modality.finalIn(kmClass) }
         }

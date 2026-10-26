@@ -70,15 +70,17 @@ class BuiltinsWithoutDeclarationsTest {
     }
 
     @Test
-    fun `should not resolve Java-only member described by kotlin-reflect which the listing leaves out`() {
-        // given - the JDK is compiled without parameter names, so String.indent(arg0: Int) is not listed
+    fun `should resolve Java-only member described by kotlin-reflect with synthetic parameter names`() {
+        // given - the JDK is compiled without parameter names
         assumeNoParameterNames(String::class.java.getMethod("indent", Int::class.java))
 
         // when
         val signatures = introspector.resolve("kotlin.String.indent")
 
         // then
-        assert(signatures == null)
+        signatures should {
+            have(lines().drop(1).single().endsWith(" fun indent(arg0: Int): String"))
+        }
     }
 
     @Test
