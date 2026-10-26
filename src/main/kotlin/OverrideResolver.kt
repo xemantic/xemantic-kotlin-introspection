@@ -549,14 +549,14 @@ internal class OverrideResolver(
             if (!visited.add(supertype.name)) continue
 
             // the function types have no declarations to read
-            functionTypeRegex.matchEntire(supertype.name)?.let { match ->
+            parseFunctionTypeName(supertype.name)?.let { functionTypeName ->
                 functions.getOrPut("invoke") { mutableListOf() } += Overridable(
                     receiver = null,
                     parameters = supertype.arguments.dropLast(1).map { it.type },
                     typeParameterCount = 0,
                     isJava = false
                 )
-                if (match.groupValues[1].isNotEmpty()) {
+                if (functionTypeName.kind.isReference) {
                     // the members of KFunction
                     pending += ClassType("kotlin/reflect/KFunction", listOfNotNull(supertype.arguments.lastOrNull()))
                 }
@@ -878,7 +878,7 @@ internal class OverrideResolver(
         if (!type.isSuspend) return null
         val functionType = type.decodeRuntimeFunctionType() ?: return null
         return ClassType(
-            name = "kotlin/SuspendFunction${functionType.parameters.size}",
+            name = FunctionTypeKind.SUSPEND_FUNCTION.metadataName(functionType.parameters.size),
             arguments = (functionType.parameters + functionType.returnType).map {
                 TypeArgument(KmVariance.INVARIANT, kotlinType(it, substitution, typeParameters))
             },
@@ -977,12 +977,11 @@ internal class OverrideResolver(
      * as it takes a trailing `Continuation`.
      */
     private fun functionTypeErasure(name: String): String? {
-        val match = functionTypeRegex.matchEntire(name) ?: return null
-        val (reflect, suspend, arity) = match.destructured
-        return when {
-            reflect.isNotEmpty() -> "kotlin/reflect/KFunction"
-            suspend.isNotEmpty() -> "kotlin/Function${arity.toInt() + 1}"
-            else -> null
+        val functionTypeName = parseFunctionTypeName(name) ?: return null
+        return when (functionTypeName.kind) {
+            FunctionTypeKind.FUNCTION_REFERENCE, FunctionTypeKind.SUSPEND_FUNCTION_REFERENCE -> "kotlin/reflect/KFunction"
+            FunctionTypeKind.SUSPEND_FUNCTION -> FunctionTypeKind.FUNCTION.metadataName(functionTypeName.arity + 1)
+            FunctionTypeKind.FUNCTION -> null
         }
     }
 
@@ -1753,12 +1752,6 @@ internal class OverrideResolver(
             "put", "putAll", "putIfAbsent", "replace", "compute", "computeIfAbsent", "computeIfPresent", "merge",
             "setValue"
         )
-
-        /**
-         * The function types, like `kotlin/Function1`, `kotlin/reflect/KFunction1`,
-         * and the suspend function types as resolved by [suspendFunctionType].
-         */
-        val functionTypeRegex = Regex("kotlin/(?:reflect/)?(K?)(Suspend)?Function(\\d+)")
 
         val primitiveNames = mapOf(
             "boolean" to "kotlin/Boolean",

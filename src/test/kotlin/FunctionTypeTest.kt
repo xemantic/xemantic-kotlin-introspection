@@ -333,6 +333,56 @@ class FunctionTypeTest {
         )
     }
 
+    // function type class names, see parseFunctionTypeName
+
+    @Test
+    fun `should parse function type name of every kind by its metadata name`() {
+        // when
+        val function = parseFunctionTypeName("kotlin/Function2")
+        val suspendFunction = parseFunctionTypeName("kotlin/coroutines/SuspendFunction0")
+        val functionReference = parseFunctionTypeName("kotlin/reflect/KFunction1")
+        val suspendFunctionReference = parseFunctionTypeName("kotlin/reflect/KSuspendFunction3")
+
+        // then
+        assert(function?.kind == FunctionTypeKind.FUNCTION && function.arity == 2)
+        assert(suspendFunction?.kind == FunctionTypeKind.SUSPEND_FUNCTION && suspendFunction.arity == 0)
+        assert(functionReference?.kind == FunctionTypeKind.FUNCTION_REFERENCE && functionReference.arity == 1)
+        assert(suspendFunctionReference?.kind == FunctionTypeKind.SUSPEND_FUNCTION_REFERENCE && suspendFunctionReference.arity == 3)
+    }
+
+    @Test
+    fun `should not parse function type name with leading zero in arity`() {
+        // like the compiler, which never synthesizes such a class
+
+        // when
+        val functionReference = parseFunctionTypeName("kotlin/reflect/KFunction01")
+        val function = parseFunctionTypeName("kotlin/Function00")
+
+        // then
+        assert(functionReference == null && function == null)
+    }
+
+    @Test
+    fun `should not parse function type name mixing the packages of the kinds`() {
+        // when
+        val functionReference = parseFunctionTypeName("kotlin/KFunction1")
+        val function = parseFunctionTypeName("kotlin/reflect/Function1")
+        val suspendFunction = parseFunctionTypeName("kotlin/reflect/SuspendFunction1")
+
+        // then
+        assert(functionReference == null && function == null && suspendFunction == null)
+    }
+
+    @Test
+    fun `should not parse function type name without arity`() {
+        // when
+        val function = parseFunctionTypeName("kotlin/Function")
+        val functionReference = parseFunctionTypeName("kotlin/reflect/KFunction")
+
+        // then
+        assert(function == null && functionReference == null)
+    }
+
 }
 
 /**

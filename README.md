@@ -121,18 +121,36 @@ com.example.AnnotationTestClass
   which `kotlin-reflect` cannot tell apart from their read-only counterparts.
 * The function types are resolved by their Kotlin names, like `kotlin.Function1` of `(P1) -> R`,
   or `kotlin.coroutines.SuspendFunction0` of `suspend () -> R`, listing the extensions on the function types,
-  like `(suspend () -> T).startCoroutine(…)`.
+  like `(suspend () -> T).startCoroutine(…)`,
+  of any library, like `(() -> T).asFlow()` of kotlinx-coroutines, unlike for a built-in type, as there are few of them.
   The compiler synthesizes these classes, so they are rendered like declared in the standard library sources,
   like `interface Function1<in P1, out R> : Function<R> { operator fun invoke(p1: P1): R }`.
   A function type with a receiver, or with context parameters, is of the same class,
   like `String.() -> Unit` and `context(String) () -> Unit` are both `kotlin.Function1`.
+  A class implementing a function type, like `class Handler : (Event) -> Unit`,
+  lists the extensions of its function type class as well, whatever their type arguments.
+  The function reference types, like `kotlin.reflect.KFunction1`, are resolved the same way,
+  like `interface KFunction1<in P1, out R> : KFunction<R>, Function1<P1, R>`,
+  listing also the extensions on `KFunction`, like `KFunction<*>.javaMethod`.
 * The extensions on a type parameter bounded by a type,
   like `fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T): T`,
   are listed among the extensions of the bound,
-  and with multiple bounds, like `where T : A, T : B`, only for the types satisfying all of them.
+  and with multiple bounds, like `where T : A, T : B`, only for the types satisfying all of them,
+  also through a Java supertype, like `java.io.Closeable` of `java.io.FilterInputStream`.
   Like any extension of a supertype, they are listed for the subtypes of the bound among the built-in types,
   but not for the other classes when the bound is a `kotlin.*` or `java.*` type,
-  so that, e.g., a class implementing `Comparable` is not flooded with the generic extensions of the standard library.
+  so that, e.g., a class implementing `CharSequence` is not flooded with the generic extensions of the standard library,
+  unless the class satisfies all the multiple bounds,
+  like of `R.contains(element: T?)` where `R : ClosedRange<T>, R : Iterable<T>`,
+  or the bound is `Comparable`, whose few extensions are listed for a class comparable to itself,
+  like `class Version : Comparable<Version>`, as told by the Kotlin metadata, but not for an enum class.
+  The ones on `T : Comparable<T>` are not listed for a final type comparable only to itself, which pins `T` to it,
+  like `Int`, when it declares a more specific overload, a member, or an extension on the type itself,
+  taking the same parameters, of the same names, where `T` stands for the type,
+  like `fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T): T` next to `fun Int.coerceAtLeast(minimumValue: Int): Int`,
+  called instead, unless the type argument is given explicitly, like `5.coerceAtLeast<Int>(3)`.
+  Any other one is listed, as its type parameter can be inferred as a supertype,
+  or it can be called with other arguments, like `5.coerceIn(null, 10)`, or `5.rangeTo(that = 6)`.
   The extensions on an unbounded type parameter, like `let` or `also`, are not listed for any type,
   as they would be listed for every one.
 * The types of the `kotlin.*` packages are rendered with simple names, as LLMs know them well,

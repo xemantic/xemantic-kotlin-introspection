@@ -289,10 +289,12 @@ internal fun KType.toKmType(scope: ReflectedTypeParameters): KmType {
         // kotlin-reflect gives the KFunction class for the function reference types, like KFunction1<P, R>,
         // telling their arity by the type arguments, apart from KFunction<R> itself, which takes one;
         // a KSuspendFunctionN cannot be told apart from a KFunctionN in the public API
-        KFunction::class if arguments.size > 1 -> KmClassifier.Class("kotlin/reflect/KFunction${arguments.size - 1}")
+        KFunction::class if arguments.size > 1 -> KmClassifier.Class(FunctionTypeKind.FUNCTION_REFERENCE.metadataName(arguments.size - 1))
         // a function type of more than 22 runtime parameters, stored in the metadata as a FunctionN of its arity
         FunctionN::class if isFunctionNType ->
-            KmClassifier.Class("kotlin/Function${if (isSuspendFunctionType) arguments.size else arguments.size - 1}")
+            KmClassifier.Class(
+                FunctionTypeKind.FUNCTION.metadataName(if (isSuspendFunctionType) arguments.size else arguments.size - 1)
+            )
         is KClass<*> -> KmClassifier.Class(classifier.qualifiedName?.let(::kotlinClassName) ?: kotlinClassName(classifier.java))
         is KTypeParameter -> KmClassifier.TypeParameter(scope.idOf(classifier))
         else -> KmClassifier.Class("kotlin/Any")
