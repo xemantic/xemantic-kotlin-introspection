@@ -96,6 +96,8 @@ class FunctionTypesSample {
     fun launchWithFunctionReceiver(block: (() -> Unit).() -> Unit) {}
     fun curried(): (Int) -> (Int) -> Int = { a -> { b -> a + b } }
     fun reference(function: kotlin.reflect.KFunction1<Int, String>) {}
+    fun referenceWithoutParameters(function: kotlin.reflect.KFunction0<String>) {}
+    fun suspendReference(function: kotlin.reflect.KSuspendFunction1<Int, String>) {}
 }
 
 // Class with function types above the arity of kotlin.Function22, run as kotlin.jvm.functions.FunctionN

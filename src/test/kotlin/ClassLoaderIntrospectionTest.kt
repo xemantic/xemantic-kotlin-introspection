@@ -44,6 +44,10 @@ import java.util.jar.Manifest
 import kotlin.io.path.createDirectories
 import kotlin.io.path.outputStream
 import kotlin.io.path.writeBytes
+import kotlin.metadata.KmClassifier
+import kotlin.metadata.KmType
+import kotlin.metadata.KmTypeProjection
+import kotlin.metadata.KmVariance
 import kotlin.metadata.jvm.KotlinModuleMetadata
 import kotlin.test.Test
 
@@ -2620,6 +2624,81 @@ class ClassLoaderIntrospectionTest {
         // then
         assert(signatures[0] == null)
         assert(signatures[1]?.contains("fun String.trimIndent(): String") == true)
+    }
+
+    @Test
+    fun `should render legacy context receivers of class`() {
+        // given
+        val introspector = introspectorWithLegacyContextReceivers()
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.LegacyContextReceiverClass")
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.LegacyContextReceiverClass [page 1/1]
+            context(LegacyLogger, Comparator<T>) class LegacyContextReceiverClass<T> {
+                fun log()
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render legacy context receivers of class after its annotations`() {
+        // given
+        val introspector = introspectorWithLegacyContextReceivers()
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.LegacyContextReceiverValue")
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.LegacyContextReceiverValue [page 1/1]
+            @Deprecated("Use LegacyContextReceiverClass") @JvmInline context(LegacyLogger) value class LegacyContextReceiverValue(val value: Int) {
+                override operator fun equals(other: Any?): Boolean
+                override fun hashCode(): Int
+                override fun toString(): String
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render legacy context receivers of inner class with the type parameters of its outer class`() {
+        // given
+        val introspector = introspectorWithLegacyContextReceivers()
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.LegacyContextReceiverOuter")
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.LegacyContextReceiverOuter [page 1/1]
+            class LegacyContextReceiverOuter<T> {
+                context(Comparator<T>) inner class Inner
+            }
+        """.trimIndent()
+    }
+
+    /**
+     * An introspector of the isolated test fixtures, with the legacy context receivers added to the metadata
+     * of the classes of `LegacyContextReceivers.kt`, like compiled with `-Xcontext-receivers`.
+     */
+    private fun introspectorWithLegacyContextReceivers(): KotlinIntrospector {
+        val logger = KmType().apply { classifier = KmClassifier.Class("com/xemantic/kotlin/introspection/isolated/LegacyLogger") }
+        // the type parameter T of the class, or of the outer class
+        val comparator = KmType().apply {
+            classifier = KmClassifier.Class("kotlin/Comparator")
+            arguments += KmTypeProjection(KmVariance.INVARIANT, KmType().apply { classifier = KmClassifier.TypeParameter(0) })
+        }
+        val root = isolatedTestFixturesCopy("legacyContextReceivers") { fileName, bytes ->
+            when (fileName) {
+                "LegacyContextReceiverClass.class" -> withContextReceiversInMetadata(bytes, logger, comparator)
+                "LegacyContextReceiverValue.class" -> withContextReceiversInMetadata(bytes, logger)
+                "LegacyContextReceiverOuter\$Inner.class" -> withContextReceiversInMetadata(bytes, comparator)
+                else -> bytes
+            }
+        }
+        return KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
     }
 
 }

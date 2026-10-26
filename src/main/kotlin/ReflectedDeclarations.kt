@@ -187,11 +187,8 @@ internal fun KFunction<*>.toKmFunction(typeParameters: ReflectedTypeParameters):
     function.isExternal = isExternal
     function.isSuspend = isSuspend
     function.typeParameters += this.typeParameters.map { it.toKmTypeParameter(scope) }
-    parameters.filter { it.kind == KParameter.Kind.CONTEXT }.mapTo(function.contextParameters) {
-        KmValueParameter(it.name ?: "_").apply { type = it.type.toKmType(scope) }
-    }
-    function.receiverParameterType = parameters.firstOrNull { it.kind == KParameter.Kind.EXTENSION_RECEIVER }
-        ?.type?.toKmType(scope)
+    parameters.contextParametersTo(function.contextParameters, scope)
+    function.receiverParameterType = parameters.extensionReceiverType(scope)
     parameters.filter { it.kind == KParameter.Kind.VALUE }.withIndex().mapTo(function.valueParameters) { (position, parameter) ->
         parameter.toKmValueParameter(position, scope)
     }
@@ -201,13 +198,18 @@ internal fun KFunction<*>.toKmFunction(typeParameters: ReflectedTypeParameters):
 
 /**
  * The declaration of this property in the Kotlin metadata, like for a function, see [toKmFunction].
+ * A property with context parameters, or an extension receiver, is listed by kotlin-reflect among the members,
+ * but not among the member properties, thus never a property of a built-in type, see [toKmBuiltinClass].
  */
+@OptIn(ExperimentalContextParameters::class)
 internal fun KProperty<*>.toKmProperty(typeParameters: ReflectedTypeParameters): KmProperty {
     val scope = typeParameters.withOwn(this.typeParameters)
     val property = KmProperty(name)
     property.visibility = reflectedVisibility(visibility)
     property.modality = reflectedModality(this)
     property.typeParameters += this.typeParameters.map { it.toKmTypeParameter(scope) }
+    parameters.contextParametersTo(property.contextParameters, scope)
+    property.receiverParameterType = parameters.extensionReceiverType(scope)
     if (this is KMutableProperty<*>) {
         property.isVar = true
         property.setter = KmPropertyAccessorAttributes().also { it.visibility = reflectedVisibility(setter.visibility) }
@@ -215,6 +217,23 @@ internal fun KProperty<*>.toKmProperty(typeParameters: ReflectedTypeParameters):
     property.returnType = returnType.toKmType(scope)
     return property
 }
+
+/**
+ * Adds the context parameters among these parameters of a callable to the [contextParameters] of its declaration,
+ * an anonymous one named `_`, like in the Kotlin metadata.
+ */
+@OptIn(ExperimentalContextParameters::class)
+private fun List<KParameter>.contextParametersTo(contextParameters: MutableList<KmValueParameter>, scope: ReflectedTypeParameters) {
+    filter { it.kind == KParameter.Kind.CONTEXT }.mapTo(contextParameters) {
+        KmValueParameter(it.name ?: "_").apply { type = it.type.toKmType(scope) }
+    }
+}
+
+/**
+ * The type of the extension receiver among these parameters of a callable, or `null` if it is not an extension.
+ */
+private fun List<KParameter>.extensionReceiverType(scope: ReflectedTypeParameters): KmType? =
+    firstOrNull { it.kind == KParameter.Kind.EXTENSION_RECEIVER }?.type?.toKmType(scope)
 
 /**
  * This modality of a member described by kotlin-reflect, declared in the [kmClass], where an open member of a final class
@@ -317,8 +336,9 @@ internal fun KType.toKmType(scope: ReflectedTypeParameters, platformAsNullable: 
     val isFunctionNType = classifier == FunctionN::class && isSuspendFunctionType != null && arguments.all { it.type != null }
     type.classifier = when (classifier) {
         // kotlin-reflect gives the KFunction class for the function reference types, like KFunction1<P, R>,
-        // telling their arity by the type arguments, apart from KFunction<R> itself, which takes one;
-        // a KSuspendFunctionN cannot be told apart from a KFunctionN in the public API
+        // telling their arity by the type arguments, apart from KFunction<R> itself, which takes one,
+        // so that a KFunction0<R> stays a KFunction<R>, and a KSuspendFunctionN is a KFunctionN,
+        // as the public API cannot tell them apart, unreachable for the members of the built-in types
         KFunction::class if arguments.size > 1 -> KmClassifier.Class(FunctionTypeKind.FUNCTION_REFERENCE.metadataName(arguments.size - 1))
         // a function type of more than 22 runtime parameters, stored in the metadata as a FunctionN of its arity
         FunctionN::class if isFunctionNType ->

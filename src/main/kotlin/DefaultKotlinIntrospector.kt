@@ -1966,13 +1966,15 @@ internal class DefaultKotlinIntrospector(
     private fun formatJvmInline(isJvmInline: Boolean): String = if (isJvmInline) "@JvmInline " else ""
 
     /**
-     * The modifiers and the [kind] of the class, like `data class ` or `object `.
+     * The modifiers and the [kind] of the class, like `data class ` or `object `,
+     * preceded by its [contextReceivers], see [formatClassContextReceivers], following its annotations.
      */
-    private fun formatClassPrefix(kmClass: KmClass, kind: ClassKind): String = buildString {
+    private fun formatClassPrefix(kmClass: KmClass, kind: ClassKind, contextReceivers: String): String = buildString {
         val isInterface = kmClass.kind == ClassKind.INTERFACE
 
         // a value class with multiple underlying properties (-Xvalue-classes) is not annotated
         +formatJvmInline(kmClass.isValue && kmClass.inlineClassUnderlyingPropertyName != null)
+        +contextReceivers
 
         // Visibility and modifiers
         +formatVisibility(kmClass.visibility)
@@ -2690,7 +2692,8 @@ internal class DefaultKotlinIntrospector(
     ): String = buildString {
         +formatDeprecation(deprecation)
         // the prefix ends with a space, like in `companion object `
-        +formatClassPrefix(kmClass, kind).let { if (name.isEmpty()) it.trimEnd() else it + name }
+        +formatClassPrefix(kmClass, kind, formatClassContextReceivers(kmClass, contextPackage, typeParameters))
+            .let { if (name.isEmpty()) it.trimEnd() else it + name }
         +formatTypeParameters(kmClass.typeParameters, typeParameters, contextPackage)
         +constructor
         val supertypes = formatSupertypes(kmClass, contextPackage, typeParameters)
@@ -2700,6 +2703,19 @@ internal class DefaultKotlinIntrospector(
         }
         +formatWhereClause(kmClass.typeParameters, typeParameters, contextPackage)
     }
+
+    /**
+     * The legacy context receivers of a class, like `context(Logger) `, compiled with `-Xcontext-receivers`
+     * by a Kotlin compiler before 2.2, in their own syntax, without names, as a class cannot declare context parameters.
+     * The ones of a function or a property are read as its context parameters by kotlin-metadata-jvm.
+     */
+    @OptIn(ExperimentalContextReceivers::class)
+    @Suppress("DEPRECATION")
+    private fun formatClassContextReceivers(
+        kmClass: KmClass,
+        contextPackage: String,
+        typeParameters: Map<Int, String>
+    ): String = formatContext(kmClass.contextReceiverTypes.map { formatType(it, contextPackage, typeParameters) })
 
     /**
      * The header of a [listed] class, like a nested class, see [formatClassHeader], without its constructor,

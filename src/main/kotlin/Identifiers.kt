@@ -54,9 +54,14 @@ internal fun escapeContextParameterName(name: String?): String =
  * Their names are a part of the signature, as a function body can refer to them.
  */
 internal fun formatContextParameters(parameters: List<Pair<String?, String>>): String =
-    if (parameters.isEmpty()) "" else parameters.joinToString(", ", prefix = "context(", postfix = ") ") { (name, type) ->
-        "${escapeContextParameterName(name)}: $type"
-    }
+    formatContext(parameters.map { (name, type) -> "${escapeContextParameterName(name)}: $type" })
+
+/**
+ * Formats the context list of a declaration, like `context(log: Logger) `, given its rendered [elements],
+ * the context parameters, or the legacy context receivers of a class, or an empty string if there are none.
+ */
+internal fun formatContext(elements: List<String>): String =
+    if (elements.isEmpty()) "" else elements.joinToString(", ", prefix = "context(", postfix = ") ")
 
 /**
  * Escapes each segment of a [name] qualified with `.`, like `pkg.Outer.Nested`, with [escapeIdentifier],

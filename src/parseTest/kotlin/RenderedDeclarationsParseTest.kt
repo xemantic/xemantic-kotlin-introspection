@@ -118,6 +118,25 @@ class RenderedDeclarationsParseTest {
     }
 
     @Test
+    fun `should parse legacy context receivers of class`() {
+        // given - like rendered by ClassLoaderIntrospectionTest, for the classes compiled with -Xcontext-receivers,
+        // which are not on the classpath introspected here, as the current compiler no longer compiles them
+        val listing = """
+            context(LegacyLogger, Comparator<T>) class LegacyContextReceiverClass<T> {
+                fun log()
+                context(Comparator<T>) inner class Inner
+            }
+            @Deprecated("Use LegacyContextReceiverClass") @JvmInline context(LegacyLogger) value class LegacyContextReceiverValue(val value: Int)
+        """.trimIndent()
+
+        // when
+        val errors = parseErrors(toParsableKotlin(listing))
+
+        // then
+        assert(errors.isEmpty())
+    }
+
+    @Test
     fun `should report unescaped segment of qualified name of listed class header`() {
         // when
         val errors = parseErrors("class Listing {\n${toParsableKotlin("    class in.Nested")}\n}")
