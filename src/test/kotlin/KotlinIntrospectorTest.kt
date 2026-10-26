@@ -6122,6 +6122,30 @@ class KotlinIntrospectorTest {
         """.trimIndent()
     }
 
+    @Test
+    fun `should resolve function of file facade with JVM package name under its Kotlin package`() {
+        // the facade is compiled with @file:JvmPackageName("kotlin.collections.jdk8"), but imported from kotlin.collections
+        resolver.resolve(
+            "kotlin.collections.jdk8.CollectionsJDK8Kt.getOrDefault"
+        ) sameAsKotlin """
+            // kotlin.collections.jdk8.CollectionsJDK8Kt.getOrDefault [page 1/1]
+            // from kotlin.collections
+            inline fun <K, V> Map<out K, V>.getOrDefault(key: K, defaultValue: V): V
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should list extension of file facade with JVM package name under its Kotlin package`() {
+        resolver.resolve(
+            "kotlin.collections.Map.getOrDefault"
+        ) sameAsKotlin """
+            // kotlin.collections.Map.getOrDefault [page 1/1]
+            open fun getOrDefault(key: K, defaultValue: V): V
+            // from kotlin.collections
+            inline fun <K, V> Map<out K, V>.getOrDefault(key: K, defaultValue: V): V
+        """.trimIndent()
+    }
+
     // built-in collection tests
 
     @Test

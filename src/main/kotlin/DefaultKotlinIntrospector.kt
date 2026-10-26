@@ -545,11 +545,19 @@ internal class DefaultKotlinIntrospector(
          */
         override val classDeprecation: Deprecation? get() = (classFile ?: reflectedClassFile).classDeprecation
 
-        // parsed once, and only when needed, as some classes are loaded only for the Java reflection
-        val metadata: KotlinClassMetadata? by lazy {
-            (if (clazz != null) clazz.getAnnotation(Metadata::class.java) else classFile?.metadata)
-                ?.let { parseMetadata(it) }
+        private val metadataAnnotation: Metadata? by lazy {
+            if (clazz != null) clazz.getAnnotation(Metadata::class.java) else classFile?.metadata
         }
+
+        // parsed once, and only when needed, as some classes are loaded only for the Java reflection
+        val metadata: KotlinClassMetadata? by lazy { metadataAnnotation?.let { parseMetadata(it) } }
+
+        /**
+         * The Kotlin package of a file facade, when it differs from its JVM package,
+         * like `kotlin.collections` of `kotlin.collections.jdk8.CollectionsJDK8Kt`, compiled with `@JvmPackageName`,
+         * or else an empty string, see [packageSourceOf].
+         */
+        val kotlinPackageName: String get() = metadataAnnotation?.packageName.orEmpty()
 
         override val kmClass: KmClass? get() = (metadata as? KotlinClassMetadata.Class)?.kmClass
 
@@ -1503,8 +1511,10 @@ internal class DefaultKotlinIntrospector(
             format: (KmPackage, FoundClass, contextPackage: String) -> List<List<String>>
         ): List<ListingItem.Extension> = kmPackages.flatMap { (kmPackage, foundClass) ->
             val binaryName = foundClass.binaryName
-            val source = packageSourceOf(binaryName)
-            format(kmPackage, foundClass, binaryName.substringBeforeLast('.', "")).map { ListingItem.Extension(source, it) }
+            val packageName = foundClass.kotlinPackageName
+            val source = packageSourceOf(binaryName, packageName)
+            val contextPackage = packageName.ifEmpty { binaryName.substringBeforeLast('.', "") }
+            format(kmPackage, foundClass, contextPackage).map { ListingItem.Extension(source, it) }
         }
         val properties = signatures { kmPackage, foundClass, contextPackage ->
             kmPackage.properties.filter { it.name == memberName }.inApi(TopLevel, foundClass).map {
@@ -3163,7 +3173,7 @@ internal class DefaultKotlinIntrospector(
                 is KotlinClassMetadata.MultiFileClassPart -> metadata.kmPackage
                 else -> return
             }
-            val source = packageSourceOf(className)
+            val source = packageSourceOf(className, classFile.metadata?.packageName.orEmpty())
             indexExtensions(
                 apiExtensions(kmPackage.functions, classFile, className, source, isObjectMember = false),
                 apiExtensionProperties(kmPackage.properties, classFile, className, source, isObjectMember = false),
@@ -4070,10 +4080,12 @@ private const val TYPE_PARAMETER_RECEIVER_KEY = "[type parameter]"
 
 /**
  * The source to import the top-level declarations of the file facade class named [binaryName] from,
- * shown in the `// from …` header: its package,
- * or the facade class name for the default package, which has no name.
+ * shown in the `// from …` header: its Kotlin package, the [packageName] of its metadata,
+ * when it differs from the JVM package, like of a facade compiled with `@JvmPackageName`,
+ * or else its JVM package, or the facade class name for the default package, which has no name.
  */
-private fun packageSourceOf(binaryName: String): String = binaryName.substringBeforeLast('.')
+private fun packageSourceOf(binaryName: String, packageName: String): String =
+    packageName.ifEmpty { binaryName.substringBeforeLast('.') }
 
 private const val ANY_RECEIVER_KEY = "kotlin.Any"
 
