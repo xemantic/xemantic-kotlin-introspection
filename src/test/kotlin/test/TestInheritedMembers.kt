@@ -175,3 +175,97 @@ open class InheritedJvmOverridingBaseIterable : Iterable<String> {
 }
 
 class InheritedJvmOverridingLeafIterable : InheritedJvmOverridingBaseIterable()
+
+// A member with a body of an interface, inherited by a final class
+interface InheritedDefaultGreeter {
+    fun hello(): String = "hello"
+}
+
+class InheritedDefaultGreeterImpl : InheritedDefaultGreeter
+
+// Members of the same JVM signature of unrelated supertypes, one declared with the type parameter of its interface
+interface InheritedGenericConsumer<T> {
+    fun accept(x: T)
+}
+
+interface InheritedStringConsumer {
+    fun accept(x: String)
+}
+
+abstract class InheritedBothConsumer : InheritedGenericConsumer<String>, InheritedStringConsumer
+
+// Members of the same signature of unrelated supertypes, whose return types are related only through the Java mapping
+interface InheritedJavaListReturn {
+    fun items(): java.util.ArrayList<String>
+}
+
+interface InheritedMutableListReturn {
+    fun items(): MutableList<String>
+}
+
+abstract class InheritedBothListReturn : InheritedJavaListReturn, InheritedMutableListReturn
+
+// Overloads of an inner class told apart only by the bounded type parameters of its outer class
+class InheritedOuter<T : Number, U : CharSequence> {
+
+    open inner class Base {
+        open fun f(x: T) {}
+        fun f(x: U) {}
+    }
+
+    open inner class Middle : Base() {
+        override fun f(x: T) {}
+    }
+
+    inner class Leaf : Middle()
+
+}
+
+// A member inherited through a chain of generic supertypes, the type argument given at the bottom
+abstract class InheritedContainerOf<E> : InheritedContainer<List<E>>
+
+abstract class InheritedIntListContainer : InheritedContainerOf<Int>()
+
+// Methods declared only by a Java superclass
+class InheritedJavaArrayList : java.util.ArrayList<String>()
+
+class InheritedJavaHashMap : java.util.HashMap<String, Int>()
+
+class InheritedFromJava : com.xemantic.kotlin.introspection.test.other.JavaInheritedMid<String>()
+
+open class OpenInheritedFromJava : com.xemantic.kotlin.introspection.test.other.JavaInheritedMid<String>()
+
+open class OpenInheritedJavaArrayList : java.util.ArrayList<String>()
+
+// A Java method declaring a type parameter named like the type parameter of the inheriting class given for its class
+class InheritedFuture<U> : java.util.concurrent.CompletableFuture<U>()
+
+// A member declaring a type parameter named like the type parameter of the inheriting class given for its class
+open class InheritedBox<E> {
+    fun <T> map(transform: (E) -> T): InheritedBox<T> = TODO()
+}
+
+class InheritedRenamingBox<T> : InheritedBox<T>()
+
+// A Kotlin member taking a nullable parameter, overridden by a Java class
+interface InheritedNullableTaker {
+    fun take(x: String?)
+}
+
+class InheritedFromNullableTaker : com.xemantic.kotlin.introspection.test.other.JavaNullableTaker()
+
+// A Kotlin member implemented by a Java class, implementing the abstract method of its Java superclass too
+interface InheritedGreeter {
+    fun greet(): String
+}
+
+class InheritedFromJavaGreeter : com.xemantic.kotlin.introspection.test.other.JavaGreeterMid()
+
+// A public method of a package-private Java class, bridged by its public Java subclass
+class InheritedThroughPublicJavaMid : com.xemantic.kotlin.introspection.test.other.JavaPublicGreeterMid()
+
+// Methods of a Java superclass, java.util.Dictionary, overridden by its Java subclass, mapped to members of Map
+class InheritedHashtable<K : Any, V : Any> : java.util.Hashtable<K, V>()
+
+// A Java override of reversed() of List since JDK 21, which Kotlin hides, with a more specific return type
+class InheritedLinkedList<E> : java.util.LinkedList<E>()

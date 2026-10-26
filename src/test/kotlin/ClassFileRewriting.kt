@@ -147,6 +147,15 @@ private val legacyComparator = KmType().apply {
     arguments += KmTypeProjection(KmVariance.INVARIANT, KmType().apply { classifier = KmClassifier.TypeParameter(0) })
 }
 
+/**
+ * Adds the supertypes of the [types] to the class metadata, like a cyclic one, which the compiler would reject.
+ */
+internal fun withSupertypesInMetadata(bytes: ByteArray, vararg types: KmType): ByteArray = withMetadata(bytes) {
+    val metadata = KotlinClassMetadata.readStrict(it) as KotlinClassMetadata.Class
+    metadata.kmClass.supertypes += types
+    metadata.write()
+}
+
 internal fun withMetadataKind(bytes: ByteArray, kind: Int): ByteArray = withMetadata(bytes) {
     Metadata(kind, it.metadataVersion, it.data1, it.data2, it.extraString, it.packageName, it.extraInt)
 }

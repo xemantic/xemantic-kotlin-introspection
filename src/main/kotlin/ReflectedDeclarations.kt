@@ -106,6 +106,32 @@ internal val HIDDEN_JDK_METHODS: Set<String> = setOf(
 private val hiddenJdkMethodNames: Set<String> = HIDDEN_JDK_METHODS.mapTo(HashSet()) { it.substringAfter('.').substringBefore('(') }
 
 /**
+ * Whether the [method], of a Java class, overrides one of the [HIDDEN_JDK_METHODS] of its supertypes,
+ * like the `reversed()` of `java.util.LinkedList`, of `java.util.List`, which Kotlin hides in the subclasses too,
+ * so that `linkedList.reversed()` calls the `Iterable<T>.reversed()` extension.
+ */
+internal fun overridesHiddenJdkMethod(method: Method): Boolean =
+    method.name in hiddenJdkMethodNames && reflectedValue(default = false) {
+        val parameterTypes = method.parameterTypes
+        val visited = HashSet<Class<*>>()
+        val pending = ArrayDeque<Class<*>>()
+        fun Class<*>.enqueueSupertypes() {
+            superclass?.let { pending += it }
+            pending += interfaces
+        }
+        method.declaringClass.enqueueSupertypes()
+        while (pending.isNotEmpty()) {
+            val type = pending.removeFirst()
+            if (!visited.add(type)) continue
+            // also among the bridges, like the reversed(): SequencedCollection of java.util.List
+            val overridden = type.declaredMethods.filter { it.name == method.name && it.parameterTypes.contentEquals(parameterTypes) }
+            if (overridden.any { jvmSignature(it) in HIDDEN_JDK_METHODS }) return@reflectedValue true
+            type.enqueueSupertypes()
+        }
+        false
+    }
+
+/**
  * The JVM signature of the [method], like `java/util/List.reversed()Ljava/util/List;`, see [HIDDEN_JDK_METHODS].
  */
 internal fun jvmSignature(method: Method): String =
@@ -176,25 +202,12 @@ internal class ReflectedTypeParameters(private val ids: Map<String, Int>) {
  * Its companion object is not declared.
  */
 internal fun KClass<*>.toKmBuiltinClass(name: String): KmClass {
-    val kmClass = KmClass()
-    kmClass.name = name
-    kmClass.kind = if (java.isInterface) ClassKind.INTERFACE else ClassKind.CLASS
-    kmClass.visibility = Visibility.PUBLIC
-    kmClass.modality = when {
-        isAbstract || java.isInterface -> Modality.ABSTRACT
-        isOpen -> Modality.OPEN
-        else -> Modality.FINAL
-    }
-    this.typeParameters.mapIndexedTo(kmClass.typeParameters) { id, typeParameter ->
-        KmTypeParameter(typeParameter.name, id, typeParameter.variance.toKmVariance())
+    val kmClass = toKmClassHeader(name) { typeParameters ->
+        supertypes
+            .filter { supertype -> (supertype.classifier as? KClass<*>)?.qualifiedName?.startsWith("kotlin.") == true }
+            .map { it.toKmType(typeParameters) }
     }
     val typeParameters = ReflectedTypeParameters.classTypeParameters(kmClass.typeParameters)
-    this.typeParameters.zip(kmClass.typeParameters) { typeParameter, kmTypeParameter ->
-        typeParameter.upperBounds.mapTo(kmTypeParameter.upperBounds) { it.toKmType(typeParameters) }
-    }
-    supertypes
-        .filter { supertype -> (supertype.classifier as? KClass<*>)?.qualifiedName?.startsWith("kotlin.") == true }
-        .mapTo(kmClass.supertypes) { it.toKmType(typeParameters) }
     declaredMemberFunctions
         .filter { '$' !in it.name && !hasSyntheticParameterNames(it) && !isUnsupportedByCompiler(it) }
         .mapTo(kmClass.functions) { function ->
@@ -216,6 +229,46 @@ internal fun KClass<*>.toKmBuiltinClass(name: String): KmClass {
                 }
             }
         }
+    return kmClass
+}
+
+/**
+ * The declaration of this Java class in the Kotlin metadata, named like `java/util/ArrayList`, as kotlin-reflect describes it,
+ * without its members, which the caller describes one by one, see [toKmFunction], and [toKmProperty].
+ * Its supertypes are named by their JVM classes, see [supertypeName],
+ * like `kotlin/collections/MutableList` of `java.util.List`, as kotlin-reflect tells only its read-only counterpart.
+ */
+internal fun KClass<*>.toKmJavaClassHeader(name: String, supertypeName: (Class<*>) -> String): KmClass =
+    toKmClassHeader(name) { typeParameters ->
+        supertypes.map { supertype ->
+            supertype.toKmType(typeParameters).also { type ->
+                (supertype.classifier as? KClass<*>)?.let { type.classifier = KmClassifier.Class(supertypeName(it.java)) }
+            }
+        }
+    }
+
+/**
+ * The declaration of this class in the Kotlin metadata, named [name], without its members and constructors,
+ * of its [supertypes], given the type parameters of the class.
+ */
+private fun KClass<*>.toKmClassHeader(name: String, supertypes: (ReflectedTypeParameters) -> List<KmType>): KmClass {
+    val kmClass = KmClass()
+    kmClass.name = name
+    kmClass.kind = if (java.isInterface) ClassKind.INTERFACE else ClassKind.CLASS
+    kmClass.visibility = Visibility.PUBLIC
+    kmClass.modality = when {
+        isAbstract || java.isInterface -> Modality.ABSTRACT
+        isOpen -> Modality.OPEN
+        else -> Modality.FINAL
+    }
+    this.typeParameters.mapIndexedTo(kmClass.typeParameters) { id, typeParameter ->
+        KmTypeParameter(typeParameter.name, id, typeParameter.variance.toKmVariance())
+    }
+    val typeParameters = ReflectedTypeParameters.classTypeParameters(kmClass.typeParameters)
+    this.typeParameters.zip(kmClass.typeParameters) { typeParameter, kmTypeParameter ->
+        typeParameter.upperBounds.mapTo(kmTypeParameter.upperBounds) { it.toKmType(typeParameters) }
+    }
+    kmClass.supertypes += supertypes(typeParameters)
     return kmClass
 }
 
@@ -369,11 +422,6 @@ private val KType.isPlatformNullable: Boolean
     get() = !isMarkedNullable && nullableNothing.isSubtypeOf(this)
 
 private val nullableNothing: KType = typeOf<Nothing?>()
-
-private fun classType(name: String, nullable: Boolean = false): KmType = KmType().also {
-    it.classifier = KmClassifier.Class(name)
-    it.isNullable = nullable
-}
 
 /**
  * The type of the Kotlin metadata described by this [KType], where the type parameters are in the [scope].
