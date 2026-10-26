@@ -1022,6 +1022,24 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should not list extensions of hidden companion object with the extensions of the class`() {
+        // Kotlin does not call HiddenCompanionExtensionHolder.of(), as the companion object is hidden
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenCompanionExtensionHolder"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenCompanionExtensionHolder [page 1/1]
+            class HiddenCompanionExtensionHolder
+            // from com.xemantic.kotlin.introspection.test
+            fun HiddenCompanionExtensionHolder.describe(): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve extension of hidden companion object as class member`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenCompanionExtensionHolder.of") == null)
+    }
+
+    @Test
     fun `should resolve extension of companion object of built-in type as its member`() {
         // String.format("%d", 42), next to the extensions on the instances, like "%d".format(42)
         resolver.resolve("kotlin.String.format") sameAsKotlin """

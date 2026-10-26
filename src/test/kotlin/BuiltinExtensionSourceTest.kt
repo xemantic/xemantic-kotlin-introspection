@@ -32,17 +32,18 @@ class BuiltinExtensionSourceTest {
         // kotlin-stdlib-jre7 and -jre8 of Kotlin 1.2, kotlin-stdlib-jdk7 and -jdk8, merged into kotlin-stdlib since 1.8,
         // and kotlin-reflect, whose module is named kotlin-reflect-api from Kotlin 1.2.40 to 1.3.11
         val sources = listOf(
-            "kotlin.text.StringsKt__StringsKt" to "kotlin-stdlib",
-            "kotlin.io.path.PathsKt__PathUtilsKt" to "kotlin-stdlib-jdk7",
-            "kotlin.streams.jdk8.StreamsKt" to "kotlin-stdlib-jdk8",
-            "kotlin.io.ExceptionsKt" to "kotlin-stdlib-jre7",
-            "kotlin.collections.jdk8.CollectionsJDK8Kt" to "kotlin-stdlib-jre8",
-            "kotlin.reflect.full.KClasses" to "kotlin-reflection",
-            "kotlin.reflect.full.KClasses" to "kotlin-reflect-api"
+            "kotlin" to "kotlin-stdlib",
+            "kotlin.text" to "kotlin-stdlib",
+            "kotlin.io.path" to "kotlin-stdlib-jdk7",
+            "kotlin.streams" to "kotlin-stdlib-jdk8",
+            "kotlin.io" to "kotlin-stdlib-jre7",
+            "kotlin.collections" to "kotlin-stdlib-jre8",
+            "kotlin.reflect.full" to "kotlin-reflection",
+            "kotlin.reflect.full" to "kotlin-reflect-api"
         )
 
         // when
-        val notShown = sources.filterNot { (sourceClass, moduleName) -> isBuiltinExtensionSource(sourceClass, moduleName) }
+        val notShown = sources.filterNot { (source, moduleName) -> isBuiltinExtensionSource(source, moduleName) }
 
         // then
         assert(notShown.isEmpty())
@@ -52,13 +53,13 @@ class BuiltinExtensionSourceTest {
     fun `should not show extensions of other libraries declaring kotlin packages`() {
         // given
         val sources = listOf(
-            "kotlin.metadata.jvm.JvmExtensionsKt" to "kotlin.metadata.internal:kotlin-metadata-jvm",
-            "kotlin.test.AssertionsKt__AssertionsKt" to "org.jetbrains.kotlin:kotlin-test",
-            "kotlin.text.StringsKt__StringsKt" to null
+            "kotlin.metadata.jvm" to "kotlin.metadata.internal:kotlin-metadata-jvm",
+            "kotlin.test" to "org.jetbrains.kotlin:kotlin-test",
+            "kotlin.text" to null
         )
 
         // when
-        val shown = sources.filter { (sourceClass, moduleName) -> isBuiltinExtensionSource(sourceClass, moduleName) }
+        val shown = sources.filter { (source, moduleName) -> isBuiltinExtensionSource(source, moduleName) }
 
         // then
         assert(shown.isEmpty())
@@ -67,7 +68,7 @@ class BuiltinExtensionSourceTest {
     @Test
     fun `should not show extensions of internal packages of the standard library`() {
         // when
-        val isShown = isBuiltinExtensionSource("kotlin.jvm.internal.ClassReference", "kotlin-stdlib")
+        val isShown = isBuiltinExtensionSource("kotlin.jvm.internal", "kotlin-stdlib")
 
         // then
         assert(!isShown)

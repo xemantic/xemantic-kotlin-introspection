@@ -36,3 +36,15 @@ class NamedCompanionExtensionHolder {
 }
 
 fun NamedCompanionExtensionHolder.Factory.of(): NamedCompanionExtensionHolder = NamedCompanionExtensionHolder()
+
+// An extension on a companion object deprecated with the HIDDEN level, like one compiled in another module
+// before an upgrade of the library hid the companion object, which Kotlin no longer calls as HiddenCompanionExtensionHolder.of()
+class HiddenCompanionExtensionHolder {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    companion object
+}
+
+@Suppress("DEPRECATION_ERROR")
+fun HiddenCompanionExtensionHolder.Companion.of(): HiddenCompanionExtensionHolder = HiddenCompanionExtensionHolder()
+
+fun HiddenCompanionExtensionHolder.describe(): String = "holder"

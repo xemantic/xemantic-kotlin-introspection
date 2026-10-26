@@ -92,6 +92,10 @@ com.example.AnnotationTestClass
   paged by signatures, one item each.
   The extensions of its companion object, like `fun Foo.Companion.parse()`, called as `Foo.parse()`,
   are listed, and resolved, with the extensions of the class, like `String.Companion.format()` with `String.format()`,
+  unless the companion object is deprecated as hidden, like by an upgrade of its library after compiling the extension,
+  as Kotlin no longer calls `Foo.parse()` then,
+  but not the extensions on the supertypes of the companion object, also called as `Foo.parse()`,
+  not to flood the listing of the class, like with the ones on `Any`,
   while a class nested in the companion object is resolved only through it, like `com.example.Foo.Companion.Builder`,
   as Kotlin does not resolve `Foo.Builder` either.
   The members a class inherits from its supertypes, without redeclaring them, are not listed, not to bloat the listing,
@@ -156,7 +160,8 @@ com.example.AnnotationTestClass
   but the ones of any library on their companion objects, like `fun Int.Companion.serializer()` of kotlinx.serialization.
   When the `.kotlin_builtins` resources cannot be read, like when the standard library is a named module,
   whose resources are encapsulated, a warning is logged, and the built-in types are described by `kotlin-reflect` instead,
-  approximately, from their JVM types, without their companion objects, nor their extensions, like `String.Companion.format()`,
+  approximately, from their JVM types, without their companion objects,
+  still listing the extensions of the companion objects, like `String.Companion.format()`, told by kotlin-reflect,
   and without the mutable collection types,
   which `kotlin-reflect` cannot tell apart from their read-only counterparts.
 * The function types are resolved by their Kotlin names, like `kotlin.Function1` of `(P1) -> R`,

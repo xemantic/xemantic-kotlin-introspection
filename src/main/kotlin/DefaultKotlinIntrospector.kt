@@ -2048,7 +2048,7 @@ internal class DefaultKotlinIntrospector(
      * not to flood its listing with the generic extensions of the standard library.
      * Either way, the ones on a type parameter with multiple bounds only when the class satisfies all of them,
      * see [receiverBoundsOf], also when none of them is among the [userSupertypes], see [listedFor],
-     * also the ones on its companion object, see [companionReceiverNames],
+     * also the ones on its companion object, see [companionObjectName],
      * and never the ones on a type parameter shadowed by a more specific overload, see [withoutShadowed].
      *
      * @param apiClass the [kmClass] as a class of the API.
@@ -2061,7 +2061,8 @@ internal class DefaultKotlinIntrospector(
         declarations: ClassDeclarations,
         isBuiltin: Boolean
     ): ListedExtensions {
-        val companionReceiverNames = companionReceiverNames(kmClass, className)
+        val companionName = companionObjectName(kmClass, className, apiClass, declarations)
+        val companionReceiverNames = listOfNotNull(companionName?.let { "$className.$it" })
         val listed = if (isBuiltin) {
             val supertypeNames = supertypeNames(kmClass, kmClassOf = { builtinClasses[it] ?: loadKmClass(it) }) {
                 it != "kotlin.Any"
@@ -2072,13 +2073,13 @@ internal class DefaultKotlinIntrospector(
             // a library extends the companion object of a built-in type only deliberately, like with serializer()
             val companionNames = setOfNotNull(
                 kmClass.name.takeIf { kmClass.kind == ClassKind.COMPANION_OBJECT },
-                kmClass.companionObject?.let { "${kmClass.name}.$it" }
+                companionName?.let { "${kmClass.name}.$it" }
             )
-            fun isListed(isBuiltinExtension: Boolean, sourceClass: String, receiver: KmType?) = isBuiltinExtension ||
-                (!isInternalPackageSource(sourceClass) && (receiver?.classifier as? KmClassifier.Class)?.name in companionNames)
+            fun isListed(isBuiltinExtension: Boolean, source: String, receiver: KmType?) = isBuiltinExtension ||
+                (!isInternalPackageSource(source) && (receiver?.classifier as? KmClassifier.Class)?.name in companionNames)
             ListedExtensions(
-                listed.functions.filter { isListed(it.isBuiltinExtension, it.sourceClass, it.function.receiverParameterType) },
-                listed.properties.filter { isListed(it.isBuiltinExtension, it.sourceClass, it.property.receiverParameterType) }
+                listed.functions.filter { isListed(it.isBuiltinExtension, it.source, it.function.receiverParameterType) },
+                listed.properties.filter { isListed(it.isBuiltinExtension, it.source, it.property.receiverParameterType) }
             )
         } else {
             extensionsListedFor(
@@ -2158,15 +2159,33 @@ internal class DefaultKotlinIntrospector(
     }
 
     /**
-     * The receiver name of the extensions on the companion object of the [kmClass], named [className],
-     * like `fun Foo.Companion.parse()`, called on the name of the class, like `Foo.parse()`.
-     * The companion object is not loaded to tell whether it is part of the API, as an indexed extension is public,
-     * and the compiler does not let a public extension expose a receiver which is not, like a private companion object,
-     * while one deprecated as hidden is not told apart.
-     * The ones on the supertypes of the companion object are not listed, not to flood the listing of the class.
+     * The name of the companion object of the [kmClass], named [className], whose extensions,
+     * like `fun Foo.Companion.parse()`, are called on the name of the class, like `Foo.parse()`,
+     * or `null` if none of them is indexed, or it has none which is part of the API, like one deprecated as hidden,
+     * which an extension compiled before an upgrade of its library hid it might still extend,
+     * while Kotlin no longer calls `Foo.parse()`, told only for an indexed extension, not to load the companion object.
+     * A built-in type described by kotlin-reflect, see [toKmBuiltinClass], declares no companion object,
+     * so it is told by kotlin-reflect, like `String.Companion` of `String.Companion.format()`.
+     * The extensions on the supertypes of the companion object are not listed, not to flood the listing of the class.
+     *
+     * @param apiClass the [kmClass] as a class of the API.
+     * @param declarations the declarations of the [kmClass], telling the located name of the companion object.
      */
-    private fun companionReceiverNames(kmClass: KmClass, className: String): List<String> =
-        listOfNotNull(kmClass.companionObject?.let { "$className.$it" })
+    private fun companionObjectName(
+        kmClass: KmClass,
+        className: String,
+        apiClass: ApiClass,
+        declarations: ClassDeclarations
+    ): String? {
+        fun isExtended(name: String) = "$className.$name".let { it in extensionIndex || it in extensionPropertyIndex }
+        kmClass.companionObject?.let { name ->
+            return name.takeIf {
+                isExtended(it) && apiClasses.nestedApiClass(apiClass, declarations.located("${kmClass.name}.$it")) != null
+            }
+        }
+        if (declarations !is BuiltinClass || kmClass.name in builtinClasses) return null
+        return reflectedValue(default = null) { builtinTypes[className]?.companionObject?.simpleName }?.takeIf(::isExtended)
+    }
 
     /**
      * The comment telling the outermost protected class enclosing the declarations of the class named [name],
@@ -2513,12 +2532,6 @@ internal class DefaultKotlinIntrospector(
         )
         return MemberListing.of(members.map { ListingItem.Declaration(listOf(it)) } + extensions)
     }
-
-    /**
-     * Whether the [sourceClass] is declared in an internal package, like `kotlin.reflect.jvm.internal`,
-     * or `kotlinx.serialization.internal`, not meant to be used by the user code.
-     */
-    private fun isInternalPackageSource(sourceClass: String): Boolean = sourceClass.split('.').contains("internal")
 
     /**
      * The `@JvmInline` annotation, which a value class with a single underlying property requires on the JVM.
@@ -4613,7 +4626,7 @@ internal class DefaultKotlinIntrospector(
         isObjectMember: Boolean,
         moduleName: String?
     ): List<IndexedExtension> {
-        val isBuiltinExtension = isBuiltinExtensionSource(className, moduleName)
+        val isBuiltinExtension = isBuiltinExtensionSource(source, moduleName)
         return functions
             .filter { it.receiverParameterType != null }
             .inApi(TopLevel, classFile)
@@ -4633,7 +4646,7 @@ internal class DefaultKotlinIntrospector(
         isObjectMember: Boolean,
         moduleName: String?
     ): List<IndexedExtensionProperty> {
-        val isBuiltinExtension = isBuiltinExtensionSource(className, moduleName)
+        val isBuiltinExtension = isBuiltinExtensionSource(source, moduleName)
         return properties
             .filter { it.receiverParameterType != null }
             .inApi(TopLevel, classFile)
@@ -5555,9 +5568,10 @@ private const val COMPARABLE_CLASS_NAME = "kotlin.Comparable"
 private const val COMPARABLE_METADATA_NAME = "kotlin/Comparable"
 
 /**
- * Whether the extensions declared in the class of the JVM binary name [sourceClass], of the Kotlin module named
- * [moduleName] in its metadata, are shown with the built-in types:
+ * Whether the extensions imported from the [source], the Kotlin package, or the object, declaring them,
+ * of the Kotlin module named [moduleName] in its metadata, are shown with the built-in types:
  * only the ones of the public `kotlin.*` packages, not the ones of the internal packages, like `kotlin.jvm.internal`,
+ * told by the Kotlin package, not by the JVM one, which a file facade relocates with `@JvmPackageName`,
  * and only the ones of the modules of the standard library, or of kotlin-reflect, see [builtinExtensionModules],
  * whose extensions, like `KClass.memberFunctions` of `kotlin.reflect.full`,
  * can be called by the user code depending on it, even if some of them, like `KClass.cast()`,
@@ -5566,9 +5580,15 @@ private const val COMPARABLE_METADATA_NAME = "kotlin/Comparable"
  * or kotlin-metadata-jvm, whose `String.isLocalClassName()` would read like a member of `String`,
  * told apart by the Kotlin module declaring them, which is kept also when merged into one jar, like a shadow jar.
  */
-internal fun isBuiltinExtensionSource(sourceClass: String, moduleName: String?): Boolean =
-    sourceClass.startsWith("kotlin.") && !sourceClass.split('.').contains("internal") &&
+internal fun isBuiltinExtensionSource(source: String, moduleName: String?): Boolean =
+    (source == "kotlin" || source.startsWith("kotlin.")) && !isInternalPackageSource(source) &&
         moduleName in builtinExtensionModules
+
+/**
+ * Whether the [source], the Kotlin package, or the object, declaring extensions, is an internal package,
+ * like `kotlin.reflect.jvm.internal`, or `kotlinx.serialization.internal`, not meant to be used by the user code.
+ */
+private fun isInternalPackageSource(source: String): Boolean = source.split('.').contains("internal")
 
 /**
  * The Kotlin modules whose extensions are shown with the built-in types, see [isBuiltinExtensionSource]:

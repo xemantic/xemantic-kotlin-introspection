@@ -24,6 +24,7 @@ import org.objectweb.asm.ClassVisitor
 import org.objectweb.asm.ClassWriter
 import org.objectweb.asm.Opcodes
 import kotlin.metadata.KmClassifier
+import kotlin.metadata.KmPackage
 import kotlin.metadata.KmType
 import kotlin.metadata.KmTypeProjection
 import kotlin.metadata.KmVariance
@@ -154,6 +155,21 @@ internal fun withSupertypesInMetadata(bytes: ByteArray, vararg types: KmType): B
     val metadata = KotlinClassMetadata.readStrict(it) as KotlinClassMetadata.Class
     metadata.kmClass.supertypes += types
     metadata.write()
+}
+
+/**
+ * Declares the file facade of the class bytes in the Kotlin [packageName], other than its JVM package,
+ * like `@JvmPackageName` of the standard library does, with its declarations [transformed][transform].
+ */
+internal fun withKotlinPackageInMetadata(
+    bytes: ByteArray,
+    packageName: String,
+    transform: (KmPackage) -> Unit
+): ByteArray = withMetadata(bytes) {
+    val metadata = KotlinClassMetadata.readStrict(it) as KotlinClassMetadata.FileFacade
+    transform(metadata.kmPackage)
+    val written = metadata.write()
+    Metadata(written.kind, written.metadataVersion, written.data1, written.data2, written.extraString, packageName, written.extraInt)
 }
 
 internal fun withMetadataKind(bytes: ByteArray, kind: Int): ByteArray = withMetadata(bytes) {

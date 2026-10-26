@@ -47,6 +47,7 @@ import kotlin.io.path.writeBytes
 import kotlin.metadata.KmClassifier
 import kotlin.metadata.KmType
 import kotlin.metadata.jvm.KotlinModuleMetadata
+import kotlin.metadata.jvm.moduleName
 import kotlin.test.Test
 
 /**
@@ -3209,6 +3210,31 @@ class ClassLoaderIntrospectionTest {
             class LegacyContextReceiverOuter<T> {
                 context(Comparator<T>) /* legacy context receivers, not compiled by Kotlin 2.2+ */ inner class Inner
             }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should list extension of standard library with built-in type by Kotlin package of its file facade`() {
+        // given
+        // like a file facade of kotlin-stdlib relocated to another JVM package by @JvmPackageName,
+        // declaring fun String.isolatedExtension() in the kotlin.text package
+        val root = isolatedTestFixturesCopy("jvmPackageName") { fileName, bytes ->
+            if (fileName != "IsolatedTestClassKt.class") bytes else withKotlinPackageInMetadata(bytes, "kotlin.text") {
+                it.moduleName = "kotlin-stdlib"
+                it.functions.single { function -> function.name == "isolatedExtension" }.receiverParameterType =
+                    KmType().apply { classifier = KmClassifier.Class("kotlin/String") }
+            }
+        }
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signatures = introspector.resolve("kotlin.String.isolatedExtension")
+
+        // then
+        signatures sameAsKotlin """
+            // kotlin.String.isolatedExtension [page 1/1]
+            // from kotlin.text
+            fun String.isolatedExtension(): Int
         """.trimIndent()
     }
 
