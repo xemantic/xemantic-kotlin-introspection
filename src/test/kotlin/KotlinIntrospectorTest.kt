@@ -4754,11 +4754,13 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve stdlib extension on type parameter with multiple bounds of the standard library as member of class satisfying them`() {
-        // like in the listing of BoundedReceiverRange, the member contains(value: Int) is inherited from ClosedRange
+        // like in the listing of BoundedReceiverRange, after the member contains(value: T) inherited from ClosedRange
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.BoundedReceiverRange.contains"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.BoundedReceiverRange.contains [page 1/1]
+            // inherited from kotlin.ranges.ClosedRange
+            operator fun contains(value: T): Boolean
             // from kotlin.ranges
             inline operator fun <T : Comparable<T>, R> R.contains(element: T?): Boolean where R : ClosedRange<T>, R : Iterable<T>
         """.trimIndent()
