@@ -2004,7 +2004,7 @@ internal class DefaultKotlinIntrospector(
      *
      * The body of a built-in type, which is its declaration in the `.kotlin_builtins` resources, see [BuiltinClass],
      * or its own Kotlin metadata, like of `kotlin.UInt`, also lists its JVM-only members, like `String.chars()`,
-     * whose parameter names are known, see [hasSyntheticParameterNames],
+     * but the ones hidden by its extensions, see [jvmOnlyFunctionsNotHidden],
      * and its extensions which read like its members, see [bodyReceiverSubstitution], without their receivers,
      * while the properties and the functions of a built-in type, coming from these different sources,
      * are sorted by name, like the members of its companion object, so that the overloads stay together.
@@ -2020,7 +2020,6 @@ internal class DefaultKotlinIntrospector(
         isBuiltin: Boolean = false
     ): ClassListing {
         val clazz = foundClass.clazz
-        val isInterface = kmClass.kind == ClassKind.INTERFACE
         val isEnum = kmClass.kind == ClassKind.ENUM_CLASS
         val isAnnotation = kmClass.kind == ClassKind.ANNOTATION_CLASS
         val isSealed = kmClass.modality == Modality.SEALED
@@ -2172,11 +2171,7 @@ internal class DefaultKotlinIntrospector(
             val propertyItems = properties
                 .filter { it !in declaredInConstructor }
                 .map { property ->
-                    property.name to formatApiProperty(
-                        property, apiClass, foundClass,
-                        inInterface = isInterface, owner = kmClass, contextPackage = contextPackage, classTypeParameters = typeParameters,
-                        isOwnerOpenForOverrides = isOpenForOverrides
-                    )
+                    property.name to formatMember(Member.Property(property), kmClass, foundClass, apiClass, contextPackage, isOpenForOverrides)
                 }
 
             // Secondary constructors, in the conventional order, between the properties and the functions
@@ -2191,13 +2186,7 @@ internal class DefaultKotlinIntrospector(
 
             // Functions, each with its name
             val functionItems = functions.map { function ->
-                function.name to listOf(
-                    formatFunction(
-                        function, inInterface = isInterface, owner = kmClass, contextPackage = contextPackage,
-                        classTypeParameters = typeParameters, deprecation = foundClass.deprecation(function),
-                        isOwnerOpenForOverrides = isOpenForOverrides
-                    )
-                )
+                function.name to formatMember(Member.Function(function), kmClass, foundClass, apiClass, contextPackage, isOpenForOverrides)
             }
 
             if (isBuiltin) {
@@ -2353,28 +2342,17 @@ internal class DefaultKotlinIntrospector(
         apiClass: ApiClass,
         bodyExtensions: ListedExtensions
     ): List<Pair<String, List<String>>> {
-        val isInterface = kmClass.kind == ClassKind.INTERFACE
-        val typeParameters = typeParametersInScope(kmClass, declarations)
         val contextPackage = contextPackageOf(declarations, kmClass)
         val isOpenForOverrides = isOpenForOverrides(kmClass, apiClass)
         val builtinClass = declarations as? BuiltinClass
+        // formatted like the members the kmClass declares, see formatClass
         val jvmOnlyProperties = builtinClass?.jvmOnlyProperties.orEmpty().inApi(apiClass, declarations).map { property ->
-            property.name to formatApiProperty(
-                property, apiClass, declarations,
-                inInterface = isInterface, owner = kmClass, contextPackage = contextPackage, classTypeParameters = typeParameters,
-                isOwnerOpenForOverrides = isOpenForOverrides
-            )
+            property.name to formatMember(Member.Property(property), kmClass, declarations, apiClass, contextPackage, isOpenForOverrides)
         }
         val jvmOnlyFunctions = jvmOnlyFunctionsNotHidden(kmClass, declarations, bodyExtensions)
             .inApi(apiClass, declarations)
             .map { function ->
-                function.name to listOf(
-                    formatFunction(
-                        function, inInterface = isInterface, owner = kmClass, contextPackage = contextPackage,
-                        classTypeParameters = typeParameters, deprecation = declarations.deprecation(function),
-                        isOwnerOpenForOverrides = isOpenForOverrides
-                    )
-                )
+                function.name to formatMember(Member.Function(function), kmClass, declarations, apiClass, contextPackage, isOpenForOverrides)
             }
         val bodyExtensionProperties = bodyExtensions.properties.map { extension ->
             extension.property.name to formatProperty(
