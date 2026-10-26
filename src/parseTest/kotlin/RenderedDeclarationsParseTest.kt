@@ -118,6 +118,18 @@ class RenderedDeclarationsParseTest {
     }
 
     @Test
+    fun `should parse legacy context receivers of class`() {
+        // given - rendered only for a class compiled with -Xcontext-receivers, which is not on the classpath of the tests
+        val listing = "context(LegacyLogger, Comparator<T>) class LegacyContextReceiverClass<T> {\n    fun log()\n}"
+
+        // when
+        val errors = parseErrors(toParsableKotlin(listing))
+
+        // then
+        assert(errors.isEmpty())
+    }
+
+    @Test
     fun `should report unescaped segment of qualified name of listed class header`() {
         // when
         val errors = parseErrors("class Listing {\n${toParsableKotlin("    class in.Nested")}\n}")

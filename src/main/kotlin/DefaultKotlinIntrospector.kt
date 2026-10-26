@@ -2669,6 +2669,7 @@ internal class DefaultKotlinIntrospector(
         kind: ClassKind = kmClass.kind
     ): String = buildString {
         +formatDeprecation(deprecation)
+        +formatClassContextReceivers(kmClass, contextPackage, typeParameters)
         // the prefix ends with a space, like in `companion object `
         +formatClassPrefix(kmClass, kind).let { if (name.isEmpty()) it.trimEnd() else it + name }
         +formatTypeParameters(kmClass.typeParameters, typeParameters, contextPackage)
@@ -2679,6 +2680,23 @@ internal class DefaultKotlinIntrospector(
             +supertypes.joinToString(", ")
         }
         +formatWhereClause(kmClass.typeParameters, typeParameters, contextPackage)
+    }
+
+    /**
+     * The legacy context receivers of a class, like `context(Logger) `, compiled with `-Xcontext-receivers`
+     * by a Kotlin compiler before 2.2, in their own syntax, without names, as a class cannot declare context parameters.
+     * The ones of a function or a property are read as its context parameters by kotlin-metadata-jvm.
+     */
+    @OptIn(ExperimentalContextReceivers::class)
+    @Suppress("DEPRECATION")
+    private fun formatClassContextReceivers(
+        kmClass: KmClass,
+        contextPackage: String,
+        typeParameters: Map<Int, String>
+    ): String = if (kmClass.contextReceiverTypes.isEmpty()) "" else {
+        kmClass.contextReceiverTypes.joinToString(", ", prefix = "context(", postfix = ") ") {
+            formatType(it, contextPackage, typeParameters)
+        }
     }
 
     /**

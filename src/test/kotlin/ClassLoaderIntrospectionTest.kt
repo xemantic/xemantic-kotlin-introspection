@@ -42,6 +42,10 @@ import java.util.jar.JarEntry
 import java.util.jar.JarOutputStream
 import java.util.jar.Manifest
 import kotlin.io.path.createDirectories
+import kotlin.metadata.KmClassifier
+import kotlin.metadata.KmType
+import kotlin.metadata.KmTypeProjection
+import kotlin.metadata.KmVariance
 import kotlin.io.path.outputStream
 import kotlin.io.path.writeBytes
 import kotlin.metadata.jvm.KotlinModuleMetadata
@@ -2560,6 +2564,31 @@ class ClassLoaderIntrospectionTest {
             // com.xemantic.kotlin.introspection.isolated.AbsentDollarJavaSubclass [page 1/1]
             class AbsentDollarJavaSubclass : AbsentDollarJavaBase {
                 override fun take(named: DollarHolder.`${'$'}Named`)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should render legacy context receivers of class`() {
+        // given
+        val logger = KmType().apply { classifier = KmClassifier.Class("com/xemantic/kotlin/introspection/isolated/LegacyLogger") }
+        val comparator = KmType().apply {
+            classifier = KmClassifier.Class("kotlin/Comparator")
+            arguments += KmTypeProjection(KmVariance.INVARIANT, KmType().apply { classifier = KmClassifier.TypeParameter(0) })
+        }
+        val root = isolatedTestFixturesCopy("legacyContextReceivers") { fileName, bytes ->
+            if (fileName == "LegacyContextReceiverClass.class") withContextReceiversInMetadata(bytes, logger, comparator) else bytes
+        }
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.LegacyContextReceiverClass")
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.LegacyContextReceiverClass [page 1/1]
+            context(LegacyLogger, Comparator<T>) class LegacyContextReceiverClass<T> {
+                fun log()
             }
         """.trimIndent()
     }
