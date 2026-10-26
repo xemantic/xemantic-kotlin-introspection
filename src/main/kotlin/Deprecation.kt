@@ -24,11 +24,13 @@ package com.xemantic.kotlin.introspection
  *
  * @property message the message of the `@Deprecated` annotation.
  * @property replaceWith the expression of its `ReplaceWith`, if any, without the imports.
- * @property level the level in effect, see [deprecationOf].
+ * @property level the level in effect, see [deprecationOf], of this one only, not of its [accessors],
+ *   like of a `val` deprecated itself, which might be lower than the one of its getter.
  * @property target what is deprecated: the declaration itself,
  *   or only an accessor of a `var`, rendered as `@get:Deprecated`, or `@set:Deprecated`, see [varDeprecationOf].
  * @property accessors the deprecations of the accessors of a `var`, deprecated apart from this one, each targeting its accessor,
- *   so that all of them are rendered, like `@Deprecated("…") @set:Deprecated("…", level = DeprecationLevel.ERROR) var a: Int`.
+ *   so that all of them are rendered, like `@Deprecated("…") @set:Deprecated("…", level = DeprecationLevel.ERROR) var a: Int`,
+ *   or the one of the getter of a `val`, deprecated itself too, see [ofReading].
  */
 internal class Deprecation(
     val message: String,
@@ -61,16 +63,21 @@ internal class Deprecation(
         (target == accessor && level == DeprecationLevel.HIDDEN) || accessors.any { it.hides(accessor) }
 
     /**
-     * The deprecation of reading the property, rendered as a `val`, as its setter cannot be called:
-     * the higher one of the property itself and of its getter, targeting the declaration,
+     * The deprecation of reading the property, rendered as a `val`, as its setter cannot be called, or as it is one:
+     * the one of the property itself, followed by the one of its getter, like
+     * `@Deprecated("Use z", ReplaceWith("z")) @get:Deprecated("Read y", level = DeprecationLevel.ERROR) val q: Int`,
+     * so that neither message is lost, or the one of its getter alone, targeting the declaration,
+     * or the hidden one of its getter, targeting the declaration, as a property which cannot be read is hidden as a whole,
      * or `null`, when only its setter is deprecated.
      */
     fun ofReading(): Deprecation? {
         if (target == Target.DECLARATION && accessors.isEmpty()) return this
-        return (listOf(this) + accessors)
-            .filter { it.target != Target.SETTER }
-            .map { it.targeting(Target.DECLARATION) }
-            .reduceOrNull(::highestOf)
+        val getter = (listOf(this) + accessors).firstOrNull { it.target == Target.GETTER }
+        return when {
+            target != Target.DECLARATION || getter?.level == DeprecationLevel.HIDDEN -> getter?.targeting(Target.DECLARATION)
+            getter == null -> targeting(Target.DECLARATION)
+            else -> targeting(Target.DECLARATION, accessors = listOf(getter))
+        }
     }
 
     /**
@@ -147,15 +154,4 @@ internal fun DeprecationAnnotations.deprecationOf(isSince: (version: String) -> 
         explicitLevel ?: DeprecationLevel.WARNING
     }
     return Deprecation(message.orEmpty(), replaceWith?.takeIf { it.isNotEmpty() }, effectiveLevel)
-}
-
-/**
- * The higher of the deprecations of one declaration told by several sources, like its getter and its annotations,
- * so that a hidden one is never overridden by a lower one.
- */
-internal fun highestOf(first: Deprecation?, second: Deprecation?): Deprecation? = when {
-    first == null -> second
-    second == null -> first
-    second.level > first.level -> second
-    else -> first
 }

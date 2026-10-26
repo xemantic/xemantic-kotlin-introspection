@@ -177,6 +177,10 @@ private fun Deprecations.isHidden(constructor: KmConstructor): Boolean = depreca
 /**
  * Whether the [property] is hidden in the [scope], also when only its getter is, see [Deprecation.hidesGetter],
  * unless its setter is part of the API, so that it can still be assigned.
+ * An override whose getter is hidden is dropped too, when its setter is not part of the API,
+ * like a `protected` one in a final class, as it can be neither read, nor assigned,
+ * while an override whose getter is visible, and whose setter is not part of the API, or hidden,
+ * is still rendered as a `var`, as a `val` cannot override a `var`, see `propertyDeclaration`.
  */
 private fun Deprecations.isHidden(property: KmProperty, scope: DeclarationScope): Boolean {
     val deprecation = deprecation(property) ?: return false
@@ -1325,21 +1329,25 @@ internal class DefaultKotlinIntrospector(
      * @param scope the class of the API telling which of the members are part of it,
      *   the [kmClass] itself, or its subclass inheriting them, see [inheritedMembers].
      * @param jvmOnlyFunctions the JVM-only functions of a built-in type, see [jvmOnlyFunctionsNotHidden].
+     * @param includingHidden whether the members deprecated as hidden are included too, like the overrides,
+     *   which hide the members they override, see [inheritedMembers].
      */
     private fun apiMembersNamed(
         kmClass: KmClass,
         declarations: ClassDeclarations,
         memberName: String,
         scope: ApiClass,
-        jvmOnlyFunctions: List<KmFunction> = (declarations as? BuiltinClass)?.jvmOnlyFunctions.orEmpty()
+        jvmOnlyFunctions: List<KmFunction> = (declarations as? BuiltinClass)?.jvmOnlyFunctions.orEmpty(),
+        includingHidden: Boolean = false
     ): List<Member> {
         val builtinClass = declarations as? BuiltinClass
         val properties = kmClass.properties.filter { it.name == memberName } +
             builtinClass?.jvmOnlyProperties.orEmpty().filter { it.name == memberName }
         val functions = kmClass.functions.filter { it.name == memberName } +
             jvmOnlyFunctions.filter { it.name == memberName }
-        return properties.inApi(scope, declarations).map { Member.Property(it) } +
-            functions.inApi(scope, declarations).map { Member.Function(it) }
+        val deprecations = if (includingHidden) null else declarations
+        return properties.inApi(scope, deprecations).map { Member.Property(it) } +
+            functions.inApi(scope, deprecations).map { Member.Function(it) }
     }
 
     /**
@@ -1389,6 +1397,8 @@ internal class DefaultKotlinIntrospector(
      * @param key the key of the member, see [memberKey].
      * @param overridden the keys of the members of the supertypes of the [kmClass] which the [member] overrides.
      * @param jvmMethod the JVM method of a JVM-only member.
+     * @param isHidden whether the [member] is deprecated as hidden, so that it is not inherited,
+     *   while it still hides the members it overrides.
      */
     private class InheritedCandidate(
         val kmClass: KmClass,
@@ -1396,6 +1406,7 @@ internal class DefaultKotlinIntrospector(
         val member: Member,
         val key: String,
         val overridden: Set<String>,
+        val isHidden: Boolean,
         val jvmMethod: JvmMethod? = null
     ) {
 
@@ -1420,6 +1431,8 @@ internal class DefaultKotlinIntrospector(
      * but the ones which a member of another supertype overrides, see [OverrideResolver.overriddenMembers],
      * so that the nearest declaration of each signature wins, like an override declared by an intermediate class,
      * while an overload which it does not override is still inherited from further up.
+     * An override deprecated as hidden, declared or inherited, is never listed, but it still overrides,
+     * as the compiler resolves neither it, nor the member it overrides, on the [kmClass].
      * Of the members of the same signature, see [InheritedCandidate.signature], or overriding the same member,
      * declared by unrelated supertypes, the one of the most specific return type wins, see [compareSpecificity],
      * like the `MutableIterator<E>` of `MutableCollection.iterator()` over the `Iterator<E>` of `List.iterator()`
@@ -1474,15 +1487,19 @@ internal class DefaultKotlinIntrospector(
             }
             // KmFunction compares by identity
             val jvmOnlyFunctionSet = jvmOnlyFunctionsNotHidden.filterTo(HashSet()) { it.name == memberName }
-            apiMembersNamed(superKmClass, supertype, memberName, scope, jvmOnlyFunctionsNotHidden).forEach { member ->
+            apiMembersNamed(
+                superKmClass, supertype, memberName, scope, jvmOnlyFunctionsNotHidden, includingHidden = true
+            ).forEach { member ->
                 candidates += when (member) {
                     is Member.Property -> InheritedCandidate(
                         superKmClass, supertype, member, memberKey(superKmClass, member.property),
-                        overrideResolver.overriddenMembers(superKmClass, member.property)
+                        overrideResolver.overriddenMembers(superKmClass, member.property),
+                        isHidden = supertype.isHidden(member.property, scope)
                     )
                     is Member.Function -> InheritedCandidate(
                         superKmClass, supertype, member, memberKey(superKmClass, member.function),
                         overrideResolver.overriddenMembers(superKmClass, member.function),
+                        isHidden = supertype.isHidden(member.function),
                         // only a JVM-only member is a Java method of its own, which the Kotlin members are not
                         jvmMethod = if (member.function in jvmOnlyFunctionSet) {
                             (supertype as? BuiltinClass)?.jvmMethodOf(member.function)
@@ -1514,14 +1531,15 @@ internal class DefaultKotlinIntrospector(
             overriddenJavaMembers += overrideResolver.overriddenJavaMembers(owner, function)
             function.signature?.let { overridingJvmSignatures += it }
         }
-        val hasJvmOnlyCandidates = candidates.any { it.jvmMethod != null }
+        val hasJvmOnlyCandidates = candidates.any { it.jvmMethod != null && !it.isHidden }
         if (hasJvmOnlyCandidates) {
             candidates.filter { it.declarations !is BuiltinClass }.forEach { candidate ->
                 (candidate.member as? Member.Function)?.let { collectJavaOverrides(candidate.kmClass, it.function) }
             }
         }
         val declaredSignatures = HashSet<String>()
-        apiMembersNamed(kmClass, declarations, memberName, scope).forEach { member ->
+        // also a hidden one, hiding the member it overrides, which cannot be called on the class either
+        apiMembersNamed(kmClass, declarations, memberName, scope, includingHidden = true).forEach { member ->
             if (member is Member.Function && hasJvmOnlyCandidates) collectJavaOverrides(kmClass, member.function)
             val (keys, isOverride) = when (member) {
                 is Member.Property -> overrideResolver.overriddenMembers(kmClass, member.property) to
@@ -1538,7 +1556,7 @@ internal class DefaultKotlinIntrospector(
             }
         }
         val survivors = candidates.filter {
-            it.key !in overridden && it.signature !in declaredSignatures &&
+            !it.isHidden && it.key !in overridden && it.signature !in declaredSignatures &&
                 it.jvmMethod?.key !in overriddenJavaMembers && it.jvmMethod?.signature !in overridingJvmSignatures
         }
         val inherited = survivors.filterIndexed { index, candidate ->
@@ -4475,15 +4493,15 @@ internal class DefaultKotlinIntrospector(
 
         /**
          * The deprecation of the [property], whose own one, of the synthetic method for its annotations,
-         * is the [annotationsDeprecation], combined with the one of its getter, see [highestOf],
-         * except for a `var`, whose accessors are deprecated apart, as it can be read, and assigned, see [varDeprecationOf].
+         * is the [annotationsDeprecation], followed by the ones of its accessors, deprecated apart, see [varDeprecationOf],
+         * as a `var` can be read, and assigned, while a `val` is deprecated by the ones of reading it, see [Deprecation.ofReading].
          */
         fun deprecation(property: KmProperty, annotationsDeprecation: Deprecation?): Deprecation? {
             val getterDeprecation = deprecation(property.getterSignature)
             return if (property.isVar) {
                 varDeprecationOf(annotationsDeprecation, getterDeprecation, deprecation(property.setterSignature))
             } else {
-                highestOf(annotationsDeprecation, getterDeprecation)
+                varDeprecationOf(annotationsDeprecation, getterDeprecation, setterDeprecation = null)?.ofReading()
             }
         }
 

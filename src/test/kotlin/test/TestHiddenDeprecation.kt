@@ -163,6 +163,19 @@ open class HiddenGetterVarOpenHolder {
         protected set
 }
 
+// an override in a final class, whose protected setter can be called only by the subclasses of the base class,
+// so that holder.overridden can be neither read, nor assigned
+open class HiddenGetterOverrideBase {
+    open var overridden: Int = 0
+        protected set
+}
+
+class HiddenGetterOverrideHolder : HiddenGetterOverrideBase() {
+    @get:Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    override var overridden: Int = 1
+        protected set
+}
+
 interface HiddenGetterVarInterface {
     @get:Deprecated("replaced", level = DeprecationLevel.HIDDEN)
     var abstractVar: Int
@@ -203,3 +216,20 @@ annotation class HiddenDeprecationAnnotationAllHidden(
     @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
     val hidden: Int = 1
 )
+
+// an override hidden in a subclass hides the member it overrides too,
+// so that holder.member(), or holder.property, of a HiddenOverride does not compile
+open class HiddenOverrideBase {
+    open fun member(): Int = 0
+    open val property: Int = 0
+}
+
+open class HiddenOverride : HiddenOverrideBase() {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    override fun member(): Int = 1
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    override val property: Int = 1
+}
+
+// inheriting the hidden overrides, so that neither can be called on it either
+class HiddenOverrideSub : HiddenOverride()
