@@ -20,6 +20,7 @@ package com.xemantic.kotlin.introspection
 
 import com.xemantic.kotlin.test.assert
 import org.junit.jupiter.api.Assumptions.assumeTrue
+import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.io.TempDir
 import java.net.JarURLConnection
 import java.net.URI
@@ -40,11 +41,51 @@ class KotlinBuiltinsTest {
 
     companion object {
 
-        // shared by the tests of the runtime image, linked once, see stdlibRuntimeImage
+        // shared by the tests of the runtime image, linked once before all the tests, see stdlibRuntimeImage
         @TempDir
         lateinit var imageDir: Path
 
-        private var stdlibRuntimeImage: Result<Path>? = null
+        private var linkedImage: Result<Path>? = null
+
+        @BeforeAll
+        @JvmStatic
+        fun linkImage() {
+            linkedImage = runCatching { linkStdlibRuntimeImage() }
+        }
+
+        /**
+         * The runtime image linked with the standard library of the tests, as its own module,
+         * skipping the test rather than failing it only when the JDK of the tests cannot link at all, like a JRE,
+         * or one without jmods, which cannot link from its own runtime image either,
+         * telling it by linking the image of `java.base` alone,
+         * so that any other failure, like of an argument, or of the module of the standard library, fails the test.
+         */
+        private fun linkStdlibRuntimeImage(): Path {
+            val jlink = java.util.spi.ToolProvider.findFirst("jlink").orElse(null)
+            assumeTrue(jlink != null, "jlink is not available")
+            fun link(output: Path, vararg arguments: String): Pair<Int, String> {
+                val log = java.io.StringWriter()
+                val exitCode = java.io.PrintWriter(log).use { writer ->
+                    jlink.run(
+                        writer,
+                        writer,
+                        *arguments,
+                        "--no-header-files", "--no-man-pages", "--strip-debug",
+                        "--output", output.toString()
+                    )
+                }
+                return exitCode to log.toString()
+            }
+            val stdlib = Path.of(KotlinVersion::class.java.protectionDomain.codeSource.location.toURI())
+            val image = imageDir.resolve("image")
+            val (exitCode, log) = link(image, "--module-path", stdlib.toString(), "--add-modules", "kotlin.stdlib")
+            if (exitCode != 0) {
+                val (javaBaseExitCode, javaBaseLog) = link(imageDir.resolve("java.base"), "--add-modules", "java.base")
+                assumeTrue(javaBaseExitCode == 0) { "the JDK cannot link: $javaBaseLog" }
+            }
+            assert(exitCode == 0, log)
+            return image
+        }
 
     }
 
@@ -112,45 +153,10 @@ class KotlinBuiltinsTest {
     }
 
     /**
-     * The runtime image linked with the standard library of the tests once for all the tests, see [linkStdlibRuntimeImage],
-     * rethrowing the failure of linking it, or the one skipping the test, to each of them.
+     * The runtime image linked with the standard library of the tests, see [linkStdlibRuntimeImage],
+     * rethrowing the failure of linking it, or the one skipping the test, to each test using it.
      */
-    private fun stdlibRuntimeImage(): Path =
-        (stdlibRuntimeImage ?: runCatching { linkStdlibRuntimeImage() }.also { stdlibRuntimeImage = it }).getOrThrow()
-
-    /**
-     * The runtime image linked with the standard library of the tests, as its own module,
-     * skipping the test rather than failing it only when the JDK of the tests cannot link at all, like a JRE,
-     * or one without jmods, which cannot link from its own runtime image either,
-     * telling it by linking the image of `java.base` alone,
-     * so that any other failure, like of an argument, or of the module of the standard library, fails the test.
-     */
-    private fun linkStdlibRuntimeImage(): Path {
-        val jlink = java.util.spi.ToolProvider.findFirst("jlink").orElse(null)
-        assumeTrue(jlink != null, "jlink is not available")
-        fun link(output: Path, vararg arguments: String): Pair<Int, String> {
-            val log = java.io.StringWriter()
-            val exitCode = java.io.PrintWriter(log).use { writer ->
-                jlink.run(
-                    writer,
-                    writer,
-                    *arguments,
-                    "--no-header-files", "--no-man-pages", "--strip-debug",
-                    "--output", output.toString()
-                )
-            }
-            return exitCode to log.toString()
-        }
-        val stdlib = Path.of(KotlinVersion::class.java.protectionDomain.codeSource.location.toURI())
-        val image = imageDir.resolve("image")
-        val (exitCode, log) = link(image, "--module-path", stdlib.toString(), "--add-modules", "kotlin.stdlib")
-        if (exitCode != 0) {
-            val (javaBaseExitCode, javaBaseLog) = link(imageDir.resolve("java.base"), "--add-modules", "java.base")
-            assumeTrue(javaBaseExitCode == 0) { "the JDK cannot link: $javaBaseLog" }
-        }
-        assert(exitCode == 0, log)
-        return image
-    }
+    private fun stdlibRuntimeImage(): Path = linkedImage!!.getOrThrow()
 
     @Test
     fun `should find kotlin_builtins resources of standard library in a module of a runtime image`() {
@@ -201,10 +207,12 @@ class KotlinBuiltinsTest {
         // bounded, so that a regression fails the test rather than hanging it
         val isExited = process.waitFor(60, java.util.concurrent.TimeUnit.SECONDS)
         if (!isExited) process.destroyForcibly()
-        joinOrFail(reader)
 
         // then
-        assert(isExited && process.exitValue() == 0)
+        // before joining the reader, so that a process which never exits tells the timeout
+        assert(isExited)
+        joinOrFail(reader)
+        assert(process.exitValue() == 0)
         assert(found == kotlinBuiltinsResources())
     }
 

@@ -911,7 +911,11 @@ internal class DefaultKotlinIntrospector(
      * shared with the concurrent lookups of the same class, and counted as the same failing attempt, see [attemptLookUpClass],
      * except for a miss of a lookup whose miss is not cached, so not probed either, see [lookUpClass],
      * which a concurrent lookup whose miss is cached does not receive, as if it were probed, looking the class up again,
-     * and which is not cached, as the names whose misses are not cached come from the user input.
+     * and which is not cached, as the names whose misses are not cached come from the user input,
+     * while a miss of such a lookup caused by an `IOException` is probed, and, if its class file is there,
+     * is a failing attempt like of any other lookup, cached once deemed final.
+     * After the misses of two such lookups in a row, the lookup whose miss is cached looks the class up on its own,
+     * outside the cache entry, so not shared with the concurrent lookups, caching it, if final, over the cached one, if any.
      */
     private fun lookUpClassByBinaryName(binaryName: String, isMissCached: Boolean = true): ClassLookup {
         repeat(2) {
@@ -922,8 +926,7 @@ internal class DefaultKotlinIntrospector(
             // also when computed by another thread
             if (!isMissCached || computed.value.isMissProbed) return computed.value.markedUnlessFinal()
         }
-        // after the misses of two concurrent lookups by name in a row, looked up outside the cache entry,
-        // which the lookups by name might keep taking for good, cached unless it might be transient
+        // after the misses of two concurrent lookups by name in a row, which might keep taking the cache entry for good
         val lookup = attemptLookUpClass(binaryName, isMissProbed = true)
         if (lookup.isFinal) foundClasses.put(binaryName, lookup)
         return lookup.markedUnlessFinal()
@@ -970,7 +973,7 @@ internal class DefaultKotlinIntrospector(
      * @param classFileAbsence whether the class file of a class which is not found is absent, see [isAbsent],
      *   told only when needed, `null` when its class file is known to be there.
      * @param isMissProbed whether the class is found, or its miss told apart from a class failing to load, see [lookUpClass],
-     *   unlike a miss which is not probed, unless it is caused by an `IOException`.
+     *   unlike a miss which is not probed, unless it is caused by an `IOException` while its class file is there.
      */
     private class ClassLookup(
         val foundClass: FoundClass?,
@@ -998,13 +1001,14 @@ internal class DefaultKotlinIntrospector(
         ClassLookup(FoundClass(binaryName, clazz), isFinal = true)
     } catch (e: ClassNotFoundException) {
         // also thrown when the class file is there, but cannot be read, like by a URLClassLoader after an IOException,
-        // which then tells a transient failure without probing the class file, when kept as the cause
-        val isIOFailure = isCausedByIOException(e)
+        // which, when kept as the cause, is worth the probe also when the miss is not cached,
+        // as it is also thrown for a class file which is not there, like a NoSuchFileException
+        val hasClassFile = (isMissProbed || isCausedByIOException(e)) && classLoader.hasClassFile(binaryName)
         ClassLookup(
             null,
-            isFinal = !isIOFailure && (!isMissProbed || !classLoader.hasClassFile(binaryName)),
+            isFinal = !hasClassFile,
             classFileAbsence = classFileAbsence(binaryName),
-            isMissProbed = isMissProbed || isIOFailure
+            isMissProbed = isMissProbed || hasClassFile
         )
     } catch (e: LinkageError) {
         // the class file is there, but refers to a class which is not, like its supertype,

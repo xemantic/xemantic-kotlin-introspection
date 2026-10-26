@@ -1099,6 +1099,28 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should not cache missing class resolved by name when ClassNotFoundException is caused by IOException`() {
+        // given
+        val missing = "com.xemantic.kotlin.introspection.test.Missing"
+        // like a class loader wrapping the NoSuchFileException of a class file which is not there
+        val classLoader = CountingClassLoader(
+            javaClass.classLoader,
+            failure = { ClassNotFoundException(it, java.nio.file.NoSuchFileException(it)) }
+        )
+        classLoader.failing += missing
+        val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
+
+        // when
+        val signatures = List(3) { introspector.resolve(missing) }
+
+        // then
+        // a final miss, as its class file is not there, which is not cached, as the name comes from the user input,
+        // rather than taken as a transient failure, deemed final, and cached
+        assert(signatures.all { it == null })
+        assert(classLoader.loads[missing] == 3)
+    }
+
+    @Test
     fun `should load nested class again after NoClassDefFoundError and failed read of its class file`() {
         // given
         val nested = "com.xemantic.kotlin.introspection.test.TypeParametersNestedHolder\$Sorted"
