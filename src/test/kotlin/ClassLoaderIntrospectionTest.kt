@@ -728,6 +728,7 @@ class ClassLoaderIntrospectionTest {
             // com.xemantic.kotlin.introspection.isolated.MissingGenericOuter.Inner [page 1/1]
             inner class MissingGenericOuter<T0>.Inner : Comparable<T0> {
                 override operator fun compareTo(other: T0): Int
+                fun <R> map(f: (T0) -> R): R
             }
         """.trimIndent()
     }

@@ -197,6 +197,8 @@ class MissingOuter {
 class MissingGenericOuter<T> {
     inner class Inner : Comparable<T> {
         override fun compareTo(other: T): Int = 0
+        // declaring its own type parameter, which is not one of the outer class
+        fun <R> map(f: (T) -> R): R = f(TODO())
     }
 }
 

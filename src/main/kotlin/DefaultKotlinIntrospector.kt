@@ -2528,11 +2528,22 @@ internal class DefaultKotlinIntrospector(
     }
 
     /**
-     * The ids of the type parameters which the types of the [kmClass] refer to, in its header, and in its members.
+     * The ids of the type parameters which the types of the [kmClass] refer to, in its header, and in its members,
+     * but the ones its members declare themselves, like `R` of `fun <R> map(f: (T) -> R): R`,
+     * computed once per class, as it is needed for each of its members rendered.
      */
+    private fun referencedTypeParameterIds(kmClass: KmClass): Set<Int> =
+        referencedTypeParameters.getOrCompute(kmClass.name) {
+            BoundedCache.Computed(computeReferencedTypeParameterIds(kmClass), isCacheable = true)
+        }.value
+
+    // the referencedTypeParameterIds of the inner classes whose outer classes cannot be read, by their metadata names
+    private val referencedTypeParameters = BoundedCache<String, Set<Int>>(capacity = 256)
+
     @OptIn(ExperimentalContextParameters::class)
-    private fun referencedTypeParameterIds(kmClass: KmClass): Set<Int> {
+    private fun computeReferencedTypeParameterIds(kmClass: KmClass): Set<Int> {
         val ids = HashSet<Int>()
+        val declared = HashSet<Int>()
         fun visitType(type: KmType?) {
             if (type == null) return
             (type.classifier as? KmClassifier.TypeParameter)?.let { ids += it.id }
@@ -2550,6 +2561,7 @@ internal class DefaultKotlinIntrospector(
             valueParameters: List<KmValueParameter>,
             returnType: KmType
         ) {
+            typeParameters.mapTo(declared) { it.id }
             visitTypeParameters(typeParameters)
             visitType(receiver)
             visitValueParameters(contextParameters)
@@ -2565,7 +2577,7 @@ internal class DefaultKotlinIntrospector(
         kmClass.properties.forEach {
             visitCallable(it.typeParameters, it.receiverParameterType, it.contextParameters, emptyList(), it.returnType)
         }
-        return ids
+        return ids - declared
     }
 
     /**
