@@ -90,6 +90,10 @@ com.example.AnnotationTestClass
   which finds everything of that name the listing of the class shows:
   its members, the members of its companion object, and the extensions of the class and its supertypes,
   paged by signatures, one item each.
+  The extensions of its companion object, like `fun Foo.Companion.parse()`, called as `Foo.parse()`,
+  are listed, and resolved, with the extensions of the class, like `String.Companion.format()` with `String.format()`,
+  while a class nested in the companion object is resolved only through it, like `com.example.Foo.Companion.Builder`,
+  as Kotlin does not resolve `Foo.Builder` either.
   The members a class inherits from its supertypes, without redeclaring them, are not listed, not to bloat the listing,
   but they are resolved by its name, after the members it declares, which override them, and before the extensions,
   each as declared by the nearest supertype declaring it, under its `// inherited from` header,
@@ -124,11 +128,16 @@ com.example.AnnotationTestClass
   or the ones on a projected receiver whose parameters would read narrower in the body than they are,
   like `fun <T> MutableCollection<in T>.plusAssign(elements: Array<T>)`, taking an array of any subtype of `E`,
   unlike `plusAssign(elements: Iterable<E>)`, read the same in the body of `interface MutableCollection<E>`.
-  Only the extensions of the public `kotlin.*` packages are listed for the built-in types,
+  Only the extensions of the public `kotlin.*` packages of the standard library, and of `kotlin-reflect`,
+  like `KClass.memberFunctions`, are listed for the built-in types,
+  told by the Kotlin module declaring them, also when merged into one jar, like a shadow jar,
+  not the ones of the other libraries declaring `kotlin.*` packages,
+  like `kotlin-metadata-jvm`, `kotlin-test`, or `kotlin-scripting`,
   but the ones of any library on their companion objects, like `fun Int.Companion.serializer()` of kotlinx.serialization.
   When the `.kotlin_builtins` resources cannot be read, like when the standard library is a named module,
   whose resources are encapsulated, a warning is logged, and the built-in types are described by `kotlin-reflect` instead,
-  approximately, from their JVM types, without their companion objects, and without the mutable collection types,
+  approximately, from their JVM types, without their companion objects, nor their extensions, like `String.Companion.format()`,
+  and without the mutable collection types,
   which `kotlin-reflect` cannot tell apart from their read-only counterparts.
 * The function types are resolved by their Kotlin names, like `kotlin.Function1` of `(P1) -> R`,
   or `kotlin.coroutines.SuspendFunction0` of `suspend () -> R`, listing the extensions on the function types,
@@ -165,7 +174,11 @@ com.example.AnnotationTestClass
   The extensions on an unbounded type parameter, like `let` or `also`, are not listed for any type,
   as they would be listed for every one.
 * The types of the `kotlin.*` packages are rendered with simple names, as LLMs know them well,
-  while the other types are fully qualified, to avoid ambiguity.
+  and so are the types of the package of the rendered class, or of the file facade, relative to it,
+  like `Outer.Nested`, while the other types are fully qualified, to avoid ambiguity.
+* The extensions are listed under the `// from …` header of the package, or the object, to import them from,
+  which is the Kotlin package also for a file facade compiled with `@JvmPackageName`,
+  like `kotlin.collections` of `Map.getOrDefault()` of `kotlin.collections.jdk8.CollectionsJDK8Kt`.
 * Only the declarations which can be used from the user code are rendered:
   never the private or internal ones,
   the protected ones only of a class which the user code can subclass, maybe indirectly,

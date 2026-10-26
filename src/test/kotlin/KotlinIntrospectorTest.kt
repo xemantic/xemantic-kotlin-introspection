@@ -46,7 +46,7 @@ class KotlinIntrospectorTest {
         resolver.resolve(
             "kotlin.String"
         ) sameAsKotlin """
-            // kotlin.String [page 1/41]
+            // kotlin.String [page 1/42]
             class String : Comparable<String>, CharSequence {
                 inline fun byteInputStream(charset: java.nio.charset.Charset = …): java.io.ByteArrayInputStream
                 @Deprecated("Use replaceFirstChar instead.", ReplaceWith("replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }")) fun capitalize(): String
@@ -69,7 +69,7 @@ class KotlinIntrospectorTest {
             "kotlin.String",
             page = 2
         ) sameAsKotlin """
-            // kotlin.String [page 2/41]
+            // kotlin.String [page 2/42]
             class String : Comparable<String>, CharSequence {
                 inline fun contentEquals(charSequence: CharSequence): Boolean
                 inline fun contentEquals(stringBuilder: java.lang.StringBuffer): Boolean
@@ -92,7 +92,7 @@ class KotlinIntrospectorTest {
             "kotlin.String",
             page = 3
         ) sameAsKotlin """
-            // kotlin.String [page 3/41]
+            // kotlin.String [page 3/42]
             class String : Comparable<String>, CharSequence {
                 fun endsWith(suffix: String, ignoreCase: Boolean = …): Boolean
                 override operator fun equals(other: Any?): Boolean
@@ -110,15 +110,13 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve String as known stdlib class - page 17 (the last page of the class body)`() {
-        // page 17 shows the last class members and the companion object, the extensions start on the next page
+        // page 17 shows the last class members and the companion object, followed by the first extensions
         resolver.resolve(
             "kotlin.String",
             page = 17
         ) sameAsKotlin """
-            // kotlin.String [page 17/41]
+            // kotlin.String [page 17/42]
             class String : Comparable<String>, CharSequence {
-                fun trimEnd(vararg chars: Char): String
-                inline fun trimEnd(): String
                 fun trimIndent(): String
                 fun trimMargin(marginPrefix: String = …): String
                 inline fun trimStart(predicate: (Char) -> Boolean): String
@@ -128,6 +126,10 @@ class KotlinIntrospectorTest {
                 inline fun uppercase(locale: java.util.Locale): String
                 companion object
             }
+            // from kotlin
+            inline infix fun <T> Comparable<T>.compareTo(other: T): Int
+            // from kotlin.ranges
+            fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T): T
         """.trimIndent()
     }
 
@@ -136,20 +138,13 @@ class KotlinIntrospectorTest {
         // extension-only pages omit the empty class body
         resolver.resolve(
             "kotlin.String",
-            page = 41
+            page = 42
         ) sameAsKotlin """
-            // kotlin.String [page 41/41]
+            // kotlin.String [page 42/42]
             // from kotlin.text
-            fun CharSequence.trimStart(): CharSequence
-            fun CharSequence.windowed(size: Int, step: Int = …, partialWindows: Boolean = …): List<String>
-            fun <R> CharSequence.windowed(size: Int, step: Int = …, partialWindows: Boolean = …, transform: (CharSequence) -> R): List<R>
-            fun CharSequence.windowedSequence(size: Int, step: Int = …, partialWindows: Boolean = …): Sequence<String>
-            fun <R> CharSequence.windowedSequence(size: Int, step: Int = …, partialWindows: Boolean = …, transform: (CharSequence) -> R): Sequence<R>
-            fun CharSequence.withIndex(): Iterable<IndexedValue<Char>>
-            infix fun CharSequence.zip(other: CharSequence): List<Pair<Char, Char>>
-            inline fun <V> CharSequence.zip(other: CharSequence, transform: (a: Char, b: Char) -> V): List<V>
-            fun CharSequence.zipWithNext(): List<Pair<Char, Char>>
             inline fun <R> CharSequence.zipWithNext(transform: (a: Char, b: Char) -> R): List<R>
+            // from kotlinx.serialization.builtins
+            fun String.Companion.serializer(): kotlinx.serialization.KSerializer<String>
         """.trimIndent()
     }
 
@@ -200,7 +195,6 @@ class KotlinIntrospectorTest {
                 inline fun hexToULong(format: HexFormat = …): ULong
                 inline fun hexToUShort(format: HexFormat = …): UShort
                 inline fun intern(): String
-                fun isLocalClassName(): Boolean
                 override val length: Int
                 inline fun lowercase(): String
                 inline fun lowercase(locale: java.util.Locale): String
@@ -283,7 +277,6 @@ class KotlinIntrospectorTest {
                 inline fun toInt(radix: Int): Int
                 fun toIntOrNull(): Int?
                 fun toIntOrNull(radix: Int): Int?
-                fun toJvmInternalName(): String
                 inline fun toLong(): Long
                 inline fun toLong(radix: Int): Long
                 fun toLongOrNull(): Long?
@@ -343,6 +336,7 @@ class KotlinIntrospectorTest {
             operator fun <T : Comparable<T>> T.rangeTo(that: T): ClosedRange<T>
             operator fun <T : Comparable<T>> T.rangeUntil(that: T): OpenEndRange<T>
             // from kotlin.text
+            val String.Companion.CASE_INSENSITIVE_ORDER: java.util.Comparator<String>
             val CharSequence.indices: IntRange
             val CharSequence.lastIndex: Int
             inline fun CharSequence.all(predicate: (Char) -> Boolean): Boolean
@@ -407,6 +401,8 @@ class KotlinIntrospectorTest {
             inline fun <R> CharSequence.foldRightIndexed(initial: R, operation: (index: Int, Char, acc: R) -> R): R
             inline fun CharSequence.forEach(action: (Char) -> Unit)
             inline fun CharSequence.forEachIndexed(action: (index: Int, Char) -> Unit)
+            inline fun String.Companion.format(format: String, vararg args: Any?): String
+            inline fun String.Companion.format(locale: java.util.Locale?, format: String, vararg args: Any?): String
             inline fun CharSequence.getOrElse(index: Int, defaultValue: (Int) -> Char): Char
             fun CharSequence.getOrNull(index: Int): Char?
             inline fun <K> CharSequence.groupBy(keySelector: (Char) -> K): Map<K, List<Char>>
@@ -575,6 +571,8 @@ class KotlinIntrospectorTest {
             inline fun <V> CharSequence.zip(other: CharSequence, transform: (a: Char, b: Char) -> V): List<V>
             fun CharSequence.zipWithNext(): List<Pair<Char, Char>>
             inline fun <R> CharSequence.zipWithNext(transform: (a: Char, b: Char) -> R): List<R>
+            // from kotlinx.serialization.builtins
+            fun String.Companion.serializer(): kotlinx.serialization.KSerializer<String>
         """.trimIndent()
     }
 
@@ -977,6 +975,76 @@ class KotlinIntrospectorTest {
             companion object {
                 fun create(): NestedCompanionTestClass.Inner
             }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should list extensions of companion object with the extensions of the class`() {
+        // called on the name of the class, like CompanionExtensionHolder.parse("…"), rendered with their receiver
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.CompanionExtensionHolder"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.CompanionExtensionHolder [page 1/1]
+            class CompanionExtensionHolder {
+                companion object {
+                    fun create(): CompanionExtensionHolder
+                }
+            }
+            // from com.xemantic.kotlin.introspection.test
+            val CompanionExtensionHolder.Companion.default: CompanionExtensionHolder
+            fun CompanionExtensionHolder.describe(): String
+            fun CompanionExtensionHolder.Companion.parse(text: String): CompanionExtensionHolder
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension of companion object as class member`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.CompanionExtensionHolder.parse"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.CompanionExtensionHolder.parse [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            fun CompanionExtensionHolder.Companion.parse(text: String): CompanionExtensionHolder
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension of named companion object as class member`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.NamedCompanionExtensionHolder.of"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NamedCompanionExtensionHolder.of [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            fun NamedCompanionExtensionHolder.Factory.of(): NamedCompanionExtensionHolder
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension of companion object of built-in type as its member`() {
+        // String.format("%d", 42), next to the extensions on the instances, like "%d".format(42)
+        resolver.resolve("kotlin.String.format") sameAsKotlin """
+            // kotlin.String.format [page 1/1]
+            // from kotlin.text
+            inline fun String.format(vararg args: Any?): String
+            inline fun String.format(locale: java.util.Locale?, vararg args: Any?): String
+            inline fun String.Companion.format(format: String, vararg args: Any?): String
+            inline fun String.Companion.format(locale: java.util.Locale?, format: String, vararg args: Any?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve class nested in companion object through outer class name`() {
+        // Kotlin does not resolve CompanionNestedClassesHolder.Builder, only CompanionNestedClassesHolder.Companion.Builder
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.CompanionNestedClassesHolder.Builder") == null)
+    }
+
+    @Test
+    fun `should resolve class nested in companion object through companion object name`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.CompanionNestedClassesHolder.Companion.Factory"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.CompanionNestedClassesHolder.Companion.Factory [page 1/1]
+            interface Factory
         """.trimIndent()
     }
 
@@ -6555,6 +6623,20 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should not resolve extension of built-in type from kotlin package of library other than stdlib and kotlin-reflect`() {
+        // kotlin-metadata-jvm declares fun ClassName.isLocalClassName() in kotlin.metadata, ClassName being a typealias of String
+        assert(resolver.resolve("kotlin.String.isLocalClassName") == null)
+    }
+
+    @Test
+    fun `should not list extensions of built-in type from kotlin package of library other than stdlib and kotlin-reflect`() {
+        // which would be listed in the body of String, like its member
+        resolver.resolve("kotlin.String", pageSize = 10000) should {
+            have(lines().none { "isLocalClassName" in it })
+        }
+    }
+
+    @Test
     fun `should list extensions of built-in type from public kotlin package of another library`() {
         resolver.resolve("kotlin.reflect.KClass", pageSize = 10000) should {
             have(lines().any { "val memberFunctions: Collection<KFunction<*>>" in it })
@@ -6824,6 +6906,30 @@ class KotlinIntrospectorTest {
             fun <T> listOf(element: T): List<T>
             fun <T> listOf(vararg elements: T): List<T>
             inline fun <T> listOf(): List<T>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve function of file facade with JVM package name under its Kotlin package`() {
+        // the facade is compiled with @file:JvmPackageName("kotlin.collections.jdk8"), but imported from kotlin.collections
+        resolver.resolve(
+            "kotlin.collections.jdk8.CollectionsJDK8Kt.getOrDefault"
+        ) sameAsKotlin """
+            // kotlin.collections.jdk8.CollectionsJDK8Kt.getOrDefault [page 1/1]
+            // from kotlin.collections
+            inline fun <K, V> Map<out K, V>.getOrDefault(key: K, defaultValue: V): V
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should list extension of file facade with JVM package name under its Kotlin package`() {
+        resolver.resolve(
+            "kotlin.collections.Map.getOrDefault"
+        ) sameAsKotlin """
+            // kotlin.collections.Map.getOrDefault [page 1/1]
+            open fun getOrDefault(key: K, defaultValue: V): V
+            // from kotlin.collections
+            inline fun <K, V> Map<out K, V>.getOrDefault(key: K, defaultValue: V): V
         """.trimIndent()
     }
 
