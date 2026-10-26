@@ -19,6 +19,7 @@
 package com.xemantic.kotlin.introspection
 
 import com.xemantic.kotlin.test.assert
+import kotlin.metadata.ClassKind
 import kotlin.metadata.Visibility
 import kotlin.test.Test
 
@@ -30,7 +31,13 @@ class ApiClassesTest {
         isUsable: Boolean = true,
         isSubclassable: Boolean = false,
         sealedSubclasses: List<String> = emptyList()
-    ) = ClassScope(visibility, isCompanion, isUsable, isSubclassable, sealedSubclasses)
+    ) = ClassScope(
+        visibility,
+        if (isCompanion) ClassKind.COMPANION_OBJECT else ClassKind.CLASS,
+        isUsable,
+        isSubclassable,
+        sealedSubclasses
+    )
 
     /**
      * The API classes of the [classes] found by their names, where a `null` scope tells a class
@@ -101,6 +108,56 @@ class ApiClassesTest {
         // then
         assert(isPublicApi == true && requestedBefore == listOf("pkg/Sealed"))
         assert(isProtectedApi == true && "pkg/Open" in requested)
+    }
+
+    @Test
+    fun `should keep openness of sealed class decided while deciding the one of its sealed superclass`() {
+        // given
+        val requested = mutableListOf<String>()
+        val apiClasses = apiClasses(
+            mapOf(
+                "pkg/Sealed" to scope(sealedSubclasses = listOf("pkg/SealedSub")),
+                "pkg/SealedSub" to scope(sealedSubclasses = listOf("pkg/Open")),
+                "pkg/Open" to scope(isSubclassable = true)
+            ),
+            requested
+        )
+        val isSealedOpen = apiClasses.apiClass("pkg/Sealed")?.isOpen
+        requested.clear()
+
+        // when
+        val isSealedSubOpen = apiClasses.apiClass("pkg/SealedSub")?.isOpen
+
+        // then
+        // being open is exact, also when decided assuming its sealed superclass not to be open meanwhile
+        assert(isSealedOpen == true && isSealedSubOpen == true)
+        assert(requested == listOf("pkg/SealedSub"))
+    }
+
+    @Test
+    fun `should derive nested class of the API from its outer class`() {
+        // given
+        val requested = mutableListOf<String>()
+        val apiClasses = apiClasses(
+            mapOf(
+                "pkg/Outer" to scope(isSubclassable = true),
+                "pkg/Outer.Companion" to scope(isCompanion = true),
+                "pkg/Outer.Private" to scope(Visibility.PRIVATE)
+            ),
+            requested
+        )
+        val outer = apiClasses.apiClass("pkg/Outer")!!
+        requested.clear()
+
+        // when
+        val companion = apiClasses.nestedApiClass(outer, "pkg/Outer.Companion")
+        val private = apiClasses.nestedApiClass(outer, "pkg/Outer.Private")
+
+        // then
+        // the protected members of the companion object of an open class are part of the API
+        assert(companion?.isApi(Visibility.PROTECTED) == true)
+        assert(private == null)
+        assert(requested == listOf("pkg/Outer.Companion", "pkg/Outer.Private"))
     }
 
     @Test

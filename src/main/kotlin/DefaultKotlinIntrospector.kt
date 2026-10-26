@@ -103,6 +103,9 @@ internal class IndexedClass(
     val extensionProperties: List<IndexedExtensionProperty>
 )
 
+// the visibilities of the constructors which do not make a class subclassable, see classScope
+private val PRIVATE_VISIBILITIES = setOf(Visibility.PRIVATE, Visibility.PRIVATE_TO_THIS, Visibility.LOCAL)
+
 /**
  * The [ClassScope] of the [kmClass], whose declarations have the [deprecations].
  *
@@ -112,13 +115,12 @@ private fun classScope(kmClass: KmClass, isUsable: Boolean, deprecations: Deprec
     // a sealed class cannot be extended outside its own module, and an interface cannot have protected members
     val isOpenClass = kmClass.kind == ClassKind.CLASS &&
         (kmClass.modality == Modality.OPEN || kmClass.modality == Modality.ABSTRACT)
-    val privateVisibilities = setOf(Visibility.PRIVATE, Visibility.PRIVATE_TO_THIS, Visibility.LOCAL)
     return ClassScope(
         visibility = kmClass.visibility,
-        isCompanion = kmClass.kind == ClassKind.COMPANION_OBJECT,
+        kind = kmClass.kind,
         isUsable = isUsable,
         isSubclassable = isOpenClass && kmClass.constructors.any {
-            it.visibility !in privateVisibilities && !deprecations.isHidden(it)
+            it.visibility !in PRIVATE_VISIBILITIES && !deprecations.isHidden(it)
         },
         sealedSubclasses = if (kmClass.kind == ClassKind.CLASS && kmClass.modality == Modality.SEALED) {
             kmClass.sealedSubclasses
@@ -1085,7 +1087,7 @@ internal class DefaultKotlinIntrospector(
         val contextPackage = contextPackageOf(declarations, kmClass)
         val members = declaredMembers(kmClass, declarations, memberName, apiClass, contextPackage)
 
-        val companionMembers = apiCompanionOf(kmClass)?.let { companion ->
+        val companionMembers = apiCompanionOf(kmClass, apiClass)?.let { companion ->
             val signatures = companion.propertiesNamed(memberName).map {
                 formatCompanionProperty(it, companion, contextPackage)
             } + companion.functionsNamed(memberName).map {
@@ -1502,8 +1504,7 @@ internal class DefaultKotlinIntrospector(
             .firstOrNull { apiClass.scopes[it].visibility == Visibility.PROTECTED }
             ?: return null
         val protectedName = names[index]
-        // a class which cannot be read is never protected, see ApiClasses
-        val kind = loadKmClass(protectedName)?.kind?.let(::formatClassKind) ?: return null
+        val kind = formatClassKind(apiClass.scopes[index].kind)
         return "// in protected $kind${escapeQualifiedName(protectedName.substringAfterLast('/'))}"
     }
 
@@ -1537,10 +1538,12 @@ internal class DefaultKotlinIntrospector(
     /**
      * The companion object of the [kmClass], see [ApiCompanion], or `null` if it has none which is part of the API,
      * like a hidden, or a synthetic one, whose members cannot be referred to either.
+     *
+     * @param outer the [kmClass] as a class of the API, which the companion object is derived from.
      */
-    private fun apiCompanionOf(kmClass: KmClass): ApiCompanion? {
+    private fun apiCompanionOf(kmClass: KmClass, outer: ApiClass): ApiCompanion? {
         val name = "${kmClass.name}.${kmClass.companionObject ?: return null}"
-        val apiClass = apiClasses.apiClass(name) ?: return null
+        val apiClass = apiClasses.nestedApiClass(outer, name) ?: return null
         val companionClass = classDeclarations(name) ?: return null
         return ApiCompanion(companionClass.kmClass ?: return null, companionClass, apiClass)
     }
@@ -2105,16 +2108,16 @@ internal class DefaultKotlinIntrospector(
         }
 
         // The companion object, unless it is not part of the API, with its members which are
-        val companion = apiCompanionOf(kmClass)
+        val companion = apiCompanionOf(kmClass, apiClass)
         // the ones which are also sealed subclasses of this class are listed as such
         val companionNestedClasses = if (companion != null) {
-            listedNestedClasses(companion.kmClass, kmClass.sealedSubclasses.toSet())
+            listedNestedClasses(companion.kmClass, companion.apiClass, kmClass.sealedSubclasses.toSet())
         } else {
             emptyList()
         }
 
         val sealedSubclasses = if (isSealed) listedSealedSubclasses(kmClass) else SealedSubclasses.NONE
-        val nestedClasses = listedNestedClasses(kmClass)
+        val nestedClasses = listedNestedClasses(kmClass, apiClass)
 
         val members = buildList<ListingItem.ClassBodyItem> {
             // The sealed subclasses first, then the other nested classes, only referenced,
@@ -2718,11 +2721,13 @@ internal class DefaultKotlinIntrospector(
      * Unlike the sealed subclasses, the ones which cannot be found are not told,
      * as a `when` expression need not cover them.
      *
+     * @param apiClass the [kmClass] as a class of the API, which the nested classes are derived from.
      * @param sealedSubclasses the declared sealed subclasses to exclude, the ones of the [kmClass],
      *   or of the class enclosing a companion object, which might be nested in that companion object.
      */
     private fun listedNestedClasses(
         kmClass: KmClass,
+        apiClass: ApiClass,
         sealedSubclasses: Set<String> = kmClass.sealedSubclasses.toSet()
     ): List<ListedClass> = kmClass.nestedClasses
         .map { "${kmClass.name}.$it" }
@@ -2730,7 +2735,7 @@ internal class DefaultKotlinIntrospector(
         .mapNotNull { name ->
             val nestedClass = classDeclarations(name) ?: return@mapNotNull null
             val nested = nestedClass.kmClass ?: return@mapNotNull null
-            if (nested.kind == ClassKind.COMPANION_OBJECT || apiClasses.apiClass(name) == null) return@mapNotNull null
+            if (nested.kind == ClassKind.COMPANION_OBJECT || apiClasses.nestedApiClass(apiClass, name) == null) return@mapNotNull null
             ListedClass(simpleClassName(name), nested, nestedClass)
         }
 

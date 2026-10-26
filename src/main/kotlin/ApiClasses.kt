@@ -18,12 +18,14 @@
 
 package com.xemantic.kotlin.introspection
 
+import kotlin.metadata.ClassKind
 import kotlin.metadata.Visibility
 
 /**
  * What a class tells by itself about whether it, and the declarations within it, are part of the API,
  * see [ApiClasses].
  *
+ * @param kind the kind of the class, telling, like for a protected one, how it is declared.
  * @param isUsable whether the class can be used in the source code at all, regardless of its visibility,
  *   unlike a synthetic class, a class deprecated with the `HIDDEN` level, or a generated serializer.
  * @param isSubclassable whether this class can be subclassed outside of its own body, and so, maybe indirectly,
@@ -35,11 +37,13 @@ import kotlin.metadata.Visibility
  */
 internal class ClassScope(
     val visibility: Visibility,
-    val isCompanion: Boolean,
+    val kind: ClassKind,
     val isUsable: Boolean,
     val isSubclassable: Boolean,
     val sealedSubclasses: List<String>
-)
+) {
+    val isCompanion: Boolean get() = kind == ClassKind.COMPANION_OBJECT
+}
 
 /**
  * A class enclosing a declaration of the API, which is itself part of the API.
@@ -51,15 +55,18 @@ internal class ClassScope(
  *   An open class with only private constructors is not open,
  *   even when it is subclassed by an open class nested in it, which the metadata does not tell.
  * @param isSubclassable see [ClassScope.isSubclassable].
+ * @param kind see [ClassScope.kind].
  */
 internal class ApiScope(
     val visibility: Visibility,
     isOpen: Lazy<Boolean>,
     val isSubclassable: Boolean,
-    val isCompanion: Boolean
+    val kind: ClassKind
 ) {
 
     val isOpen: Boolean by isOpen
+
+    val isCompanion: Boolean get() = kind == ClassKind.COMPANION_OBJECT
 
 }
 
@@ -195,7 +202,7 @@ internal class ApiClasses(
             visibility = scope.visibility,
             isOpen = lazy { isOpen(name, scope, inProgress) },
             isSubclassable = scope.isSubclassable,
-            isCompanion = scope.isCompanion
+            kind = scope.kind
         )
         return outer?.plus(apiScope) ?: ApiClass(listOf(apiScope))
     }
@@ -204,7 +211,8 @@ internal class ApiClasses(
      * Whether the class is open, see [ApiScope.isOpen], where a sealed class is, when any of its subclasses
      * is part of the API, and open.
      * Only the openness decided without assuming any sealed class not to be open is kept,
-     * which is exact, as such an assumption matters only when the sealed class is not open otherwise,
+     * or else decided to be open anyway, which is exact either way,
+     * as such an assumption matters only when the sealed class is not open otherwise,
      * and not after a transient failure meanwhile, see [transientFailures].
      */
     private fun isOpen(name: String, scope: ClassScope, inProgress: Set<String>): Boolean {
@@ -214,7 +222,7 @@ internal class ApiClasses(
         if (name in inProgress) return false
         val failureCount = transientFailures?.count()
         val isOpen = scope.sealedSubclasses.any { subclass -> apiClass(subclass, inProgress + name)?.isOpen == true }
-        if (inProgress.isEmpty() && transientFailures?.count() == failureCount) sealedOpenness.put(name, isOpen)
+        if ((inProgress.isEmpty() || isOpen) && transientFailures?.count() == failureCount) sealedOpenness.put(name, isOpen)
         return isOpen
     }
 
@@ -222,7 +230,8 @@ internal class ApiClasses(
 
         val ABSENT_ENCLOSING_CLASS = ClassScope(
             visibility = Visibility.PUBLIC,
-            isCompanion = false,
+            // never protected, as it is assumed to be public
+            kind = ClassKind.CLASS,
             isUsable = true,
             isSubclassable = false,
             sealedSubclasses = emptyList()
