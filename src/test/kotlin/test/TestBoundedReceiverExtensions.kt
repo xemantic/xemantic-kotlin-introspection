@@ -146,3 +146,159 @@ class BoundedReceiverComparableToOther : Comparable<BoundedReceiverVersion> {
 class BoundedReceiverRange(override val start: Int, override val endInclusive: Int) : ClosedRange<Int>, Iterable<Int> {
     override fun iterator(): Iterator<Int> = (start..endInclusive).iterator()
 }
+
+// the classes comparable to themselves through a generic supertype, satisfying the bound T : Comparable<T>
+abstract class BoundedReceiverEntity<E : BoundedReceiverEntity<E>> : Comparable<E>
+
+class BoundedReceiverUser : BoundedReceiverEntity<BoundedReceiverUser>() {
+    override fun compareTo(other: BoundedReceiverUser): Int = 0
+    // shadows T.coerceAtMost(maximumValue: T), as T is pinned to this final class, comparable only to itself
+    fun coerceAtMost(maximumValue: BoundedReceiverUser): BoundedReceiverUser = this
+}
+
+// E : BoundedReceiverEntity<E> inferred as BoundedReceiverMember for BoundedReceiverAdmin, not satisfying it itself
+fun <E : BoundedReceiverEntity<E>> E.save(): E = this
+
+open class BoundedReceiverMember : BoundedReceiverEntity<BoundedReceiverMember>() {
+    override fun compareTo(other: BoundedReceiverMember): Int = 0
+}
+
+class BoundedReceiverAdmin : BoundedReceiverMember()
+
+interface BoundedReceiverOrdered<T> : Comparable<T>
+
+class BoundedReceiverRank : BoundedReceiverOrdered<BoundedReceiverRank> {
+    override fun compareTo(other: BoundedReceiverRank): Int = 0
+}
+
+// the extensions on Comparable of the package of a class, listed for it, like the ones of the standard library,
+// unlike the ones of another package, like isAtLeast, see CustomTypes, or the ones it cannot be called with
+fun <E : Comparable<in E>> E.isBetween(low: E, high: E): Boolean = this >= low && this <= high
+
+fun Comparable<Int>.comparedToZero(): Int = compareTo(0)
+
+// the extensions on a type parameter pinned to a final class by a self-referential bound, which is invariant,
+// shadowed by the members of the class called instead, unless a call can still reach them
+interface BoundedReceiverNode<N : BoundedReceiverNode<N>>
+
+fun <N : BoundedReceiverNode<N>> N.linkTo(next: N): N = next
+
+fun <N : BoundedReceiverNode<N>> N.linkAll(vararg nodes: N): N = this
+
+fun <N : BoundedReceiverNode<N>> N.linkOrSelf(next: N? = null): N = this
+
+fun <N : BoundedReceiverNode<N>> N.linkInContext(next: N): N = this
+
+fun <N : BoundedReceiverNode<N>> N.linkSuspending(next: N): N = this
+
+fun <N : BoundedReceiverNode<N>> N.linkMany(next: N): N = this
+
+class BoundedReceiverLeaf : BoundedReceiverNode<BoundedReceiverLeaf> {
+    // called instead of the extension
+    fun linkTo(next: BoundedReceiverLeaf): BoundedReceiverLeaf = next
+    // not called for leaf.linkAll(), or for more nodes
+    fun linkAll(nodes: BoundedReceiverLeaf): BoundedReceiverLeaf = this
+    // not called for leaf.linkOrSelf()
+    fun linkOrSelf(next: BoundedReceiverLeaf?): BoundedReceiverLeaf = this
+    // not called without the context parameter
+    context(log: Logger)
+    fun linkInContext(next: BoundedReceiverLeaf): BoundedReceiverLeaf = this
+    // called instead of the extension, also outside a coroutine, failing to compile then
+    suspend fun linkSuspending(next: BoundedReceiverLeaf): BoundedReceiverLeaf = this
+    // not called for leaf.linkMany(next = leaf), as a vararg does not take a single named argument
+    fun linkMany(vararg next: BoundedReceiverLeaf): BoundedReceiverLeaf = this
+}
+
+open class BoundedReceiverTwigBase {
+    // called instead of N.linkTo(next: N) on a BoundedReceiverTwig, inheriting it
+    fun linkTo(next: BoundedReceiverTwig): BoundedReceiverTwig = next
+}
+
+class BoundedReceiverTwig : BoundedReceiverTwigBase(), BoundedReceiverNode<BoundedReceiverTwig>
+
+// the type arguments of the receivers, and of the bounds, matched against the ones of the supertypes of a class
+interface BoundedReceiverBox<T>
+
+interface BoundedReceiverSource<out T>
+
+class BoundedReceiverIntBox : BoundedReceiverBox<Int>, BoundedReceiverSource<Int>
+
+class BoundedReceiverMixedBox : BoundedReceiverBox<Int>, BoundedReceiverSource<String>
+
+fun BoundedReceiverBox<Int>.sumOfInts(): Int = 0
+
+fun BoundedReceiverBox<String>.joinStrings(): String = ""
+
+fun BoundedReceiverBox<out Number>.sumOfNumbers(): Double = 0.0
+
+fun BoundedReceiverSource<Number>.firstNumber(): Number = 0
+
+fun BoundedReceiverSource<String>.firstString(): String = ""
+
+fun <T> BoundedReceiverBox<T>.anyBox() {}
+
+fun <T, B> B.sameElements() where B : BoundedReceiverBox<T>, B : BoundedReceiverSource<T> {}
+
+// the bound T : Comparable<T> next to another one, satisfied only by a class comparable to itself
+interface BoundedReceiverE
+
+fun <T> T.comparableE() where T : Comparable<T>, T : BoundedReceiverE {}
+
+class BoundedReceiverComparableE : Comparable<BoundedReceiverComparableE>, BoundedReceiverE {
+    override fun compareTo(other: BoundedReceiverComparableE): Int = 0
+}
+
+class BoundedReceiverComparableToOtherE : Comparable<BoundedReceiverVersion>, BoundedReceiverE {
+    override fun compareTo(other: BoundedReceiverVersion): Int = 0
+}
+
+// a generic class whose type parameter, bounded by the class itself, stands for its subclass, comparable to itself
+abstract class BoundedReceiverTitled<N : BoundedReceiverTitled<N>> : BoundedReceiverEntity<N>()
+
+// a contravariant type argument, which Any is not a subtype of
+interface BoundedReceiverSink<in T>
+
+class BoundedReceiverNumberSink : BoundedReceiverSink<Number>
+
+fun BoundedReceiverSink<Any>.sinkAny() {}
+
+fun BoundedReceiverSink<Int>.sinkInt() {}
+
+// a type argument of a Java class, which is not a String
+class BoundedReceiverFiles : BoundedReceiverSource<java.io.File>
+
+// the supertypes of the Kotlin classes mapped to Java classes, like java.io.Serializable, only told by the Java classes
+class BoundedReceiverIoErrors : BoundedReceiverSource<java.io.IOException>
+
+class BoundedReceiverStrings : BoundedReceiverSource<String>
+
+class BoundedReceiverArrays : BoundedReceiverSource<Array<String>>
+
+class BoundedReceiverSerializableSink : BoundedReceiverSink<java.io.Serializable>
+
+fun BoundedReceiverSource<java.io.Serializable>.firstSerializable() {}
+
+fun BoundedReceiverSource<Cloneable>.firstCloneable() {}
+
+// a Java interface without superinterfaces, which is not a String
+class BoundedReceiverRunnables : BoundedReceiverSource<Runnable>
+
+// a type parameter bounded by the class of other type arguments, not standing for the class
+abstract class BoundedReceiverStarred<X, T : BoundedReceiverStarred<String, T>> : Comparable<T>
+
+// Nothing, a subtype of any type, as a type argument, like of an Arrow-style None
+object BoundedReceiverNone : BoundedReceiverSource<Nothing>
+
+class BoundedReceiverIntSink : BoundedReceiverSink<Int>
+
+fun BoundedReceiverSink<Nothing>.sinkNothing() {}
+
+// the JVM supertypes of a built-in type, which Kotlin does not see, like java.lang.constant.Constable of Int,
+// or java.util.Collection of List, seen as MutableCollection
+class BoundedReceiverInts : BoundedReceiverSource<Int>
+
+class BoundedReceiverLists : BoundedReceiverSource<List<String>>
+
+fun BoundedReceiverSource<java.lang.constant.Constable>.firstConstable() {}
+
+fun BoundedReceiverSource<MutableCollection<String>>.addRow() {}

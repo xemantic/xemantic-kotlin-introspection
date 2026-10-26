@@ -32,3 +32,8 @@ data class CustomResult(
     val value: String,
     val success: Boolean
 )
+/**
+ * An extension on Comparable of another package than the one of a comparable class,
+ * not listed for the class, like the generic extensions on the other types of the standard library.
+ */
+fun <T : Comparable<T>> T.isAtLeast(other: T): Boolean = this >= other
