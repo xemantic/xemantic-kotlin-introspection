@@ -23,7 +23,6 @@ import com.xemantic.kotlin.test.sameAs
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
-import java.net.URLClassLoader
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.file.Path
@@ -55,12 +54,6 @@ class ClasspathScanTest {
         }.filter { (_, file) -> file.exists() }
     }
 
-    // the classes scanned are only the ones of the given roots, not of the test classpath
-    private fun classLoader(vararg roots: Path) = URLClassLoader(
-        roots.map { it.toUri().toURL() }.toTypedArray(),
-        ClassLoader.getPlatformClassLoader()
-    )
-
     private fun directoryRoot(name: String, prefix: String = ""): Path = tempDir.resolve(name).also { root ->
         isolatedClassFiles.forEach { (path, file) -> file.copyTo(root.resolve(prefix + path).toFile()) }
     }
@@ -68,8 +61,9 @@ class ClasspathScanTest {
     @Test
     fun `should not index class files of multi-release versions of directory root, like of jar root`() {
         // given
-        // a class loader of a directory root does not support multi-release, unlike the one of a jar,
-        // so that a class only in META-INF/versions cannot be loaded by its name either way
+        // a class loader of a directory root does not serve the class versions, so that a class only in
+        // META-INF/versions cannot be loaded by its name, neither from this jar, without Multi-Release: true
+        // in its manifest; the one of a multi-release jar does, which its scan, skipping META-INF, does not follow
         val root = directoryRoot("classes", prefix = "META-INF/versions/9/")
         val jar = tempDir.resolve("versions.jar")
         JarOutputStream(jar.outputStream()).use { out ->
@@ -81,8 +75,8 @@ class ClasspathScanTest {
         }
 
         // when
-        val directoryScan = scan(classLoader(root))
-        val jarScan = scan(classLoader(jar))
+        val directoryScan = scan(root)
+        val jarScan = scan(jar)
 
         // then
         assert(isolatedClassFiles.size == 2)
@@ -110,7 +104,7 @@ class ClasspathScanTest {
         corruptFirstEntryData(jar)
 
         // when
-        val scan = scan(classLoader(jar))
+        val scan = scan(jar)
 
         // then
         assert(scan.readClassFileCount == 3)
@@ -131,7 +125,7 @@ class ClasspathScanTest {
 
         // when
         val scan = try {
-            scan(classLoader(root))
+            scan(root)
         } finally {
             unreadable.setReadable(true)
         }
@@ -156,8 +150,8 @@ class ClasspathScanTest {
         }
 
         // when
-        val oneRoot = scan(classLoader(roots.first()))
-        val twoRoots = scan(classLoader(*roots.toTypedArray()))
+        val oneRoot = scan(roots.first())
+        val twoRoots = scan(*roots.toTypedArray())
 
         // then
         assert(oneRoot.readClassFileCount > 0 && oneRoot.skippedClassFileCount > 0)

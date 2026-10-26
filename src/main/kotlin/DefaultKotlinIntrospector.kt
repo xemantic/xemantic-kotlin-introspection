@@ -3784,7 +3784,10 @@ internal class DefaultKotlinIntrospector(
          * so that the nested class files which cannot contain an indexed Kotlin class are recognized before reading them.
          */
         fun scan(classFiles: List<ClassFileEntry>) {
-            val nestedClassFiles = NestedClassFiles(classFiles.mapTo(HashSet()) { it.name })
+            // no nesting is read, when not skipping, see indexClass
+            val nestedClassFiles = NestedClassFiles(
+                if (skipNestedClassFiles) classFiles.mapTo(HashSet()) { it.name } else emptySet()
+            )
             classFiles.sortedBy { nestingDepth(it.name) }.forEach { classFile ->
                 // the name of the path being also the one a class file read declares for it
                 val binaryName = classFile.name.replace('/', '.')
@@ -4306,7 +4309,8 @@ internal class DefaultKotlinIntrospector(
      *   might tell a class nested in a class which is not read, like `Outer${'$'}Nested${'$'}Deep` of a Java class compiled
      *   without the `NestMembers` attribute, before Java 11, referred to by another class scanned together with it,
      *   see [ClasspathScanner.scan]: any class of the same jar, even of another package,
-     *   while only a class of the same package in a directory, scanned one directory at a time.
+     *   while only a class of the same package in a directory, scanned one directory at a time;
+     *   of all of them, [NestedClassFiles] keeps only the ones of the class files within the group.
      * @property nestMembers the classes compiled from the same source as this nest host,
      *   declared by the `NestMembers` attribute.
      */
