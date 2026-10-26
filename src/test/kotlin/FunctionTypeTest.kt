@@ -249,6 +249,10 @@ class FunctionTypeTest {
                 "(() -> Unit)?",
                 "(() -> Unit).() -> Unit",
                 "com.xemantic.kotlin.introspection.test.FunctionModifiersTestClass.() -> Unit",
+                "KFunction1<Int, String>",
+                // the public API of kotlin-reflect describes a KFunction0<String> as KFunction<String>,
+                // and a KSuspendFunction1 as a KFunction1, see toKmType
+                "KFunction<String>",
                 "KFunction1<Int, String>"
             )
         )
