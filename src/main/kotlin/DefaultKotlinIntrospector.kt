@@ -1351,7 +1351,8 @@ internal class DefaultKotlinIntrospector(
         // the JVM-only members are overridden by the declared members, or by the ones of the other supertypes,
         // like an override declared by an intermediate class
         val overriddenJavaMembers = HashSet<String>()
-        if (candidates.any { it.javaKey != null }) {
+        val hasJvmOnlyCandidates = candidates.any { it.javaKey != null }
+        if (hasJvmOnlyCandidates) {
             candidates.filter { it.declarations !is BuiltinClass }.forEach { candidate ->
                 (candidate.member as? Member.Function)?.let {
                     overriddenJavaMembers += overrideResolver.overriddenJavaMembers(candidate.kmClass, it.function)
@@ -1360,7 +1361,7 @@ internal class DefaultKotlinIntrospector(
         }
         val declaredSignatures = HashSet<String>()
         apiMembersNamed(kmClass, declarations, memberName, scope).forEach { member ->
-            if (member is Member.Function && candidates.any { it.javaKey != null }) {
+            if (member is Member.Function && hasJvmOnlyCandidates) {
                 overriddenJavaMembers += overrideResolver.overriddenJavaMembers(kmClass, member.function)
             }
             val (keys, isOverride) = when (member) {
