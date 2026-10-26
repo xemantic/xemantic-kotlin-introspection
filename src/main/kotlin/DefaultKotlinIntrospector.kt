@@ -3734,7 +3734,7 @@ internal class DefaultKotlinIntrospector(
         // where every class file of the classpath is read, or skipped, see ClasspathScanner.scan, before deciding it,
         // while an enclosing class might still be served by the class loader from elsewhere, read then on its own
         val outsideClasses = HashMap<String, OutsideClass>()
-        // also when it cannot be read, or is absent, kept for the scan, read once by its metadata name
+        // read once by its name, kept for the scan also when it cannot be read, or is absent
         fun outsideClass(name: String): OutsideClass = outsideClasses.getOrPut(name) { readOutsideClass(binaryNameOf(name)) }
         val apiClasses = ApiClasses(
             scopeOf = { name ->
