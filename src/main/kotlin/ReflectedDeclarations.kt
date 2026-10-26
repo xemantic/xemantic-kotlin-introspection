@@ -18,6 +18,8 @@
 
 package com.xemantic.kotlin.introspection
 
+import org.objectweb.asm.Type as AsmType
+import java.lang.reflect.Method
 import kotlin.jvm.functions.FunctionN
 import kotlin.metadata.*
 import kotlin.metadata.jvm.annotations
@@ -35,6 +37,7 @@ import kotlin.reflect.KVisibility
 import kotlin.reflect.full.declaredMemberFunctions
 import kotlin.reflect.full.declaredMemberProperties
 import kotlin.reflect.full.isSubtypeOf
+import kotlin.reflect.jvm.javaMethod
 import kotlin.reflect.typeOf
 
 /*
@@ -68,19 +71,61 @@ internal fun hasSyntheticParameterNames(function: KFunction<*>): Boolean =
  * Tells whether the [callable] reflected by kotlin-reflect is a JDK member of a built-in type which Kotlin does not call,
  * newer than the members mapped to the built-in type, like `String.indent(Int)`, `strip()`, or `CharSequence.getChars`,
  * which kotlin-reflect tells deprecated as "not fully supported by Kotlin compiler", mirroring the warning of K1,
- * while K2 does not resolve it at all, so that it is neither rendered, nor shadows the extensions of its signature.
+ * while K2 does not resolve it at all, or one which Kotlin hides, see [HIDDEN_JDK_METHODS],
+ * so that it is neither rendered, nor shadows the extensions of its signature.
+ * A member whose annotations cannot be read, like one kotlin-reflect cannot describe, is not told callable either,
+ * which might leave out a member Kotlin does call, rather than list one it does not.
  */
-internal fun isUnsupportedByCompiler(callable: KCallable<*>): Boolean = try {
-    callable.annotations.any { it is Deprecated && it.message.startsWith(UNSUPPORTED_MEMBER_MESSAGE) }
-} catch (_: Exception) {
-    false
-} catch (e: Error) {
-    // like the KotlinReflectionInternalError of a member kotlin-reflect cannot describe
-    if (e is VirtualMachineError) throw e
-    false
-}
+internal fun isUnsupportedByCompiler(callable: KCallable<*>): Boolean =
+    reflectedValue(default = true) {
+        callable.annotations.any { it is Deprecated && it.message.startsWith(UNSUPPORTED_MEMBER_MESSAGE) }
+    } || callable.name in hiddenJdkMethodNames && reflectedValue(default = false) {
+        (callable as? KFunction<*>)?.javaMethod?.let { jvmSignature(it) in HIDDEN_JDK_METHODS } == true
+    }
 
 private const val UNSUPPORTED_MEMBER_MESSAGE = "This member is not fully supported by Kotlin compiler"
+
+/**
+ * The JDK methods of the built-in types which Kotlin hides, though kotlin-reflect lists them without telling,
+ * like `getDeclaringClass()` of `java.lang.Enum`, in favor of the `declaringJavaClass` extension,
+ * or `reversed()` of `java.util.List` since JDK 21, so that `list.reversed()` calls the `Iterable<T>.reversed()` extension,
+ * or `isEmpty()` of `java.lang.CharSequence` since JDK 15, in favor of the `CharSequence.isEmpty()` extension,
+ * by their JVM signatures, see [jvmSignature]: the `HIDDEN_METHOD_SIGNATURES` of `JvmBuiltInsSignatures` of the compiler,
+ * but the ones of the final classes, like `String.intern()`, which kotlin-reflect leaves out itself,
+ * compared with the copy of kotlin-reflect by `ReflectedDeclarationsTest`.
+ */
+internal val HIDDEN_JDK_METHODS: Set<String> = setOf(
+    "java/lang/CharSequence.isEmpty()Z",
+    "java/lang/Enum.finalize()V",
+    "java/lang/Enum.getDeclaringClass()Ljava/lang/Class;",
+    "java/util/List.reversed()Ljava/util/List;",
+    "java/util/List.sort(Ljava/util/Comparator;)V"
+)
+
+// telling most members apart without resolving their JVM methods
+private val hiddenJdkMethodNames: Set<String> = HIDDEN_JDK_METHODS.mapTo(HashSet()) { it.substringAfter('.').substringBefore('(') }
+
+/**
+ * The JVM signature of the [method], like `java/util/List.reversed()Ljava/util/List;`, see [HIDDEN_JDK_METHODS].
+ */
+internal fun jvmSignature(method: Method): String =
+    AsmType.getInternalName(method.declaringClass) + "." + method.name + AsmType.getMethodDescriptor(method)
+
+/**
+ * A [value] which kotlin-reflect builds from the metadata of the built-ins, like an annotation,
+ * or the companion object of a built-in type,
+ * or the [default] when it cannot be read, like a parameter with the default value, absent from the metadata,
+ * whose getter throws `KotlinReflectionInternalError`, as for the `level` of `@Deprecated` of `Long.toChar()`,
+ * but never when the virtual machine fails, like when out of memory.
+ */
+internal inline fun <T> reflectedValue(default: T, value: () -> T): T = try {
+    value()
+} catch (_: Exception) {
+    default
+} catch (e: Error) {
+    if (e is VirtualMachineError) throw e
+    default
+}
 
 /**
  * The ids of the type parameters a reflected declaration can refer to, by their names:
@@ -121,8 +166,10 @@ internal class ReflectedTypeParameters(private val ids: Map<String, Int>) {
  *
  * kotlin-reflect describes the JVM class, like `java.lang.String`, so that the declaration is approximate:
  * its supertypes are only the Kotlin ones, its members are the ones the JVM class declares,
- * also the ones whose parameter names are not known, like `initCause(arg0: Throwable?)`,
- * but the ones Kotlin does not call, see [isUnsupportedByCompiler],
+ * but the ones whose parameter names are not known, like `initCause(arg0: Throwable?)`, see [hasSyntheticParameterNames],
+ * which are Java-only, and left to the JVM-only members, like when the declarations of the built-ins are read,
+ * so that they are hidden by extensions, and overridden, alike,
+ * and the ones Kotlin does not call, see [isUnsupportedByCompiler],
  * and its constructors are the ones of the JVM class whose parameter names are known, like `String()`,
  * see [hasSyntheticParameterNames],
  * as the others, like `Integer(int)`, have no counterpart in Kotlin.
@@ -149,7 +196,7 @@ internal fun KClass<*>.toKmBuiltinClass(name: String): KmClass {
         .filter { supertype -> (supertype.classifier as? KClass<*>)?.qualifiedName?.startsWith("kotlin.") == true }
         .mapTo(kmClass.supertypes) { it.toKmType(typeParameters) }
     declaredMemberFunctions
-        .filter { '$' !in it.name && !isUnsupportedByCompiler(it) }
+        .filter { '$' !in it.name && !hasSyntheticParameterNames(it) && !isUnsupportedByCompiler(it) }
         .mapTo(kmClass.functions) { function ->
             function.toKmFunction(typeParameters).also { it.modality = it.modality.finalIn(kmClass) }
         }
@@ -163,8 +210,9 @@ internal fun KClass<*>.toKmBuiltinClass(name: String): KmClass {
         .mapTo(kmClass.constructors) { constructor ->
             KmConstructor().also { kmConstructor ->
                 kmConstructor.visibility = Visibility.PUBLIC
+                // a constructor infers the type arguments of the class at the call, like a function its own ones
                 constructor.parameters.withIndex().mapTo(kmConstructor.valueParameters) { (position, parameter) ->
-                    parameter.toKmValueParameter(position, typeParameters)
+                    parameter.toKmValueParameter(position, typeParameters, ownTypeParameters = this.typeParameters)
                 }
             }
         }
@@ -190,7 +238,7 @@ internal fun KFunction<*>.toKmFunction(typeParameters: ReflectedTypeParameters):
     parameters.contextParametersTo(function.contextParameters, scope)
     function.receiverParameterType = parameters.extensionReceiverType(scope)
     parameters.filter { it.kind == KParameter.Kind.VALUE }.withIndex().mapTo(function.valueParameters) { (position, parameter) ->
-        parameter.toKmValueParameter(position, scope)
+        parameter.toKmValueParameter(position, scope, ownTypeParameters = this.typeParameters)
     }
     function.returnType = returnType.toKmType(scope)
     return function
@@ -280,11 +328,24 @@ internal fun varargElementType(arrayType: KmType): KmType =
         ?: primitiveArrayElementTypes[(arrayType.classifier as? KmClassifier.Class)?.name]?.let { classType(it) }
         ?: arrayType
 
-private fun KParameter.toKmValueParameter(position: Int, scope: ReflectedTypeParameters): KmValueParameter =
+/**
+ * The declaration of this parameter in the Kotlin metadata, at the [position] among the value parameters,
+ * of a callable declaring the [ownTypeParameters], whose type arguments are inferred at the call,
+ * unlike the ones of the class, given by the receiver.
+ */
+private fun KParameter.toKmValueParameter(
+    position: Int,
+    scope: ReflectedTypeParameters,
+    ownTypeParameters: List<KTypeParameter> = emptyList()
+): KmValueParameter =
     KmValueParameter(name ?: "arg$position").also { parameter ->
         // a Java parameter of a platform type, like Any! of Object, accepts null,
-        // but a vararg one, whose array is never null, and which tells the nullability of its elements below
-        val type = type.toKmType(scope, platformAsNullable = !isVararg)
+        // but a vararg one, whose array is never null, and which tells the nullability of its elements below,
+        // and one of a type parameter of the class, like E! of `addFirst` of `java.util.List`, which accepts null
+        // only when the type argument of the receiver does, unlike for `addFirst(null)` of a `MutableList<String>`
+        val classifier = type.classifier
+        val isClassTypeParameter = classifier is KTypeParameter && classifier !in ownTypeParameters
+        val type = type.toKmType(scope, platformAsNullable = !isVararg && !isClassTypeParameter)
         parameter.type = type
         // a vararg parameter is typed as an array, like Array<out T> or IntArray, of its element type
         if (isVararg) {

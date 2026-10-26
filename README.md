@@ -118,9 +118,15 @@ com.example.AnnotationTestClass
   and whose parameters of the platform types of Java, like `Throwable!`, accepting `null`, are nullable,
   like `Throwable.initCause(arg0: Throwable?): Throwable`,
   but the JDK members newer than the ones mapped to the built-in type, like `String.indent(Int)` or `String.strip()`,
-  which the compiler does not call, and kotlin-reflect tells deprecated as "not fully supported by Kotlin compiler".
-  An extension hiding a member of the same signature, like `Throwable.addSuppressed(exception: Throwable)`,
-  annotated with `@kotlin.internal.HidesMembers` in the standard library, is listed in place of that member.
+  which the compiler does not call, and kotlin-reflect tells deprecated as "not fully supported by Kotlin compiler",
+  and the ones the compiler hides, like `Enum.getDeclaringClass()`, or `List.reversed()` of JDK 21,
+  whose calls resolve to the extensions instead, like `fun <T> Iterable<T>.reversed()`.
+  The mutable collection types also list the members of their JVM types only,
+  like `MutableCollection.removeIf(arg0: java.util.function.Predicate<in E>)`, or `MutableList.removeFirst()` of JDK 21.
+  An extension hiding a member of the same signature, annotated with `@kotlin.internal.HidesMembers` in the standard library,
+  is listed in place of that member, while a member accepting more arguments is still listed next to it,
+  like `Throwable.addSuppressed(arg0: Throwable?)`, called by `addSuppressed(null)`,
+  next to `Throwable.addSuppressed(exception: Throwable)`, called for any other argument.
   The body of a built-in type also lists the extensions of the standard library reading like its members,
   without their receivers, like `fun fill(value: E)` of `fun <T> MutableList<T>.fill(value: T)` in `interface MutableList<E>`,
   sorted by name together with its members, while the other ones are listed after it, with their receivers,

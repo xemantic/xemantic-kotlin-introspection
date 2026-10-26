@@ -52,6 +52,7 @@ import kotlin.reflect.KProperty
 import kotlin.reflect.full.companionObject
 import kotlin.reflect.full.declaredMemberFunctions
 import kotlin.reflect.full.declaredMemberProperties
+import kotlin.reflect.full.memberFunctions
 import kotlin.reflect.jvm.javaMethod
 import kotlin.time.measureTime
 import kotlin.metadata.jvm.Metadata as jvmMetadata
@@ -362,6 +363,18 @@ internal class DefaultKotlinIntrospector(
         private val mutableBuiltinTypes = builtinTypes.keys.filter {
             it.substringAfterLast('.').startsWith("Mutable")
         }.toSet()
+
+        /**
+         * The Java classes implementing the mutable collection types whose JVM classes declare members of their own,
+         * which kotlin-reflect describes as members of the mutable types, see [mutableCollectionFunctions],
+         * declaring the type parameters of the same names.
+         */
+        private val mutableCollectionImplementations: Map<String, KClass<*>> = mapOf(
+            "kotlin.collections.MutableCollection" to java.util.AbstractCollection::class,
+            "kotlin.collections.MutableList" to java.util.AbstractList::class,
+            "kotlin.collections.MutableSet" to java.util.AbstractSet::class,
+            "kotlin.collections.MutableMap" to java.util.AbstractMap::class
+        )
 
         private const val ANY_CLASS_NAME = "kotlin/Any"
 
@@ -713,10 +726,12 @@ internal class DefaultKotlinIntrospector(
      *
      * A mutable collection type has no [kClass], as kotlin-reflect describes the read-only counterpart,
      * sharing the same JVM type, instead, so that whether one of its declarations is deprecated cannot be told,
-     * and none of them is, which `KotlinBuiltinsTest` guards.
+     * and none of them is, which `KotlinBuiltinsTest` guards,
+     * while its JVM-only members, like `MutableList.replaceAll`, are reflected on a Java class implementing it,
+     * see [mutableCollectionFunctions].
      * Neither the constructors, nor the class itself, are deprecated.
      */
-    private inner class BuiltinClass(name: String, override val kmClass: KmClass) : ClassDeclarations {
+    private inner class BuiltinClass(private val name: String, override val kmClass: KmClass) : ClassDeclarations {
 
         // reflected only when needed, see reflectedBuiltinClass
         private val kClass: KClass<*>? by lazy { reflectedBuiltinClass(name) }
@@ -733,11 +748,12 @@ internal class DefaultKotlinIntrospector(
 
         /**
          * The functions declared by the [kClass], also the JVM-only ones, by their signatures, see [signatureOf],
+         * or else the JVM-only ones of a mutable collection type, see [mutableCollectionFunctions],
          * converted to the Kotlin metadata, see [toKmFunction].
          */
         private val reflectedFunctions: Map<String, ReflectedFunction> by lazy {
             val typeParameters = ReflectedTypeParameters.classTypeParameters(kmClass.typeParameters)
-            kClass?.declaredMemberFunctions.orEmpty()
+            (kClass?.declaredMemberFunctions ?: mutableCollectionFunctions(name.replace('/', '.'), kmClass))
                 // neither a synthetic method, nor an accessor of a JVM field
                 .filter { '$' !in it.name }
                 .map { function ->
@@ -804,12 +820,15 @@ internal class DefaultKotlinIntrospector(
             reflectedFunctions[signatureOf(function)]?.let { builtinDeprecation(it.kFunction) }
 
         /**
-         * The key of the JVM method of a JVM-only [function], see [javaMemberKey], like
-         * `java.lang.Throwable#printStackTrace(Ljava/io/PrintStream;)V`, telling its overrides, see [inheritedMembers].
+         * The JVM method of a JVM-only [function], telling its overrides, see [inheritedMembers].
          */
-        fun javaMemberKeyOf(function: KmFunction): String? = reflectedValue(default = null) {
+        fun jvmMethodOf(function: KmFunction): JvmMethod? = reflectedValue(default = null) {
             reflectedFunctions[signatureOf(function)]?.kFunction?.javaMethod?.let { method ->
-                javaMemberKey(method.declaringClass.name, method.name, AsmType.getMethodDescriptor(method))
+                val descriptor = AsmType.getMethodDescriptor(method)
+                JvmMethod(
+                    javaMemberKey(method.declaringClass.name, method.name, descriptor),
+                    JvmMethodSignature(method.name, descriptor)
+                )
             }
         }
 
@@ -818,6 +837,55 @@ internal class DefaultKotlinIntrospector(
         override fun deprecation(property: KmProperty): Deprecation? =
             reflectedProperties[property.name]?.let { builtinDeprecation(it.kProperty) }
 
+    }
+
+    /**
+     * The functions of the JVM class of the mutable collection type of the [qualifiedName] only,
+     * like `replaceAll` of `java.util.List` for `kotlin.collections.MutableList`,
+     * not of its read-only counterpart, like `spliterator()`, which kotlin-reflect describes in place of the mutable type,
+     * nor inherited from another JVM class, like `removeIf` of `java.util.Collection`, the one of `MutableCollection`,
+     * nor mapped to a member which the [kmClass] of the mutable type declares, of the same name and erased parameter types,
+     * see [erasedJavaClass], like `remove(key: K, value: V)` of `MutableMap`, which kotlin-reflect describes anew,
+     * with the platform types,
+     * reflected on a Java class implementing the mutable type, see [mutableCollectionImplementations],
+     * declaring the type parameters of the same names, like `E` of `java.util.AbstractList<E>`.
+     */
+    private fun mutableCollectionFunctions(qualifiedName: String, kmClass: KmClass): List<KFunction<*>> {
+        val implementation = mutableCollectionImplementations[qualifiedName] ?: return emptyList()
+        val readOnly = builtinTypes[qualifiedName.replace(".Mutable", ".")] ?: return emptyList()
+        val declared = kmClass.functions.groupBy({ it.name }) { function ->
+            function.valueParameters.map { erasedJavaClass(it.type) }
+        }
+        // an erased type which cannot be told matches any
+        fun isDeclared(method: java.lang.reflect.Method) = declared[method.name].orEmpty().any { parameterTypes ->
+            parameterTypes.size == method.parameterCount &&
+                parameterTypes.zip(method.parameterTypes).all { (declaredType, type) -> declaredType == null || declaredType == type }
+        }
+        return reflectedValue(default = emptyList()) {
+            val readOnlyMethods = readOnly.declaredMemberFunctions.mapNotNullTo(HashSet()) {
+                reflectedValue(default = null) { it.javaMethod }
+            }
+            implementation.memberFunctions.filter { function ->
+                reflectedValue(default = false) {
+                    val method = function.javaMethod
+                    method != null && method.declaringClass == readOnly.java && method !in readOnlyMethods && !isDeclared(method)
+                }
+            }
+        }
+    }
+
+    /**
+     * The JVM class the [type] of a parameter of a member of a mutable collection type is erased to,
+     * see [mutableCollectionFunctions]: `Object` of a type parameter, unbounded in these types,
+     * the primitive one of a not nullable primitive type, like `int` of `Int`, the JVM class of another built-in type,
+     * like `java.util.Collection` of `Collection<E>`, or `null`, if it cannot be told.
+     */
+    private fun erasedJavaClass(type: KmType): Class<*>? = when (val classifier = type.classifier) {
+        is KmClassifier.TypeParameter -> Any::class.java
+        is KmClassifier.Class -> builtinTypes[classifier.name.replace('/', '.')]?.let { kClass ->
+            (if (type.isNullable) null else kClass.javaPrimitiveType) ?: kClass.java
+        }
+        is KmClassifier.TypeAlias -> null
     }
 
     /**
@@ -1188,7 +1256,7 @@ internal class DefaultKotlinIntrospector(
         val listedExtensions = listedExtensions(kmClass, className, apiClass, declarations, isBuiltin)
         val members = declaredMembers(
             kmClass, declarations, memberName, apiClass, contextPackage,
-            jvmOnlyFunctions = jvmOnlyFunctionsNotHidden(kmClass, declarations, listedExtensions)
+            jvmOnlyFunctions = jvmOnlyFunctionsNotHidden(kmClass, declarations, listedExtensions.functions)
         )
 
         val companionMembers = apiCompanionOf(kmClass, declarations, apiClass)?.let { companion ->
@@ -1302,11 +1370,20 @@ internal class DefaultKotlinIntrospector(
     }
 
     /**
+     * The JVM method of a JVM-only member of a built-in type, see [BuiltinClass.jvmMethodOf]:
+     * its [key], see [javaMemberKey], like `java.lang.Throwable#printStackTrace(Ljava/io/PrintStream;)V`,
+     * matched with the Java members a function overrides, see [OverrideResolver.overriddenJavaMembers],
+     * and its [signature], like `printStackTrace(Ljava/io/PrintStream;)V`, the one of a function overriding it on the JVM.
+     */
+    private class JvmMethod(val key: String, val signature: JvmMethodSignature)
+
+    /**
      * A [member] named like the one looked up, declared by a supertype, the [kmClass] of the [declarations],
      * which is inherited, unless a member of another supertype overrides it, see [inheritedMembers].
      *
      * @param key the key of the member, see [memberKey].
      * @param overridden the keys of the members of the supertypes of the [kmClass] which the [member] overrides.
+     * @param jvmMethod the JVM method of a JVM-only member.
      */
     private class InheritedCandidate(
         val kmClass: KmClass,
@@ -1314,7 +1391,7 @@ internal class DefaultKotlinIntrospector(
         val member: Member,
         val key: String,
         val overridden: Set<String>,
-        val javaKey: String? = null
+        val jvmMethod: JvmMethod? = null
     ) {
 
         /**
@@ -1357,8 +1434,9 @@ internal class DefaultKotlinIntrospector(
      * next to the `add(index: Int, element: E)` which `AbstractMutableList` declares.
      * A qualified [memberName], like `Nested.member`, names no member, so the supertypes are not walked then.
      * The JVM-only members of a built-in supertype, see [BuiltinClass.jvmOnlyFunctions], are overridden
-     * like the Java members, see [OverrideResolver.overriddenJavaMembers], and never inherited when hidden
-     * by an extension, see [jvmOnlyFunctionsNotHidden], which is added to the [hidingExtensions] instead,
+     * like the Java members, see [OverrideResolver.overriddenJavaMembers], or by a function of the same JVM signature,
+     * and never inherited when hidden by an extension, see [jvmOnlyFunctionsNotHidden],
+     * while the extension called instead of a member, at least for some arguments, is added to the [hidingExtensions],
      * like `fun Throwable.addSuppressed(exception: Throwable)` for a subclass of `Exception`.
      */
     private fun inheritedMembers(
@@ -1380,16 +1458,17 @@ internal class DefaultKotlinIntrospector(
             if (superKmClass == null || apiClasses.apiClass(superKmClass.name) == null) return
             val jvmOnlyFunctions = (supertype as? BuiltinClass)?.jvmOnlyFunctions.orEmpty()
             val jvmOnlyFunctionsNotHidden = if (jvmOnlyFunctions.any { it.name == memberName }) {
-                // only an extension on the built-in type itself reads like its member, see bodyReceiverSubstitution
+                // only an extension on the built-in type itself reads like its member, and hides it,
+                // see bodyReceiverSubstitution, never one on a type parameter, like of multiple bounds, see listedFor
                 val hiding = extensionIndex[superKmClass.name.replace('/', '.')].orEmpty().filter {
                     it.hidesMembers && it.function.name == memberName && it.isBuiltinExtension
                 }
-                val notHidden = jvmOnlyFunctionsNotHidden(superKmClass, supertype, ListedExtensions(hiding, emptyList()))
-                if (notHidden.size < jvmOnlyFunctions.size) hidingExtensions += hiding
-                notHidden
+                jvmOnlyFunctionsNotHidden(superKmClass, supertype, hiding, hidingExtensions)
             } else {
                 jvmOnlyFunctions
             }
+            // KmFunction compares by identity
+            val jvmOnlyFunctionSet = jvmOnlyFunctionsNotHidden.filterTo(HashSet()) { it.name == memberName }
             apiMembersNamed(superKmClass, supertype, memberName, scope, jvmOnlyFunctionsNotHidden).forEach { member ->
                 candidates += when (member) {
                     is Member.Property -> InheritedCandidate(
@@ -1400,8 +1479,8 @@ internal class DefaultKotlinIntrospector(
                         superKmClass, supertype, member, memberKey(superKmClass, member.function),
                         overrideResolver.overriddenMembers(superKmClass, member.function),
                         // only a JVM-only member is a Java method of its own, which the Kotlin members are not
-                        javaKey = if (jvmOnlyFunctionsNotHidden.any { it === member.function }) {
-                            (supertype as? BuiltinClass)?.javaMemberKeyOf(member.function)
+                        jvmMethod = if (member.function in jvmOnlyFunctionSet) {
+                            (supertype as? BuiltinClass)?.jvmMethodOf(member.function)
                         } else {
                             null
                         }
@@ -1421,21 +1500,24 @@ internal class DefaultKotlinIntrospector(
         // by the same signature, compared as written, without substituting the type arguments of the supertypes
         val overridden = candidates.flatMapTo(HashSet()) { it.overridden }
         // the JVM-only members are overridden by the declared members, or by the ones of the other supertypes,
-        // like an override declared by an intermediate class
+        // like an override declared by an intermediate class, also by a function of the same JVM signature,
+        // overriding the JVM method on the JVM, though its metadata does not tell, like `ArrayDeque.addFirst(element: E)`
+        // of the standard library, compiled against JDK 8, of `addFirst` of `java.util.List` since JDK 21
         val overriddenJavaMembers = HashSet<String>()
-        val hasJvmOnlyCandidates = candidates.any { it.javaKey != null }
+        val overridingJvmSignatures = HashSet<JvmMethodSignature>()
+        fun collectJavaOverrides(owner: KmClass, function: KmFunction) {
+            overriddenJavaMembers += overrideResolver.overriddenJavaMembers(owner, function)
+            function.signature?.let { overridingJvmSignatures += it }
+        }
+        val hasJvmOnlyCandidates = candidates.any { it.jvmMethod != null }
         if (hasJvmOnlyCandidates) {
             candidates.filter { it.declarations !is BuiltinClass }.forEach { candidate ->
-                (candidate.member as? Member.Function)?.let {
-                    overriddenJavaMembers += overrideResolver.overriddenJavaMembers(candidate.kmClass, it.function)
-                }
+                (candidate.member as? Member.Function)?.let { collectJavaOverrides(candidate.kmClass, it.function) }
             }
         }
         val declaredSignatures = HashSet<String>()
         apiMembersNamed(kmClass, declarations, memberName, scope).forEach { member ->
-            if (member is Member.Function && hasJvmOnlyCandidates) {
-                overriddenJavaMembers += overrideResolver.overriddenJavaMembers(kmClass, member.function)
-            }
+            if (member is Member.Function && hasJvmOnlyCandidates) collectJavaOverrides(kmClass, member.function)
             val (keys, isOverride) = when (member) {
                 is Member.Property -> overrideResolver.overriddenMembers(kmClass, member.property) to
                     { isOverride(kmClass, member.property) }
@@ -1451,7 +1533,8 @@ internal class DefaultKotlinIntrospector(
             }
         }
         val survivors = candidates.filter {
-            it.key !in overridden && it.signature !in declaredSignatures && it.javaKey !in overriddenJavaMembers
+            it.key !in overridden && it.signature !in declaredSignatures &&
+                it.jvmMethod?.key !in overriddenJavaMembers && it.jvmMethod?.signature !in overridingJvmSignatures
         }
         val inherited = survivors.filterIndexed { index, candidate ->
             survivors.withIndex().none { (rivalIndex, rival) ->
@@ -1816,21 +1899,6 @@ internal class DefaultKotlinIntrospector(
             }
         }
         annotations.deprecationOf(::isSince)
-    }
-
-    /**
-     * A [value] which kotlin-reflect builds from the metadata of the built-ins, like an annotation,
-     * or the companion object of a built-in type, see [reflectedBuiltinClass],
-     * or the [default] when it cannot be read, like a parameter with the default value, absent from the metadata,
-     * whose getter throws `KotlinReflectionInternalError`, as for the `level` of `@Deprecated` of `Long.toChar()`.
-     */
-    private inline fun <T> reflectedValue(default: T, value: () -> T): T = try {
-        value()
-    } catch (_: Exception) {
-        default
-    } catch (e: Error) {
-        if (e is VirtualMachineError) throw e
-        default
     }
 
     /**
@@ -2422,11 +2490,23 @@ internal class DefaultKotlinIntrospector(
      * see [memberCallSignature], shadowing an extension of the same name, called instead,
      * when it accepts each of the parameter types of the extension, see [shadows].
      */
-    private class MemberCallSignature(val name: String, val parameterTypes: List<Set<String>>) {
+    private class MemberCallSignature(
+        val name: String,
+        val parameterTypes: List<Set<String>>,
+        private val declaredParameterTypes: List<String>
+    ) {
 
         fun shadows(signature: CallSignature): Boolean =
             name == signature.name && parameterTypes.size == signature.parameterTypes.size &&
                 parameterTypes.zip(signature.parameterTypes).all { (accepted, type) -> type in accepted }
+
+        /**
+         * Whether the extension of the [signature] accepts every argument of the member, declaring its very parameter types,
+         * unlike `Throwable.addSuppressed(exception: Throwable)`, which does not accept the `null`
+         * which the member `addSuppressed(arg0: Throwable?)` of `java.lang.Throwable` does.
+         */
+        fun isCoveredBy(signature: CallSignature): Boolean =
+            name == signature.name && declaredParameterTypes == signature.parameterTypes
 
     }
 
@@ -2460,13 +2540,18 @@ internal class DefaultKotlinIntrospector(
      */
     private fun memberCallSignature(function: KmFunction, classTypeParameters: Map<Int, String>): MemberCallSignature {
         val typeParameters = classTypeParameters + function.typeParameters.namesById()
-        return MemberCallSignature(function.name, function.valueParameters.map { parameter ->
-            val type = parameter.varargElementType ?: parameter.type
-            setOfNotNull(
-                callParameterType(parameter, typeParameters),
-                if (type.isNullable) callParameterType(parameter, typeParameters, notNullable = true) else null
-            )
-        })
+        val declaredParameterTypes = function.valueParameters.map { callParameterType(it, typeParameters) }
+        return MemberCallSignature(
+            function.name,
+            function.valueParameters.zip(declaredParameterTypes) { parameter, declaredType ->
+                val type = parameter.varargElementType ?: parameter.type
+                setOfNotNull(
+                    declaredType,
+                    if (type.isNullable) callParameterType(parameter, typeParameters, notNullable = true) else null
+                )
+            },
+            declaredParameterTypes
+        )
     }
 
     /**
@@ -2512,25 +2597,33 @@ internal class DefaultKotlinIntrospector(
      * The JVM-only functions of a built-in type, the [kmClass], see [BuiltinClass.jvmOnlyFunctions],
      * but the ones hidden by one of the [extensions] annotated with `@kotlin.internal.HidesMembers`,
      * reading like a member of the same signature, see [memberCallSignature], which is called instead,
-     * like `fun Throwable.addSuppressed(exception: Throwable)` of the member `addSuppressed(arg0: Throwable?)`
-     * of `java.lang.Throwable`, while a member of another signature is still called,
-     * like `forEach(arg0: java.util.function.Consumer<in T>?)` of `java.lang.Iterable` next to `Iterable<T>.forEach(action)`.
+     * for every argument the member accepts, see [MemberCallSignature.isCoveredBy],
+     * while a member of another signature is still called,
+     * like `forEach(arg0: java.util.function.Consumer<in T>?)` of `java.lang.Iterable` next to `Iterable<T>.forEach(action)`,
+     * and so is a member accepting more, like `addSuppressed(arg0: Throwable?)` of `java.lang.Throwable`,
+     * called by `addSuppressed(null)`, while `fun Throwable.addSuppressed(exception: Throwable)` is called for the rest,
+     * thus one of the extensions called instead of a member for some arguments, added to the [hidingExtensions], if given.
      */
     private fun jvmOnlyFunctionsNotHidden(
         kmClass: KmClass,
         declarations: ClassDeclarations,
-        extensions: ListedExtensions
+        extensions: List<IndexedExtension>,
+        hidingExtensions: MutableList<IndexedExtension>? = null
     ): List<KmFunction> {
         val jvmOnlyFunctions = (declarations as? BuiltinClass)?.jvmOnlyFunctions.orEmpty()
         if (jvmOnlyFunctions.isEmpty()) return jvmOnlyFunctions
-        val hiding = extensions.functions.filter { it.hidesMembers && !it.isObjectMember }.mapNotNull { extension ->
-            bodyReceiverSubstitution(extension.function, kmClass)?.let { callSignature(extension.function, it) }
+        val hiding = extensions.filter { it.hidesMembers && !it.isObjectMember }.mapNotNull { extension ->
+            bodyReceiverSubstitution(extension.function, kmClass)?.let { extension to callSignature(extension.function, it) }
         }
         if (hiding.isEmpty()) return jvmOnlyFunctions
         val typeParameters = typeParametersInScope(kmClass, declarations)
-        return jvmOnlyFunctions.filter { function ->
-            val member = memberCallSignature(function, typeParameters)
-            hiding.none { member.shadows(it) }
+        val members = jvmOnlyFunctions.map { memberCallSignature(it, typeParameters) }
+        hidingExtensions?.let { added ->
+            hiding.filterTo(ArrayList()) { (_, signature) -> members.any { it.shadows(signature) } }
+                .mapTo(added) { (extension, _) -> extension }
+        }
+        return jvmOnlyFunctions.filterIndexed { index, _ ->
+            hiding.none { (_, signature) -> members[index].isCoveredBy(signature) }
         }
     }
 
@@ -2559,7 +2652,7 @@ internal class DefaultKotlinIntrospector(
                 typeParameters = typeParameters
             )
         }
-        val jvmOnlyFunctions = jvmOnlyFunctionsNotHidden(kmClass, declarations, listedExtensions)
+        val jvmOnlyFunctions = jvmOnlyFunctionsNotHidden(kmClass, declarations, listedExtensions.functions)
             .inApi(apiClass, declarations)
             .map { function ->
                 function.name to formatMember(
@@ -2636,6 +2729,8 @@ internal class DefaultKotlinIntrospector(
 
     /**
      * The variances of the type parameters of the class of the metadata [name], like `[IN, OUT]` of `kotlin/Function1`,
+     * also of a suspend function type, as the metadata stores it as the function type of one more parameter,
+     * the continuation, like `kotlin/Function2` of `suspend (K) -> Unit`, never by its own name, like `SuspendFunction1`,
      * or none, if it cannot be read.
      */
     private fun declaredVariancesOf(name: String): List<KmVariance> {

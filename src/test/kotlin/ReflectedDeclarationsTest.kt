@@ -23,11 +23,15 @@ import com.xemantic.kotlin.introspection.test.GenericInnerTypes
 import com.xemantic.kotlin.introspection.test.KeywordMembersSample
 import com.xemantic.kotlin.introspection.test.NonGenericInnerTypes
 import com.xemantic.kotlin.introspection.test.ReflectedValueParametersSample
+import com.xemantic.kotlin.introspection.test.other.JavaLabelBase
 import com.xemantic.kotlin.introspection.test.other.JavaUnnamedParameters
 import com.xemantic.kotlin.introspection.test.other.Upper.JavaUpperCasePackage
 import com.xemantic.kotlin.test.assert
 import kotlin.metadata.KmClassifier
 import kotlin.metadata.KmType
+import kotlin.metadata.KmTypeParameter
+import kotlin.metadata.KmVariance
+import kotlin.metadata.isNullable
 import kotlin.reflect.KFunction
 import kotlin.reflect.KProperty
 import kotlin.reflect.full.declaredMemberExtensionFunctions
@@ -72,6 +76,50 @@ class ReflectedDeclarationsTest {
     }
 
     @Test
+    fun `should tell member whose annotations cannot be read unsupported by compiler`() {
+        // given - like a member which kotlin-reflect cannot describe, failing with KotlinReflectionInternalError
+        val toString: KFunction<String> = Any::toString
+        val unreadable = object : KFunction<String> by toString {
+            override val annotations: List<Annotation> get() = throw NoClassDefFoundError("Unreadable")
+        }
+
+        // when
+        val unsupported = isUnsupportedByCompiler(unreadable)
+
+        // then
+        assert(unsupported)
+    }
+
+    @Test
+    fun `should tell JVM member of built-in type which the compiler hides unsupported by compiler`() {
+        // given - kotlin-reflect lists Enum.getDeclaringClass() without telling that Kotlin hides it
+        val getDeclaringClass = Enum::class.memberFunctions.single { it.name == "getDeclaringClass" }
+
+        // when
+        val unsupported = isUnsupportedByCompiler(getDeclaringClass)
+
+        // then
+        assert(unsupported)
+    }
+
+    @Test
+    fun `should hide the JDK methods of the built-in types which the compiler hides`() {
+        // given - the hidden JDK methods of kotlin-reflect, the same as of the compiler, of the classes it does not leave out
+        val signatures = Class.forName("kotlin.reflect.jvm.internal.impl.builtins.jvm.JvmBuiltInsSignatures")
+        val instance = signatures.getField("INSTANCE").get(null)
+        val hidden = signatures.getMethod("getHIDDEN_METHOD_SIGNATURES").invoke(instance) as Set<*>
+
+        // when
+        val notFinal = hidden.filterIsInstance<String>().filter { signature ->
+            val className = signature.substringBefore('.').replace('/', '.')
+            !java.lang.reflect.Modifier.isFinal(Class.forName(className).modifiers)
+        }
+
+        // then
+        assert(notFinal.toSet() == HIDDEN_JDK_METHODS)
+    }
+
+    @Test
     fun `should render element type of Java vararg as nullable like its platform type`() {
         // given - Object... is seen in Kotlin as vararg of Any!, accepting null elements
         val format = JavaUnnamedParameters::class.memberFunctions.single { it.name == "format" }
@@ -112,6 +160,19 @@ class ReflectedDeclarationsTest {
                 "fun <T> listOf(vararg arg0: T?): List<T>"
             )
         )
+    }
+
+    @Test
+    fun `should render Java parameter of class type parameter as not nullable`() {
+        // given - T! of a JavaLabelBase<String> accepts no null, unlike Any! of Object, as the receiver fixes T
+        val getLabel = JavaLabelBase::class.memberFunctions.single { it.name == "getLabel" }
+        val typeParameters = ReflectedTypeParameters.classTypeParameters(listOf(KmTypeParameter("T", 0, KmVariance.INVARIANT)))
+
+        // when
+        val type = getLabel.toKmFunction(typeParameters).valueParameters.single().type
+
+        // then
+        assert(!type.isNullable && (type.classifier as? KmClassifier.TypeParameter)?.id == 0)
     }
 
     @Test

@@ -93,6 +93,32 @@ class BuiltinsWithoutDeclarationsTest {
     }
 
     @Test
+    fun `should not resolve JVM member described by kotlin-reflect which the compiler hides`() {
+        // when - Enum.getDeclaringClass is hidden in favor of the declaringJavaClass extension, which kotlin-reflect does not tell
+        val signatures = introspector.resolve("kotlin.Enum.getDeclaringClass")
+
+        // then
+        assert(signatures == null)
+    }
+
+    @Test
+    fun `should not resolve Java-only member described by kotlin-reflect overridden in user class`() {
+        // given
+        assumeNoParameterNames(Throwable::class.java.getMethod("printStackTrace", java.io.PrintStream::class.java))
+
+        // when - printStackTrace(s: PrintStream) overrides printStackTrace(arg0: java.io.PrintStream?) of java.lang.Throwable
+        val signatures = introspector.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJvmOverridingException.printStackTrace"
+        )
+
+        // then
+        signatures should {
+            have(lines().any { it.endsWith("fun printStackTrace(s: java.io.PrintStream)") })
+            have(lines().none { "printStackTrace(arg0: java.io.PrintStream" in it })
+        }
+    }
+
+    @Test
     fun `should not resolve mutable collection type which kotlin-reflect cannot tell apart from the read-only one`() {
         // when
         val listing = introspector.resolve("kotlin.collections.MutableList")
