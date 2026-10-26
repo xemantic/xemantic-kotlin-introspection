@@ -285,7 +285,10 @@ com.example.AnnotationTestClass
   as nothing else in its listing declares the type parameters of its outer classes.
   When the class file of such an outer class is absent from the classpath,
   the names of its type parameters are not known,
-  and the ones the inner class refers to are named by their ids in the metadata, like `Outer<T0>.Inner`.
+  and the ones the inner class refers to are named by their ids in the metadata, like `Outer<T0>.Inner`,
+  followed by `_` when the inner class declares a type parameter of the same name, like `Outer<T0_>.Inner<T0>`.
+  The ones it does not refer to are not known, nor how they are split between two such outer classes,
+  so that all of them are given to the innermost one, like `Mid<T0, T1>.Leaf`.
   A sealed subclass which cannot be listed is still told with a comment following them,
   as a `when` expression has to cover it:
   `// sealed subclass not found: com.example.Sub` when its class file is missing from the classpath,
