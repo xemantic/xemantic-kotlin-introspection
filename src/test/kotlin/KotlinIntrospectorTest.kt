@@ -1307,9 +1307,10 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve function types in arrow notation`() {
-        // KFunction1 is a function reference type, not a function type
+        // KFunction1, KFunction0 and KSuspendFunction1 are function reference types, not function types
         resolver.resolve(
-            "com.xemantic.kotlin.introspection.test.FunctionTypesSample"
+            "com.xemantic.kotlin.introspection.test.FunctionTypesSample",
+            pageSize = 20
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.FunctionTypesSample [page 1/1]
             class FunctionTypesSample {
@@ -1323,6 +1324,8 @@ class KotlinIntrospectorTest {
                 fun launchWithFunctionReceiver(block: (() -> Unit).() -> Unit)
                 fun curried(): (Int) -> (Int) -> Int
                 fun reference(function: KFunction1<Int, String>)
+                fun referenceWithoutParameters(function: KFunction0<String>)
+                fun suspendReference(function: KSuspendFunction1<Int, String>)
             }
         """.trimIndent()
     }

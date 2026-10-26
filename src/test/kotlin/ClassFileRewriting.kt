@@ -23,6 +23,8 @@ import org.objectweb.asm.ClassReader
 import org.objectweb.asm.ClassVisitor
 import org.objectweb.asm.ClassWriter
 import org.objectweb.asm.Opcodes
+import kotlin.metadata.ExperimentalContextReceivers
+import kotlin.metadata.KmType
 import kotlin.metadata.jvm.KotlinClassMetadata
 import kotlin.metadata.jvm.Metadata
 
@@ -108,6 +110,18 @@ internal fun withMetadata(bytes: ByteArray, transform: (Metadata) -> Metadata): 
 internal fun withoutNestedClassInMetadata(bytes: ByteArray, nestedClass: String): ByteArray = withMetadata(bytes) {
     val metadata = KotlinClassMetadata.readStrict(it) as KotlinClassMetadata.Class
     check(metadata.kmClass.nestedClasses.remove(nestedClass))
+    metadata.write()
+}
+
+/**
+ * Adds the legacy context receivers of the [types] to the class metadata,
+ * like of `context(Logger) class Foo` compiled with `-Xcontext-receivers`, which the current compiler no longer compiles.
+ */
+@OptIn(ExperimentalContextReceivers::class)
+@Suppress("DEPRECATION")
+internal fun withContextReceiversInMetadata(bytes: ByteArray, vararg types: KmType): ByteArray = withMetadata(bytes) {
+    val metadata = KotlinClassMetadata.readStrict(it) as KotlinClassMetadata.Class
+    metadata.kmClass.contextReceiverTypes += types
     metadata.write()
 }
 

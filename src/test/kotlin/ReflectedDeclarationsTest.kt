@@ -29,6 +29,8 @@ import com.xemantic.kotlin.test.assert
 import kotlin.metadata.KmClassifier
 import kotlin.metadata.KmType
 import kotlin.reflect.KFunction
+import kotlin.reflect.KProperty
+import kotlin.reflect.full.declaredMemberExtensionFunctions
 import kotlin.reflect.full.memberFunctions
 import kotlin.reflect.full.memberProperties
 import kotlin.reflect.typeOf
@@ -206,6 +208,35 @@ class ReflectedDeclarationsTest {
 
         // then
         assert(rendered == listOf("context(log: com.xemantic.kotlin.introspection.test.Logger) fun run()", "fun run()"))
+    }
+
+    @Test
+    fun `should render extension receiver of member extension function`() {
+        // given
+        val decorate = ContextParametersSample::class.declaredMemberExtensionFunctions.single { it.name == "decorate" }
+
+        // when
+        val rendered = introspector.formatReflectedFunction(decorate)
+
+        // then
+        assert(rendered == "context(log: com.xemantic.kotlin.introspection.test.Logger) fun String.decorate(): String")
+    }
+
+    @Test
+    fun `should render context parameters and extension receiver of property`() {
+        // given - kotlin-reflect lists them among the members, but not among the member properties
+        val properties = ContextParametersSample::class.members.filterIsInstance<KProperty<*>>().sortedBy { it.name }
+
+        // when
+        val rendered = properties.map { introspector.formatReflectedProperty(it) }
+
+        // then
+        assert(
+            rendered == listOf(
+                listOf("context(log: com.xemantic.kotlin.introspection.test.Logger) val String.decorated: String"),
+                listOf("context(log: com.xemantic.kotlin.introspection.test.Logger) val label: String")
+            )
+        )
     }
 
     @Test
