@@ -44,6 +44,7 @@ import java.util.jar.Manifest
 import kotlin.io.path.createDirectories
 import kotlin.io.path.outputStream
 import kotlin.io.path.writeBytes
+import kotlin.metadata.jvm.KotlinModuleMetadata
 import kotlin.test.Test
 
 /**
@@ -1912,6 +1913,24 @@ class ClassLoaderIntrospectionTest {
                 fun take(marker: com.xemantic.kotlin.introspection.othermodule.OtherModuleMarker)
             }
         """.trimIndent()
+    }
+
+    @Test
+    fun `should keep the colliding module files of both modules named by default without top-level declarations`() {
+        // given
+        // both default-module fixtures write META-INF/main.kotlin_module onto the test classpath,
+        // and only one of them would be seen by its resource name, depending on the classpath order,
+        // so that a top-level declaration of either, mapped only there, might not be found
+        val moduleFiles = javaClass.classLoader.getResources("META-INF/main.kotlin_module").toList()
+
+        // when
+        val packageParts = moduleFiles.map { url ->
+            KotlinModuleMetadata.read(url.openStream().use { it.readBytes() }).kmModule.packageParts
+        }
+
+        // then
+        // a top-level declaration belongs in a fixture of a module of its own name instead
+        assert(moduleFiles.size == 2 && packageParts.all { it.isEmpty() })
     }
 
     @Test
