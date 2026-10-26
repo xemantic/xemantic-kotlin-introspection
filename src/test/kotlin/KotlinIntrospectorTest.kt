@@ -3537,6 +3537,49 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should not resolve inherited JVM-only member of built-in type overridden with not nullable platform parameter`() {
+        // printStackTrace(s: PrintStream) overrides printStackTrace(arg0: java.io.PrintStream?), of a PrintStream!
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJvmOverridingException.printStackTrace"
+        ) should {
+            have("override fun printStackTrace(s: java.io.PrintStream)" in lines())
+            have(lines().none { "printStackTrace(arg0: java.io.PrintStream" in it })
+        }
+    }
+
+    @Test
+    fun `should not resolve inherited JVM-only member of built-in type overridden with nullable platform parameter`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJvmOverridingException.initCause"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJvmOverridingException.initCause [page 1/1]
+            override fun initCause(cause: Throwable?): Throwable
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve inherited JVM-only member of built-in type overridden with substituted type argument`() {
+        // forEach(action: Consumer<in String>) overrides forEach(arg0: java.util.function.Consumer<in T>?) of Iterable<T>
+        listOf("InheritedJvmOverridingIterable", "InheritedJvmOverridingList").forEach { name ->
+            resolver.resolve("com.xemantic.kotlin.introspection.test.$name.forEach") should {
+                have(lines().none { "forEach(arg0: " in it })
+            }
+        }
+    }
+
+    @Test
+    fun `should resolve extension hiding inherited JVM-only member of built-in type`() {
+        // the @HidesMembers Throwable.addSuppressed is called instead of the addSuppressed of java.lang.Throwable
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJvmException.addSuppressed"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJvmException.addSuppressed [page 1/1]
+            // from kotlin
+            fun Throwable.addSuppressed(exception: Throwable)
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve inherited member before extension of the same name`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.InheritedWithExtension.extended"
