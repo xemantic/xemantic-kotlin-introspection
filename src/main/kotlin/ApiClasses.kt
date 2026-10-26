@@ -32,7 +32,7 @@ import kotlin.metadata.Visibility
  *   by the user code: an open or abstract class with a constructor other than a private one, which is not hidden.
  *   An internal constructor does not close the class, as a subclass in its own module can be public and open,
  *   while a private one does, unless the class has other constructors.
- * @param sealedSubclasses the metadata names of the direct subclasses of a sealed class, or a sealed interface,
+ * @param sealedSubclasses the located names, see [locatedNameOf], of the direct subclasses of a sealed class, or a sealed interface,
  *   which might make it open to the user code indirectly, see [ApiScope.isOpen].
  */
 internal class ClassScope(

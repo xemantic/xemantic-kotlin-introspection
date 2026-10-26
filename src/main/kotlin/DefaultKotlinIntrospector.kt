@@ -695,11 +695,12 @@ internal class DefaultKotlinIntrospector(
 
     /**
      * Whether the class file of the class of this JVM [binaryName], which is not found, is absent from the classpath,
-     * not when it cannot be read, maybe only for now, see [readClassBytesOutcome].
+     * not when it cannot be read, maybe only for now, see [readClassBytesOutcome],
+     * nor when it is there, but cannot be opened, like by a class loader swallowing the `IOException` of opening it.
      */
     private fun classFileAbsence(binaryName: String): FinalOnce<Boolean> = FinalOnce {
         val bytes = readClassBytesOutcome(binaryName)
-        TransientFailures.Outcome(bytes.value == null && bytes.isFinal, bytes.isFinal)
+        TransientFailures.Outcome(bytes.value == null && bytes.isFinal && !classLoader.hasClassFile(binaryName), bytes.isFinal)
     }
 
     /**
@@ -1792,8 +1793,8 @@ internal class DefaultKotlinIntrospector(
 
     /**
      * The deprecation told by the [reflected] annotations of a declaration, like of a built-in member,
-     * see [builtinDeprecation], or of a class whose class file cannot be read, see [reflectedClassFile],
-     * by the same rule as the one of the annotations read from the class files, see [deprecationVisitor],
+     * see [builtinDeprecation], or of a class whose class file cannot be read, or of its members,
+     * see [reflectedClassFile] and [reflectedMembersFile], by the same rule as the one of the annotations read from the class files, see [deprecationVisitor],
      * each attribute read on its own, never failing the resolve.
      */
     private fun reflectedDeprecation(reflected: List<Annotation>): Deprecation? = reflectedValue(default = null) {
@@ -2848,10 +2849,12 @@ internal class DefaultKotlinIntrospector(
      * like the ones of an outer class of the outer class which cannot be read, are given to it,
      * named by their ids, like `T0`, see [referencedTypeParameterIds],
      * followed by as many `_` as needed to tell them apart from the type parameters declared otherwise,
-     * like `T0_` when the [kmClass], or one of its members, declares `T0`.
+     * like `T0_` when the [kmClass], one of its outer classes read, or one of their members, declares `T0`.
      */
     private fun outerTypeParametersOf(kmClass: KmClass, declarations: ClassDeclarations): List<OuterTypeParameters> {
         val outers = mutableListOf<OuterTypeParameters>()
+        // the outer classes read, whose members might declare type parameters too
+        val readOuters = mutableListOf<KmClass>()
         var currentName = declarations.located(kmClass.name)
         var current: KmClass? = kmClass
         // the ids referred to which are not told by the outer classes read, once one cannot be read, at that index
@@ -2871,11 +2874,12 @@ internal class DefaultKotlinIntrospector(
             }
             unknown?.removeAll(typeParameters.keys)
             outers += OuterTypeParameters(outerName, typeParameters)
+            outer?.let { readOuters += it }
             currentName = outerName
             current = outer
         }
         if (unknown != null) {
-            val declared = declaredTypeParameterNames(kmClass) + outers.flatMap { it.typeParameters.values }
+            val declared = (readOuters + kmClass).flatMapTo(HashSet()) { declaredTypeParameterNames(it) }
             outers[unreadableIndex] = OuterTypeParameters(
                 outers[unreadableIndex].name,
                 unknown.sorted().associateWith { id -> generateSequence("T$id") { "${it}_" }.first { it !in declared } }
@@ -3969,7 +3973,7 @@ internal class DefaultKotlinIntrospector(
     /**
      * A class served by the [classLoader] outside the classpath roots, see [scanClasspath],
      * of the [scope], or `null` if it cannot be read, see [ClassScope],
-     * and whether its class file [isAbsent], neither served, nor failing to be read with an `IOException`,
+     * and whether its class file [isAbsent], neither served, nor failing to be read with an `IOException`, nor there at all,
      * like for the classes resolved, see [isAbsent].
      */
     private class OutsideClass(val scope: ClassScope?, val isAbsent: Boolean)
@@ -3986,7 +3990,7 @@ internal class DefaultKotlinIntrospector(
                 failure = null
                 classLoader.readClassBytes(binaryName) { failure = it }
             } else null
-        val isAbsent = bytes == null && failure !is IOException
+        val isAbsent = bytes == null && failure !is IOException && !classLoader.hasClassFile(binaryName)
         val classFile = readClassFile(binaryName, bytes) ?: return OutsideClass(scope = null, isAbsent)
         val kmClass = (classFile.metadata?.let(::parseMetadata) as? KotlinClassMetadata.Class)?.kmClass
             ?: return OutsideClass(scope = null, isAbsent)

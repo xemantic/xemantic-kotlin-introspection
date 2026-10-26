@@ -45,4 +45,13 @@ class ClassFileResourcesTest {
         assert(name == ".shaded/com/example/Outer\$f\$Local")
     }
 
+    @Test
+    fun `should keep single leading dot of local class of root package relocated to a package`() {
+        // when
+        val name = locatedNameOf("shaded.Outer\$f\$Local", ".Outer\$f\$Local")
+
+        // then
+        assert(name == ".shaded/Outer\$f\$Local")
+    }
+
 }

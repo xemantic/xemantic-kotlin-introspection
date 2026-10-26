@@ -65,7 +65,7 @@ internal fun binaryNameOf(metadataName: String): String {
  */
 internal fun locatedNameOf(binaryName: String, metadataName: String): String {
     val packageName = binaryName.substringBeforeLast('.', "")
-    val simpleName = metadataName.substringAfterLast('/')
+    val simpleName = metadataName.substringAfterLast('/').removePrefix(".")
     val localPrefix = if (metadataName.startsWith('.')) "." else ""
-    return localPrefix + if (packageName.isEmpty()) simpleName.removePrefix(".") else "${packageName.replace('.', '/')}/$simpleName"
+    return localPrefix + if (packageName.isEmpty()) simpleName else "${packageName.replace('.', '/')}/$simpleName"
 }

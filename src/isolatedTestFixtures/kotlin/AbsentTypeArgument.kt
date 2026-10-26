@@ -215,6 +215,9 @@ class ClashingGenericOuter<T> {
     inner class Inner<T0> : Comparable<T> {
         override fun compareTo(other: T): Int = 0
         fun <T0_> pair(a: T0, b: T0_): Pair<T, T0_> = TODO()
+        inner class Deep : Comparable<T> {
+            override fun compareTo(other: T): Int = 0
+        }
     }
 }
 

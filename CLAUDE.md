@@ -69,8 +69,7 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 - kotlin-reflect reports a synthetic `@Deprecated("This member is not fully supported by Kotlin compiler, …")` on the JDK members of the built-in types newer than the mapped ones, like `String.strip()` or `describeConstable()`,
   mirroring the K1 warning; K2 rejects them outright, see `isUnsupportedByCompiler`.
 
-- Java reflection resolves the parameter types of all the declared methods of a class at once, also for `getDeclaredMethod(name, types)` —
-  so when one type is missing, no method can be reflected, not even one by one (constructors likewise, apart from the methods).
+- Reflecting the members of a class one by one does not get around a missing parameter type, see `reflectedMembersFile`.
 
 ## Anti-patterns to avoid
 

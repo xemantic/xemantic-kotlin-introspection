@@ -794,6 +794,32 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should neither resolve nor find nested class of outer class whose class file is there, but cannot be opened`() {
+        // given
+        val root = isolatedTestFixturesCopy("withoutUnopenedOuter", "StrippedOuter.class")
+        val outside = isolatedTestFixturesCopy("unopenedOuterOnly", isAbsent = { it != "StrippedOuter.class" })
+        val outsideLoader = URLClassLoader(arrayOf(outside.toUri().toURL()), null)
+        // like a URLClassLoader swallowing the IOException of opening a class file found outside the classpath roots,
+        // which it cannot load then either
+        val classLoader = object : URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader) {
+            override fun findResource(name: String): URL? = super.findResource(name) ?: outsideLoader.findResource(name)
+
+            override fun getResourceAsStream(name: String): InputStream? =
+                if (name.endsWith("/StrippedOuter.class")) null else super.getResourceAsStream(name)
+        }
+        val introspector = KotlinIntrospector(classLoader)
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.StrippedOuter.Nested")
+        val searchResult = introspector.search("Nested", pageSize = 1000)
+
+        // then
+        // the outer class is not absent, so it might be private, like it is
+        assert(signature == null)
+        assert(searchResult?.contains("StrippedOuter") != true)
+    }
+
+    @Test
     fun `should find nested class of outer class served outside the classpath roots after a transient IOException`() {
         // given
         val root = isolatedTestFixturesCopy("withoutOuter", "MissingOuter.class")
@@ -936,14 +962,25 @@ class ClassLoaderIntrospectionTest {
         val signature = introspector.resolve(
             "com.xemantic.kotlin.introspection.isolated.ClashingGenericOuter.Inner"
         )
+        val deep = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.ClashingGenericOuter.Inner.Deep"
+        )
 
         // then
-        // T0, and T0_ of its member, are already declared by the inner class
+        // T0, and T0_ of its member, are already declared by the inner class,
+        // also for the inner class nested in it, which its outer classes read declare too
         signature sameAsKotlin """
             // com.xemantic.kotlin.introspection.isolated.ClashingGenericOuter.Inner [page 1/1]
             inner class ClashingGenericOuter<T0__>.Inner<T0> : Comparable<T0__> {
+                inner class Deep : Comparable<T0__>
                 override operator fun compareTo(other: T0__): Int
                 fun <T0_> pair(a: T0, b: T0_): Pair<T0__, T0_>
+            }
+        """.trimIndent()
+        deep sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.ClashingGenericOuter.Inner.Deep [page 1/1]
+            inner class ClashingGenericOuter<T0__>.Inner<T0>.Deep : Comparable<T0__> {
+                override operator fun compareTo(other: T0__): Int
             }
         """.trimIndent()
     }
