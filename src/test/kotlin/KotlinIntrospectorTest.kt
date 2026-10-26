@@ -6957,7 +6957,24 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve MutableList with its mutating members`() {
-        // also the addFirst and addLast of java.util.List since JDK 21
+        // the first page also lists the addFirst and addLast of java.util.List since JDK 21, see the test below
+        resolver.resolve("kotlin.collections.MutableList", pageSize = 10000) should {
+            have(lines()[1] == "interface MutableList<E> : List<E>, MutableCollection<E> {")
+            have("    override fun add(element: E): Boolean" in lines())
+            have("    fun add(index: Int, element: E)" in lines())
+            have("    override fun addAll(elements: Collection<E>): Boolean" in lines())
+            have("    fun addAll(index: Int, elements: Collection<E>): Boolean" in lines())
+            have("    override fun clear()" in lines())
+            have("    inline fun fill(value: E)" in lines())
+            have("    override fun remove(element: E): Boolean" in lines())
+            have("    fun removeAt(index: Int): E" in lines())
+            have("    operator fun set(index: Int, element: E): E" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve MutableList with sequenced members of JDK 21 taking its type parameter`() {
+        // the parameter of type E! accepts no null, unlike one of a concrete platform type, like Throwable!
         assumeTrue(runCatching { List::class.java.getMethod("addFirst", Any::class.java) }.isSuccess, "JDK 21+")
         resolver.resolve(
             "kotlin.collections.MutableList"
@@ -6968,8 +6985,8 @@ class KotlinIntrospectorTest {
                 fun add(index: Int, element: E)
                 override fun addAll(elements: Collection<E>): Boolean
                 fun addAll(index: Int, elements: Collection<E>): Boolean
-                open fun addFirst(arg0: E?)
-                open fun addLast(arg0: E?)
+                open fun addFirst(arg0: E)
+                open fun addLast(arg0: E)
                 fun asReversed(): MutableList<E>
                 override fun clear()
                 inline fun fill(value: E)
@@ -7011,12 +7028,27 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should resolve JVM-only members of mutable list`() {
+    fun `should resolve inherited JVM-only member of mutable list taking its type parameter`() {
+        assumeTrue(runCatching { List::class.java.getMethod("addFirst", Any::class.java) }.isSuccess, "JDK 21+")
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JdkMutableList.addFirst") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JdkMutableList.addFirst [page 1/1]
+            // inherited from kotlin.collections.MutableList
+            open fun addFirst(arg0: E)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve JVM-only member of mutable list`() {
         assumeNoParameterNames(List::class.java.getMethod("replaceAll", java.util.function.UnaryOperator::class.java))
         resolver.resolve("kotlin.collections.MutableList.replaceAll") sameAsKotlin """
             // kotlin.collections.MutableList.replaceAll [page 1/1]
             open fun replaceAll(arg0: java.util.function.UnaryOperator<E>)
         """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve JVM-only member of mutable collection type inherited by mutable list`() {
+        assumeNoParameterNames(Collection::class.java.getMethod("removeIf", java.util.function.Predicate::class.java))
         resolver.resolve("kotlin.collections.MutableList.removeIf") sameAsKotlin """
             // kotlin.collections.MutableList.removeIf [page 1/1]
             // inherited from kotlin.collections.MutableCollection
@@ -7040,17 +7072,22 @@ class KotlinIntrospectorTest {
         // the remove(Object, Object) of java.util.Map is the remove(key: K, value: V) which MutableMap declares
         assumeNoParameterNames(Map::class.java.getMethod("putIfAbsent", Any::class.java, Any::class.java))
         resolver.resolve("kotlin.collections.MutableMap", pageSize = 10000) should {
-            have("    open fun putIfAbsent(arg0: K?, arg1: V?): V?" in lines())
+            // the parameters of the types K! and V! accept no null
+            have("    open fun putIfAbsent(arg0: K, arg1: V): V?" in lines())
+            have("    open fun replace(arg0: K, arg1: V, arg2: V): Boolean" in lines())
             have("    open fun remove(key: K, value: V): Boolean" in lines())
             have(lines().none { it.startsWith("    open fun remove(key: K?") })
         }
     }
 
     @Test
-    fun `should not resolve JVM member of mutable list which the compiler hides`() {
-        // the sort(Comparator) of java.util.List is hidden by Kotlin, the deprecated MutableList<T>.sort extension is called
-        resolver.resolve("kotlin.collections.MutableList.sort") should {
-            have(lines().none { "arg0" in it })
+    fun `should not list JVM member of mutable list which the compiler hides`() {
+        // the sort(Comparator) of java.util.List is hidden by Kotlin, the deprecated MutableList<T>.sort extension is called,
+        // while replaceAll(UnaryOperator) of java.util.List is not
+        assumeNoParameterNames(List::class.java.getMethod("replaceAll", java.util.function.UnaryOperator::class.java))
+        resolver.resolve("kotlin.collections.MutableList", pageSize = 10000) should {
+            have(lines().none { "sort(arg0" in it })
+            have("    open fun replaceAll(arg0: java.util.function.UnaryOperator<E>)" in lines())
         }
     }
 
@@ -8016,15 +8053,23 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should not list JVM members of built-in types which the compiler hides`() {
+    fun `should not list JVM member of built-in type which the compiler hides`() {
         resolver.resolve("kotlin.Enum", pageSize = 10000) should {
             have(lines().none { "getDeclaringClass" in it })
         }
+    }
+
+    @Test
+    fun `should list extension in body of built-in type in place of JVM member which the compiler hides`() {
         // the isEmpty() of java.lang.CharSequence since JDK 15, charSequence.isEmpty() calls the CharSequence.isEmpty() extension
         resolver.resolve("kotlin.CharSequence", pageSize = 10000) should {
             have("    inline fun isEmpty(): Boolean" in lines())
             have(lines().none { it.endsWith(" fun isEmpty(): Boolean") && "inline" !in it })
         }
+    }
+
+    @Test
+    fun `should list extension of built-in type in place of JVM member which the compiler hides`() {
         // the reversed() of java.util.List since JDK 21, list.reversed() calls the Iterable<T>.reversed() extension
         resolver.resolve("kotlin.collections.List", pageSize = 10000) should {
             have("    open fun reversed(): List<E>" !in lines())

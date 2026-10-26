@@ -233,7 +233,7 @@ internal fun KFunction<*>.toKmFunction(typeParameters: ReflectedTypeParameters):
     parameters.contextParametersTo(function.contextParameters, scope)
     function.receiverParameterType = parameters.extensionReceiverType(scope)
     parameters.filter { it.kind == KParameter.Kind.VALUE }.withIndex().mapTo(function.valueParameters) { (position, parameter) ->
-        parameter.toKmValueParameter(position, scope)
+        parameter.toKmValueParameter(position, scope, ownTypeParameters = this.typeParameters)
     }
     function.returnType = returnType.toKmType(scope)
     return function
@@ -323,11 +323,24 @@ internal fun varargElementType(arrayType: KmType): KmType =
         ?: primitiveArrayElementTypes[(arrayType.classifier as? KmClassifier.Class)?.name]?.let { classType(it) }
         ?: arrayType
 
-private fun KParameter.toKmValueParameter(position: Int, scope: ReflectedTypeParameters): KmValueParameter =
+/**
+ * The declaration of this parameter in the Kotlin metadata, at the [position] among the value parameters,
+ * of a callable declaring the [ownTypeParameters], whose type arguments are inferred at the call,
+ * unlike the ones of the class, given by the receiver.
+ */
+private fun KParameter.toKmValueParameter(
+    position: Int,
+    scope: ReflectedTypeParameters,
+    ownTypeParameters: List<KTypeParameter> = emptyList()
+): KmValueParameter =
     KmValueParameter(name ?: "arg$position").also { parameter ->
         // a Java parameter of a platform type, like Any! of Object, accepts null,
-        // but a vararg one, whose array is never null, and which tells the nullability of its elements below
-        val type = type.toKmType(scope, platformAsNullable = !isVararg)
+        // but a vararg one, whose array is never null, and which tells the nullability of its elements below,
+        // and one of a type parameter of the class, like E! of `addFirst` of `java.util.List`, which accepts null
+        // only when the type argument of the receiver does, unlike for `addFirst(null)` of a `MutableList<String>`
+        val classifier = type.classifier
+        val isClassTypeParameter = classifier is KTypeParameter && classifier !in ownTypeParameters
+        val type = type.toKmType(scope, platformAsNullable = !isVararg && !isClassTypeParameter)
         parameter.type = type
         // a vararg parameter is typed as an array, like Array<out T> or IntArray, of its element type
         if (isVararg) {
