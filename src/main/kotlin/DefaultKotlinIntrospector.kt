@@ -963,11 +963,14 @@ internal class DefaultKotlinIntrospector(
         override fun located(metadataName: String): String = metadataName
 
         override fun deprecation(function: KmFunction): Deprecation? =
-            functions[function]?.let { builtinDeprecation(it.kFunction) }
+            functions[function]?.kFunction?.let { kFunction ->
+                builtinDeprecation(kFunction) ?: javaDeprecation { kFunction.javaMethod }
+            }
 
         override fun deprecation(constructor: KmConstructor): Deprecation? = null
 
-        override fun deprecation(property: KmProperty): Deprecation? = properties[property]?.let { builtinDeprecation(it) }
+        override fun deprecation(property: KmProperty): Deprecation? =
+            properties[property]?.let { kProperty -> builtinDeprecation(kProperty) ?: javaDeprecation { kProperty.javaField } }
 
         /**
          * The keys of the members of the Kotlin supertypes which the [member] of this class overrides,
@@ -1039,6 +1042,7 @@ internal class DefaultKotlinIntrospector(
      * The [JavaClass] of the Java [clazz], with its members, which Kotlin calls, see [isUnsupportedByCompiler],
      * each described on its own, not to lose the others when one of them cannot be,
      * like when its signature refers to a class missing from the classpath,
+     * without any of them when kotlin-reflect fails on all of them at once,
      * or `null` if kotlin-reflect cannot describe the class itself.
      */
     private fun reflectedJavaClass(clazz: Class<*>): JavaClass? = reflectedValue(default = null) {
@@ -1053,7 +1057,10 @@ internal class DefaultKotlinIntrospector(
         fun Visibility.orProtected(modifiers: Int?): Visibility =
             if (this == Visibility.LOCAL && modifiers != null && Modifier.isProtected(modifiers)) Visibility.PROTECTED else this
         val functions = IdentityHashMap<KmFunction, JavaFunction>()
-        kClass.declaredMemberFunctions.forEach { function ->
+        // kotlin-reflect might fail on all the members at once, still telling the supertypes, like of java.util.LinkedHashSet
+        // since JDK 21, on its inherited clone(), so that the class is kept without its members, substituting the type arguments
+        // of its supertypes, whose own declarations of these members stand for them
+        reflectedValue(default = emptyList()) { kClass.declaredMemberFunctions }.forEach { function ->
             reflectedValue(default = null) {
                 function.takeIf { '$' !in it.name && !isUnsupportedByCompiler(it) }
                     ?.toKmFunction(typeParameters)
@@ -1067,7 +1074,7 @@ internal class DefaultKotlinIntrospector(
             }
         }
         val properties = IdentityHashMap<KmProperty, KProperty<*>>()
-        kClass.declaredMemberProperties.forEach { property ->
+        reflectedValue(default = emptyList()) { kClass.declaredMemberProperties }.forEach { property ->
             reflectedValue(default = null) {
                 property.takeIf { '$' !in it.name && !isUnsupportedByCompiler(it) }
                     ?.toKmProperty(typeParameters)
@@ -1740,6 +1747,25 @@ internal class DefaultKotlinIntrospector(
     ) {
 
         /**
+         * The modality of the method of a Java class implementing the abstract [member], which is inherited in its place,
+         * like `intValue()` of `java.util.concurrent.atomic.AtomicInteger` of the `toInt()` of `kotlin.Number`,
+         * see [inheritedCandidates], or `null`.
+         */
+        var implementationModality: Modality? = null
+
+        /**
+         * The [member] as rendered, not abstract when a Java class implements it, see [implementationModality].
+         */
+        val renderedMember: Member
+            get() {
+                // an abstract member of an interface is rendered as within it, without its modality
+                if (kmClass.kind == ClassKind.INTERFACE) return member
+                val modality = implementationModality?.takeUnless { it == Modality.ABSTRACT } ?: return member
+                val function = (member as? Member.Function)?.takeIf { it.function.modality == Modality.ABSTRACT } ?: return member
+                return Member.Function(function.function.withModality(modality), function.declaration)
+            }
+
+        /**
          * Whether the [member], of a Java class, overrides a JDK method of the JVM type of a built-in type,
          * which the built-in type does not expose, as one of its JVM-only members, see [BuiltinClass.jvmOnlyFunctions],
          * by the keys of the [exposedJdkMethods], see [javaMemberKey], like the `sort(Comparator)` of `java.util.List`,
@@ -1817,7 +1843,10 @@ internal class DefaultKotlinIntrospector(
      * and the ones overriding a JDK method which a built-in type does not expose, like the `sort(Comparator)` of `java.util.List`,
      * see [InheritedCandidate.overridesHiddenJdkMethod].
      * Its methods are matched with the members of the Kotlin supertypes they override
-     * regardless of the nullability of the platform types of Java, see [JavaClass.overriddenMembers].
+     * regardless of the nullability of the platform types of Java, see [JavaClass.overriddenMembers],
+     * and an abstract Kotlin member a Java method implements is not abstract, see [InheritedCandidate.implementationModality].
+     * A member of a Java class which the user code cannot name, like a package-private one, is inherited from its public subclass,
+     * see [inheritedFromName], and one annotated with `@java.lang.Deprecated` is deprecated, see [javaDeprecation].
      * A Java supertype whose members cannot be described, like one which cannot be loaded, is walked through to its supertypes,
      * as told by its class file, see [rawJavaSupertypes].
      * A Kotlin supertype which is not part of the API, see [ApiClasses], is walked through too,
@@ -1847,9 +1876,9 @@ internal class DefaultKotlinIntrospector(
         val isOpenForOverrides = isOpenForOverrides(kmClass, scope)
         return inherited.map { candidate ->
             ListingItem.InheritedMember(
-                candidate.kmClass.name.replace('/', '.'),
+                inheritedFromName(candidate, declarations.clazz),
                 formatMember(
-                    candidate.member, candidate.kmClass, candidate.declarations, scope, contextPackage,
+                    candidate.renderedMember, candidate.kmClass, candidate.declarations, scope, contextPackage,
                     isOwnerOpenForOverrides = isOpenForOverrides,
                     // also the open member of a class, unless inherited by an interface,
                     // where it is rendered as open, like its own members, telling it apart from an abstract one,
@@ -1861,6 +1890,23 @@ internal class DefaultKotlinIntrospector(
                 )
             )
         }
+    }
+
+    /**
+     * The name of the class the [candidate] is inherited from, rendered in its `// inherited from …` header,
+     * like `java.util.ArrayList`: the class declaring it, but of a Java class which the user code cannot name,
+     * like a package-private one, the public JVM superclass of the [inheriting] class extending it, closest to it, if any,
+     * which inherits its public members, like the public subclass of a package-private class, which javac bridges them in.
+     */
+    private fun inheritedFromName(candidate: InheritedCandidate, inheriting: Class<*>?): String {
+        val declaring = (candidate.declarations as? JavaClass)?.clazz?.takeUnless { Modifier.isPublic(it.modifiers) }
+            ?: return candidate.kmClass.name.replace('/', '.')
+        val nearest = reflectedValue(default = null) {
+            generateSequence(inheriting?.superclass) { it.superclass }
+                .takeWhile { it != declaring }
+                .lastOrNull { Modifier.isPublic(it.modifiers) && declaring.isAssignableFrom(it) }
+        }
+        return (nearest?.let { kotlinClassName(it) } ?: candidate.kmClass.name).replace('/', '.')
     }
 
     /**
@@ -1958,9 +2004,15 @@ internal class DefaultKotlinIntrospector(
         val exposedJdkMethods = jvmOnlyCandidates.mapNotNullTo(HashSet()) { it.jvmMethod?.key }
         candidates.removeAll { candidate ->
             val javaClass = candidate.declarations as? JavaClass ?: return@removeAll false
-            kotlinCandidates.any { overridden ->
+            val implemented = kotlinCandidates.filter { overridden ->
                 overridden.key in candidate.overridden && !candidate.refines(overridden, supertypeNamesOf)
-            } ||
+            }
+            // the Kotlin member stands for the Java method implementing it, like toInt() of kotlin.Number
+            // for intValue() of java.util.concurrent.atomic.AtomicInteger
+            (candidate.member as? Member.Function)?.function?.modality?.let { modality ->
+                implemented.forEach { it.implementationModality = modality }
+            }
+            implemented.isNotEmpty() ||
                 (candidate.overridden.isEmpty() && candidate.overridesHiddenJdkMethod(exposedJdkMethods)) ||
                 jvmOnlyCandidates.any { jvmOnly ->
                     jvmOnly.signature == candidate.signature && !candidate.raisesVisibility(jvmOnly)
@@ -2511,6 +2563,19 @@ internal class DefaultKotlinIntrospector(
      */
     private fun builtinDeprecation(member: KCallable<*>): Deprecation? =
         reflectedValue(default = null) { reflectedDeprecation(member.annotations) }
+
+    /**
+     * The deprecation of a Java member, the [element], annotated with `@java.lang.Deprecated`,
+     * which Kotlin warns of, with the message `Deprecated in Java`, regardless of its `forRemoval`,
+     * or `null` if it is not deprecated, or cannot be reflected.
+     */
+    private fun javaDeprecation(element: () -> AnnotatedElement?): Deprecation? = reflectedValue(default = null) {
+        if (element()?.isAnnotationPresent(java.lang.Deprecated::class.java) == true) {
+            Deprecation(JAVA_DEPRECATION_MESSAGE, replaceWith = null, level = DeprecationLevel.WARNING)
+        } else {
+            null
+        }
+    }
 
     /**
      * The deprecation told by the [reflected] annotations of a declaration, like of a built-in member,
@@ -6169,6 +6234,11 @@ private fun kotlinPackageOf(binaryName: String, packageName: String): String =
 private const val ANY_RECEIVER_KEY = "kotlin.Any"
 
 private const val COMPARABLE_CLASS_NAME = "kotlin.Comparable"
+
+/**
+ * The message Kotlin reports the use of a Java member annotated with `@java.lang.Deprecated` with.
+ */
+private const val JAVA_DEPRECATION_MESSAGE = "Deprecated in Java"
 
 /**
  * The supertypes which Kotlin/JVM sees for the JVM classes of the built-in types, see `jvmSupertypeNamesOfBuiltins`,
