@@ -34,6 +34,7 @@ import java.lang.reflect.Modifier
 import java.net.URI
 import java.net.URL
 import java.net.URLClassLoader
+import java.nio.file.Path
 import java.util.IdentityHashMap
 import java.util.concurrent.ConcurrentHashMap
 import java.util.jar.Attributes
@@ -4688,28 +4689,52 @@ internal class DefaultKotlinIntrospector(
      * Scans the class files of the directory [root], one directory at a time, listing each of them once,
      * as the class files of a nested class are in the directory of its outer class, the one of their package.
      * The `META-INF` directory is skipped, as the class versions of a multi-release root are loaded only from a jar,
-     * see [scanJarFile], and each directory is listed once, also when reached again through a symbolic link.
+     * see [scanJarFile], and a directory reached again within itself, through a symbolic link cycle, like `pkg/loop -> ..`,
+     * is not listed again, while the one reached also through another symbolic link is, like by the class loader,
+     * as the class files are scanned by the names they are loaded by, see [ClasspathScanner.scan].
      */
     private fun scanDirectory(root: File, scanner: ClasspathScanner) {
-        // the canonical paths of the directories scanned, so that a symbolic link cycle, like pkg/loop -> .., is not followed
-        val visitedDirectories = mutableSetOf<File>()
-        val directories = ArrayDeque(listOf(root))
+        val rootDirectory = ScannedDirectory.of(root, enclosing = null) ?: return
+        val directories = ArrayDeque(listOf(rootDirectory))
         while (directories.isNotEmpty()) {
             val directory = directories.removeFirst()
-            val canonicalDirectory = try {
-                directory.canonicalFile
-            } catch (_: IOException) {
-                directory
-            }
-            if (!visitedDirectories.add(canonicalDirectory)) continue
-            val (subdirectories, files) = directory.listFiles().orEmpty().partition { it.isDirectory }
-            directories.addAll(if (directory == root) subdirectories.filter { it.name != "META-INF" } else subdirectories)
+            val (subdirectories, files) = directory.file.listFiles().orEmpty().partition { it.isDirectory }
+            subdirectories
+                .filter { directory !== rootDirectory || it.name != "META-INF" }
+                .mapNotNullTo(directories) { ScannedDirectory.of(it, enclosing = directory) }
             scanner.scan(
                 files.filter { it.isFile && isIndexedClassFile(it.name) }.map { file ->
                     ClassFileEntry(file.relativeTo(root).invariantSeparatorsPath.removeSuffix(".class"), file::readBytes)
                 }
             )
         }
+    }
+
+    /**
+     * A directory [file] of a directory root being scanned, see [scanDirectory], by its [realPath],
+     * within its [enclosing] one, as it is reached.
+     */
+    private class ScannedDirectory(val file: File, val realPath: Path, val enclosing: ScannedDirectory?) {
+
+        companion object {
+
+            /**
+             * The directory [file] within its [enclosing] one, or `null` if it is one of the directories enclosing it,
+             * reached through a symbolic link cycle, or if its real path cannot be told,
+             * see [Path.toRealPath], resolving also the junctions of Windows.
+             */
+            fun of(file: File, enclosing: ScannedDirectory?): ScannedDirectory? {
+                val realPath = try {
+                    file.toPath().toRealPath()
+                } catch (_: IOException) {
+                    return null
+                }
+                val isCycle = generateSequence(enclosing) { it.enclosing }.any { it.realPath == realPath }
+                return if (isCycle) null else ScannedDirectory(file, realPath, enclosing)
+            }
+
+        }
+
     }
 
     /**
