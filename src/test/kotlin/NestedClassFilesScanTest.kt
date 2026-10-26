@@ -58,12 +58,6 @@ class NestedClassFilesScanTest {
             .toList()
     }
 
-    // the classes scanned are only the ones of the given root, not of the test classpath
-    private fun classLoader(root: Path) = URLClassLoader(
-        arrayOf(root.toUri().toURL()),
-        ClassLoader.getPlatformClassLoader()
-    )
-
     @Test
     fun `should index the same classes and extensions as when reading every nested class file`() {
         // given
@@ -73,8 +67,7 @@ class NestedClassFilesScanTest {
         )
 
         // when
-        val skipping = scan(classLoader)
-        val readingEveryClassFile = scan(classLoader, skipNestedClassFiles = false)
+        val (skipping, readingEveryClassFile) = classLoader.use { scan(it) to scan(it, skipNestedClassFiles = false) }
 
         // then
         assert(readingEveryClassFile.skippedClassFiles.isEmpty())
@@ -102,7 +95,7 @@ class NestedClassFilesScanTest {
         }
 
         // when
-        val skipping = scan(classLoader(root))
+        val skipping = scan(root)
 
         // then
         // neither JavaOuter$Impostor, nor EntryWithBody$WITH_BODY
@@ -114,11 +107,11 @@ class NestedClassFilesScanTest {
                 "com/xemantic/kotlin/introspection/isolated/WhenMappingsHolder\$WhenMappings"
             )
         )
-        DefaultKotlinIntrospector(classLoader(root)).search("Impostor") sameAs """
+        rootsClassLoader(root).use { DefaultKotlinIntrospector(it).search("Impostor") } sameAs """
             // search results for "Impostor" [page 1/1]
             com.xemantic.kotlin.introspection.isolated.JavaOuter${'$'}Impostor
         """.trimIndent()
-        skipping.indexDump() sameAs scan(classLoader(root), skipNestedClassFiles = false).indexDump()
+        skipping.indexDump() sameAs scan(root, skipNestedClassFiles = false).indexDump()
     }
 
     @Test
@@ -131,7 +124,7 @@ class NestedClassFilesScanTest {
         val whenMappings = nestedClassFiles.map { (path, _) -> path }.filter { it.endsWith("\$WhenMappings.class") }
 
         // when
-        val skipping = scan(classLoader(root), skipNestedClassFiles = false)
+        val skipping = scan(root, skipNestedClassFiles = false)
 
         // then
         assert(whenMappings == listOf("com/xemantic/kotlin/introspection/isolated/WhenMappingsHolder\$WhenMappings.class"))
@@ -152,11 +145,11 @@ class NestedClassFilesScanTest {
         }
 
         // when
-        val skipping = scan(classLoader(jar))
+        val skipping = scan(jar)
 
         // then
         assert(skipping.skippedClassFiles.size == 4)
-        skipping.indexDump() sameAs scan(classLoader(jar), skipNestedClassFiles = false).indexDump()
+        skipping.indexDump() sameAs scan(jar, skipNestedClassFiles = false).indexDump()
     }
 
     @Test
@@ -177,7 +170,7 @@ class NestedClassFilesScanTest {
         }
 
         // when
-        val skipping = scan(classLoader(root))
+        val skipping = scan(root)
 
         // then
         assert(
@@ -186,7 +179,7 @@ class NestedClassFilesScanTest {
                 "com/xemantic/kotlin/introspection/isolated/EntriesMappingsHolder\$EntriesMappings"
             )
         )
-        skipping.indexDump() sameAs scan(classLoader(root), skipNestedClassFiles = false).indexDump()
+        skipping.indexDump() sameAs scan(root, skipNestedClassFiles = false).indexDump()
     }
 
     @Test
@@ -196,12 +189,12 @@ class NestedClassFilesScanTest {
         val root = rewrittenOuterRoot { bytes -> withoutNestedClassInMetadata(bytes, "Nested") }
 
         // when
-        val skipping = scan(classLoader(root))
+        val skipping = scan(root)
 
         // then
         assert(skipping.skippedClassFiles.isEmpty())
         assert(skipping.classIndex["nested"] == listOf("com.xemantic.kotlin.introspection.isolated.RewrittenOuter.Nested"))
-        skipping.indexDump() sameAs scan(classLoader(root), skipNestedClassFiles = false).indexDump()
+        skipping.indexDump() sameAs scan(root, skipNestedClassFiles = false).indexDump()
     }
 
     @Test
@@ -211,8 +204,8 @@ class NestedClassFilesScanTest {
         val root = rewrittenOuterRoot { bytes -> withoutMetadata(bytes) }
 
         // when
-        val skipping = scan(classLoader(root))
-        val readingEveryClassFile = scan(classLoader(root), skipNestedClassFiles = false)
+        val skipping = scan(root)
+        val readingEveryClassFile = scan(root, skipNestedClassFiles = false)
 
         // then
         // RewrittenOuter declares only its own member classes, like Java8Outer, so that RewrittenOuter$Nested$Deep is read
@@ -235,8 +228,8 @@ class NestedClassFilesScanTest {
         val root = rewrittenOuterRoot { bytes -> withMetadataKind(bytes, kind = 99) }
 
         // when
-        val skipping = scan(classLoader(root))
-        val readingEveryClassFile = scan(classLoader(root), skipNestedClassFiles = false)
+        val skipping = scan(root)
+        val readingEveryClassFile = scan(root, skipNestedClassFiles = false)
 
         // then
         // RewrittenOuter declares only its own member classes, like Java8Outer, so that RewrittenOuter$Nested$Deep is read
@@ -254,7 +247,7 @@ class NestedClassFilesScanTest {
         java8TestFixtures.forEach { dir -> dir.copyRecursively(root.toFile()) }
 
         // when
-        val skipping = scan(classLoader(root))
+        val skipping = scan(root)
 
         // then
         // without the NestMembers attribute, Java8Outer declares only its own member classes,
@@ -286,45 +279,3 @@ class NestedClassFilesScanTest {
     }
 
 }
-
-private fun scan(
-    classLoader: ClassLoader,
-    skipNestedClassFiles: Boolean = true
-): DefaultKotlinIntrospector.ClasspathScan = DefaultKotlinIntrospector(classLoader, scanEntireClasspath = false)
-    .scanClasspath(skipNestedClassFiles, collectSkippedClassFiles = true)
-
-/**
- * The extensions and classes indexed by the classpath scan, one per line, in the scan order,
- * and, [withClasses], all the Kotlin classes found, with their flags, which decide what is indexed.
- */
-private fun DefaultKotlinIntrospector.ClasspathScan.indexDump(withClasses: Boolean = true): String = buildList {
-    extensionIndex.forEach { (receiver, extensions) ->
-        extensions.forEach {
-            add("fun $receiver.${it.function.name} in ${it.sourceClass} from ${it.source} object=${it.isObjectMember}")
-        }
-    }
-    extensionPropertyIndex.forEach { (receiver, extensions) ->
-        extensions.forEach {
-            add(
-                "val $receiver.${it.property.name} in ${it.sourceClass} from ${it.source} " +
-                    "object=${it.isObjectMember} assignable=${it.setterVisibility != null}"
-            )
-        }
-    }
-    classIndex.forEach { (simpleName, classes) ->
-        classes.forEach { add("indexed $simpleName: $it") }
-    }
-    if (withClasses) classes.forEach {
-        add(
-            "class ${it.name} (${it.binaryName}) ${it.scope.visibility} subclassable=${it.scope.isSubclassable} " +
-                "companion=${it.scope.isCompanion} usable=${it.scope.isUsable} sealed=${it.scope.sealedSubclasses} " +
-                "extensions=${it.extensions.map { e -> e.function.name }} " +
-                "properties=${it.extensionProperties.map { p -> p.property.name }}"
-        )
-    }
-}.joinToString("\n")
-
-private fun testFixtures(property: String): List<File> = System.getProperty(property)
-    .split(File.pathSeparator)
-    .map { File(it) }
-    .filter { it.exists() }

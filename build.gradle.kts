@@ -78,7 +78,9 @@ tasks.named<KotlinCompile>("compileJvmDefaultDisabledTestFixturesKotlin") {
     compilerOptions.jvmDefault = JvmDefaultMode.DISABLE
 }
 
-// compiled for Java 8, like the libraries still targeting it, without the NestMembers attribute of Java 11
+// compiled for Java 8, like the libraries still targeting it, without the NestMembers attribute of Java 11;
+// once a JDK running the build drops --release 8, this compilation fails, instead of silently changing the fixtures,
+// and the attribute can be stripped from the class files compiled for a later release instead, like ClassFileRewriting does
 val java8TestFixtures: SourceSet = sourceSets.create("java8TestFixtures")
 
 tasks.named<JavaCompile>(java8TestFixtures.compileJavaTaskName) {
