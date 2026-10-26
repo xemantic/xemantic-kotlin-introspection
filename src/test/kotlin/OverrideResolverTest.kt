@@ -87,12 +87,12 @@ class OverrideResolverTest {
 
         // when
         val builtinOverrides = listOf(
-            resolver.isOverride(OverrideResolver.Owner(builtinOwner, builtinOwner.name), function("fromBuiltin")),
-            resolver.isOverride(OverrideResolver.Owner(builtinOwner, builtinOwner.name), function("fromClassFile"))
+            resolver.isOverride(OverrideResolver.Owner(builtinOwner), function("fromBuiltin")),
+            resolver.isOverride(OverrideResolver.Owner(builtinOwner), function("fromClassFile"))
         )
         val classFileOverrides = listOf(
-            resolver.isOverride(OverrideResolver.Owner(classFileOwner, classFileOwner.name), function("fromBuiltin")),
-            resolver.isOverride(OverrideResolver.Owner(classFileOwner, classFileOwner.name), function("fromClassFile"))
+            resolver.isOverride(OverrideResolver.Owner(classFileOwner), function("fromBuiltin")),
+            resolver.isOverride(OverrideResolver.Owner(classFileOwner), function("fromClassFile"))
         )
 
         // then
@@ -147,9 +147,32 @@ class OverrideResolverTest {
     }
 
     @Test
+    fun `should find supertypes of other packages relocated with the owner by the prefix of its relocation`() {
+        // given
+        // like relocated by shading, prepending shaded/ to all the packages
+        val owner = kmClass("test/Owner", supertype = "other/Base")
+        val resolver = overrideResolver(
+            classes = mapOf(
+                "other/Base" to kmClass("other/Base", null, "original"),
+                "shaded/other/Base" to kmClass("other/Base", null, "relocated")
+            )
+        )
+        val relocated = OverrideResolver.Owner(owner, "shaded/test/Owner")
+
+        // when
+        val overrides = listOf(
+            resolver.isOverride(relocated, function("original")),
+            resolver.isOverride(relocated, function("relocated"))
+        )
+
+        // then
+        assert(overrides == listOf(false, true))
+    }
+
+    @Test
     fun `should find supertypes of relocated owner which are not relocated by their metadata names`() {
         // given
-        // like a supertype of another package, which is not told to be relocated, or one excluded from the relocation
+        // like a class excluded from the relocation, of another package, or of the same one
         val owner = kmClass("test/Owner", supertype = "other/Base").apply { supertypes += type("test/SamePackageBase") }
         val resolver = overrideResolver(
             classes = mapOf(
@@ -218,10 +241,10 @@ class OverrideResolverTest {
         }
 
         // when
-        val first = resolver.isOverride(OverrideResolver.Owner(owner, owner.name), function("foo"))
+        val first = resolver.isOverride(OverrideResolver.Owner(owner), function("foo"))
         joinOrFail(other)
         val lookupsOfFirst = lookups.get()
-        val second = resolver.isOverride(OverrideResolver.Owner(owner, owner.name), function("foo"))
+        val second = resolver.isOverride(OverrideResolver.Owner(owner), function("foo"))
 
         // then
         assert(first && second)
@@ -272,8 +295,8 @@ class OverrideResolverTest {
         val overload = processor.functions.single { it.name == "process" }
 
         // when
-        val isPrivateOverloadOverride = resolver.isOverride(OverrideResolver.Owner(greeter, greeter.name), privateOverload)
-        val isOverloadOverride = resolver.isOverride(OverrideResolver.Owner(processor, processor.name), overload)
+        val isPrivateOverloadOverride = resolver.isOverride(OverrideResolver.Owner(greeter), privateOverload)
+        val isOverloadOverride = resolver.isOverride(OverrideResolver.Owner(processor), overload)
 
         // then
         // the private overload, absent from the interface itself, is not taken for a shrunk override

@@ -77,3 +77,13 @@ class RelocatedDerived : RelocatedBase<String>() {
     override fun accept(value: String) {}
     fun accept(value: Int) {}
 }
+
+// tests relocate them, like shading, together with the Java interface taking a RelocatedEvent
+class RelocatedEvent
+
+class RelocatedOther
+
+class RelocatedListenerImpl : RelocatedListener {
+    override fun on(event: RelocatedEvent) {}
+    fun on(event: RelocatedOther) {}
+}

@@ -22,7 +22,11 @@ import org.objectweb.asm.AnnotationVisitor
 import org.objectweb.asm.ClassReader
 import org.objectweb.asm.ClassVisitor
 import org.objectweb.asm.ClassWriter
+import org.objectweb.asm.FieldVisitor
+import org.objectweb.asm.Label
+import org.objectweb.asm.MethodVisitor
 import org.objectweb.asm.Opcodes
+import org.objectweb.asm.Type
 import kotlin.metadata.KmClassifier
 import kotlin.metadata.KmPackage
 import kotlin.metadata.KmType
@@ -199,5 +203,101 @@ internal fun withoutInnerClasses(bytes: ByteArray): ByteArray {
     }, 0)
     return writer.toByteArray()
 }
+
+/**
+ * Relocates the class bytes like shading does: the internal names, like `com/example/Foo`, which [relocate] maps,
+ * like to `shaded/com/example/Foo`, are rewritten wherever the class file refers to them:
+ * in the name of the class, its supertypes, the descriptors and the generic signatures of its fields and methods,
+ * the `InnerClasses`, `EnclosingMethod` and nest attributes, and the method bodies,
+ * but not in the Kotlin metadata, which a shading tool does not rewrite.
+ * The `ClassRemapper` of `asm-commons`, not on the test classpath, is not used.
+ *
+ * @param relocate the relocated internal name of a class, or `null` if it is not relocated.
+ */
+internal fun withRelocatedNames(bytes: ByteArray, relocate: (String) -> String?): ByteArray {
+    fun name(name: String): String = relocate(name) ?: name
+    // the class types of a descriptor, or of a generic signature, like `Lcom/example/Outer<TK;>.Inner;`
+    fun descriptor(descriptor: String): String = CLASS_TYPE.replace(descriptor) { "L" + name(it.groupValues[1]) }
+    // the internal name of a class, or the descriptor of an array type
+    fun type(type: String): String = if (type.startsWith('[')) descriptor(type) else name(type)
+    fun constant(value: Any?): Any? = when {
+        value is Type && value.sort == Type.METHOD -> Type.getMethodType(descriptor(value.descriptor))
+        value is Type -> Type.getType(descriptor(value.descriptor))
+        else -> value
+    }
+    fun frame(entries: Array<out Any?>?): Array<Any?>? = entries?.map { if (it is String) type(it) else it }?.toTypedArray()
+    val writer = ClassWriter(0)
+    ClassReader(bytes).accept(object : ClassVisitor(Opcodes.ASM9, writer) {
+        override fun visit(
+            version: Int,
+            access: Int,
+            name: String,
+            signature: String?,
+            superName: String?,
+            interfaces: Array<out String>?
+        ) = super.visit(
+            version, access, name(name), signature?.let(::descriptor), superName?.let(::name),
+            interfaces?.map(::name)?.toTypedArray()
+        )
+
+        override fun visitOuterClass(owner: String, name: String?, descriptor: String?) =
+            super.visitOuterClass(name(owner), name, descriptor?.let(::descriptor))
+
+        override fun visitInnerClass(name: String, outerName: String?, innerName: String?, access: Int) =
+            super.visitInnerClass(name(name), outerName?.let(::name), innerName, access)
+
+        override fun visitNestHost(nestHost: String) = super.visitNestHost(name(nestHost))
+
+        override fun visitNestMember(nestMember: String) = super.visitNestMember(name(nestMember))
+
+        override fun visitField(access: Int, name: String, descriptor: String, signature: String?, value: Any?): FieldVisitor? =
+            super.visitField(access, name, descriptor(descriptor), signature?.let(::descriptor), value)
+
+        override fun visitMethod(
+            access: Int,
+            name: String,
+            descriptor: String,
+            signature: String?,
+            exceptions: Array<out String>?
+        ): MethodVisitor = object : MethodVisitor(
+            Opcodes.ASM9,
+            super.visitMethod(
+                access, name, descriptor(descriptor), signature?.let(::descriptor), exceptions?.map(::name)?.toTypedArray()
+            )
+        ) {
+            override fun visitTypeInsn(opcode: Int, type: String) = super.visitTypeInsn(opcode, type(type))
+
+            override fun visitFieldInsn(opcode: Int, owner: String, name: String, descriptor: String) =
+                super.visitFieldInsn(opcode, type(owner), name, descriptor(descriptor))
+
+            override fun visitMethodInsn(opcode: Int, owner: String, name: String, descriptor: String, isInterface: Boolean) =
+                super.visitMethodInsn(opcode, type(owner), name, descriptor(descriptor), isInterface)
+
+            override fun visitLdcInsn(value: Any?) = super.visitLdcInsn(constant(value))
+
+            override fun visitMultiANewArrayInsn(descriptor: String, numDimensions: Int) =
+                super.visitMultiANewArrayInsn(descriptor(descriptor), numDimensions)
+
+            override fun visitTryCatchBlock(start: Label, end: Label, handler: Label, type: String?) =
+                super.visitTryCatchBlock(start, end, handler, type?.let(::name))
+
+            override fun visitLocalVariable(
+                name: String,
+                descriptor: String,
+                signature: String?,
+                start: Label,
+                end: Label,
+                index: Int
+            ) = super.visitLocalVariable(name, descriptor(descriptor), signature?.let(::descriptor), start, end, index)
+
+            override fun visitFrame(type: Int, numLocal: Int, local: Array<out Any?>?, numStack: Int, stack: Array<out Any?>?) =
+                super.visitFrame(type, numLocal, frame(local), numStack, frame(stack))
+        }
+    }, 0)
+    return writer.toByteArray()
+}
+
+// a class type in a descriptor, or in a generic signature, up to its end, its type arguments, or its inner class
+private val CLASS_TYPE = Regex("L([^;<.:]+)")
 
 private const val METADATA_DESCRIPTOR = "Lkotlin/Metadata;"
