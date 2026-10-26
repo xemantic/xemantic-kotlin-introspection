@@ -29,8 +29,10 @@ import org.jetbrains.kotlin.com.intellij.psi.util.PsiTreeUtil
 import org.jetbrains.kotlin.config.CompilerConfiguration
 import org.jetbrains.kotlin.psi.KtPsiFactory
 import org.junit.jupiter.api.AfterAll
+import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import java.net.URLClassLoader
+import java.nio.file.Path
 import java.util.jar.JarFile
 import kotlin.metadata.KmPackage
 import kotlin.metadata.jvm.KotlinClassMetadata
@@ -118,21 +120,21 @@ class RenderedDeclarationsParseTest {
     }
 
     @Test
-    fun `should parse legacy context receivers of class`() {
-        // given - like rendered by ClassLoaderIntrospectionTest, for the classes compiled with -Xcontext-receivers,
-        // which are not on the classpath introspected here, as the current compiler no longer compiles them
-        val listing = """
-            context(LegacyLogger, Comparator<T>) class LegacyContextReceiverClass<T> {
-                fun log()
-                context(Comparator<T>) inner class Inner
-            }
-            @Deprecated("Use LegacyContextReceiverClass") @JvmInline context(LegacyLogger) value class LegacyContextReceiverValue(val value: Int)
-        """.trimIndent()
+    fun `should parse legacy context receivers of class`(@TempDir tempDir: Path) {
+        // given - the classes compiled with -Xcontext-receivers, not on the classpath introspected by the other test,
+        // as the current compiler no longer compiles them, see withLegacyContextReceivers
+        val listings = legacyContextReceiversClassLoader(tempDir).use { classLoader ->
+            val introspector = KotlinIntrospector(classLoader)
 
-        // when
-        val errors = parseErrors(toParsableKotlin(listing))
+            // when
+            listOf("LegacyContextReceiverClass", "LegacyContextReceiverValue", "LegacyContextReceiverOuter").map { name ->
+                introspector.resolve("com.xemantic.kotlin.introspection.isolated.$name")!!
+            }
+        }
+        val errors = listings.flatMap { parseErrors(toParsableKotlin(it)) }
 
         // then
+        assert(listings.all { "context(" in it })
         assert(errors.isEmpty())
     }
 
@@ -189,13 +191,34 @@ class RenderedDeclarationsParseTest {
  * where the `kotlin.*` classes are the ones of this test, sharing the `kotlin.Metadata` annotation with kotlin-reflect,
  * and nothing else is visible, also not the resources, telling the classpath of the parent class loader.
  */
-private fun introspectedClassLoader(): URLClassLoader {
-    val kotlinClasses = object : ClassLoader(getPlatformClassLoader()) {
-        override fun loadClass(name: String, resolve: Boolean): Class<*> =
-            if (name.startsWith("kotlin.")) RenderedDeclarationsParseTest::class.java.classLoader.loadClass(name)
-            else super.loadClass(name, resolve)
-    }
-    return URLClassLoader(introspectedClasspath.map { it.toURI().toURL() }.toTypedArray(), kotlinClasses)
+private fun introspectedClassLoader(): URLClassLoader =
+    URLClassLoader(introspectedClasspath.map { it.toURI().toURL() }.toTypedArray(), kotlinClassLoader)
+
+/**
+ * The parent of a class loader of the introspected classes, see [introspectedClassLoader].
+ */
+private val kotlinClassLoader = object : ClassLoader(getPlatformClassLoader()) {
+    override fun loadClass(name: String, resolve: Boolean): Class<*> =
+        if (name.startsWith("kotlin.")) RenderedDeclarationsParseTest::class.java.classLoader.loadClass(name)
+        else super.loadClass(name, resolve)
+}
+
+/**
+ * The isolated test fixtures, see `ClassLoaderIntrospectionTest`, copied to the [root],
+ * with the legacy context receivers added to the metadata of their classes, see [withLegacyContextReceivers],
+ * seen through their own class loader, like the [introspectedClassLoader].
+ */
+private fun legacyContextReceiversClassLoader(root: Path): URLClassLoader {
+    requireNotNull(System.getProperty("isolatedTestFixtures")) { "run via ./gradlew parseTest" }
+        .split(File.pathSeparator).filter { it.isNotEmpty() }.map(::File).filter { it.exists() }
+        .forEach { dir ->
+            dir.walkTopDown().filter { it.isFile }.forEach { file ->
+                val target = root.resolve(file.relativeTo(dir).path).toFile()
+                target.parentFile.mkdirs()
+                target.writeBytes(withLegacyContextReceivers(file.name, file.readBytes()))
+            }
+        }
+    return URLClassLoader(arrayOf(root.toUri().toURL()), kotlinClassLoader)
 }
 
 private val introspectedClasspath: List<File> by lazy {
