@@ -98,10 +98,11 @@ com.example.AnnotationTestClass
   not to flood the listing of the class, like with the ones on `Any`,
   while a class nested in the companion object is resolved only through it, like `com.example.Foo.Companion.Builder`,
   as Kotlin does not resolve `Foo.Builder` either.
-  A companion object deprecated with the `WARNING` or the `ERROR` level,
-  which Kotlin reports for `Foo.parse()`, tells its deprecation on its extensions listed with the class,
-  as the one of their receiver, after the deprecation of the extension itself, if any,
-  like `@receiver:Deprecated("Use the constructor") fun Foo.Companion.parse(): Foo`.
+  The deprecation of a companion object deprecated with the `WARNING` or the `ERROR` level,
+  which Kotlin reports for `Foo.parse()`, and `Foo.Companion.parse()`,
+  is told on its extensions listed with the class, or resolved by its name, in a comment, as no annotation compiles there,
+  after the deprecation of the extension itself, if any,
+  like `/* companion object deprecated: "Use the constructor", level = DeprecationLevel.ERROR */ fun Foo.Companion.parse(): Foo`.
   The members a class inherits from its supertypes, without redeclaring them, are not listed, not to bloat the listing,
   but they are resolved by its name, after the members it declares, which override them, and before the extensions,
   each as declared by the nearest supertype declaring it, under its `// inherited from` header,

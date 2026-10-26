@@ -68,9 +68,19 @@ val DeprecatedCompanionExtensionHolder.Companion.default: DeprecatedCompanionExt
     get() = DeprecatedCompanionExtensionHolder()
 
 class ErrorCompanionExtensionHolder {
-    @Deprecated("Removed", level = DeprecationLevel.ERROR)
+    @Deprecated("Removed", ReplaceWith("ErrorCompanionExtensionHolder()"), level = DeprecationLevel.ERROR)
     companion object
 }
 
 @Suppress("DEPRECATION_ERROR")
 fun ErrorCompanionExtensionHolder.Companion.of(): ErrorCompanionExtensionHolder = ErrorCompanionExtensionHolder()
+
+// The deprecation of the companion object is rendered within a comment, which its message must not end
+class CommentEndingCompanionExtensionHolder {
+    @Deprecated("Use /* the */ constructor")
+    companion object
+}
+
+@Suppress("DEPRECATION")
+fun CommentEndingCompanionExtensionHolder.Companion.of(): CommentEndingCompanionExtensionHolder =
+    CommentEndingCompanionExtensionHolder()

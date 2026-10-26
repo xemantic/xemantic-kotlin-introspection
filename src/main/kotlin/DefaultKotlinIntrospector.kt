@@ -73,7 +73,9 @@ internal data class IndexedExtension(
     // annotated with @kotlin.internal.HidesMembers, called instead of a member, see jvmOnlyFunctionsNotHidden
     val hidesMembers: Boolean = false,
     override val receiverBounds: Set<String> = emptySet(),
-    override val isBuiltinExtension: Boolean = false  // whether it is shown with the built-in types, see isBuiltinExtensionSource
+    override val isBuiltinExtension: Boolean = false,  // whether it is shown with the built-in types, see isBuiltinExtensionSource
+    // the deprecation of the companion object it extends, when listed with its class, see withCompanionDeprecation
+    val companionDeprecation: Deprecation? = null
 ) : ReceiverBounded
 
 /**
@@ -110,7 +112,9 @@ internal data class IndexedExtensionProperty(
     // never a hidden one, as the hidden extensions are not indexed, but maybe hiding an accessor, see Deprecation.accessors
     val deprecation: Deprecation? = null,
     override val receiverBounds: Set<String> = emptySet(),
-    override val isBuiltinExtension: Boolean = false  // whether it is shown with the built-in types, see isBuiltinExtensionSource
+    override val isBuiltinExtension: Boolean = false,  // whether it is shown with the built-in types, see isBuiltinExtensionSource
+    // the deprecation of the companion object it extends, when listed with its class, see withCompanionDeprecation
+    val companionDeprecation: Deprecation? = null
 ) : ReceiverBounded
 
 /**
@@ -1448,7 +1452,12 @@ internal class DefaultKotlinIntrospector(
     ): MemberListing? {
         val contextPackage = contextPackageOf(declarations, kmClass)
         // like in the listing of the class, also the extensions a built-in type lists in its body, with their receivers
-        val listedExtensions = listedExtensions(kmClass, className, apiClass, declarations, isBuiltin)
+        val listedExtensions = listedExtensions(kmClass, className, apiClass, declarations, isBuiltin).let { listed ->
+            // Kotlin reports the deprecation of a companion object also for its extensions called on its name,
+            // like Foo.Companion.of(), which, resolved directly, unlike in its listing, are not rendered under its header
+            val deprecation = declarations.classDeprecation.takeIf { kmClass.kind == ClassKind.COMPANION_OBJECT }
+            if (deprecation == null) listed else listed.withCompanionDeprecation(kmClass.name, deprecation)
+        }
         // also the JVM-only members hidden by an extension, which are not listed, but still override the inherited ones
         val apiMembers = apiMembersNamed(kmClass, declarations, memberName, apiClass)
         val hiddenJvmOnlyFunctions = (declarations as? BuiltinClass)?.jvmOnlyFunctions.orEmpty() -
@@ -2065,7 +2074,7 @@ internal class DefaultKotlinIntrospector(
      * Either way, the ones on a type parameter with multiple bounds only when the class satisfies all of them,
      * see [receiverBoundsOf], also when none of them is among the [userSupertypes], see [listedFor],
      * and only the ones which can be called on the class, as told by the type arguments, see [isCallableOn],
-     * also the ones on its companion object, see [companionObjectName], deprecated by it, see [withCompanionDeprecation],
+     * also the ones on its companion object, see [extendedCompanionOf], telling its deprecation, see [withCompanionDeprecation],
      * and never the ones on a type parameter shadowed by a more specific overload, see [withoutShadowed].
      *
      * @param apiClass the [kmClass] as a class of the API.
@@ -2078,7 +2087,8 @@ internal class DefaultKotlinIntrospector(
         declarations: ClassDeclarations,
         isBuiltin: Boolean
     ): ListedExtensions {
-        val companionName = companionObjectName(kmClass, className, apiClass, declarations)
+        val companion = extendedCompanionOf(kmClass, className, apiClass, declarations)
+        val companionName = companion?.name
         val companionReceiverNames = listOfNotNull(companionName?.let { "$className.$it" })
         val supertypes = supertypesOf(kmClass)
         val listed = if (isBuiltin) {
@@ -2133,38 +2143,20 @@ internal class DefaultKotlinIntrospector(
                 .inApi(apiClass, declarations) +
                 inheritedFunctionsNamed(kmClass, names, apiClass)
         }
-        return unshadowed.withCompanionDeprecation(kmClass, companionName, apiClass, declarations)
+        val companionDeprecation = companion?.deprecation ?: return unshadowed
+        return unshadowed.withCompanionDeprecation("${kmClass.name}.${companion.name}", companionDeprecation)
     }
 
     /**
-     * These extensions, the ones on the companion object named [companionName] of the [kmClass],
-     * see [companionObjectName], deprecated by the deprecation of the companion object, if any, targeting their receiver,
-     * see [extensionDeprecationOf], as Kotlin reports it when they are called on the name of the class, like `Foo.of()`.
-     *
-     * @param apiClass the [kmClass] as a class of the API.
-     * @param declarations the declarations of the [kmClass], telling the located name of the companion object.
+     * These extensions, telling on the ones on the companion object named [companionName], like `com/example/Foo.Companion`,
+     * its [deprecation], as Kotlin reports it when they are called, like `Foo.of()`, or `Foo.Companion.of()`,
+     * rendered next to their own one, see [formatCompanionDeprecation].
      */
-    private fun ListedExtensions.withCompanionDeprecation(
-        kmClass: KmClass,
-        companionName: String?,
-        apiClass: ApiClass,
-        declarations: ClassDeclarations
-    ): ListedExtensions {
-        // a built-in type described by kotlin-reflect declares no companion object, which is never deprecated anyway
-        if (companionName == null || kmClass.companionObject == null) return this
-        val (located, _) = apiCompanionClassOf(kmClass, declarations, apiClass) ?: return this
-        val companionDeprecation = classDeclarations(located)?.classDeprecation ?: return this
-        val receiverName = "${kmClass.name}.$companionName"
-        fun KmType?.isCompanion() = (this?.classifier as? KmClassifier.Class)?.name == receiverName
+    private fun ListedExtensions.withCompanionDeprecation(companionName: String, deprecation: Deprecation): ListedExtensions {
+        fun KmType?.isCompanion() = (this?.classifier as? KmClassifier.Class)?.name == companionName
         return ListedExtensions(
-            functions.map { extension ->
-                if (!extension.function.receiverParameterType.isCompanion()) extension
-                else extension.copy(deprecation = extensionDeprecationOf(extension.deprecation, companionDeprecation))
-            },
-            properties.map { extension ->
-                if (!extension.property.receiverParameterType.isCompanion()) extension
-                else extension.copy(deprecation = extensionDeprecationOf(extension.deprecation, companionDeprecation))
-            }
+            functions.map { if (it.function.receiverParameterType.isCompanion()) it.copy(companionDeprecation = deprecation) else it },
+            properties.map { if (it.property.receiverParameterType.isCompanion()) it.copy(companionDeprecation = deprecation) else it }
         )
     }
 
@@ -2267,31 +2259,46 @@ internal class DefaultKotlinIntrospector(
     }
 
     /**
-     * The name of the companion object of the [kmClass], named [className], whose extensions,
+     * The companion object of a class whose extensions are listed with the class, see [extendedCompanionOf].
+     *
+     * @property name the name of the companion object, like `Companion`.
+     * @property deprecation the deprecation of the companion object, never a hidden one,
+     *   which Kotlin reports when its extensions are called, like `Foo.parse()`, see [withCompanionDeprecation].
+     */
+    private class ExtendedCompanion(val name: String, val deprecation: Deprecation?)
+
+    /**
+     * The companion object of the [kmClass], named [className], whose extensions,
      * like `fun Foo.Companion.parse()`, are called on the name of the class, like `Foo.parse()`,
      * or `null` if none of them is indexed, or it has none which is part of the API, like one deprecated as hidden,
      * which an extension compiled before an upgrade of its library hid it might still extend,
      * while Kotlin no longer calls `Foo.parse()`, told only for an indexed extension, not to load the companion object.
      * A built-in type described by kotlin-reflect, see [toKmBuiltinClass], declares no companion object,
-     * so it is told by kotlin-reflect, like `String.Companion` of `String.Companion.format()`.
+     * so it is told by kotlin-reflect, like `String.Companion` of `String.Companion.format()`, never deprecated.
      * The extensions on the supertypes of the companion object are not listed, not to flood the listing of the class.
      *
      * @param apiClass the [kmClass] as a class of the API.
      * @param declarations the declarations of the [kmClass], telling the located name of the companion object.
      */
-    private fun companionObjectName(
+    private fun extendedCompanionOf(
         kmClass: KmClass,
         className: String,
         apiClass: ApiClass,
         declarations: ClassDeclarations
-    ): String? {
+    ): ExtendedCompanion? {
         fun isExtended(name: String) = "$className.$name".let { it in extensionIndex || it in extensionPropertyIndex }
         kmClass.companionObject?.let { name ->
-            return name.takeIf { isExtended(it) && apiCompanionClassOf(kmClass, declarations, apiClass) != null }
+            if (!isExtended(name)) return null
+            val (located, _) = apiCompanionClassOf(kmClass, declarations, apiClass) ?: return null
+            val deprecation = classDeclarations(located)?.classDeprecation
+            if (deprecation?.isHidden == true) return null
+            return ExtendedCompanion(name, deprecation)
         }
         // the companion objects of the built-in types have the default name
         if (declarations !is BuiltinClass || kmClass.name in builtinClasses || !isExtended(DEFAULT_COMPANION_NAME)) return null
-        return reflectedValue(default = null) { builtinTypes[className]?.companionObject?.simpleName }?.takeIf(::isExtended)
+        return reflectedValue(default = null) { builtinTypes[className]?.companionObject?.simpleName }
+            ?.takeIf(::isExtended)
+            ?.let { ExtendedCompanion(it, deprecation = null) }
     }
 
     /**
@@ -3912,15 +3919,25 @@ internal class DefaultKotlinIntrospector(
         deprecation: Deprecation?,
         withHidden: Boolean = false
     ): String = if (deprecation == null || (deprecation.isHidden && !withHidden)) "" else buildString {
-        val message = deprecation.message.trim()
-        val firstLine = message.lineSequence().first().trimEnd()
         // telling that only the reading, or the assigning, of a var is deprecated
         +when (deprecation.target) {
-            Deprecation.Target.DECLARATION -> "@Deprecated(\""
-            Deprecation.Target.GETTER -> "@get:Deprecated(\""
-            Deprecation.Target.SETTER -> "@set:Deprecated(\""
-            Deprecation.Target.RECEIVER -> "@receiver:Deprecated(\""
+            Deprecation.Target.DECLARATION -> "@Deprecated("
+            Deprecation.Target.GETTER -> "@get:Deprecated("
+            Deprecation.Target.SETTER -> "@set:Deprecated("
         }
+        +formatDeprecationArguments(deprecation)
+        +") "
+        deprecation.accessors.forEach { +formatDeprecation(it) }
+    }
+
+    /**
+     * The arguments of the `@Deprecated` annotation of the [deprecation], see [formatDeprecation],
+     * like `"Use bar()", ReplaceWith("bar()"), level = DeprecationLevel.ERROR`.
+     */
+    private fun formatDeprecationArguments(deprecation: Deprecation): String = buildString {
+        val message = deprecation.message.trim()
+        val firstLine = message.lineSequence().first().trimEnd()
+        +"\""
         +firstLine.escapeKotlin('"')
         if (firstLine.length < message.length) +" …"
         +"\""
@@ -3930,8 +3947,19 @@ internal class DefaultKotlinIntrospector(
             +"\")"
         }
         if (deprecation.level != DeprecationLevel.WARNING) +", level = DeprecationLevel.${deprecation.level.name}"
-        +") "
-        deprecation.accessors.forEach { +formatDeprecation(it) }
+    }
+
+    /**
+     * The [deprecation] of a companion object, which Kotlin reports when its extension is called, like `Foo.of()`,
+     * rendered before the extension, see [withCompanionDeprecation], after its own one,
+     * within a comment, as no annotation of the extension compiles to tell it, like
+     * `/* companion object deprecated: "Use the constructor", level = DeprecationLevel.ERROR */`,
+     * with the arguments of its `@Deprecated` annotation, see [formatDeprecationArguments],
+     * but neither `/*`, nor `*/`, which would nest, or end, the comment.
+     */
+    private fun formatCompanionDeprecation(deprecation: Deprecation?): String = if (deprecation == null) "" else {
+        val arguments = formatDeprecationArguments(deprecation).replace("/*", "/ *").replace("*/", "* /")
+        "/* companion object deprecated: $arguments */ "
     }
 
     private fun formatSupertypes(
@@ -3976,7 +4004,10 @@ internal class DefaultKotlinIntrospector(
                 .map {
                     ListingItem.Extension(
                         source,
-                        formatProperty(it.property, it.setterVisibility, contextPackage = contextPackage, deprecation = it.deprecation)
+                        formatProperty(
+                            it.property, it.setterVisibility, contextPackage = contextPackage,
+                            deprecation = it.deprecation, companionDeprecation = it.companionDeprecation
+                        )
                     )
                 } +
                 functionsBySource[source].orEmpty()
@@ -3984,7 +4015,12 @@ internal class DefaultKotlinIntrospector(
                     .map {
                         ListingItem.Extension(
                             source,
-                            listOf(formatFunction(it.function, contextPackage = contextPackage, deprecation = it.deprecation))
+                            listOf(
+                                formatFunction(
+                                    it.function, contextPackage = contextPackage,
+                                    deprecation = it.deprecation, companionDeprecation = it.companionDeprecation
+                                )
+                            )
                         )
                     }
         }
@@ -4160,6 +4196,8 @@ internal class DefaultKotlinIntrospector(
      * @param bodyReceiverSubstitution the substitution of an extension listed in the body of its receiver class,
      *   rendered without its receiver, see [bodyReceiverSubstitution], or `null` to render the receiver.
      * @param deprecation the deprecation of the [function], see [formatDeprecation].
+     * @param companionDeprecation the deprecation of the companion object the [function] extends,
+     *   see [formatCompanionDeprecation].
      * @param isOwnerOpenForOverrides whether the user code might override the members of the [owner],
      *   see [formatModalityModifiers], by default unless final.
      * @param declaration the [function] as the [owner] declares it, telling whether it is an override,
@@ -4174,6 +4212,7 @@ internal class DefaultKotlinIntrospector(
         classTypeParameters: Map<Int, String> = emptyMap(),
         bodyReceiverSubstitution: Map<Int, String>? = null,
         deprecation: Deprecation? = null,
+        companionDeprecation: Deprecation? = null,
         isOwnerOpenForOverrides: Boolean = isOpenForOverridesByDefault(owner),
         isInheritedByFinalClass: Boolean = false,
         declaration: KmFunction = function
@@ -4183,6 +4222,7 @@ internal class DefaultKotlinIntrospector(
         val declaredTypeParameters = function.typeParameters.filter { it.id !in bodyReceiverSubstitution.orEmpty() }
 
         +formatDeprecation(deprecation)
+        +formatCompanionDeprecation(companionDeprecation)
         +formatContextParameters(function.contextParameters, contextPackage, typeParameters)
         +formatVisibility(function.visibility)
 
@@ -4307,6 +4347,7 @@ internal class DefaultKotlinIntrospector(
      * @param bodyReceiverSubstitution the substitution of an extension listed in the body of its receiver class,
      *   like for [formatFunction].
      * @param deprecation the deprecation of the [property], see [formatDeprecation].
+     * @param companionDeprecation the deprecation of the companion object the [property] extends, like for [formatFunction].
      * @param isOwnerOpenForOverrides whether the user code might override the members of the [owner], like for [formatFunction].
      * @param declaration the [property] as the [owner] declares it, like for [formatFunction].
      */
@@ -4320,6 +4361,7 @@ internal class DefaultKotlinIntrospector(
         classTypeParameters: Map<Int, String> = emptyMap(),
         bodyReceiverSubstitution: Map<Int, String>? = null,
         deprecation: Deprecation? = null,
+        companionDeprecation: Deprecation? = null,
         isOwnerOpenForOverrides: Boolean = isOpenForOverridesByDefault(owner),
         isInheritedByFinalClass: Boolean = false,
         declaration: KmProperty = property
@@ -4332,6 +4374,7 @@ internal class DefaultKotlinIntrospector(
         val renderedSetterVisibility = propertyDeclaration.setterVisibility
         add(buildString {
             +formatDeprecation(propertyDeclaration.deprecation)
+            +formatCompanionDeprecation(companionDeprecation)
             +formatContextParameters(property.contextParameters, contextPackage, typeParameters)
             +formatVisibility(property.visibility)
 

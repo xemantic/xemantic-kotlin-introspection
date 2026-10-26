@@ -27,12 +27,10 @@ package com.xemantic.kotlin.introspection
  * @property level the level in effect, see [deprecationOf], of this one only, not of its [accessors],
  *   like of a `val` deprecated itself, which might be lower than the one of its getter.
  * @property target what is deprecated: the declaration itself,
- *   or only an accessor of a `var`, rendered as `@get:Deprecated`, or `@set:Deprecated`, see [varDeprecationOf],
- *   or the receiver of an extension, rendered as `@receiver:Deprecated`, see [extensionDeprecationOf].
+ *   or only an accessor of a `var`, rendered as `@get:Deprecated`, or `@set:Deprecated`, see [varDeprecationOf].
  * @property accessors the deprecations of the accessors of a `var`, deprecated apart from this one, each targeting its accessor,
  *   so that all of them are rendered, like `@Deprecated("…") @set:Deprecated("…", level = DeprecationLevel.ERROR) var a: Int`,
- *   or the one of the getter of a `val`, deprecated itself too, see [ofReading],
- *   followed by the one of the receiver of an extension, if any.
+ *   or the one of the getter of a `val`, deprecated itself too, see [ofReading].
  */
 internal class Deprecation(
     val message: String,
@@ -42,7 +40,7 @@ internal class Deprecation(
     val accessors: List<Deprecation> = emptyList()
 ) {
 
-    enum class Target { DECLARATION, GETTER, SETTER, RECEIVER }
+    enum class Target { DECLARATION, GETTER, SETTER }
 
     /**
      * Whether the declaration cannot be used in the source code at all, and therefore is not rendered,
@@ -70,15 +68,9 @@ internal class Deprecation(
      * `@Deprecated("Use z", ReplaceWith("z")) @get:Deprecated("Read y", level = DeprecationLevel.ERROR) val q: Int`,
      * so that neither message is lost, or the one of its getter alone, targeting the declaration,
      * or the hidden one of its getter, targeting the declaration, as a property which cannot be read is hidden as a whole,
-     * or `null`, when only its setter is deprecated,
-     * always followed by the deprecation of the receiver of an extension, if any, see [extensionDeprecationOf].
+     * or `null`, when only its setter is deprecated.
      */
     fun ofReading(): Deprecation? {
-        if (target == Target.RECEIVER) return this
-        val receiver = accessors.lastOrNull { it.target == Target.RECEIVER }
-        if (receiver != null) {
-            return extensionDeprecationOf(targeting(target, accessors = accessors - receiver).ofReading(), receiver)
-        }
         if (target == Target.DECLARATION && accessors.isEmpty()) return this
         val getter = (listOf(this) + accessors).firstOrNull { it.target == Target.GETTER }
         return when {
@@ -162,19 +154,4 @@ internal fun DeprecationAnnotations.deprecationOf(isSince: (version: String) -> 
         explicitLevel ?: DeprecationLevel.WARNING
     }
     return Deprecation(message.orEmpty(), replaceWith?.takeIf { it.isNotEmpty() }, effectiveLevel)
-}
-
-/**
- * The deprecation of an extension, whose [receiverDeprecation] is the one of its receiver,
- * like of a deprecated companion object, whose extension `fun Foo.Companion.of()` is called as `Foo.of()`,
- * where Kotlin reports the deprecation of the companion object, next to the [deprecation] of the extension itself, if any,
- * so that both are rendered, like `@Deprecated("Use bar()") @receiver:Deprecated("Use the constructor") fun Foo.Companion.of(): Foo`,
- * the one of the receiver last, targeting it, see [Deprecation.accessors].
- * A hidden extension stays hidden, while a hidden receiver is not expected,
- * as the extensions of a hidden companion object are not listed.
- */
-internal fun extensionDeprecationOf(deprecation: Deprecation?, receiverDeprecation: Deprecation?): Deprecation? {
-    if (receiverDeprecation == null || deprecation?.isHidden == true) return deprecation
-    val receiver = receiverDeprecation.targeting(Deprecation.Target.RECEIVER)
-    return deprecation?.let { it.targeting(it.target, accessors = it.accessors + receiver) } ?: receiver
 }

@@ -1040,9 +1040,9 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should list extensions of deprecated companion object with deprecation of their receiver`() {
+    fun `should list extensions of deprecated companion object with its deprecation`() {
         // Kotlin reports the deprecation of the companion object for DeprecatedCompanionExtensionHolder.of(),
-        // next to the one of the extension itself, like for create()
+        // next to the one of the extension itself, like for create(), told in a comment, as no annotation compiles there
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.DeprecatedCompanionExtensionHolder"
         ) sameAsKotlin """
@@ -1051,9 +1051,9 @@ class KotlinIntrospectorTest {
                 @Deprecated("Use the constructor") companion object
             }
             // from com.xemantic.kotlin.introspection.test
-            @receiver:Deprecated("Use the constructor") val DeprecatedCompanionExtensionHolder.Companion.default: DeprecatedCompanionExtensionHolder
-            @Deprecated("Use of()", ReplaceWith("of()"), level = DeprecationLevel.ERROR) @receiver:Deprecated("Use the constructor") fun DeprecatedCompanionExtensionHolder.Companion.create(): DeprecatedCompanionExtensionHolder
-            @receiver:Deprecated("Use the constructor") fun DeprecatedCompanionExtensionHolder.Companion.of(): DeprecatedCompanionExtensionHolder
+            /* companion object deprecated: "Use the constructor" */ val DeprecatedCompanionExtensionHolder.Companion.default: DeprecatedCompanionExtensionHolder
+            @Deprecated("Use of()", ReplaceWith("of()"), level = DeprecationLevel.ERROR) /* companion object deprecated: "Use the constructor" */ fun DeprecatedCompanionExtensionHolder.Companion.create(): DeprecatedCompanionExtensionHolder
+            /* companion object deprecated: "Use the constructor" */ fun DeprecatedCompanionExtensionHolder.Companion.of(): DeprecatedCompanionExtensionHolder
         """.trimIndent()
     }
 
@@ -1073,13 +1073,37 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should resolve extension of companion object deprecated as error with deprecation of its receiver`() {
+    fun `should resolve extension of companion object deprecated as error with its deprecation`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.ErrorCompanionExtensionHolder.of"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.ErrorCompanionExtensionHolder.of [page 1/1]
             // from com.xemantic.kotlin.introspection.test
-            @receiver:Deprecated("Removed", level = DeprecationLevel.ERROR) fun ErrorCompanionExtensionHolder.Companion.of(): ErrorCompanionExtensionHolder
+            /* companion object deprecated: "Removed", ReplaceWith("ErrorCompanionExtensionHolder()"), level = DeprecationLevel.ERROR */ fun ErrorCompanionExtensionHolder.Companion.of(): ErrorCompanionExtensionHolder
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension of deprecated companion object by its name with its deprecation`() {
+        // Kotlin reports the deprecation of the companion object for ErrorCompanionExtensionHolder.Companion.of() too
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ErrorCompanionExtensionHolder.Companion.of"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ErrorCompanionExtensionHolder.Companion.of [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            /* companion object deprecated: "Removed", ReplaceWith("ErrorCompanionExtensionHolder()"), level = DeprecationLevel.ERROR */ fun ErrorCompanionExtensionHolder.Companion.of(): ErrorCompanionExtensionHolder
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not end comment telling deprecation of companion object by its message`() {
+        // Kotlin block comments nest, so neither /* nor */ of the message is rendered as is
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.CommentEndingCompanionExtensionHolder.of"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.CommentEndingCompanionExtensionHolder.of [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            /* companion object deprecated: "Use / * the * / constructor" */ fun CommentEndingCompanionExtensionHolder.Companion.of(): CommentEndingCompanionExtensionHolder
         """.trimIndent()
     }
 
