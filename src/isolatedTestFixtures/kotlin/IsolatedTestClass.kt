@@ -58,3 +58,22 @@ sealed class RelocatedSealed {
 }
 
 open class RelocatedOpenSubclass : RelocatedSealed()
+
+// tests relocate it, like shading, together with its inner class overloading the overridden function
+// with the bounded type parameter of the outer class, erased to its bound
+class RelocatedBoundedOuter<K : Number> {
+    inner class Comparing : Comparator<String> {
+        override fun compare(a: String, b: String): Int = 0
+        fun compare(a: K, b: K): Int = 0
+    }
+}
+
+// tests relocate it, like shading, together with its subclass, so that the overridden members are found by its relocated name
+abstract class RelocatedBase<T> {
+    abstract fun accept(value: T)
+}
+
+class RelocatedDerived : RelocatedBase<String>() {
+    override fun accept(value: String) {}
+    fun accept(value: Int) {}
+}

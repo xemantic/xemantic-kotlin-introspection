@@ -175,6 +175,53 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should not take overload of relocated inner class with bounded type parameter of its relocated outer class for override`() {
+        // given
+        val classFiles = arrayOf("RelocatedBoundedOuter.class", "RelocatedBoundedOuter\$Comparing.class")
+        val root = isolatedTestFixturesCopy("relocatedBoundedInner", *classFiles)
+        relocatedCopy(root, *classFiles)
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve(
+            "shaded.com.xemantic.kotlin.introspection.isolated.RelocatedBoundedOuter.Comparing"
+        )
+
+        // then
+        // the outer class is found by its relocated binary name, telling the bound K is erased to,
+        // so that compare(Number, Number) does not override compare(String, String) of Comparator<String>
+        signature sameAsKotlin """
+            // shaded.com.xemantic.kotlin.introspection.isolated.RelocatedBoundedOuter.Comparing [page 1/1]
+            inner class RelocatedBoundedOuter<K>.Comparing : java.util.Comparator<String> {
+                override fun compare(a: String, b: String): Int
+                fun compare(a: K, b: K): Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should tell override of member of relocated supertype of relocated class`() {
+        // given
+        val classFiles = arrayOf("RelocatedBase.class", "RelocatedDerived.class")
+        val root = isolatedTestFixturesCopy("relocatedSupertype", *classFiles)
+        relocatedCopy(root, *classFiles)
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("shaded.com.xemantic.kotlin.introspection.isolated.RelocatedDerived")
+
+        // then
+        // the supertype in the package of the relocated class is found by its relocated binary name
+        signature sameAsKotlin """
+            // shaded.com.xemantic.kotlin.introspection.isolated.RelocatedDerived [page 1/1]
+            class RelocatedDerived : RelocatedBase<String> {
+                override fun accept(value: String)
+                fun accept(value: Int)
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should list member extensions of relocated object from its relocated name`() {
         // given
         val root = isolatedTestFixturesCopy("relocatedObject", "RelocatedExtensions.class")
