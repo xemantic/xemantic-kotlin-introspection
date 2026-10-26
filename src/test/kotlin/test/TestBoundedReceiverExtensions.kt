@@ -19,7 +19,11 @@
 package com.xemantic.kotlin.introspection.test
 
 import com.xemantic.kotlin.introspection.test.other.JavaBoundedReceiverBase
+import com.xemantic.kotlin.introspection.test.other.JavaBoxBase
+import com.xemantic.kotlin.introspection.test.other.JavaComparableBase
 import com.xemantic.kotlin.introspection.test.other.JavaFunctionBase
+import com.xemantic.kotlin.introspection.test.other.JavaLinkBase
+import com.xemantic.kotlin.introspection.test.other.JavaNamedLinkBase
 
 // Extensions on type parameter receivers, listed for the classes satisfying their bounds,
 // names avoid the "TestClass" suffix to keep search result tests stable
@@ -302,3 +306,74 @@ class BoundedReceiverLists : BoundedReceiverSource<List<String>>
 fun BoundedReceiverSource<java.lang.constant.Constable>.firstConstable() {}
 
 fun BoundedReceiverSource<MutableCollection<String>>.addRow() {}
+
+// a self-referential bound of a covariant type argument, satisfied only by a class of a type argument which is its subtype
+interface BoundedReceiverChain<out T>
+
+fun <T : BoundedReceiverChain<T>> T.chain() {}
+
+class BoundedReceiverChainOfAny : BoundedReceiverChain<Any>
+
+open class BoundedReceiverChainBase : BoundedReceiverChain<BoundedReceiverChainLink>
+
+class BoundedReceiverChainLink : BoundedReceiverChainBase()
+
+// a type parameter inferred from a contravariant and a covariant type argument,
+// which has to be a subtype of the former, and a supertype of the latter
+interface BoundedReceiverPair<in A, out B>
+
+fun <T> BoundedReceiverPair<T, T>.samePair() {}
+
+class BoundedReceiverStringToAny : BoundedReceiverPair<String, Any>
+
+class BoundedReceiverAnyToString : BoundedReceiverPair<Any, String>
+
+// the type arguments of a supertype of a type argument, like Comparable<String> of String
+interface BoundedReceiverComparables<out T>
+
+fun BoundedReceiverComparables<Comparable<java.io.File>>.firstComparableFile() {}
+
+fun BoundedReceiverComparables<Comparable<String>>.firstComparableString() {}
+
+class BoundedReceiverComparableStrings : BoundedReceiverComparables<String>
+
+// the JVM supertypes of a built-in supertype, like java.io.Serializable of kotlin.Throwable, and of kotlin.Enum
+fun <T> T.boundedByAAndSerializable() where T : BoundedReceiverA, T : java.io.Serializable {}
+
+class BoundedReceiverThrowable : Throwable(), BoundedReceiverA
+
+enum class BoundedReceiverEnum : BoundedReceiverA { ENTRY }
+
+// the extensions on Comparable declared in an object of the package of a class, imported from it
+object BoundedReceiverComparisons {
+    fun Comparable<BoundedReceiverVersion>.isNewerThan(version: BoundedReceiverVersion): Boolean = compareTo(version) > 0
+}
+
+// a class comparable to its Java supertype
+class BoundedReceiverJavaComparable : JavaComparableBase()
+
+// a method of a Java supertype, which never shadows the extension, called by leaf.linkTo(next = leaf)
+class BoundedReceiverJavaLeaf : JavaLinkBase<BoundedReceiverJavaLeaf>(), BoundedReceiverNode<BoundedReceiverJavaLeaf>
+
+// the methods of a Java supertype taking parameters, never shadowing the extensions, which a named argument calls,
+// like picker.pick(arg0 = picker), also when the Java parameter is named like the one of the extension,
+// unlike a Java method taking none
+interface BoundedReceiverJavaNode<N : BoundedReceiverJavaNode<N>>
+
+fun <N : BoundedReceiverJavaNode<N>> N.pick(arg0: N): N = arg0
+
+fun <N : BoundedReceiverJavaNode<N>> N.linkNext(next: N): N = next
+
+fun <N : BoundedReceiverJavaNode<N>> N.self(): N = this
+
+class BoundedReceiverJavaPicker : JavaLinkBase<BoundedReceiverJavaPicker>(), BoundedReceiverJavaNode<BoundedReceiverJavaPicker>
+
+class BoundedReceiverJavaNamedLeaf : JavaNamedLinkBase<BoundedReceiverJavaNamedLeaf>(), BoundedReceiverJavaNode<BoundedReceiverJavaNamedLeaf>
+
+// the type arguments given to a Java supertype, platform types in its supertypes, unless nullable,
+// like BoundedReceiverBox<String!> of BoundedReceiverStringBox, but BoundedReceiverBox<String?> of BoundedReceiverNullableStringBox
+fun BoundedReceiverBox<String?>.joinNullableStrings(): String = ""
+
+class BoundedReceiverStringBox : JavaBoxBase<String>()
+
+class BoundedReceiverNullableStringBox : JavaBoxBase<String?>()

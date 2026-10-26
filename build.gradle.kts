@@ -89,6 +89,13 @@ tasks.named<JavaCompile>(java8TestFixtures.compileJavaTaskName) {
     options.compilerArgs.add("-Xlint:-options")
 }
 
+// compiled with -parameters, so that kotlin-reflect tells the names of the parameters of the Java methods
+val javaParameterNamesTestFixtures: SourceSet = sourceSets.create("javaParameterNamesTestFixtures")
+
+tasks.named<JavaCompile>(javaParameterNamesTestFixtures.compileJavaTaskName) {
+    options.compilerArgs.add("-parameters")
+}
+
 // a separate Kotlin module, whose internal members are not visible to the test module
 val otherModuleTestFixtures: SourceSet = sourceSets.create("otherModuleTestFixtures")
 
@@ -124,6 +131,7 @@ dependencies {
     implementation(libs.slf4j.api)
 
     testImplementation(jvmDefaultDisabledTestFixtures.output)
+    testImplementation(javaParameterNamesTestFixtures.output)
     testImplementation(otherModuleTestFixtures.output)
     testImplementation(friendModuleTestFixtures.output)
     testImplementation(defaultModuleTestFixtures.output)

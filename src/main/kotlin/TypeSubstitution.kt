@@ -130,7 +130,10 @@ private fun KmType.typeParameterIds(): Sequence<Int> = when (val classifier = cl
         (outerType?.typeParameterIds() ?: emptySequence())
 }
 
-private fun KmType.copy(
+/**
+ * A copy of this type, of the given [arguments], and [outerType], as the types of the metadata are shared.
+ */
+internal fun KmType.copy(
     arguments: List<KmTypeProjection> = this.arguments,
     outerType: KmType? = this.outerType
 ): KmType = KmType().also { type ->
