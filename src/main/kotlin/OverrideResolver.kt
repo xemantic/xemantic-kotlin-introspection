@@ -1879,7 +1879,6 @@ internal fun javaMemberKey(className: String, name: String, descriptor: String):
 
 /**
  * The key of a [function] of the [owner] class, like `kotlin/collections/List#context() fun get(kotlin/Int)`,
-
  * telling it apart from the other members of the class, its overloads, by its parameter types, see [memberKeyType],
  * a type parameter by its name, the same for the declaration of the class read from its class file,
  * and the one of a built-in type in the `.kotlin_builtins` resources.

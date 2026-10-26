@@ -53,7 +53,6 @@ import kotlin.reflect.typeOf
  * while such a constructor tells a JVM constructor, like `Integer(int)`, which has no counterpart in Kotlin,
  * see [toKmBuiltinClass].
  * Only the exact positional name is matched, as real Kotlin names like `args` or `argument` are common.
-
  *
  * The parameter names are the only signal available here:
  * the Kotlin members of the built-in types are also backed by the same JDK methods,
@@ -120,7 +119,6 @@ internal class ReflectedTypeParameters(private val ids: Map<String, Int>) {
  * its supertypes are only the Kotlin ones, its members are the ones the JVM class declares,
  * also the ones whose parameter names are not known, like `initCause(arg0: Throwable?)`,
  * but the ones Kotlin does not call, see [isUnsupportedByCompiler],
-
  * and its constructors are the ones of the JVM class whose parameter names are known, like `String()`,
  * see [hasSyntheticParameterNames],
  * as the others, like `Integer(int)`, have no counterpart in Kotlin.

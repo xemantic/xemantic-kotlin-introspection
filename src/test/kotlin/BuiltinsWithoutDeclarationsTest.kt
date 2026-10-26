@@ -92,7 +92,6 @@ class BuiltinsWithoutDeclarationsTest {
         assert(signatures == null)
     }
 
-
     @Test
     fun `should not resolve mutable collection type which kotlin-reflect cannot tell apart from the read-only one`() {
         // when
