@@ -8062,6 +8062,7 @@ class KotlinIntrospectorTest {
     @Test
     fun `should list extension in body of built-in type in place of JVM member which the compiler hides`() {
         // the isEmpty() of java.lang.CharSequence since JDK 15, charSequence.isEmpty() calls the CharSequence.isEmpty() extension
+        assumeTrue(runCatching { CharSequence::class.java.getMethod("isEmpty") }.isSuccess, "JDK 15+")
         resolver.resolve("kotlin.CharSequence", pageSize = 10000) should {
             have("    inline fun isEmpty(): Boolean" in lines())
             have(lines().none { it.endsWith(" fun isEmpty(): Boolean") && "inline" !in it })
@@ -8071,6 +8072,7 @@ class KotlinIntrospectorTest {
     @Test
     fun `should list extension of built-in type in place of JVM member which the compiler hides`() {
         // the reversed() of java.util.List since JDK 21, list.reversed() calls the Iterable<T>.reversed() extension
+        assumeTrue(runCatching { List::class.java.getMethod("reversed") }.isSuccess, "JDK 21+")
         resolver.resolve("kotlin.collections.List", pageSize = 10000) should {
             have("    open fun reversed(): List<E>" !in lines())
             have("fun <T> Iterable<T>.reversed(): List<T>" in lines())

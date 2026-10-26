@@ -73,12 +73,13 @@ internal fun hasSyntheticParameterNames(function: KFunction<*>): Boolean =
  * which kotlin-reflect tells deprecated as "not fully supported by Kotlin compiler", mirroring the warning of K1,
  * while K2 does not resolve it at all, or one which Kotlin hides, see [HIDDEN_JDK_METHODS],
  * so that it is neither rendered, nor shadows the extensions of its signature.
- * A member whose annotations cannot be read, like one kotlin-reflect cannot describe, is not told callable either.
+ * A member whose annotations cannot be read, like one kotlin-reflect cannot describe, is not told callable either,
+ * which might leave out a member Kotlin does call, rather than list one it does not.
  */
 internal fun isUnsupportedByCompiler(callable: KCallable<*>): Boolean =
     reflectedValue(default = true) {
         callable.annotations.any { it is Deprecated && it.message.startsWith(UNSUPPORTED_MEMBER_MESSAGE) }
-    } || reflectedValue(default = false) {
+    } || callable.name in hiddenJdkMethodNames && reflectedValue(default = false) {
         (callable as? KFunction<*>)?.javaMethod?.let { jvmSignature(it) in HIDDEN_JDK_METHODS } == true
     }
 
@@ -100,6 +101,9 @@ internal val HIDDEN_JDK_METHODS: Set<String> = setOf(
     "java/util/List.reversed()Ljava/util/List;",
     "java/util/List.sort(Ljava/util/Comparator;)V"
 )
+
+// telling most members apart without resolving their JVM methods
+private val hiddenJdkMethodNames: Set<String> = HIDDEN_JDK_METHODS.mapTo(HashSet()) { it.substringAfter('.').substringBefore('(') }
 
 /**
  * The JVM signature of the [method], like `java/util/List.reversed()Ljava/util/List;`, see [HIDDEN_JDK_METHODS].
@@ -206,8 +210,9 @@ internal fun KClass<*>.toKmBuiltinClass(name: String): KmClass {
         .mapTo(kmClass.constructors) { constructor ->
             KmConstructor().also { kmConstructor ->
                 kmConstructor.visibility = Visibility.PUBLIC
+                // a constructor infers the type arguments of the class at the call, like a function its own ones
                 constructor.parameters.withIndex().mapTo(kmConstructor.valueParameters) { (position, parameter) ->
-                    parameter.toKmValueParameter(position, typeParameters)
+                    parameter.toKmValueParameter(position, typeParameters, ownTypeParameters = this.typeParameters)
                 }
             }
         }

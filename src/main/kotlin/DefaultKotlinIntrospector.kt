@@ -1195,7 +1195,7 @@ internal class DefaultKotlinIntrospector(
         val listedExtensions = listedExtensions(kmClass, className, apiClass, declarations, isBuiltin)
         val members = declaredMembers(
             kmClass, declarations, memberName, apiClass, contextPackage,
-            jvmOnlyFunctions = jvmOnlyFunctionsNotHidden(kmClass, declarations, listedExtensions.functions).notHidden
+            jvmOnlyFunctions = jvmOnlyFunctionsNotHidden(kmClass, declarations, listedExtensions.functions)
         )
 
         val companionMembers = apiCompanionOf(kmClass, apiClass)?.let { companion ->
@@ -1402,14 +1402,12 @@ internal class DefaultKotlinIntrospector(
                 val hiding = extensionIndex[superKmClass.name.replace('/', '.')].orEmpty().filter {
                     it.hidesMembers && it.function.name == memberName && it.isBuiltinExtension
                 }
-                val functions = jvmOnlyFunctionsNotHidden(superKmClass, supertype, hiding)
-                hidingExtensions += functions.hidingExtensions
-                functions.notHidden
+                jvmOnlyFunctionsNotHidden(superKmClass, supertype, hiding, hidingExtensions)
             } else {
                 jvmOnlyFunctions
             }
             // KmFunction compares by identity
-            val jvmOnlyFunctionSet = jvmOnlyFunctionsNotHidden.toHashSet()
+            val jvmOnlyFunctionSet = jvmOnlyFunctionsNotHidden.filterTo(HashSet()) { it.name == memberName }
             apiMembersNamed(superKmClass, supertype, memberName, scope, jvmOnlyFunctionsNotHidden).forEach { member ->
                 candidates += when (member) {
                     is Member.Property -> InheritedCandidate(
@@ -2532,17 +2530,6 @@ internal class DefaultKotlinIntrospector(
     }
 
     /**
-     * The JVM-only functions of a built-in type, see [jvmOnlyFunctionsNotHidden]:
-     * the [notHidden] ones, and the [hidingExtensions] called instead of any of them, at least for some arguments.
-     */
-    private class JvmOnlyFunctions(val notHidden: List<KmFunction>, hidingExtensions: () -> List<IndexedExtension>) {
-
-        // told only when needed, like by an inherited lookup, unlike by the listing of the class
-        val hidingExtensions: List<IndexedExtension> by lazy(LazyThreadSafetyMode.NONE, hidingExtensions)
-
-    }
-
-    /**
      * The JVM-only functions of a built-in type, the [kmClass], see [BuiltinClass.jvmOnlyFunctions],
      * but the ones hidden by one of the [extensions] annotated with `@kotlin.internal.HidesMembers`,
      * reading like a member of the same signature, see [memberCallSignature], which is called instead,
@@ -2551,26 +2538,28 @@ internal class DefaultKotlinIntrospector(
      * like `forEach(arg0: java.util.function.Consumer<in T>?)` of `java.lang.Iterable` next to `Iterable<T>.forEach(action)`,
      * and so is a member accepting more, like `addSuppressed(arg0: Throwable?)` of `java.lang.Throwable`,
      * called by `addSuppressed(null)`, while `fun Throwable.addSuppressed(exception: Throwable)` is called for the rest,
-     * thus one of the extensions called instead of a member for some arguments, see [JvmOnlyFunctions.hidingExtensions].
+     * thus one of the extensions called instead of a member for some arguments, added to the [hidingExtensions], if given.
      */
     private fun jvmOnlyFunctionsNotHidden(
         kmClass: KmClass,
         declarations: ClassDeclarations,
-        extensions: List<IndexedExtension>
-    ): JvmOnlyFunctions {
+        extensions: List<IndexedExtension>,
+        hidingExtensions: MutableList<IndexedExtension>? = null
+    ): List<KmFunction> {
         val jvmOnlyFunctions = (declarations as? BuiltinClass)?.jvmOnlyFunctions.orEmpty()
-        if (jvmOnlyFunctions.isEmpty()) return JvmOnlyFunctions(jvmOnlyFunctions) { emptyList() }
+        if (jvmOnlyFunctions.isEmpty()) return jvmOnlyFunctions
         val hiding = extensions.filter { it.hidesMembers && !it.isObjectMember }.mapNotNull { extension ->
             bodyReceiverSubstitution(extension.function, kmClass)?.let { extension to callSignature(extension.function, it) }
         }
-        if (hiding.isEmpty()) return JvmOnlyFunctions(jvmOnlyFunctions) { emptyList() }
+        if (hiding.isEmpty()) return jvmOnlyFunctions
         val typeParameters = typeParametersInScope(kmClass, declarations)
         val members = jvmOnlyFunctions.map { memberCallSignature(it, typeParameters) }
-        val notHidden = jvmOnlyFunctions.filterIndexed { index, _ ->
-            hiding.none { (_, signature) -> members[index].isCoveredBy(signature) }
+        hidingExtensions?.let { added ->
+            hiding.filterTo(ArrayList()) { (_, signature) -> members.any { it.shadows(signature) } }
+                .mapTo(added) { (extension, _) -> extension }
         }
-        return JvmOnlyFunctions(notHidden) {
-            hiding.filter { (_, signature) -> members.any { it.shadows(signature) } }.map { (extension, _) -> extension }
+        return jvmOnlyFunctions.filterIndexed { index, _ ->
+            hiding.none { (_, signature) -> members[index].isCoveredBy(signature) }
         }
     }
 
@@ -2599,7 +2588,7 @@ internal class DefaultKotlinIntrospector(
                 typeParameters = typeParameters
             )
         }
-        val jvmOnlyFunctions = jvmOnlyFunctionsNotHidden(kmClass, declarations, listedExtensions.functions).notHidden
+        val jvmOnlyFunctions = jvmOnlyFunctionsNotHidden(kmClass, declarations, listedExtensions.functions)
             .inApi(apiClass, declarations)
             .map { function ->
                 function.name to formatMember(

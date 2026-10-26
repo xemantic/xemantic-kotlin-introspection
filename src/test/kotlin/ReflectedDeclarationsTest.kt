@@ -23,11 +23,15 @@ import com.xemantic.kotlin.introspection.test.GenericInnerTypes
 import com.xemantic.kotlin.introspection.test.KeywordMembersSample
 import com.xemantic.kotlin.introspection.test.NonGenericInnerTypes
 import com.xemantic.kotlin.introspection.test.ReflectedValueParametersSample
+import com.xemantic.kotlin.introspection.test.other.JavaLabelBase
 import com.xemantic.kotlin.introspection.test.other.JavaUnnamedParameters
 import com.xemantic.kotlin.introspection.test.other.Upper.JavaUpperCasePackage
 import com.xemantic.kotlin.test.assert
 import kotlin.metadata.KmClassifier
 import kotlin.metadata.KmType
+import kotlin.metadata.KmTypeParameter
+import kotlin.metadata.KmVariance
+import kotlin.metadata.isNullable
 import kotlin.reflect.KFunction
 import kotlin.reflect.KProperty
 import kotlin.reflect.full.declaredMemberExtensionFunctions
@@ -156,6 +160,19 @@ class ReflectedDeclarationsTest {
                 "fun <T> listOf(vararg arg0: T?): List<T>"
             )
         )
+    }
+
+    @Test
+    fun `should render Java parameter of class type parameter as not nullable`() {
+        // given - T! of a JavaLabelBase<String> accepts no null, unlike Any! of Object, as the receiver fixes T
+        val getLabel = JavaLabelBase::class.memberFunctions.single { it.name == "getLabel" }
+        val typeParameters = ReflectedTypeParameters.classTypeParameters(listOf(KmTypeParameter("T", 0, KmVariance.INVARIANT)))
+
+        // when
+        val type = getLabel.toKmFunction(typeParameters).valueParameters.single().type
+
+        // then
+        assert(!type.isNullable && (type.classifier as? KmClassifier.TypeParameter)?.id == 0)
     }
 
     @Test
