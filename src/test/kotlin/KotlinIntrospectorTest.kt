@@ -5407,6 +5407,64 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve generic class with extensions on type parameter with bound satisfied by its F-bounded type parameter`() {
+        // N : BoundedReceiverTitled<N> stands for the subclass itself, a BoundedReceiverEntity<N> and a Comparable<N>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverTitled"
+        ) should {
+            have("fun <E : BoundedReceiverEntity<E>> E.save(): E" in lines())
+            have("fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T): T" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve Enum with stdlib extensions on type parameter bounded by Comparable`() {
+        // E : Enum<E> stands for the enum class itself, like for e.coerceAtLeast(e) of fun <E : Enum<E>> f(e: E)
+        resolver.resolve(
+            "kotlin.Enum",
+            pageSize = 1000
+        ) should {
+            have("fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T): T" in lines())
+            have("fun <T : Comparable<T>> T.coerceAtMost(maximumValue: T): T" in lines())
+            have("fun <T : Comparable<T>> T.coerceIn(minimumValue: T?, maximumValue: T?): T" in lines())
+            have("fun <T : Comparable<T>> T.coerceIn(range: ClosedFloatingPointRange<T>): T" in lines())
+            have("fun <T : Comparable<T>> T.coerceIn(range: ClosedRange<T>): T" in lines())
+            have("operator fun <T : Comparable<T>> T.rangeTo(that: T): ClosedRange<T>" in lines())
+            have("operator fun <T : Comparable<T>> T.rangeUntil(that: T): OpenEndRange<T>" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve class without extension on contravariant supertype of type argument Any`() {
+        // a BoundedReceiverSink<Number> is a BoundedReceiverSink<Int>, but not a BoundedReceiverSink<Any>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverNumberSink"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverNumberSink [page 1/1]
+            class BoundedReceiverNumberSink : BoundedReceiverSink<Number>
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverSink<Int>.sinkInt()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extension on covariant supertype of other type argument than Java class`() {
+        // java.io.File, without the Kotlin metadata, is not a String
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverFiles"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverFiles [page 1/1]
+            class BoundedReceiverFiles : BoundedReceiverSource<java.io.File>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve extension on Comparable of other type argument as member of class comparable to itself`() {
+        // fun Comparable<Int>.comparedToZero() can neither be called on BoundedReceiverVersion, nor is of the standard library
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.BoundedReceiverVersion.comparedToZero") == null)
+    }
+
+    @Test
     fun `should resolve class with extensions on type parameter with self-referential bound satisfied by its supertype`() {
         // E is inferred as BoundedReceiverMember, a BoundedReceiverEntity<BoundedReceiverMember>, and T as well,
         // while BoundedReceiverAdmin, a Comparable<BoundedReceiverMember>, is not a BoundedReceiverEntity<BoundedReceiverAdmin>

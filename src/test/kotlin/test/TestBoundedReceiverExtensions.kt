@@ -251,3 +251,18 @@ class BoundedReceiverComparableE : Comparable<BoundedReceiverComparableE>, Bound
 class BoundedReceiverComparableToOtherE : Comparable<BoundedReceiverVersion>, BoundedReceiverE {
     override fun compareTo(other: BoundedReceiverVersion): Int = 0
 }
+
+// a generic class whose type parameter, bounded by the class itself, stands for its subclass, comparable to itself
+abstract class BoundedReceiverTitled<N : BoundedReceiverTitled<N>> : BoundedReceiverEntity<N>()
+
+// a contravariant type argument, which Any is not a subtype of
+interface BoundedReceiverSink<in T>
+
+class BoundedReceiverNumberSink : BoundedReceiverSink<Number>
+
+fun BoundedReceiverSink<Any>.sinkAny() {}
+
+fun BoundedReceiverSink<Int>.sinkInt() {}
+
+// a type argument of a Java class, which is not a String
+class BoundedReceiverFiles : BoundedReceiverSource<java.io.File>
