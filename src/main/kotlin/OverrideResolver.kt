@@ -25,7 +25,6 @@ import org.objectweb.asm.MethodVisitor
 import org.objectweb.asm.Opcodes
 import org.objectweb.asm.signature.SignatureReader
 import org.objectweb.asm.signature.SignatureVisitor
-import java.lang.module.ModuleFinder
 import java.lang.reflect.GenericArrayType
 import java.lang.reflect.MalformedParameterizedTypeException
 import java.lang.reflect.Method
@@ -316,15 +315,17 @@ internal class OverrideResolver(
 
     /**
      * Whether this class is a platform class, like `java.lang.Throwable`, which is not shrunk with an app:
-     * of a JDK module of the boot layer, whether defined by the bootstrap, the platform,
-     * or the application class loader, like `jdk.compiler`.
+     * defined by the bootstrap or the platform class loader, or of a JDK module of the boot layer
+     * defined by the application class loader, like `jdk.compiler`, told by its name,
+     * as an app module of a jlink image is a system module as well.
      */
     private val Class<*>.isPlatformClass: Boolean
-        get() = this.module.let { it.layer === ModuleLayer.boot() && it.name in systemModuleNames }
+        get() = this.classLoader.let { it == null || it === platformClassLoader } ||
+            this.module.let { module ->
+                module.layer === ModuleLayer.boot() && (module.name.startsWith("java.") || module.name.startsWith("jdk."))
+            }
 
-    private val systemModuleNames: Set<String> by lazy {
-        ModuleFinder.ofSystem().findAll().mapTo(HashSet()) { it.descriptor().name() }
-    }
+    private val platformClassLoader: ClassLoader? = ClassLoader.getPlatformClassLoader()
 
     /**
      * The Kotlin class names of the built-in types, like `kotlin/collections/Map.Entry`,
