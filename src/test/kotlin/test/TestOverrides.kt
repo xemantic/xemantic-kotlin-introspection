@@ -815,3 +815,26 @@ class OverloadingInternalSubclass : com.xemantic.kotlin.introspection.othermodul
 class JavaLocalizedNameSubclass : JavaLocalizedNameBase() {
     val name: String get() = ""
 }
+
+// Overloads of members of JDK classes, which a shrinker never removes, also of the ones mapped to built-in types
+class IndentedException : Exception() {
+    fun toString(indent: Int): String = ""
+}
+
+abstract class OrderedList : java.util.AbstractList<String>() {
+    fun sort(descending: Boolean) {}
+}
+
+abstract class OrderedMutableList : MutableList<String> {
+    fun sort(descending: Boolean) {}
+}
+
+// A class of a JDK module defined by the application class loader, like jdk.compiler
+abstract class DepthScanner : com.sun.source.util.TreeScanner<Unit, Unit>() {
+    fun scan(depth: Int) {}
+}
+
+// A property whose getter, getProperty(int), is named like Properties.getProperty(String)
+class IndexedProperties : java.util.Properties() {
+    val Int.property: String get() = ""
+}

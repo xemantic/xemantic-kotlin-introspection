@@ -31,6 +31,10 @@ class UnreflectableFriendModuleSubclass : InternalBase() {
     fun take(marker: com.xemantic.kotlin.introspection.othermodule.OtherModuleMarker) {}
 }
 
+class FriendModuleDefaultsSubclass : com.xemantic.kotlin.introspection.othermodule.InternalDefaultsBase() {
+    public override fun find(limit: Int) {}
+}
+
 // A public override of a @PublishedApi internal member, whose JVM method is not mangled
 class FriendModulePublishedApiSubclass : com.xemantic.kotlin.introspection.othermodule.PublishedApiBase() {
     public override fun publish() {}

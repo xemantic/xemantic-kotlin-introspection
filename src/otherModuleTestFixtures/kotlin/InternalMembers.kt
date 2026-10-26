@@ -42,6 +42,11 @@ open class OverloadedInternalBase {
     open fun reset(force: Boolean) {}
 }
 
+// An internal member declaring a default value, which its overrides inherit
+open class InternalDefaultsBase {
+    internal open fun find(limit: Int = 10) {}
+}
+
 // Left out of the class loader of a test, so that the classes referring to it cannot be reflected
 class OtherModuleMarker
 

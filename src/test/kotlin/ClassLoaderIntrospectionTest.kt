@@ -2211,7 +2211,7 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
-    fun `should tell overrides of internal members only of the same module name by classes which can be neither read nor reflected`() {
+    fun `should tell overrides of internal members by modality in final classes which can be neither read nor reflected`() {
         // given
         val root = tempDir.resolve("unreflectable")
         listOf(InternalBase::class.java, FriendModuleSubclass::class.java).forEach { fixture ->
@@ -2257,7 +2257,8 @@ class ClassLoaderIntrospectionTest {
         )
 
         // then
-        // a module of the same name is assumed to be the same module
+        // the JVM methods telling a mangled override cannot be read, so in a final class the modality is the evidence,
+        // as only an override is open there
         sameModule sameAsKotlin """
             // com.xemantic.kotlin.introspection.othermodule.UnreflectableSameModuleSubclass [page 1/1]
             class UnreflectableSameModuleSubclass : InternalBase {
@@ -2265,11 +2266,11 @@ class ClassLoaderIntrospectionTest {
                 fun take(marker: OtherModuleMarker)
             }
         """.trimIndent()
-        // while a friend module is told only by the bridge, which cannot be seen
+        // also of a friend module, otherwise told only by the bridge, which cannot be seen
         friendModule sameAsKotlin """
             // com.xemantic.kotlin.introspection.friendmodule.UnreflectableFriendModuleSubclass [page 1/1]
             class UnreflectableFriendModuleSubclass : com.xemantic.kotlin.introspection.othermodule.InternalBase {
-                val state: Int
+                override val state: Int
                 fun take(marker: com.xemantic.kotlin.introspection.othermodule.OtherModuleMarker)
             }
         """.trimIndent()
@@ -2436,6 +2437,78 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should not mark shrunk overloads of members of classes of JDK modules defined by application class loader as override`() {
+        // given
+        val className = "com.xemantic.kotlin.introspection.test.DepthScanner"
+        val introspector = shrunkIntrospector(className, "scan")
+
+        // when
+        val signature = introspector.resolve(className)
+
+        // then
+        // like jdk.compiler, which is a part of the JDK, though not defined by the platform class loader
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DepthScanner [page 1/1]
+            abstract class DepthScanner : com.sun.source.util.TreeScanner<Unit, Unit> {
+                fun scan(depth: Int)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not mark shrunk properties named like getters of JDK classes as override`() {
+        // given
+        val className = "com.xemantic.kotlin.introspection.test.IndexedProperties"
+        val introspector = shrunkIntrospector(className, "getProperty")
+
+        // when
+        val signature = introspector.resolve(className)
+
+        // then
+        // a shrinker never removes Properties.getProperty(String), so it is not taken for the shrunk overridden getter
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.IndexedProperties [page 1/1]
+            class IndexedProperties : java.util.Properties {
+                val Int.property: String
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not mark shrunk overloads of members of JDK classes as override`() {
+        // given
+        val exceptionName = "com.xemantic.kotlin.introspection.test.IndentedException"
+        val listName = "com.xemantic.kotlin.introspection.test.OrderedList"
+        val mutableListName = "com.xemantic.kotlin.introspection.test.OrderedMutableList"
+
+        // when
+        val exception = shrunkIntrospector(exceptionName, "toString").resolve(exceptionName)
+        val list = shrunkIntrospector(listName, "sort").resolve(listName)
+        val mutableList = shrunkIntrospector(mutableListName, "sort").resolve(mutableListName)
+
+        // then
+        // a shrinker never removes a JDK method, so its overload is not taken for its shrunk override
+        list sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OrderedList [page 1/1]
+            abstract class OrderedList : java.util.AbstractList<String> {
+                fun sort(descending: Boolean)
+            }
+        """.trimIndent()
+        mutableList sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OrderedMutableList [page 1/1]
+            abstract class OrderedMutableList : MutableList<String> {
+                fun sort(descending: Boolean)
+            }
+        """.trimIndent()
+        exception sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.IndentedException [page 1/1]
+            class IndentedException : java.lang.Exception {
+                fun toString(indent: Int): String
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should mark shrunk overrides of internal members of superclass of a friend module in final class`() {
         // given
         val className = "com.xemantic.kotlin.introspection.friendmodule.FriendModuleSubclass"
@@ -2451,6 +2524,24 @@ class ClassLoaderIntrospectionTest {
             // com.xemantic.kotlin.introspection.friendmodule.FriendModuleSubclass [page 1/1]
             class FriendModuleSubclass : com.xemantic.kotlin.introspection.othermodule.InternalBase {
                 override val state: Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should keep inherited default values of shrunk overrides of internal members of superclass of a friend module`() {
+        // given
+        val className = "com.xemantic.kotlin.introspection.friendmodule.FriendModuleDefaultsSubclass"
+        val introspector = shrunkIntrospector(className, "find")
+
+        // when
+        val signature = introspector.resolve(className)
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.friendmodule.FriendModuleDefaultsSubclass [page 1/1]
+            class FriendModuleDefaultsSubclass : com.xemantic.kotlin.introspection.othermodule.InternalDefaultsBase {
+                override fun find(limit: Int = …)
             }
         """.trimIndent()
     }
