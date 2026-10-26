@@ -2179,9 +2179,10 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
-    fun `should list extensions of standard library with built-in type when class loader fails to look up their class file`() {
+    fun `should list extensions of standard library with built-in type without looking up their class files`() {
         // given
-        // a failure, maybe transient, of a class loader looking up a resource, does not tell where the extensions come from
+        // which library an extension comes from is told when indexing the classpath, see isBuiltinExtensionSource,
+        // not by looking up its class file on every listing, where a failure, maybe transient, would hide it
         val classLoader = object : ClassLoader(javaClass.classLoader) {
             override fun getResource(name: String): java.net.URL? =
                 if (name == "kotlin/text/StringsKt__IndentKt.class") throw IllegalStateException("closed: $name")
@@ -2223,11 +2224,12 @@ class ClassLoaderIntrospectionTest {
                 }
             }
         }
-        val classLoader = URLClassLoader(arrayOf(shadowJar.toUri().toURL()), ClassLoader.getPlatformClassLoader())
-        val introspector = KotlinIntrospector(classLoader)
-
         // when
-        val signatures = listOf("kotlin.String.isLocalClassName", "kotlin.String.trimIndent").map { introspector.resolve(it) }
+        // closed, not to keep the jar open, which could not be deleted on Windows
+        val signatures = URLClassLoader(arrayOf(shadowJar.toUri().toURL()), ClassLoader.getPlatformClassLoader()).use {
+            val introspector = KotlinIntrospector(it)
+            listOf("kotlin.String.isLocalClassName", "kotlin.String.trimIndent").map { name -> introspector.resolve(name) }
+        }
 
         // then
         assert(signatures[0] == null)

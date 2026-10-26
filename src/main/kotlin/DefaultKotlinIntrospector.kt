@@ -63,21 +63,8 @@ internal data class IndexedExtension(
     val isObjectMember: Boolean,  // whether the source is an object
     val deprecation: Deprecation? = null,  // never a hidden one, as the hidden extensions are not indexed
     override val receiverBounds: Set<String> = emptySet(),
-    override val moduleName: String? = null
-) : ReceiverBounded, ModuleBound
-
-/**
- * An indexed extension declared in a Kotlin module.
- */
-internal sealed interface ModuleBound {
-
-    /**
-     * The name of the Kotlin module declaring it, like `kotlin-stdlib`, read from its metadata when indexed,
-     * kept also when its library is merged into another jar, like a shadow jar, or `null` if not told.
-     */
-    val moduleName: String?
-
-}
+    val isBuiltinExtension: Boolean = false  // whether it is shown with the built-in types, see isBuiltinExtensionSource
+) : ReceiverBounded
 
 /**
  * An indexed extension listed only for the classes which are subtypes of all its [receiverBounds].
@@ -103,8 +90,8 @@ internal data class IndexedExtensionProperty(
     // never a hidden one, as the hidden extensions are not indexed, but maybe hiding the getter, see Deprecation.hidesGetter
     val deprecation: Deprecation? = null,
     override val receiverBounds: Set<String> = emptySet(),
-    override val moduleName: String? = null
-) : ReceiverBounded, ModuleBound
+    val isBuiltinExtension: Boolean = false  // whether it is shown with the built-in types, see isBuiltinExtensionSource
+) : ReceiverBounded
 
 /**
  * A Kotlin class found on the classpath, by its metadata name, like `com/example/Outer.Nested`,
@@ -374,15 +361,6 @@ internal class DefaultKotlinIntrospector(
         private const val NOT_CONSTRUCTIBLE_MARKER = " private constructor()"
 
         private const val DEFAULT_COMPANION_NAME = "Companion"
-
-        /**
-         * The Kotlin modules whose extensions are shown with the built-in types, see [isBuiltinExtension]:
-         * the standard library, with `kotlin-stdlib-jdk7` and `kotlin-stdlib-jdk8`,
-         * separate jars before Kotlin 1.8, merged into it since, still declaring their modules, and kotlin-reflect.
-         */
-        private val BUILTIN_EXTENSION_MODULES = setOf(
-            "kotlin-stdlib", "kotlin-stdlib-jdk7", "kotlin-stdlib-jdk8", "kotlin-reflection"
-        )
 
         private const val ENUM_CLASS_NAME = "kotlin/Enum"
 
@@ -1396,7 +1374,7 @@ internal class DefaultKotlinIntrospector(
      * The extensions listed for the [kmClass], named [className], on the class and on its supertypes.
      *
      * For a built-in type, or its companion object, when [isBuiltin],
-     * only the ones of the public `kotlin.*` packages, see [isBuiltinExtension],
+     * only the ones of the public `kotlin.*` packages, see [isBuiltinExtensionSource],
      * on the class and on all its supertypes, except `Any`, also the ones from the `kotlin.*` packages,
      * whose extensions are, after all, the ones of the standard library.
      * For any other class, all of them, on the class and its [userSupertypes], see [extensionReceiverNames],
@@ -1419,8 +1397,8 @@ internal class DefaultKotlinIntrospector(
         val receiverNames = listOf(className) + supertypeNames + companionReceiverNames(kmClass, className)
         val satisfiedBounds = lazyOf(supertypeNames + className)
         return ListedExtensions(
-            extensionIndex.listedFor(receiverNames, satisfiedBounds).filter { isBuiltinExtension(it.sourceClass, it) },
-            extensionPropertyIndex.listedFor(receiverNames, satisfiedBounds).filter { isBuiltinExtension(it.sourceClass, it) }
+            extensionIndex.listedFor(receiverNames, satisfiedBounds).filter { it.isBuiltinExtension },
+            extensionPropertyIndex.listedFor(receiverNames, satisfiedBounds).filter { it.isBuiltinExtension }
         )
     }
 
@@ -1707,21 +1685,6 @@ internal class DefaultKotlinIntrospector(
         )
         return MemberListing.of(members.map { ListingItem.Declaration(listOf(it)) } + extensions)
     }
-
-    /**
-     * Whether an [extension] declared in the [sourceClass] is shown with the built-in types:
-     * only the ones of the public `kotlin.*` packages, not the ones of the internal packages, like `kotlin.jvm.internal`,
-     * and only the ones of the modules of the standard library, or of kotlin-reflect, see [BUILTIN_EXTENSION_MODULES],
-     * whose extensions, like `KClass.memberFunctions` of `kotlin.reflect.full`,
-     * can be called by the user code depending on it, even if some of them, like `KClass.cast()`,
-     * have the same signature as the ones of the standard library, imported from another package,
-     * but not the ones of the other libraries declaring `kotlin.*` packages, like kotlin-test, kotlin-scripting,
-     * or kotlin-metadata-jvm, whose `String.isLocalClassName()` would read like a member of `String`,
-     * told apart by the Kotlin module declaring them, also when merged into one jar, like a shadow jar.
-     */
-    private fun isBuiltinExtension(sourceClass: String, extension: ModuleBound): Boolean =
-        sourceClass.startsWith("kotlin.") && !sourceClass.split('.').contains("internal") &&
-            extension.moduleName in BUILTIN_EXTENSION_MODULES
 
     /**
      * The `@JvmInline` annotation, which a value class with a single underlying property requires on the JVM.
@@ -3307,10 +3270,17 @@ internal class DefaultKotlinIntrospector(
         source: String,
         isObjectMember: Boolean,
         moduleName: String?
-    ): List<IndexedExtension> = functions
-        .filter { it.receiverParameterType != null }
-        .inApi(TopLevel, classFile)
-        .map { IndexedExtension(it, className, source, isObjectMember, classFile.deprecation(it), moduleName = moduleName) }
+    ): List<IndexedExtension> {
+        val isBuiltinExtension = isBuiltinExtensionSource(className, moduleName)
+        return functions
+            .filter { it.receiverParameterType != null }
+            .inApi(TopLevel, classFile)
+            .map {
+                IndexedExtension(
+                    it, className, source, isObjectMember, classFile.deprecation(it), isBuiltinExtension = isBuiltinExtension
+                )
+            }
+    }
 
     private fun apiExtensionProperties(
         properties: List<KmProperty>,
@@ -3319,17 +3289,20 @@ internal class DefaultKotlinIntrospector(
         source: String,
         isObjectMember: Boolean,
         moduleName: String?
-    ): List<IndexedExtensionProperty> = properties
-        .filter { it.receiverParameterType != null }
-        .inApi(TopLevel, classFile)
-        .map {
-            IndexedExtensionProperty(
-                it, className, source, isObjectMember,
-                setterVisibility = it.apiSetterVisibility(TopLevel, classFile),
-                deprecation = classFile.deprecation(it),
-                moduleName = moduleName
-            )
-        }
+    ): List<IndexedExtensionProperty> {
+        val isBuiltinExtension = isBuiltinExtensionSource(className, moduleName)
+        return properties
+            .filter { it.receiverParameterType != null }
+            .inApi(TopLevel, classFile)
+            .map {
+                IndexedExtensionProperty(
+                    it, className, source, isObjectMember,
+                    setterVisibility = it.apiSetterVisibility(TopLevel, classFile),
+                    deprecation = classFile.deprecation(it),
+                    isBuiltinExtension = isBuiltinExtension
+                )
+            }
+    }
 
     private fun indexExtensions(
         functions: List<IndexedExtension>,
@@ -4127,6 +4100,34 @@ private fun kotlinPackageOf(binaryName: String, packageName: String): String =
     packageName.ifEmpty { binaryName.substringBeforeLast('.', "") }
 
 private const val ANY_RECEIVER_KEY = "kotlin.Any"
+
+/**
+ * Whether the extensions declared in the class of the JVM binary name [sourceClass], of the Kotlin module named
+ * [moduleName] in its metadata, are shown with the built-in types:
+ * only the ones of the public `kotlin.*` packages, not the ones of the internal packages, like `kotlin.jvm.internal`,
+ * and only the ones of the modules of the standard library, or of kotlin-reflect, see [builtinExtensionModules],
+ * whose extensions, like `KClass.memberFunctions` of `kotlin.reflect.full`,
+ * can be called by the user code depending on it, even if some of them, like `KClass.cast()`,
+ * have the same signature as the ones of the standard library, imported from another package,
+ * but not the ones of the other libraries declaring `kotlin.*` packages, like kotlin-test, kotlin-scripting,
+ * or kotlin-metadata-jvm, whose `String.isLocalClassName()` would read like a member of `String`,
+ * told apart by the Kotlin module declaring them, which is kept also when merged into one jar, like a shadow jar.
+ */
+internal fun isBuiltinExtensionSource(sourceClass: String, moduleName: String?): Boolean =
+    sourceClass.startsWith("kotlin.") && !sourceClass.split('.').contains("internal") &&
+        moduleName in builtinExtensionModules
+
+/**
+ * The Kotlin modules whose extensions are shown with the built-in types, see [isBuiltinExtensionSource]:
+ * the standard library, with `kotlin-stdlib-jdk7` and `kotlin-stdlib-jdk8`,
+ * separate jars before Kotlin 1.8, merged into it since, still declaring their modules,
+ * and `kotlin-stdlib-jre7` and `kotlin-stdlib-jre8`, which they replaced in Kotlin 1.2,
+ * and kotlin-reflect, `kotlin-reflection`, named `kotlin-reflect-api` from Kotlin 1.2.40 to 1.3.11.
+ */
+private val builtinExtensionModules = setOf(
+    "kotlin-stdlib", "kotlin-stdlib-jdk7", "kotlin-stdlib-jdk8", "kotlin-stdlib-jre7", "kotlin-stdlib-jre8",
+    "kotlin-reflection", "kotlin-reflect-api"
+)
 
 /**
  * The Kotlin name of the function type class compiled to the JVM interface named [className],
