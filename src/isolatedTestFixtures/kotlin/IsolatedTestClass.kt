@@ -58,3 +58,44 @@ sealed class RelocatedSealed {
 }
 
 open class RelocatedOpenSubclass : RelocatedSealed()
+
+// tests relocate it, like shading, together with its inner class overloading the overridden function
+// with the bounded type parameter of the outer class, erased to its bound
+class RelocatedBoundedOuter<K : Number> {
+    inner class Comparing : Comparator<String> {
+        override fun compare(a: String, b: String): Int = 0
+        fun compare(a: K, b: K): Int = 0
+    }
+}
+
+// tests relocate it, like shading, together with its subclass, so that the overridden members are found by its relocated name
+abstract class RelocatedBase<T> {
+    abstract fun accept(value: T)
+}
+
+class RelocatedDerived : RelocatedBase<String>() {
+    override fun accept(value: String) {}
+    fun accept(value: Int) {}
+}
+
+// tests relocate them, like shading, together with the Java interface taking a RelocatedEvent
+class RelocatedEvent
+
+class RelocatedOther
+
+class RelocatedListenerImpl : RelocatedListener {
+    override fun on(event: RelocatedEvent) {}
+    fun on(event: RelocatedOther) {}
+}
+
+// tests relocate it, like shading, together with its Java superclass, its Kotlin supertype and the parameter types
+class RelocatedViaJavaImpl : RelocatedJavaMid() {
+    override fun accept(value: RelocatedEvent) {}
+    fun accept(value: RelocatedOther) {}
+}
+
+// tests relocate it, like shading, together with the Java interface, but not the parameter types
+class RelocatedPrefixListenerImpl : RelocatedPrefixListener {
+    override fun on(value: IsolatedTestClass) {}
+    fun on(value: RelocatedHolder) {}
+}

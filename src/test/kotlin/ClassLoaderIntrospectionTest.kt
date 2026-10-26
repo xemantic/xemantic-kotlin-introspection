@@ -69,6 +69,15 @@ class ClassLoaderIntrospectionTest {
         fun IsolatedTestClass.isolatedExtension(): Int
     """.trimIndent()
 
+    // the types of the metadata are not relocated, so qualified, as not in the package of the relocated class
+    private val relocatedListenerImplSignature = /* language=kotlin */ """
+        // shaded.com.xemantic.kotlin.introspection.isolated.RelocatedListenerImpl [page 1/1]
+        class RelocatedListenerImpl : com.xemantic.kotlin.introspection.isolated.RelocatedListener {
+            override fun on(event: com.xemantic.kotlin.introspection.isolated.RelocatedEvent)
+            fun on(event: com.xemantic.kotlin.introspection.isolated.RelocatedOther)
+        }
+    """.trimIndent()
+
     @Test
     fun `should index classes visible only to the given class loader`() {
         // given
@@ -175,6 +184,142 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should not take overload of relocated inner class with bounded type parameter of its relocated outer class for override`() {
+        // given
+        val classFiles = arrayOf("RelocatedBoundedOuter.class", "RelocatedBoundedOuter\$Comparing.class")
+        val root = isolatedTestFixturesCopy("relocatedBoundedInner", *classFiles)
+        relocatedCopy(root, *classFiles)
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve(
+            "shaded.com.xemantic.kotlin.introspection.isolated.RelocatedBoundedOuter.Comparing"
+        )
+
+        // then
+        // the outer class is found by its relocated binary name, telling the bound K is erased to,
+        // so that compare(Number, Number) does not override compare(String, String) of Comparator<String>
+        signature sameAsKotlin """
+            // shaded.com.xemantic.kotlin.introspection.isolated.RelocatedBoundedOuter.Comparing [page 1/1]
+            inner class RelocatedBoundedOuter<K>.Comparing : java.util.Comparator<String> {
+                override fun compare(a: String, b: String): Int
+                fun compare(a: K, b: K): Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should tell override of member of relocated supertype of relocated class`() {
+        // given
+        val classFiles = arrayOf("RelocatedBase.class", "RelocatedDerived.class")
+        val root = isolatedTestFixturesCopy("relocatedSupertype", *classFiles)
+        relocatedCopy(root, *classFiles)
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("shaded.com.xemantic.kotlin.introspection.isolated.RelocatedDerived")
+
+        // then
+        // the supertype in the package of the relocated class is found by its relocated binary name
+        signature sameAsKotlin """
+            // shaded.com.xemantic.kotlin.introspection.isolated.RelocatedDerived [page 1/1]
+            class RelocatedDerived : com.xemantic.kotlin.introspection.isolated.RelocatedBase<String> {
+                override fun accept(value: String)
+                fun accept(value: Int)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should tell override of method of relocated Java supertype taking relocated type`() {
+        // given
+        val classFiles = arrayOf(
+            "RelocatedListener.class", "RelocatedListenerImpl.class", "RelocatedEvent.class", "RelocatedOther.class"
+        )
+        val root = isolatedTestFixturesCopy("relocatedJavaSupertype", *classFiles)
+        relocatedCopy(root, *classFiles)
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("shaded.com.xemantic.kotlin.introspection.isolated.RelocatedListenerImpl")
+
+        // then
+        // the relocated parameter type of the Java method is the type of the metadata, which is not relocated,
+        // and the JVM methods of the relocated class, taking the relocated types, are not taken for shrunk ones
+        signature sameAsKotlin relocatedListenerImplSignature
+    }
+
+    @Test
+    fun `should tell override of method of relocated Java supertype taking relocated type next to the original one`() {
+        // given
+        val classFiles = arrayOf(
+            "RelocatedListener.class", "RelocatedListenerImpl.class", "RelocatedEvent.class", "RelocatedOther.class"
+        )
+        val shadedRoot = tempDir.resolve("relocatedJavaSupertypeNextToOriginal")
+        relocatedCopy(shadedRoot, *classFiles)
+        val root = isolatedTestFixturesCopy("originalJavaSupertype")
+        val introspector = KotlinIntrospector(
+            URLClassLoader(arrayOf(shadedRoot.toUri().toURL(), root.toUri().toURL()), javaClass.classLoader)
+        )
+
+        // when
+        val signature = introspector.resolve("shaded.com.xemantic.kotlin.introspection.isolated.RelocatedListenerImpl")
+
+        // then
+        signature sameAsKotlin relocatedListenerImplSignature
+    }
+
+    @Test
+    fun `should tell override of member of relocated Kotlin supertype through relocated Java superclass`() {
+        // given
+        val classFiles = arrayOf(
+            "RelocatedBase.class", "RelocatedJavaMid.class", "RelocatedViaJavaImpl.class",
+            "RelocatedEvent.class", "RelocatedOther.class"
+        )
+        val root = isolatedTestFixturesCopy("relocatedViaJava", *classFiles)
+        relocatedCopy(root, *classFiles)
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("shaded.com.xemantic.kotlin.introspection.isolated.RelocatedViaJavaImpl")
+
+        // then
+        // the type argument of RelocatedBase, named by its relocated JVM name in the Java superclass,
+        // is the class named by its metadata name in the metadata of the overriding function
+        signature sameAsKotlin """
+            // shaded.com.xemantic.kotlin.introspection.isolated.RelocatedViaJavaImpl [page 1/1]
+            class RelocatedViaJavaImpl : com.xemantic.kotlin.introspection.isolated.RelocatedJavaMid {
+                override fun accept(value: com.xemantic.kotlin.introspection.isolated.RelocatedEvent)
+                fun accept(value: com.xemantic.kotlin.introspection.isolated.RelocatedOther)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not take type of real package starting like relocation prefix for relocated one`() {
+        // given
+        // relocated to com/com/xemantic/…, so that the prefix com/ is the first segment of the packages not relocated,
+        // like com/xemantic/… of IsolatedTestClass and RelocatedHolder
+        val classFiles = arrayOf("RelocatedPrefixListener.class", "RelocatedPrefixListenerImpl.class")
+        val root = isolatedTestFixturesCopy("relocatedByPrefixOfRealPackage", *classFiles)
+        relocatedCopy(root, *classFiles, prefix = "com/")
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("com.com.xemantic.kotlin.introspection.isolated.RelocatedPrefixListenerImpl")
+
+        // then
+        // neither the parameter type of the Java method, nor the ones of the JVM methods, are taken for relocated ones
+        signature sameAsKotlin """
+            // com.com.xemantic.kotlin.introspection.isolated.RelocatedPrefixListenerImpl [page 1/1]
+            class RelocatedPrefixListenerImpl : com.xemantic.kotlin.introspection.isolated.RelocatedPrefixListener {
+                override fun on(value: com.xemantic.kotlin.introspection.isolated.IsolatedTestClass)
+                fun on(value: com.xemantic.kotlin.introspection.isolated.RelocatedHolder)
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should list member extensions of relocated object from its relocated name`() {
         // given
         val root = isolatedTestFixturesCopy("relocatedObject", "RelocatedExtensions.class")
@@ -260,17 +405,23 @@ class ClassLoaderIntrospectionTest {
 
     /**
      * A copy of the isolated test fixture class files named [fileNames], in the [root] directory,
-     * relocated to the `shaded` package, like by shading, which does not rewrite their Kotlin metadata.
+     * relocated to the package prepended with the [prefix], like by shading, which does not rewrite their Kotlin metadata,
+     * while it rewrites the references to the relocated classes, see [withRelocatedNames],
+     * the other classes referred to as they are.
      */
-    private fun relocatedCopy(root: Path, vararg fileNames: String) {
+    private fun relocatedCopy(root: Path, vararg fileNames: String, prefix: String = "shaded/") {
+        val relocatedNames = fileNames.associate {
+            val name = "com/xemantic/kotlin/introspection/isolated/${it.removeSuffix(".class")}"
+            name to "$prefix$name"
+        }
         fileNames.forEach { fileName ->
             val original = isolatedTestFixtures
                 .map { it.resolve("com/xemantic/kotlin/introspection/isolated/$fileName") }
                 .single { it.exists() }
-            val relocatedName = "shaded/com/xemantic/kotlin/introspection/isolated/${fileName.removeSuffix(".class")}"
+            val relocatedName = "${prefix}com/xemantic/kotlin/introspection/isolated/${fileName.removeSuffix(".class")}"
             val relocated = root.resolve("$relocatedName.class")
             relocated.parent.createDirectories()
-            relocated.writeBytes(withClassName(original.readBytes(), relocatedName))
+            relocated.writeBytes(withRelocatedNames(original.readBytes(), relocatedNames::get))
         }
     }
 

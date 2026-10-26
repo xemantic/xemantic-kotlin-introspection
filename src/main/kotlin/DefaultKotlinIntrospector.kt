@@ -628,6 +628,13 @@ internal class DefaultKotlinIntrospector(
          */
         fun located(metadataName: String): String
 
+        /**
+         * This class as the owner of the members checked for overrides, see [OverrideResolver.Owner],
+         * by its located name, see [located], telling its relocation, if any,
+         * or `null` if it is not a Kotlin class, or its metadata cannot be read.
+         */
+        val overrideOwner: OverrideResolver.Owner?
+
     }
 
     /**
@@ -743,6 +750,9 @@ internal class DefaultKotlinIntrospector(
 
         override fun located(metadataName: String): String = locatedNameOf(binaryName, metadataName)
 
+        // made once, and only when needed, as it is needed for each member rendered
+        override val overrideOwner: OverrideResolver.Owner? by lazy { kmClass?.let { OverrideResolver.Owner(it, located(it.name)) } }
+
     }
 
     /**
@@ -799,6 +809,8 @@ internal class DefaultKotlinIntrospector(
         override val scope: ClassScope by lazy { classScope(kmClass, isUsable = true, deprecations = this) }
 
         override fun located(metadataName: String): String = metadataName
+
+        override val overrideOwner: OverrideResolver.Owner = OverrideResolver.Owner(kmClass)
 
         private val typeParameterNames = kmClass.typeParameters.namesById()
 
@@ -967,6 +979,8 @@ internal class DefaultKotlinIntrospector(
         // described by kotlin-reflect of the loaded class, by its very name, never relocated
         override fun located(metadataName: String): String = metadataName
 
+        override val overrideOwner: OverrideResolver.Owner = OverrideResolver.Owner(kmClass)
+
         override fun deprecation(function: KmFunction): Deprecation? =
             functions[function]?.let { builtinDeprecation(it.kFunction) }
 
@@ -980,10 +994,10 @@ internal class DefaultKotlinIntrospector(
          * like `E!`, of its value parameters, see [JavaFunction.notNullable].
          */
         fun overriddenMembers(member: Member): Set<String> {
-            val overridden = member.overridden(overrideResolver, kmClass)
+            val overridden = member.overridden(overrideResolver, overrideOwner)
             if (member !is Member.Function) return overridden
             val notNullable = functions[member.declaration]?.notNullable ?: return overridden
-            return overridden + overrideResolver.overriddenMembers(kmClass, notNullable)
+            return overridden + overrideResolver.overriddenMembers(overrideOwner, notNullable)
         }
 
         /**
@@ -1550,12 +1564,12 @@ internal class DefaultKotlinIntrospector(
          * The keys of the members of the supertypes of the [owner] which this member of it overrides,
          * see [OverrideResolver.overriddenMembers].
          */
-        fun overridden(overrideResolver: OverrideResolver, owner: KmClass): Set<String>
+        fun overridden(overrideResolver: OverrideResolver, owner: OverrideResolver.Owner?): Set<String>
 
         /**
          * Whether this member of the [owner] is an override, see [OverrideResolver.isOverride].
          */
-        fun isOverride(overrideResolver: OverrideResolver, owner: KmClass): Boolean
+        fun isOverride(overrideResolver: OverrideResolver, owner: OverrideResolver.Owner?): Boolean
 
         /**
          * The signature of this member as rendered, see [memberSignature], the type parameters of its class
@@ -1581,11 +1595,11 @@ internal class DefaultKotlinIntrospector(
 
             override fun key(owner: KmClass): String = memberKey(owner, declaration)
 
-            override fun overridden(overrideResolver: OverrideResolver, owner: KmClass): Set<String> =
-                overrideResolver.overriddenMembers(owner, declaration)
+            override fun overridden(overrideResolver: OverrideResolver, owner: OverrideResolver.Owner?): Set<String> =
+                owner?.let { overrideResolver.overriddenMembers(it, declaration) }.orEmpty()
 
-            override fun isOverride(overrideResolver: OverrideResolver, owner: KmClass): Boolean =
-                overrideResolver.isOverride(owner, declaration)
+            override fun isOverride(overrideResolver: OverrideResolver, owner: OverrideResolver.Owner?): Boolean =
+                owner != null && overrideResolver.isOverride(owner, declaration)
 
             override fun signature(classTypeParameters: Map<Int, String>): String =
                 memberSignature(property, classTypeParameters + positionalNames(property.typeParameters))
@@ -1606,11 +1620,11 @@ internal class DefaultKotlinIntrospector(
 
             override fun key(owner: KmClass): String = memberKey(owner, declaration)
 
-            override fun overridden(overrideResolver: OverrideResolver, owner: KmClass): Set<String> =
-                overrideResolver.overriddenMembers(owner, declaration)
+            override fun overridden(overrideResolver: OverrideResolver, owner: OverrideResolver.Owner?): Set<String> =
+                owner?.let { overrideResolver.overriddenMembers(it, declaration) }.orEmpty()
 
-            override fun isOverride(overrideResolver: OverrideResolver, owner: KmClass): Boolean =
-                overrideResolver.isOverride(owner, declaration)
+            override fun isOverride(overrideResolver: OverrideResolver, owner: OverrideResolver.Owner?): Boolean =
+                owner != null && overrideResolver.isOverride(owner, declaration)
 
             override fun signature(classTypeParameters: Map<Int, String>): String =
                 memberSignature(function, classTypeParameters + positionalNames(function.typeParameters))
@@ -1685,6 +1699,9 @@ internal class DefaultKotlinIntrospector(
 
     /**
      * Format a [member] of the [kmClass] on its lines, the setter visibility of a property decided in the [scope].
+     *
+     * @param inheritedBy the kind of the class inheriting the [member], see [inheritedMembers],
+     *   or `null` if it is listed as a member of the [kmClass] itself.
      */
     private fun formatMember(
         member: Member,
@@ -1693,22 +1710,26 @@ internal class DefaultKotlinIntrospector(
         scope: ApiClass,
         contextPackage: String,
         isOwnerOpenForOverrides: Boolean,
-        isInheritedByFinalClass: Boolean = false,
-        isInheritedByInterface: Boolean = false,
+        inheritedBy: ClassKind? = null,
         typeParameters: Map<Int, String> = typeParametersInScope(kmClass, declarations)
     ): List<String> {
         // a member inherited by an interface is rendered as within it, like the ones of kotlin.Any
-        val isInterface = kmClass.kind == ClassKind.INTERFACE || isInheritedByInterface
+        val isInterface = kmClass.kind == ClassKind.INTERFACE || inheritedBy == ClassKind.INTERFACE
+        // also the open member of a class, unless inherited by an interface,
+        // where it is rendered as open, like its own members, telling it apart from an abstract one,
+        // like the member with a body of an interface, rendered as within it
+        val isInheritedByFinalClass = inheritedBy != null && !isOwnerOpenForOverrides && !isInterface
+        val owner = declarations.overrideOwner
         return when (member) {
             is Member.Property -> formatApiProperty(
                 member.property, scope, declarations,
-                inInterface = isInterface, owner = kmClass, contextPackage = contextPackage, classTypeParameters = typeParameters,
+                inInterface = isInterface, owner = owner, contextPackage = contextPackage, classTypeParameters = typeParameters,
                 isOwnerOpenForOverrides = isOwnerOpenForOverrides, isInheritedByFinalClass = isInheritedByFinalClass,
                 declaration = member.declaration
             )
             is Member.Function -> listOf(
                 formatFunction(
-                    member.function, inInterface = isInterface, owner = kmClass, contextPackage = contextPackage,
+                    member.function, inInterface = isInterface, owner = owner, contextPackage = contextPackage,
                     classTypeParameters = typeParameters, deprecation = declarations.deprecation(member.declaration),
                     isOwnerOpenForOverrides = isOwnerOpenForOverrides, isInheritedByFinalClass = isInheritedByFinalClass,
                     declaration = member.declaration
@@ -1761,7 +1782,8 @@ internal class DefaultKotlinIntrospector(
          */
         fun overridesHiddenJdkMethod(exposedJdkMethods: Set<String>): Boolean {
             val function = (member as? Member.Function)?.declaration ?: return false
-            return overrideResolver.overriddenJavaMembers(kmClass, function).any { key ->
+            val owner = declarations.overrideOwner ?: return false
+            return overrideResolver.overriddenJavaMembers(owner, function).any { key ->
                 overrideResolver.builtinNameOfJavaClass(key.substringBefore('#')) != null && key !in exposedJdkMethods
             }
         }
@@ -1865,12 +1887,7 @@ internal class DefaultKotlinIntrospector(
                 formatMember(
                     candidate.member, candidate.kmClass, candidate.declarations, scope, contextPackage,
                     isOwnerOpenForOverrides = isOpenForOverrides,
-                    // also the open member of a class, unless inherited by an interface,
-                    // where it is rendered as open, like its own members, telling it apart from an abstract one,
-                    // like the member with a body of an interface, rendered as within it
-                    isInheritedByFinalClass = !isOpenForOverrides && kmClass.kind != ClassKind.INTERFACE &&
-                        candidate.kmClass.kind != ClassKind.INTERFACE,
-                    isInheritedByInterface = kmClass.kind == ClassKind.INTERFACE,
+                    inheritedBy = kmClass.kind,
                     typeParameters = candidate.typeParameters
                 )
             )
@@ -1929,7 +1946,7 @@ internal class DefaultKotlinIntrospector(
             ).forEach { apiMember ->
                 val declared = apiMember.member
                 val overridden = (superDeclarations as? JavaClass)?.overriddenMembers(declared)
-                    ?: declared.overridden(overrideResolver, superKmClass)
+                    ?: declared.overridden(overrideResolver, superDeclarations.overrideOwner)
                 val member = declared.substituted(substitution, inheritingNames)
                 candidates += InheritedCandidate(
                     superKmClass, superDeclarations, member, declared.key(superKmClass), overridden,
@@ -1997,25 +2014,26 @@ internal class DefaultKotlinIntrospector(
         // of the standard library, compiled against JDK 8, of `addFirst` of `java.util.List` since JDK 21
         val overriddenJavaMembers = HashSet<String>()
         val overridingJvmSignatures = HashSet<JvmMethodSignature>()
-        fun collectJavaOverrides(owner: KmClass, function: KmFunction) {
-            overriddenJavaMembers += overrideResolver.overriddenJavaMembers(owner, function)
+        fun collectJavaOverrides(owner: OverrideResolver.Owner?, function: KmFunction) {
+            owner?.let { overriddenJavaMembers += overrideResolver.overriddenJavaMembers(it, function) }
             function.signature?.let { overridingJvmSignatures += it }
         }
         val hasJavaCandidates = candidates.any { it.jvmMethod != null && !it.isHidden }
         if (hasJavaCandidates) {
             candidates.filter { it.declarations !is BuiltinClass }.forEach { candidate ->
-                (candidate.member as? Member.Function)?.let { collectJavaOverrides(candidate.kmClass, it.declaration) }
+                (candidate.member as? Member.Function)?.let { collectJavaOverrides(candidate.declarations.overrideOwner, it.declaration) }
             }
         }
         val declaredSignatures = HashSet<String>()
+        val owner = declarations.overrideOwner
         // also a hidden one, hiding the member it overrides, which cannot be called on the class either
         apiMembersIncludingHidden(kmClass, declarations, memberName, scope).map { it.member }.forEach { member ->
             if (member is Member.Function && hasJavaCandidates) {
-                collectJavaOverrides(kmClass, member.declaration)
+                collectJavaOverrides(owner, member.declaration)
             }
-            val keys = member.overridden(overrideResolver, kmClass)
+            val keys = member.overridden(overrideResolver, owner)
             overridden += keys
-            if (keys.isEmpty() && member.isOverride(overrideResolver, kmClass)) {
+            if (keys.isEmpty() && member.isOverride(overrideResolver, owner)) {
                 declaredSignatures += member.signature(inheritingTypeParameters)
             }
         }
@@ -2478,11 +2496,14 @@ internal class DefaultKotlinIntrospector(
      * the setter visibility decided in the companion object.
      */
     private fun formatCompanionProperty(property: KmProperty, companion: ApiCompanion, contextPackage: String): List<String> =
-        formatApiProperty(property, companion.apiClass, companion.foundClass, owner = companion.kmClass, contextPackage = contextPackage)
+        formatApiProperty(
+            property, companion.apiClass, companion.foundClass,
+            owner = companion.foundClass.overrideOwner, contextPackage = contextPackage
+        )
 
     private fun formatCompanionFunction(function: KmFunction, companion: ApiCompanion, contextPackage: String): String =
         formatFunction(
-            function, inInterface = false, owner = companion.kmClass, contextPackage = contextPackage,
+            function, inInterface = false, owner = companion.foundClass.overrideOwner, contextPackage = contextPackage,
             deprecation = companion.foundClass.deprecation(function)
         )
 
@@ -3022,7 +3043,7 @@ internal class DefaultKotlinIntrospector(
                 KFUNCTION_CLASS_NAME,
                 formatMember(
                     member, kmClass, declarations, apiClass, contextPackage,
-                    isOwnerOpenForOverrides = isOpenForOverrides, isInheritedByInterface = true
+                    isOwnerOpenForOverrides = isOpenForOverrides, inheritedBy = ClassKind.INTERFACE
                 )
             )
         }
@@ -3243,7 +3264,7 @@ internal class DefaultKotlinIntrospector(
             ) { param ->
                 // a parameter not declaring a property is still needed to call the constructor
                 val prop = constructorProperties[param.name]
-                val isOverride = prop != null && isOverride(kmClass, prop)
+                val isOverride = prop != null && isOverride(foundClass.overrideOwner, prop)
                 // never with a setter narrower than the property, which is declared in the class body
                 val declaration = prop?.let {
                     val deprecation = foundClass.deprecation(it)
@@ -4296,13 +4317,13 @@ internal class DefaultKotlinIntrospector(
     private fun formatFunction(
         function: KmFunction,
         inInterface: Boolean = false,
-        owner: KmClass? = null,
+        owner: OverrideResolver.Owner? = null,
         contextPackage: String? = null,
         classTypeParameters: Map<Int, String> = emptyMap(),
         bodyReceiverSubstitution: Map<Int, String>? = null,
         deprecation: Deprecation? = null,
         companionDeprecation: Deprecation? = null,
-        isOwnerOpenForOverrides: Boolean = isOpenForOverridesByDefault(owner),
+        isOwnerOpenForOverrides: Boolean = isOpenForOverridesByDefault(owner?.kmClass),
         isInheritedByFinalClass: Boolean = false,
         declaration: KmFunction = function
     ): String = buildString {
@@ -4410,10 +4431,10 @@ internal class DefaultKotlinIntrospector(
         scope: DeclarationScope,
         deprecations: Deprecations?,
         inInterface: Boolean = false,
-        owner: KmClass? = null,
+        owner: OverrideResolver.Owner? = null,
         contextPackage: String? = null,
         classTypeParameters: Map<Int, String> = emptyMap(),
-        isOwnerOpenForOverrides: Boolean = isOpenForOverridesByDefault(owner),
+        isOwnerOpenForOverrides: Boolean = isOpenForOverridesByDefault(owner?.kmClass),
         isInheritedByFinalClass: Boolean = false,
         declaration: KmProperty = property
     ): List<String> {
@@ -4445,13 +4466,13 @@ internal class DefaultKotlinIntrospector(
         property: KmProperty,
         setterVisibility: Visibility?,
         inInterface: Boolean = false,
-        owner: KmClass? = null,
+        owner: OverrideResolver.Owner? = null,
         contextPackage: String? = null,
         classTypeParameters: Map<Int, String> = emptyMap(),
         bodyReceiverSubstitution: Map<Int, String>? = null,
         deprecation: Deprecation? = null,
         companionDeprecation: Deprecation? = null,
-        isOwnerOpenForOverrides: Boolean = isOpenForOverridesByDefault(owner),
+        isOwnerOpenForOverrides: Boolean = isOpenForOverridesByDefault(owner?.kmClass),
         isInheritedByFinalClass: Boolean = false,
         declaration: KmProperty = property
     ): List<String> = buildList {
@@ -4760,16 +4781,16 @@ internal class DefaultKotlinIntrospector(
     // kotlinc writes no FAKE_OVERRIDE members to the metadata, neither of a class file, nor of .kotlin_builtins,
     // and a member implemented by delegation is a DELEGATION one, so each override is told by matching its supertypes
 
-    private fun isOverride(owner: KmClass?, function: KmFunction): Boolean =
+    private fun isOverride(owner: OverrideResolver.Owner?, function: KmFunction): Boolean =
         owner != null && overrideResolver.isOverride(owner, function)
 
     /**
      * The override of a supertype function by the [function], or `null` if it is not an override.
      */
-    private fun override(owner: KmClass?, function: KmFunction): OverrideResolver.FunctionOverride? =
+    private fun override(owner: OverrideResolver.Owner?, function: KmFunction): OverrideResolver.FunctionOverride? =
         owner?.let { overrideResolver.override(it, function) }
 
-    private fun isOverride(owner: KmClass?, property: KmProperty): Boolean =
+    private fun isOverride(owner: OverrideResolver.Owner?, property: KmProperty): Boolean =
         owner != null && overrideResolver.isOverride(owner, property)
 
     /**

@@ -25,8 +25,13 @@ import kotlin.metadata.KmClass
 import kotlin.metadata.KmClassifier
 import kotlin.metadata.KmFunction
 import kotlin.metadata.KmType
+import kotlin.metadata.KmTypeParameter
+import kotlin.metadata.KmTypeProjection
+import kotlin.metadata.KmValueParameter
+import kotlin.metadata.KmVariance
 import kotlin.metadata.Modality
 import kotlin.metadata.Visibility
+import kotlin.metadata.isInner
 import kotlin.metadata.modality
 import kotlin.metadata.jvm.KotlinClassMetadata
 import kotlin.metadata.visibility
@@ -82,17 +87,133 @@ class OverrideResolverTest {
 
         // when
         val builtinOverrides = listOf(
-            resolver.isOverride(builtinOwner, function("fromBuiltin")),
-            resolver.isOverride(builtinOwner, function("fromClassFile"))
+            resolver.isOverride(OverrideResolver.Owner(builtinOwner), function("fromBuiltin")),
+            resolver.isOverride(OverrideResolver.Owner(builtinOwner), function("fromClassFile"))
         )
         val classFileOverrides = listOf(
-            resolver.isOverride(classFileOwner, function("fromBuiltin")),
-            resolver.isOverride(classFileOwner, function("fromClassFile"))
+            resolver.isOverride(OverrideResolver.Owner(classFileOwner), function("fromBuiltin")),
+            resolver.isOverride(OverrideResolver.Owner(classFileOwner), function("fromClassFile"))
         )
 
         // then
         assert(builtinOverrides == listOf(true, false))
         assert(classFileOverrides == listOf(false, true))
+    }
+
+    /**
+     * A function taking a value of the type parameter of the [id], like `accept(value: T)`.
+     */
+    private fun typeParameterFunction(name: String, id: Int) = function(name).apply {
+        valueParameters += KmValueParameter("value").apply {
+            type = KmType().apply { classifier = KmClassifier.TypeParameter(id) }
+        }
+    }
+
+    /**
+     * Like `abstract class Base<T> { abstract fun accept(value: T) }`.
+     */
+    private fun genericBase(name: String) = kmClass(name).apply {
+        typeParameters += KmTypeParameter("T", 0, KmVariance.INVARIANT)
+        functions += typeParameterFunction("accept", 0)
+    }
+
+    @Test
+    fun `should find supertypes of relocated owner in its package by their located names`() {
+        // given
+        // like by shading, relocating the binary names of the classes, but not their names in the Kotlin metadata
+        val owner = kmClass("test/Owner", supertype = "test/Base")
+        val resolver = overrideResolver(
+            classes = mapOf(
+                "test/Base" to kmClass("test/Base", null, "original"),
+                "shaded/test/Base" to kmClass("test/Base", null, "relocated")
+            )
+        )
+        val original = OverrideResolver.Owner(owner, "test/Owner")
+        val relocated = OverrideResolver.Owner(owner, "shaded/test/Owner")
+
+        // when
+        val originalOverrides = listOf(
+            resolver.isOverride(original, function("original")),
+            resolver.isOverride(original, function("relocated"))
+        )
+        val relocatedOverrides = listOf(
+            resolver.isOverride(relocated, function("original")),
+            resolver.isOverride(relocated, function("relocated"))
+        )
+
+        // then
+        assert(originalOverrides == listOf(true, false))
+        assert(relocatedOverrides == listOf(false, true))
+    }
+
+    @Test
+    fun `should find supertypes of other packages relocated with the owner by the prefix of its relocation`() {
+        // given
+        // like relocated by shading, prepending shaded/ to all the packages
+        val owner = kmClass("test/Owner", supertype = "other/Base")
+        val resolver = overrideResolver(
+            classes = mapOf(
+                "other/Base" to kmClass("other/Base", null, "original"),
+                "shaded/other/Base" to kmClass("other/Base", null, "relocated")
+            )
+        )
+        val relocated = OverrideResolver.Owner(owner, "shaded/test/Owner")
+
+        // when
+        val overrides = listOf(
+            resolver.isOverride(relocated, function("original")),
+            resolver.isOverride(relocated, function("relocated"))
+        )
+
+        // then
+        assert(overrides == listOf(false, true))
+    }
+
+    @Test
+    fun `should find supertypes of relocated owner which are not relocated by their metadata names`() {
+        // given
+        // like a class excluded from the relocation, of another package, or of the same one
+        val owner = kmClass("test/Owner", supertype = "other/Base").apply { supertypes += type("test/SamePackageBase") }
+        val resolver = overrideResolver(
+            classes = mapOf(
+                "other/Base" to kmClass("other/Base", null, "fromOtherPackage"),
+                "test/SamePackageBase" to kmClass("test/SamePackageBase", null, "fromSamePackage")
+            )
+        )
+        val relocated = OverrideResolver.Owner(owner, "shaded/test/Owner")
+
+        // when
+        val overrides = listOf(
+            resolver.isOverride(relocated, function("fromOtherPackage")),
+            resolver.isOverride(relocated, function("fromSamePackage"))
+        )
+
+        // then
+        assert(overrides == listOf(true, true))
+    }
+
+    @Test
+    fun `should resolve type parameter of outer class of relocated inner class found by its located name`() {
+        // given
+        // like `class Outer<K> { inner class Inner : Base<String>() { fun accept(value: K) } }`,
+        // relocated with the outer class, but not with the base class
+        val outer = kmClass("test/Outer").apply { typeParameters += KmTypeParameter("K", 0, KmVariance.INVARIANT) }
+        val inner = kmClass("test/Outer.Inner").apply {
+            isInner = true
+            supertypes += type("test/Base").apply {
+                arguments += KmTypeProjection(KmVariance.INVARIANT, type("kotlin/String"))
+            }
+        }
+        val resolver = overrideResolver(classes = mapOf("shaded/test/Outer" to outer, "test/Base" to genericBase("test/Base")))
+
+        // when
+        val isOverride = resolver.isOverride(
+            OverrideResolver.Owner(inner, "shaded/test/Outer.Inner"), typeParameterFunction("accept", 0)
+        )
+
+        // then
+        // accept(value: K) overloads accept(value: String), unless K, not found, were taken for an unknown type matching any
+        assert(!isOverride)
     }
 
     @Test
@@ -120,10 +241,10 @@ class OverrideResolverTest {
         }
 
         // when
-        val first = resolver.isOverride(owner, function("foo"))
+        val first = resolver.isOverride(OverrideResolver.Owner(owner), function("foo"))
         joinOrFail(other)
         val lookupsOfFirst = lookups.get()
-        val second = resolver.isOverride(owner, function("foo"))
+        val second = resolver.isOverride(OverrideResolver.Owner(owner), function("foo"))
 
         // then
         assert(first && second)
@@ -174,8 +295,8 @@ class OverrideResolverTest {
         val overload = processor.functions.single { it.name == "process" }
 
         // when
-        val isPrivateOverloadOverride = resolver.isOverride(greeter, privateOverload)
-        val isOverloadOverride = resolver.isOverride(processor, overload)
+        val isPrivateOverloadOverride = resolver.isOverride(OverrideResolver.Owner(greeter), privateOverload)
+        val isOverloadOverride = resolver.isOverride(OverrideResolver.Owner(processor), overload)
 
         // then
         // the private overload, absent from the interface itself, is not taken for a shrunk override

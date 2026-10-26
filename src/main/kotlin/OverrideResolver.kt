@@ -80,6 +80,8 @@ import org.objectweb.asm.Type as AsmType
  * so that a long-lived resolver over a large classpath does not keep the declarations of every class ever resolved,
  * as long as the classes are looked up through a bounded cache as well.
  * What is computed while a class lookup fails maybe only for now, see [transientFailures], is not cached.
+ * The classes are looked up by their Kotlin class names, the located ones, see [Owner],
+ * when they are relocated with the checked class, like by shading.
  * This class is thread-safe.
  *
  * @param classLoader the class loader of the introspected classes, telling which classes have their own class files.
@@ -108,6 +110,17 @@ internal class OverrideResolver(
     private val builtinClasses: () -> Map<String, KmClass>,
     builtinTypes: Map<String, kotlin.reflect.KClass<*>>
 ) {
+
+    /**
+     * A class whose members are checked, declared by the [kmClass], found by its located [name], see [locatedNameOf],
+     * differing from the metadata name when the class is relocated, like by shading, which does not rewrite its metadata,
+     * see [Relocation].
+     */
+    class Owner(val kmClass: KmClass, val name: String = kmClass.name) {
+
+        internal val relocation: Relocation? = Relocation.of(kmClass.name, name)
+
+    }
 
     /**
      * A type of a member parameter, resolved in the context of the class whose members are checked.
@@ -256,7 +269,9 @@ internal class OverrideResolver(
         val java: Class<*>?,
         val hiddenJavaMethods: Set<String> = emptySet(),
         val javaClassFile: JavaClassFile? = null
-    )
+    ) {
+        val isFound: Boolean get() = kotlin != null || java != null || javaClassFile != null
+    }
 
     /**
      * A Java class which cannot be loaded, like when its supertype is missing from the classpath,
@@ -360,28 +375,28 @@ internal class OverrideResolver(
      * The whole supertype hierarchy is matched, so that the declaration of an inherited default value is found
      * also through intermediate overrides.
      */
-    fun override(owner: KmClass, function: KmFunction): FunctionOverride? =
+    fun override(owner: Owner, function: KmFunction): FunctionOverride? =
         override(owner, function, withDefaultValues = true)
 
     /**
      * Whether the [function] overrides a supertype function, like [override], without matching all of them.
      */
-    fun isOverride(owner: KmClass, function: KmFunction): Boolean =
+    fun isOverride(owner: Owner, function: KmFunction): Boolean =
         override(owner, function, withDefaultValues = false) != null
 
     /**
      * @param withDefaultValues whether to match all the overridden functions for their inherited default values,
      *   otherwise the first one tells that the [function] is an override, without default values.
      */
-    private fun override(owner: KmClass, function: KmFunction, withDefaultValues: Boolean): FunctionOverride? {
+    private fun override(owner: Owner, function: KmFunction, withDefaultValues: Boolean): FunctionOverride? {
         val overridables = overridables(owner)
         val candidates = overridables.functions[function.name] ?: return null
         val signature = overridables.signature(function)
         val matching = candidates.filter { it.matches(signature) }
-        val overridden = matching.asSequence().filter { overridables.isVisible(it, owner, function.modality) }
+        val overridden = matching.asSequence().filter { overridables.isVisible(it, owner.kmClass, function.modality) }
             .ifEmpty {
                 val evidence = matching.ifEmpty { candidates.filter { it.isJava && !it.isPlatform } }
-                overridables.shrunkOverridden(evidence, owner, function.modality, function.signature)
+                overridables.shrunkOverridden(evidence, owner.kmClass, function.modality, function.signature)
             }
         return when {
             !withDefaultValues -> if (overridden.any()) noDefaultValues else null
@@ -442,12 +457,12 @@ internal class OverrideResolver(
      * or would override, if it is not declared as an override, along the whole supertype hierarchy,
      * the ones matching on the known types, if there are any, see [inheritedDefaultValues].
      */
-    fun overriddenMembers(owner: KmClass, function: KmFunction): Set<String> {
+    fun overriddenMembers(owner: Owner, function: KmFunction): Set<String> {
         val overridables = overridables(owner)
         val candidates = overridables.functions[function.name] ?: return emptySet()
         val signature = overridables.signature(function)
         val overridden = candidates.filter {
-            it.key != null && it.matches(signature) && overridables.isVisible(it, owner, function.modality)
+            it.key != null && it.matches(signature) && overridables.isVisible(it, owner.kmClass, function.modality)
         }
         // an unknown type matches any type, so a sibling overload, which is not overridden, might be matched too,
         // like for the inheritedDefaultValues, the ones matching on the known types are taken, if there are any
@@ -466,11 +481,13 @@ internal class OverrideResolver(
      * and with the type arguments of the supertypes substituted, like `Consumer<in String>` of `Consumer<? super T>`
      * of `java.lang.Iterable<T>`, implemented as `Iterable<String>`.
      */
-    fun overriddenJavaMembers(owner: KmClass, function: KmFunction): Set<String> {
+    fun overriddenJavaMembers(owner: Owner, function: KmFunction): Set<String> {
         val overridables = overridables(owner)
         val candidates = overridables.functions[function.name] ?: return emptySet()
         val signature = overridables.signature(function)
-        return candidates.filter { it.javaKey != null && it.matches(signature) && overridables.isVisible(it, owner, function.modality) }
+        return candidates.filter {
+            it.javaKey != null && it.matches(signature) && overridables.isVisible(it, owner.kmClass, function.modality)
+        }
             .mapTo(HashSet()) { it.javaKey!! }
     }
 
@@ -478,9 +495,9 @@ internal class OverrideResolver(
      * The keys of the properties of the Kotlin supertypes of the [owner] which its [property] overrides,
      * like the [overriddenMembers] of a function.
      */
-    fun overriddenMembers(owner: KmClass, property: KmProperty): Set<String> {
+    fun overriddenMembers(owner: Owner, property: KmProperty): Set<String> {
         val overridables = overridables(owner)
-        return overriddenProperties(owner, overridables, property).mapNotNullTo(HashSet()) { it.key }
+        return overriddenProperties(owner.kmClass, overridables, property).mapNotNullTo(HashSet()) { it.key }
     }
 
     private fun overriddenProperties(owner: KmClass, overridables: Overridables, property: KmProperty): List<Overridable> {
@@ -531,11 +548,11 @@ internal class OverrideResolver(
         return (listOfNotNull(classFile.superName) + classFile.interfaces).map { objectType(it).name }
     }
 
-    fun isOverride(owner: KmClass, property: KmProperty): Boolean {
+    fun isOverride(owner: Owner, property: KmProperty): Boolean {
         val overridables = overridables(owner)
         val signature = overridables.signature(property)
         val matching = overridables.properties[property.name].orEmpty().filter { it.matches(signature) }
-        if (matching.any { overridables.isVisible(it, owner, property.modality) }) return true
+        if (matching.any { overridables.isVisible(it, owner.kmClass, property.modality) }) return true
         // a property of a Kotlin supertype without metadata is known only by its JVM getter,
         // which a private or a @JvmField property does not have, and which might be renamed or mangled
         val getter = property.getterSignature?.takeIf { property.visibility.isOverridable }
@@ -547,7 +564,7 @@ internal class OverrideResolver(
             }
         }
         return javaGetters.any { it.matches(signature) } ||
-            overridables.shrunkOverridden(evidence, owner, property.modality, property.getterSignature).any()
+            overridables.shrunkOverridden(evidence, owner.kmClass, property.modality, property.getterSignature).any()
     }
 
     /**
@@ -650,8 +667,12 @@ internal class OverrideResolver(
             this.parameters.zip(parameters).all { (overridden, overriding) -> typesMatch(overridden, overriding) }
     }
 
-    private fun overridables(owner: KmClass): Overridables =
-        overridablesCache.getOrPutUnlessTransient(OwnerKey(owner.name, isBuiltin = builtinClasses()[owner.name] === owner)) {
+    // by the located name, as a relocated class might be found next to the original one of the same metadata name,
+    // with other supertypes and outer classes, see Owner
+    private fun overridables(owner: Owner): Overridables =
+        overridablesCache.getOrPutUnlessTransient(
+            OwnerKey(owner.name, isBuiltin = builtinClasses()[owner.kmClass.name] === owner.kmClass)
+        ) {
             collectOverridables(owner)
         }
 
@@ -659,16 +680,21 @@ internal class OverrideResolver(
      * Walks the whole supertype hierarchy of the [owner] once,
      * collecting the overridable members with the type arguments substituted.
      */
-    private fun collectOverridables(owner: KmClass): Overridables {
+    private fun collectOverridables(owner: Owner): Overridables {
+        val ownerClass = owner.kmClass
+        // the Java types, named by their JVM names, might be relocated, unlike the types of the Kotlin metadata,
+        // so they are looked up, and matched, also by the names the metadata would refer to them by, see unlocated
+        val relocation = owner.relocation
         val ownerSubstitution = ownerSubstitution(owner)
+        // the JVM package, telling which package-private Java methods are visible, of the located name
         val ownerPackage = owner.name.substringBeforeLast('/', "").replace('/', '.')
         val functions = mutableMapOf<String, MutableList<Overridable>>()
         val properties = mutableMapOf<String, MutableList<Overridable>>()
-        val pending = ArrayDeque(owner.supertypes.mapNotNull { kotlinType(it, ownerSubstitution) as? ClassType })
+        val pending = ArrayDeque(ownerClass.supertypes.mapNotNull { kotlinType(it, ownerSubstitution) as? ClassType })
         // every class and interface is a subtype of Any, also when it is reached only through Java interfaces
         pending += ClassType("kotlin/Any")
         // a class is never its own supertype, which matters for Any itself
-        val visited = mutableSetOf(owner.name)
+        val visited = mutableSetOf(ownerClass.name)
 
         while (pending.isNotEmpty()) {
             val supertype = pending.removeFirst()
@@ -689,11 +715,11 @@ internal class OverrideResolver(
                 continue
             }
 
-            val declaration = declaration(supertype.name)
+            val declaration = declaration(owner, supertype.name)
 
             declaration.kotlin?.let { kmClass ->
-                val substitution = supertypeSubstitution(kmClass, supertype)
-                val isSameModuleName = kmClass.moduleName == owner.moduleName
+                val substitution = supertypeSubstitution(owner, kmClass, supertype)
+                val isSameModuleName = kmClass.moduleName == ownerClass.moduleName
                 // the JVM name of an internal member is mangled with the module name, sanitized like by the compiler,
                 // unless it is a @PublishedApi one; the module name is absent only from the built-in declarations,
                 // read from .kotlin_builtins, which have no internal members
@@ -755,12 +781,12 @@ internal class OverrideResolver(
                 val substitution = javaSubstitution(javaClass, supertype)
                 javaMethods(javaClass, ownerPackage, substitution).forEach { (name, method) ->
                     if (name !in declaration.hiddenJavaMethods) {
-                        functions.getOrPut(name) { mutableListOf() } += method
+                        functions.getOrPut(name) { mutableListOf() } += method.withUnlocated(relocation)
                     }
                 }
                 // the supertypes of a built-in type are known from its Kotlin declaration
                 if (declaration.kotlin == null) {
-                    pending += javaSupertypes(javaClass, substitution)
+                    javaSupertypes(javaClass, substitution).forEach { pending += it.unlocated(relocation) }
                 }
             }
 
@@ -768,19 +794,23 @@ internal class OverrideResolver(
                 val signature = classFile.signature?.let { genericClassSignature(it) }
                 val substitution = classFileSubstitution(signature, supertype)
                 asmMethods(classFile.methods, classFile.packageName, ownerPackage, substitution).forEach { (name, method) ->
-                    functions.getOrPut(name) { mutableListOf() } += method
+                    functions.getOrPut(name) { mutableListOf() } += method.withUnlocated(relocation)
                 }
-                pending += classFileSupertypes(classFile, signature, substitution)
+                classFileSupertypes(classFile, signature, substitution).forEach { pending += it.unlocated(relocation) }
             }
         }
 
-        // only the name and whether it might have DefaultImpls are captured, as the overridables are cached
+        // only the name, the relocation, and whether it might have DefaultImpls are captured, as the overridables are cached
         val ownerName = owner.name
-        val hasDefaultImpls = owner.mayHaveDefaultImpls
+        val hasDefaultImpls = ownerClass.mayHaveDefaultImpls
         return Overridables(ownerSubstitution, functions, properties, FinalOnce {
             // a transient failure is marked on this thread by the lookup failing, telling the caller not to cache
             val failureCount = transientFailures.count()
-            val jvmMethods = jvmMethods(ownerName, hasDefaultImpls)
+            // the descriptors of a relocated class file, compared with the JVM signatures of its metadata, which are not,
+            // also as they are, as a type of a package starting like the relocation prefix might not be relocated
+            val jvmMethods = jvmMethods(ownerName, hasDefaultImpls)?.let { methods ->
+                if (relocation == null) methods else methods.flatMapTo(HashSet()) { listOf(it, relocation.unlocatedDescriptor(it)) }
+            }
             TransientFailures.Outcome(jvmMethods, isFinal = transientFailures.count() == failureCount)
         })
     }
@@ -895,9 +925,9 @@ internal class OverrideResolver(
      * The type parameters of the [owner], and of its outer classes if it is an inner class,
      * which stay type parameters, as the members are checked in the context of the [owner].
      */
-    private fun ownerSubstitution(owner: KmClass): Map<Int, MemberType> = buildMap {
-        val typeParameters = generateSequence(owner) { kmClass ->
-            if (kmClass.isInner) declaration(outerClassName(kmClass.name)).kotlin else null
+    private fun ownerSubstitution(owner: Owner): Map<Int, MemberType> = buildMap {
+        val typeParameters = generateSequence(owner.kmClass) { kmClass ->
+            if (kmClass.isInner) declaration(owner, outerClassName(kmClass.name)).kotlin else null
         }.flatMap { it.typeParameters }.toList()
         val byId = typeParameters.associateBy { it.id }
         typeParameters.forEach { typeParameter ->
@@ -911,9 +941,9 @@ internal class OverrideResolver(
      * or to the erasures of their bounds if the [supertype] is a raw supertype of a Java class,
      * like `Comparable` in `class C implements Comparable`, as [javaSubstitution] does for a Java class.
      */
-    private fun supertypeSubstitution(kmClass: KmClass, supertype: ClassType): Map<Int, MemberType> = buildMap {
+    private fun supertypeSubstitution(owner: Owner, kmClass: KmClass, supertype: ClassType): Map<Int, MemberType> = buildMap {
         val declarations = generateSequence(kmClass) { declaration ->
-            if (declaration.isInner) declaration(outerClassName(declaration.name)).kotlin else null
+            if (declaration.isInner) declaration(owner, outerClassName(declaration.name)).kotlin else null
         }.toList()
         // the outer type of a raw inner type is raw as well
         if (supertype.isRaw) {
@@ -1130,6 +1160,88 @@ internal class OverrideResolver(
 
     private fun declaration(name: String): Declaration =
         declarationCache.getOrPutUnlessTransient(name) { findDeclaration(name) }
+
+    /**
+     * The declaration of the class of the [metadataName], which the [owner], or one of its supertypes, refers to,
+     * found by its located name, see [Relocation.located], like an outer class, or a supertype, relocated with the [owner],
+     * or else by the [metadataName], like a class of another package, or one excluded from the relocation.
+     */
+    private fun declaration(owner: Owner, metadataName: String): Declaration {
+        // neither a built-in type, nor a JDK class, is relocated
+        val located = owner.relocation?.takeIf { metadataName !in builtinClasses() && !metadataName.startsWith("java/") }
+            ?.located(metadataName)
+            ?: return declaration(metadataName)
+        val failureCount = transientFailures.count()
+        val declaration = declaration(located)
+        // not taken for one excluded from the relocation when it cannot be told, maybe only for now
+        if (declaration.isFound || transientFailures.count() != failureCount) return declaration
+        return declaration(metadataName)
+    }
+
+    /**
+     * This Java supertype, named by its JVM name, which the [relocation] might have relocated,
+     * named by the name the Kotlin metadata would refer to it by, see [Relocation.unlocated],
+     * which is safe, as it is looked up by its located name first, see [declaration],
+     * with its type arguments named by the metadata names of the Kotlin classes found by their JVM names, see [metadataNamed],
+     * as they are substituted for the type parameters of a Kotlin supertype, matched against the types of the metadata.
+     */
+    private fun ClassType.unlocated(relocation: Relocation?): ClassType = if (relocation == null) this else copy(
+        name = relocation.unlocated(name),
+        arguments = arguments.map { it.copy(type = it.type.metadataNamed()) },
+        outer = outer?.metadataNamed() as ClassType?
+    )
+
+    /**
+     * This type, named by its JVM name, which might be relocated, named by the metadata name of the Kotlin class found there,
+     * which the Kotlin metadata refers to it by, or else as it is, like a Java class, as no name is guessed,
+     * since a type of a package starting like the relocation prefix might not be relocated.
+     */
+    private fun MemberType.metadataNamed(): MemberType = when (this) {
+        is ClassType -> copy(
+            name = declaration(name).kotlin?.name ?: name,
+            arguments = arguments.map { it.copy(type = it.type.metadataNamed()) },
+            outer = outer?.metadataNamed() as ClassType?
+        )
+        else -> this
+    }
+
+    private fun MemberType.unlocatedType(relocation: Relocation): MemberType = when (this) {
+        is ClassType -> copy(
+            name = relocation.unlocated(name),
+            arguments = arguments.map { it.copy(type = it.type.unlocatedType(relocation)) },
+            outer = outer?.unlocatedType(relocation) as ClassType?
+        )
+        else -> this
+    }
+
+    /**
+     * This Java member, with its types named by their JVM names, followed by the same member with its types named
+     * by the names the Kotlin metadata would refer to them by, see [Relocation.unlocated], if any of them differs,
+     * so that it is matched either way, as a type of a package starting like the relocation prefix might not be relocated,
+     * like `com/google/gson/JsonElement` of a class relocated to `com/acme/probe` from `acme/probe`.
+     */
+    private fun Overridable.withUnlocated(relocation: Relocation?): List<Overridable> {
+        if (relocation == null) return listOf(this)
+        val contexts = contexts.map { it.unlocatedType(relocation) }
+        val receiver = receiver?.unlocatedType(relocation)
+        val parameters = parameters.map { it.unlocatedType(relocation) }
+        if (contexts == this.contexts && receiver == this.receiver && parameters == this.parameters) return listOf(this)
+        return listOf(
+            this,
+            Overridable(
+                contexts = contexts,
+                receiver = receiver,
+                parameters = parameters,
+                typeParameterCount = typeParameterCount,
+                isJava = isJava,
+                isPlatform = isPlatform,
+                visibility = visibility,
+                declaresDefaultValues = declaresDefaultValues,
+                key = key,
+                javaKey = javaKey
+            )
+        )
+    }
 
     private fun findDeclaration(name: String): Declaration {
         val builtinClass = builtinClasses()[name]
@@ -2066,4 +2178,90 @@ private fun KmType.memberKeyType(typeParameters: Map<Int, String>): String = bui
         })
     }
     if (isNullable) append('?')
+}
+
+/**
+ * The relocation of a class, like by shading, which rewrites the binary names of the class, and of the ones it refers to,
+ * like `shaded.com.example.Foo`, but not its Kotlin metadata, still referring to them like `com/example/Foo`,
+ * from the [metadataPackage] to the [locatedPackage], by their Kotlin names, like `com/example`.
+ * The classes of the same package are relocated with it, see [locatedNameOf], and so are the ones of the other packages,
+ * when the relocation prepends a [prefix] to the package, like `shaded/`, prepended to the other packages too,
+ * while a class excluded from the relocation is still found by its metadata name, see `OverrideResolver`.
+ */
+internal class Relocation private constructor(
+    private val metadataPackage: String,
+    private val locatedPackage: String,
+    private val locatedBinaryName: String
+) {
+
+    /**
+     * The prefix prepended to the package, like `shaded/` of `shaded/com/example`, or `null` if the package is renamed.
+     */
+    private val prefix: String? = when {
+        metadataPackage.isEmpty() -> "$locatedPackage/"
+        locatedPackage.endsWith("/$metadataPackage") -> locatedPackage.removeSuffix(metadataPackage)
+        else -> null
+    }
+
+    /**
+     * The name the class of the [metadataName] is found by, when relocated with this one, see [locatedNameOf],
+     * or `null` if it is not known to be relocated.
+     */
+    fun located(metadataName: String): String? {
+        // the leading '.' of a local class, see locatedNameOf, is not part of its package
+        val localPrefix = if (metadataName.startsWith('.')) "." else ""
+        val name = metadataName.removePrefix(".")
+        return when {
+            packageOf(name) == metadataPackage -> locatedNameOf(locatedBinaryName, metadataName)
+            prefix != null && !name.startsWith(prefix) -> localPrefix + prefix + name
+            else -> null
+        }
+    }
+
+    /**
+     * The name the Kotlin metadata refers to the class of the [locatedName] by, the inverse of [located],
+     * like to a type of a Java member, named by its relocated JVM name.
+     */
+    fun unlocated(locatedName: String): String {
+        val localPrefix = if (locatedName.startsWith('.')) "." else ""
+        val name = locatedName.removePrefix(".")
+        return localPrefix + when {
+            packageOf(name) == locatedPackage -> {
+                val simpleName = name.substringAfterLast('/')
+                if (metadataPackage.isEmpty()) simpleName else "$metadataPackage/$simpleName"
+            }
+            prefix != null && name.startsWith(prefix) -> name.removePrefix(prefix)
+            else -> name
+        }
+    }
+
+    /**
+     * A JVM method of a relocated class file, a name followed by a descriptor, like `on(Lshaded/com/example/Event;)V`,
+     * with the class types named like in the JVM signatures of the Kotlin metadata, see [unlocated].
+     */
+    fun unlocatedDescriptor(method: String): String {
+        val descriptor = method.indexOf('(').takeIf { it >= 0 } ?: return method
+        return method.substring(0, descriptor) + CLASS_TYPE_OF_DESCRIPTOR.replace(method.substring(descriptor)) {
+            "L" + unlocated(it.groupValues[1]) + ";"
+        }
+    }
+
+    companion object {
+
+        /**
+         * The relocation of the class of the [metadataName] found by the [locatedName], or `null` if it is not relocated.
+         */
+        fun of(metadataName: String, locatedName: String): Relocation? {
+            val metadataPackage = packageOf(metadataName.removePrefix("."))
+            val locatedPackage = packageOf(locatedName.removePrefix("."))
+            return if (metadataPackage == locatedPackage) null
+            else Relocation(metadataPackage, locatedPackage, binaryNameOf(locatedName.removePrefix(".")))
+        }
+
+        private fun packageOf(name: String): String = name.substringBeforeLast('/', "")
+
+        private val CLASS_TYPE_OF_DESCRIPTOR = Regex("L([^;]+);")
+
+    }
+
 }
