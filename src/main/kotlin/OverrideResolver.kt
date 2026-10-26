@@ -358,16 +358,15 @@ internal class OverrideResolver(
         val overridables = overridables(owner)
         val candidates = overridables.functions[function.name] ?: return null
         val signature = overridables.signature(function)
-        val overridden = candidates.asSequence().filter {
-            it.matches(signature) && overridables.isVisible(it, owner, function.modality)
-        }
+        val matching = candidates.filter { it.matches(signature) }
+        val overridden = matching.asSequence().filter { overridables.isVisible(it, owner, function.modality) }
         return when {
             !withDefaultValues -> if (overridden.any()) noDefaultValues else null
             else -> overridden.toList().takeIf { it.isNotEmpty() }
                 ?.let { FunctionOverride(inheritedDefaultValues(it, signature)) }
         } ?: noDefaultValues.takeIf {
-            val matching = candidates.filter { it.matches(signature) }
-            overridables.isShrunkOverride(candidates, matching, owner, function.modality, function.signature)
+            val evidence = matching.ifEmpty { candidates.filter { it.isJava } }
+            overridables.isShrunkOverride(evidence, owner, function.modality, function.signature)
         }
     }
 
@@ -465,18 +464,33 @@ internal class OverrideResolver(
     }
 
     private fun overriddenProperties(owner: KmClass, overridables: Overridables, property: KmProperty): List<Overridable> {
-        val typeParameters = memberTypeParameters(property.typeParameters)
-        val contexts = property.contextParameters.map {
-            kotlinType(it.type, overridables.substitution, typeParameters)
-        }
-        val receiver = property.receiverParameterType?.let {
-            kotlinType(it, overridables.substitution, typeParameters)
-        }
+        val signature = overridables.signature(property)
         return overridables.properties[property.name].orEmpty().filter {
-            it.matches(contexts, receiver, emptyList(), property.typeParameters.size, isSuspend = false) &&
-                overridables.isVisible(it, owner, property.modality)
+            it.matches(signature) && overridables.isVisible(it, owner, property.modality)
         }
     }
+
+    /**
+     * The types of a property checked for overriding, resolved in the context of its class.
+     */
+    private class PropertySignature(
+        val contexts: List<MemberType>,
+        val receiver: MemberType?,
+        val typeParameterCount: Int
+    )
+
+    private fun Overridables.signature(property: KmProperty): PropertySignature {
+        val typeParameters = memberTypeParameters(property.typeParameters)
+        return PropertySignature(
+            contexts = property.contextParameters.map { kotlinType(it.type, substitution, typeParameters) },
+            receiver = property.receiverParameterType?.let { kotlinType(it, substitution, typeParameters) },
+            typeParameterCount = property.typeParameters.size
+        )
+    }
+
+    private fun Overridable.matches(signature: PropertySignature): Boolean = matches(
+        signature.contexts, signature.receiver, emptyList(), signature.typeParameterCount, isSuspend = false
+    )
 
     /**
      * The Kotlin class name of the built-in type which the JVM class named like `java.util.List` is mapped to,
@@ -487,26 +501,15 @@ internal class OverrideResolver(
 
     fun isOverride(owner: KmClass, property: KmProperty): Boolean {
         val overridables = overridables(owner)
-        val typeParameters = memberTypeParameters(property.typeParameters)
-        val contexts = property.contextParameters.map {
-            kotlinType(it.type, overridables.substitution, typeParameters)
-        }
-        val receiver = property.receiverParameterType?.let {
-            kotlinType(it, overridables.substitution, typeParameters)
-        }
-        val candidates = overridables.properties[property.name].orEmpty()
-        val overridesProperty = overriddenProperties(owner, overridables, property).isNotEmpty()
+        val signature = overridables.signature(property)
+        val matching = overridables.properties[property.name].orEmpty().filter { it.matches(signature) }
+        if (matching.any { overridables.isVisible(it, owner, property.modality) }) return true
         // a property of a Kotlin supertype without metadata is known only by its JVM getter,
         // which a private or a @JvmField property does not have, and which might be renamed or mangled
         val getter = property.getterSignature?.takeIf { property.visibility.isOverridable }
-        val overridesGetter = getter != null && overridables.functions[getter.name].orEmpty().any {
-            it.isJava && it.matches(contexts, receiver, emptyList(), property.typeParameters.size, isSuspend = false)
-        }
-        val matching = candidates.filter {
-            it.matches(contexts, receiver, emptyList(), property.typeParameters.size, isSuspend = false)
-        }
-        return overridesProperty || overridesGetter ||
-            overridables.isShrunkOverride(candidates, matching, owner, property.modality, property.getterSignature)
+        val javaGetters = getter?.let { overridables.functions[it.name] }.orEmpty().filter { it.isJava }
+        return javaGetters.any { it.matches(signature) } ||
+            overridables.isShrunkOverride(matching.ifEmpty { javaGetters }, owner, property.modality, property.getterSignature)
     }
 
     /**
@@ -542,23 +545,23 @@ internal class OverrideResolver(
         }
 
     /**
-     * Whether a member of the [modality] of the [owner], overriding none of the [candidates] of the same name,
-     * is still taken for an override of one of them, as its JVM method, the [signature], is shrunk, see [isShrunk].
-     * The [matching] candidates, of the same signature, are the evidence, if there are any,
-     * otherwise any of the candidates, as the overridden member might be known only by the JVM methods
-     * of a supertype, from which a shrinker removed it as well.
-     * A candidate is the evidence only if it is visible to the [owner], see [isVisible],
-     * so that an internal member of another module does not make a member of the same name an override.
-     * The JVM methods of the [owner] are read only when a candidate is visible, or is a mangled internal member.
+     * Whether a member of the [modality] of the [owner], overriding no visible supertype member,
+     * is still taken for an override of one of the [evidence] members, as its JVM method, the [signature],
+     * is shrunk, see [isShrunk].
+     * The evidence are the supertype members of the same signature, if there are any,
+     * otherwise the Java ones of the same name, including the ones of a Kotlin supertype without metadata,
+     * as the overridden JVM method might be removed by a shrinker as well,
+     * while the members of a Kotlin supertype are known by its metadata, whether shrunk or not.
+     * A member is the evidence only if it is visible to the [owner], see [isVisible],
+     * so that an internal member of another module does not make a member of the same signature an override.
+     * The JVM methods of the [owner] are read only when an evidence member is visible, or is a mangled internal one.
      */
     private fun Overridables.isShrunkOverride(
-        candidates: List<Overridable>,
-        matching: List<Overridable>,
+        evidence: List<Overridable>,
         owner: KmClass,
         modality: Modality,
         signature: JvmMethodSignature?
-    ): Boolean = matching.ifEmpty { candidates }.any { isVisible(it, owner, modality, isShrunk = true) } &&
-        isShrunk(signature)
+    ): Boolean = evidence.any { isVisible(it, owner, modality, isShrunk = true) } && isShrunk(signature)
 
     /**
      * Whether the JVM method of a member, declared in the metadata, has been removed from the class file of its owner,

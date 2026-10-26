@@ -1947,34 +1947,12 @@ class ClassLoaderIntrospectionTest {
     @Test
     fun `should mark shrunk overrides of internal members of superclass of the same module named by default`() {
         // given
-        val shrunkResource = "com/xemantic/kotlin/introspection/defaultmodule/DefaultModuleSubclass.class"
+        val className = "com.xemantic.kotlin.introspection.defaultmodule.DefaultModuleSubclass"
         // like R8 removing both the override of clear and its bridge clear$main, keeping the metadata
-        val classLoader = object : ClassLoader(javaClass.classLoader) {
-            override fun getResourceAsStream(name: String): InputStream? {
-                val stream = super.getResourceAsStream(name)
-                return if (stream != null && name == shrunkResource) {
-                    val writer = ClassWriter(0)
-                    ClassReader(stream.use { it.readBytes() }).accept(object : ClassVisitor(Opcodes.ASM9, writer) {
-                        override fun visitMethod(
-                            access: Int,
-                            name: String,
-                            descriptor: String,
-                            signature: String?,
-                            exceptions: Array<out String>?
-                        ): MethodVisitor? = if (name == "clear" || name == "clear\$main") {
-                            null
-                        } else {
-                            super.visitMethod(access, name, descriptor, signature, exceptions)
-                        }
-                    }, 0)
-                    writer.toByteArray().inputStream()
-                } else stream
-            }
-        }
-        val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
+        val introspector = shrunkIntrospector(className, "clear")
 
         // when
-        val signature = introspector.resolve("com.xemantic.kotlin.introspection.defaultmodule.DefaultModuleSubclass")
+        val signature = introspector.resolve(className)
 
         // then
         signature sameAsKotlin """
@@ -2059,6 +2037,25 @@ class ClassLoaderIntrospectionTest {
             // com.xemantic.kotlin.introspection.test.OverloadedInternalSubclass [page 1/1]
             class OverloadedInternalSubclass : com.xemantic.kotlin.introspection.othermodule.OverloadedInternalBase {
                 fun reset()
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not mark shrunk overloads of public members as override when no member is matched`() {
+        // given
+        val className = "com.xemantic.kotlin.introspection.test.OverloadingInternalSubclass"
+        val introspector = shrunkIntrospector(className, "reset")
+
+        // when
+        val signature = introspector.resolve(className)
+
+        // then
+        // the members of a Kotlin supertype are known by the metadata, also when their JVM methods are shrunk
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OverloadingInternalSubclass [page 1/1]
+            class OverloadingInternalSubclass : com.xemantic.kotlin.introspection.othermodule.OverloadedInternalBase {
+                fun reset(name: String)
             }
         """.trimIndent()
     }
@@ -2426,14 +2423,23 @@ class ClassLoaderIntrospectionTest {
         // given
         val interfaceResource = "com/xemantic/kotlin/introspection/defaultimpls/DefaultImplsOverloader.class"
         val defaultImplsName = "com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsOverloader\$DefaultImpls"
+        val baseName = "com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsBase"
         val classLoader = object : ClassLoader(javaClass.classLoader) {
             override fun loadClass(name: String, resolve: Boolean): Class<*> =
-                if (name == defaultImplsName) throw ClassNotFoundException(name) else super.loadClass(name, resolve)
+                when (name) {
+                    defaultImplsName -> throw ClassNotFoundException(name)
+                    // like when a supertype of the class is missing, so that it is read from its class file
+                    baseName -> throw NoClassDefFoundError(name)
+                    else -> super.loadClass(name, resolve)
+                }
 
             override fun getResourceAsStream(name: String): InputStream? {
                 val stream = super.getResourceAsStream(name) ?: return null
                 val bytes = stream.use { it.readBytes() }
                 return when (name) {
+                    // the supertype is known only by its JVM methods, like a Java one,
+                    // so that the overload cannot be told from an override of a JVM method removed as well
+                    baseName.replace('.', '/') + ".class" -> withoutMetadata(bytes)
                     // the JVM method of the overload is removed, like by R8
                     interfaceResource -> withoutMethods(bytes) { methodName, descriptor ->
                         methodName == "greet" && descriptor == "(I)Ljava/lang/String;"

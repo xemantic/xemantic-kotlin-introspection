@@ -799,3 +799,8 @@ class PublishedApiSubclass : com.xemantic.kotlin.introspection.othermodule.Publi
 class OverloadedInternalSubclass : com.xemantic.kotlin.introspection.othermodule.OverloadedInternalBase() {
     fun reset() {}
 }
+
+// A member overloading both an internal member of a class of another module and a public one
+class OverloadingInternalSubclass : com.xemantic.kotlin.introspection.othermodule.OverloadedInternalBase() {
+    fun reset(name: String) {}
+}
