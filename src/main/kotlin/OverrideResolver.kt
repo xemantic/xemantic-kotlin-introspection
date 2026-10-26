@@ -1182,10 +1182,28 @@ internal class OverrideResolver(
      * This Java supertype, named by its JVM name, which the [relocation] might have relocated,
      * named by the name the Kotlin metadata would refer to it by, see [Relocation.unlocated],
      * which is safe, as it is looked up by its located name first, see [declaration],
-     * while its type arguments are kept, as a type of a package starting like the relocation prefix might not be relocated.
+     * with its type arguments named by the metadata names of the Kotlin classes found by their JVM names, see [metadataNamed],
+     * as they are substituted for the type parameters of a Kotlin supertype, matched against the types of the metadata.
      */
-    private fun ClassType.unlocated(relocation: Relocation?): ClassType =
-        if (relocation == null) this else copy(name = relocation.unlocated(name))
+    private fun ClassType.unlocated(relocation: Relocation?): ClassType = if (relocation == null) this else copy(
+        name = relocation.unlocated(name),
+        arguments = arguments.map { it.copy(type = it.type.metadataNamed()) },
+        outer = outer?.metadataNamed() as ClassType?
+    )
+
+    /**
+     * This type, named by its JVM name, which might be relocated, named by the metadata name of the Kotlin class found there,
+     * which the Kotlin metadata refers to it by, or else as it is, like a Java class, as no name is guessed,
+     * since a type of a package starting like the relocation prefix might not be relocated.
+     */
+    private fun MemberType.metadataNamed(): MemberType = when (this) {
+        is ClassType -> copy(
+            name = declaration(name).kotlin?.name ?: name,
+            arguments = arguments.map { it.copy(type = it.type.metadataNamed()) },
+            outer = outer?.metadataNamed() as ClassType?
+        )
+        else -> this
+    }
 
     private fun MemberType.unlocatedType(relocation: Relocation): MemberType = when (this) {
         is ClassType -> copy(

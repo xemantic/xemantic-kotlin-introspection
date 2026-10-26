@@ -88,6 +88,12 @@ class RelocatedListenerImpl : RelocatedListener {
     fun on(event: RelocatedOther) {}
 }
 
+// tests relocate it, like shading, together with its Java superclass, its Kotlin supertype and the parameter types
+class RelocatedViaJavaImpl : RelocatedJavaMid() {
+    override fun accept(value: RelocatedEvent) {}
+    fun accept(value: RelocatedOther) {}
+}
+
 // tests relocate it, like shading, together with the Java interface, but not the parameter types
 class RelocatedPrefixListenerImpl : RelocatedPrefixListener {
     override fun on(value: IsolatedTestClass) {}

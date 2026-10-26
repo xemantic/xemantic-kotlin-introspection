@@ -270,6 +270,32 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should tell override of member of relocated Kotlin supertype through relocated Java superclass`() {
+        // given
+        val classFiles = arrayOf(
+            "RelocatedBase.class", "RelocatedJavaMid.class", "RelocatedViaJavaImpl.class",
+            "RelocatedEvent.class", "RelocatedOther.class"
+        )
+        val root = isolatedTestFixturesCopy("relocatedViaJava", *classFiles)
+        relocatedCopy(root, *classFiles)
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("shaded.com.xemantic.kotlin.introspection.isolated.RelocatedViaJavaImpl")
+
+        // then
+        // the type argument of RelocatedBase, named by its relocated JVM name in the Java superclass,
+        // is the class named by its metadata name in the metadata of the overriding function
+        signature sameAsKotlin """
+            // shaded.com.xemantic.kotlin.introspection.isolated.RelocatedViaJavaImpl [page 1/1]
+            class RelocatedViaJavaImpl : com.xemantic.kotlin.introspection.isolated.RelocatedJavaMid {
+                override fun accept(value: com.xemantic.kotlin.introspection.isolated.RelocatedEvent)
+                fun accept(value: com.xemantic.kotlin.introspection.isolated.RelocatedOther)
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should not take type of real package starting like relocation prefix for relocated one`() {
         // given
         // relocated to com/com/xemantic/…, so that the prefix com/ is the first segment of the packages not relocated,
