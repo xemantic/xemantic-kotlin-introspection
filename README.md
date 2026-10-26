@@ -109,10 +109,12 @@ com.example.AnnotationTestClass
   The ones with Kotlin metadata of their own, like `kotlin.UInt`, are rendered from it.
   `kotlin-reflect` only tells the deprecations of their members, which the `.kotlin_builtins` metadata does not carry,
   and the members of their JVM types only, like `String.chars()`,
-  whose parameters are named after their positions, like `String.indent(arg0: Int)`, as the JDK is compiled without their names,
-  which Kotlin does not let a call to a Java method name anyway,
+  whose parameters are named after their positions, like `Throwable.printStackTrace(arg0: java.io.PrintStream?)`,
+  as the JDK is compiled without their names, which Kotlin does not let a call to a Java method name anyway,
   and whose parameters of the platform types of Java, like `Throwable!`, accepting `null`, are nullable,
-  like `Throwable.initCause(arg0: Throwable?): Throwable`.
+  like `Throwable.initCause(arg0: Throwable?): Throwable`,
+  but the JDK members newer than the ones mapped to the built-in type, like `String.indent(Int)` or `String.strip()`,
+  which the compiler does not call, and kotlin-reflect tells deprecated as "not fully supported by Kotlin compiler".
   An extension hiding a member of the same signature, like `Throwable.addSuppressed(exception: Throwable)`,
   annotated with `@kotlin.internal.HidesMembers` in the standard library, is listed in place of that member.
   The body of a built-in type also lists the extensions of the standard library reading like its members,

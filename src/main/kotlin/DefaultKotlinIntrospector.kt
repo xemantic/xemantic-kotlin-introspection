@@ -714,14 +714,17 @@ internal class DefaultKotlinIntrospector(
         /**
          * The functions of the JVM class only, not declared in the [kmClass], like `String.chars()`,
          * sorted by their signatures, as kotlin-reflect does not guarantee their order,
-         * also the Java-only ones, whose parameter names are not known, like `String.indent(arg0: Int)`,
+         * also the Java-only ones, whose parameter names are not known, like `Throwable.initCause(arg0: Throwable?)`,
          * see [hasSyntheticParameterNames], as Kotlin calls them all the same,
          * and never lets a call to a Java method name its arguments anyway,
-         * listed and resolved alike, unless hidden by an extension, see [jvmOnlyFunctionsNotHidden].
+         * listed and resolved alike, unless hidden by an extension, see [jvmOnlyFunctionsNotHidden],
+         * but the ones Kotlin does not call, like `String.indent(Int)`, see [isUnsupportedByCompiler].
          */
         val jvmOnlyFunctions: List<KmFunction> by lazy {
             val declared = kmClass.functions.mapTo(HashSet()) { signatureOf(it) }
-            reflectedFunctions.filterKeys { it !in declared }.toSortedMap().values.map { it.kmFunction }
+            reflectedFunctions.filterKeys { it !in declared }.toSortedMap().values
+                .filter { !isUnsupportedByCompiler(it.kFunction) }
+                .map { it.kmFunction }
         }
 
         /**
@@ -729,8 +732,11 @@ internal class DefaultKotlinIntrospector(
          */
         val jvmOnlyProperties: List<KmProperty> by lazy {
             val declared = kmClass.properties.mapTo(HashSet()) { it.name }
-            reflectedProperties.filterKeys { it !in declared }.toSortedMap().values.map { it.kmProperty }
+            reflectedProperties.filterKeys { it !in declared }.toSortedMap().values
+                .filter { !isUnsupportedByCompiler(it.kProperty) }
+                .map { it.kmProperty }
         }
+
 
         /**
          * The signature telling apart the overloads of a [function], like `plus(Int)`,

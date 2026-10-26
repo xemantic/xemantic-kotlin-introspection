@@ -72,16 +72,26 @@ class BuiltinsWithoutDeclarationsTest {
     @Test
     fun `should resolve Java-only member described by kotlin-reflect with synthetic parameter names`() {
         // given - the JDK is compiled without parameter names
-        assumeNoParameterNames(String::class.java.getMethod("indent", Int::class.java))
+        assumeNoParameterNames(Throwable::class.java.getMethod("initCause", Throwable::class.java))
 
         // when
-        val signatures = introspector.resolve("kotlin.String.indent")
+        val signatures = introspector.resolve("kotlin.Throwable.initCause")
 
         // then
         signatures should {
-            have(lines().drop(1).single().endsWith(" fun indent(arg0: Int): String"))
+            have(lines().drop(1).single().endsWith(" fun initCause(arg0: Throwable?): Throwable"))
         }
     }
+
+    @Test
+    fun `should not resolve JVM-only member described by kotlin-reflect which the compiler cannot call`() {
+        // when - String.indent is told "not fully supported by Kotlin compiler", which K2 does not resolve
+        val signatures = introspector.resolve("kotlin.String.indent")
+
+        // then
+        assert(signatures == null)
+    }
+
 
     @Test
     fun `should not resolve mutable collection type which kotlin-reflect cannot tell apart from the read-only one`() {

@@ -66,6 +66,20 @@ internal fun hasSyntheticParameterNames(function: KFunction<*>): Boolean =
     }
 
 /**
+ * Tells whether the [callable] reflected by kotlin-reflect is a JDK member of a built-in type which Kotlin does not call,
+ * newer than the members mapped to the built-in type, like `String.indent(Int)`, `strip()`, or `CharSequence.getChars`,
+ * which kotlin-reflect tells deprecated as "not fully supported by Kotlin compiler", mirroring the warning of K1,
+ * while K2 does not resolve it at all, so that it is neither rendered, nor shadows the extensions of its signature.
+ */
+internal fun isUnsupportedByCompiler(callable: KCallable<*>): Boolean = try {
+    callable.annotations.any { it is Deprecated && it.message.startsWith(UNSUPPORTED_MEMBER_MESSAGE) }
+} catch (_: Exception) {
+    false
+}
+
+private const val UNSUPPORTED_MEMBER_MESSAGE = "This member is not fully supported by Kotlin compiler"
+
+/**
  * The ids of the type parameters a reflected declaration can refer to, by their names:
  * the ones of its declaring class, declared in the Kotlin metadata, see [classTypeParameters],
  * and its own ones, numbered after them, see [withOwn].
@@ -104,7 +118,9 @@ internal class ReflectedTypeParameters(private val ids: Map<String, Int>) {
  *
  * kotlin-reflect describes the JVM class, like `java.lang.String`, so that the declaration is approximate:
  * its supertypes are only the Kotlin ones, its members are the ones the JVM class declares,
- * also the ones whose parameter names are not known, like `indent(arg0: Int)`,
+ * also the ones whose parameter names are not known, like `initCause(arg0: Throwable?)`,
+ * but the ones Kotlin does not call, see [isUnsupportedByCompiler],
+
  * and its constructors are the ones of the JVM class whose parameter names are known, like `String()`,
  * see [hasSyntheticParameterNames],
  * as the others, like `Integer(int)`, have no counterpart in Kotlin.
@@ -131,13 +147,13 @@ internal fun KClass<*>.toKmBuiltinClass(name: String): KmClass {
         .filter { supertype -> (supertype.classifier as? KClass<*>)?.qualifiedName?.startsWith("kotlin.") == true }
         .mapTo(kmClass.supertypes) { it.toKmType(typeParameters) }
     declaredMemberFunctions
-        .filter { '$' !in it.name }
+        .filter { '$' !in it.name && !isUnsupportedByCompiler(it) }
 
         .mapTo(kmClass.functions) { function ->
             function.toKmFunction(typeParameters).also { it.modality = it.modality.finalIn(kmClass) }
         }
     declaredMemberProperties
-        .filter { '$' !in it.name }
+        .filter { '$' !in it.name && !isUnsupportedByCompiler(it) }
         .mapTo(kmClass.properties) { property ->
             property.toKmProperty(typeParameters).also { it.modality = it.modality.finalIn(kmClass) }
         }
