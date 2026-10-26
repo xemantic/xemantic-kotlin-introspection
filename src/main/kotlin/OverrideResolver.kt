@@ -684,6 +684,8 @@ internal class OverrideResolver(
      * including the members of an interface relocated to its `DefaultImpls` class,
      * like with `-jvm-default=disable`, as if they were declared in the interface, unless they are unknown,
      * or `null` if the methods of the class itself can be neither read nor reflected.
+     * The class is reflected only when its class file is not served, or cannot be parsed,
+     * which is then the same evidence, as the class is already loaded, being the owner of the resolved members.
      */
     private fun jvmMethods(className: String, isInterface: Boolean): Set<String>? {
         // the package is separated with '/', and nested classes with '.'
@@ -695,9 +697,18 @@ internal class OverrideResolver(
         if (isInterface) {
             val defaultImplsName = "$className.DefaultImpls"
             val defaultImplsFile = readClassBytesByMetadataName(defaultImplsName)
-            // most interfaces have no DefaultImpls, so it is not loaded to tell, unless no class file is served
+            // most interfaces have no DefaultImpls, so it is not probed by name, which would mostly fail,
+            // but found among the nested classes of the interface, already loaded, when no class file is served,
+            // and probed by name only if they cannot be reflected, which tells a failure which might be transient
             val defaultImplsClass = if (defaultImplsFile == null && classFile == null) {
-                loadClassByMetadataName(defaultImplsName)
+                loadClassByMetadataName(className)?.let { interfaceClass ->
+                    val nestedClasses = reflectOrNull { interfaceClass.declaredClasses }
+                    if (nestedClasses != null) {
+                        nestedClasses.find { it.name == interfaceClass.name + "\$DefaultImpls" }
+                    } else {
+                        loadClassByMetadataName(defaultImplsName)
+                    }
+                }
             } else null
             if (defaultImplsFile != null || defaultImplsClass != null) {
                 // the static method of DefaultImpls takes the interface instance as the first parameter

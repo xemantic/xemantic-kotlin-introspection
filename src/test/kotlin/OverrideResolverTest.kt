@@ -29,6 +29,7 @@ import kotlin.metadata.KmType
 import kotlin.metadata.Modality
 import kotlin.metadata.Visibility
 import kotlin.metadata.modality
+import kotlin.metadata.jvm.KotlinClassMetadata
 import kotlin.metadata.visibility
 import kotlin.test.Test
 
@@ -128,6 +129,47 @@ class OverrideResolverTest {
         // then
         assert(first && second)
         assert(lookups.get() == lookupsOfFirst)
+    }
+
+    @Test
+    fun `should find DefaultImpls among nested classes of interface whose class files are not served`() {
+        // given
+        val requestedClasses = mutableListOf<String>()
+        fun loadClass(name: String): Class<*>? {
+            requestedClasses += name
+            return try {
+                Class.forName(binaryNameOf(name), false, javaClass.classLoader)
+            } catch (_: ClassNotFoundException) {
+                null
+            }
+        }
+        fun loadKmClass(name: String): KmClass? = loadClass(name)?.getAnnotation(Metadata::class.java)?.let {
+            (KotlinClassMetadata.readStrict(it) as? KotlinClassMetadata.Class)?.kmClass
+        }
+        // like an in-memory class loader, defining the classes without serving their class files as resources
+        val resolver = OverrideResolver(
+            classLoader = javaClass.classLoader,
+            loadClassByMetadataName = ::loadClass,
+            loadKmClassByMetadataName = ::loadKmClass,
+            readClassBytesByMetadataName = { null },
+            unloadableClassBytesByMetadataName = { null },
+            transientFailures = TransientFailures(),
+            builtinClasses = { emptyMap() },
+            builtinTypes = emptyMap()
+        )
+        val greeterName = "com/xemantic/kotlin/introspection/defaultimpls/DefaultImplsGreeter"
+        val greeter = checkNotNull(loadKmClass(greeterName))
+        // compiled with -jvm-default=disable, its JVM method is only in DefaultImplsGreeter${'$'}DefaultImpls
+        val privateOverload = greeter.functions.single { it.name == "greet" && it.visibility == Visibility.PRIVATE }
+
+        // when
+        val isOverride = resolver.isOverride(greeter, privateOverload)
+
+        // then
+        // the private overload, absent from the interface itself, is not taken for a shrunk override
+        assert(!isOverride)
+        // the DefaultImpls class, which most interfaces do not have, is not probed by its name
+        assert(requestedClasses.none { it.endsWith(".DefaultImpls") })
     }
 
 }

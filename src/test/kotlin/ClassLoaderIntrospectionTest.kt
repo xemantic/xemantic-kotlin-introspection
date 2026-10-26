@@ -2138,6 +2138,49 @@ class ClassLoaderIntrospectionTest {
         assert(requestedClasses.none { it.endsWith("\$DefaultImpls") })
     }
 
+    @Test
+    fun `should find DefaultImpls classes of interfaces without probing them by name when no class file is served`() {
+        // given
+        val requestedClasses = Collections.synchronizedList(mutableListOf<String>())
+        // like an in-memory class loader, defining the classes without serving their class files as resources
+        val classLoader = object : ClassLoader(javaClass.classLoader) {
+            override fun loadClass(name: String, resolve: Boolean): Class<*> {
+                requestedClasses += name
+                return super.loadClass(name, resolve)
+            }
+
+            override fun getResource(name: String): java.net.URL? =
+                if (name.startsWith("com/xemantic/")) null else super.getResource(name)
+
+            override fun getResourceAsStream(name: String): InputStream? =
+                if (name.startsWith("com/xemantic/")) null else super.getResourceAsStream(name)
+        }
+        val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
+
+        // when
+        // the JVM methods of an interface owning an overload are reflected, also the ones relocated to DefaultImpls,
+        // found among the nested classes of the interface, which most interfaces do not have
+        val greeter = introspector.resolve("com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsGreeter")
+        val processor = introspector.resolve("com.xemantic.kotlin.introspection.test.OverloadingProcessorInterface")
+
+        // then
+        // the private overload, present only in DefaultImpls, is not taken for a shrunk override
+        greeter sameAsKotlin """
+            // com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsGreeter [page 1/1]
+            interface DefaultImplsGreeter : DefaultImplsBase {
+                open override val label: String
+                open override fun greet(name: String): String
+            }
+        """.trimIndent()
+        processor sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OverloadingProcessorInterface [page 1/1]
+            interface OverloadingProcessorInterface : Processor<String> {
+                fun process(item: Int)
+            }
+        """.trimIndent()
+        assert(requestedClasses.none { it.endsWith("\$DefaultImpls") })
+    }
+
     /**
      * Removes the JVM methods which are [removed], by their names and descriptors, from the class bytes, like R8 might.
      */
