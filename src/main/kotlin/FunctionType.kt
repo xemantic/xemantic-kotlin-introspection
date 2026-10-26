@@ -293,12 +293,16 @@ internal class FunctionTypeClass private constructor(val kind: FunctionTypeKind,
 
     /**
      * The Kotlin names of the supertypes, whose extensions are listed for this class:
-     * `kotlin.Function`, and of a function reference type, `kotlin.reflect.KFunction`, and its function type,
+     * `kotlin.Function`, and of a function reference type, `kotlin.reflect.KFunction`, with its supertypes,
+     * `kotlin.reflect.KCallable` and `kotlin.reflect.KAnnotatedElement`, and its function type,
      * like `kotlin.Function1` of `kotlin.reflect.KFunction1`.
      */
     val supertypeNames: List<String> =
         if (kind.isReference) {
-            listOf(KFUNCTION_CLASS_NAME, kind.functionTypeKind.kotlinName(arity), FUNCTION_CLASS_NAME)
+            listOf(
+                KFUNCTION_CLASS_NAME, KCALLABLE_CLASS_NAME, KANNOTATED_ELEMENT_CLASS_NAME,
+                kind.functionTypeKind.kotlinName(arity), FUNCTION_CLASS_NAME
+            )
         } else {
             listOf(FUNCTION_CLASS_NAME)
         }
@@ -350,7 +354,11 @@ internal class FunctionTypeClass private constructor(val kind: FunctionTypeKind,
 /**
  * The supertype of all the function reference types, see [FunctionTypeClass].
  */
-private const val KFUNCTION_CLASS_NAME = "kotlin.reflect.KFunction"
+internal const val KFUNCTION_CLASS_NAME = "kotlin.reflect.KFunction"
+
+private const val KCALLABLE_CLASS_NAME = "kotlin.reflect.KCallable"
+
+private const val KANNOTATED_ELEMENT_CLASS_NAME = "kotlin.reflect.KAnnotatedElement"
 
 private fun <T> decodeParameters(
     isSuspend: Boolean,

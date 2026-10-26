@@ -1730,6 +1730,30 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve function reference type with the extensions of the supertypes of KFunction`() {
+        // KFunction<R> : KCallable<R>, KCallable<R> : KAnnotatedElement
+        resolver.resolve(
+            "kotlin.reflect.KFunction1",
+            pageSize = 1000
+        ) should {
+            have("var KCallable<*>.isAccessible: Boolean" in lines())
+            have("suspend fun <R> KCallable<R>.callSuspend(vararg args: Any?): R" in lines())
+            have("inline fun <reified T : Annotation> KAnnotatedElement.findAnnotation(): T?" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve member of KCallable as member of function reference type`() {
+        resolver.resolve(
+            "kotlin.reflect.KFunction1.name"
+        ) sameAsKotlin """
+            // kotlin.reflect.KFunction1.name [page 1/1]
+            // inherited from kotlin.reflect.KCallable
+            val name: String
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve invoke of function reference type`() {
         resolver.resolve(
             "kotlin.reflect.KFunction2.invoke"
@@ -3070,7 +3094,8 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should mark override of invoke of function type supertype`() {
-        // with the extensions of the function type, like the ones of kotlin.Function1, whatever its type arguments
+        // with the extensions of the function type, like the ones of kotlin.Function1, of matching type arguments,
+        // but not fun (context(String) () -> Unit).runInContext(), on Function1<String, Unit>, as Int is not Unit
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.FunctionTypeImpl"
         ) sameAsKotlin """
@@ -3081,7 +3106,6 @@ class KotlinIntrospectorTest {
             }
             // from com.xemantic.kotlin.introspection.test
             fun <P, R> ((P) -> R).handleAll(events: List<P>): List<R>
-            fun (context(String) () -> Unit).runInContext()
             // from kotlin.reflect.jvm
             fun <R> Function<R>.reflect(): KFunction<R>?
         """.trimIndent()
@@ -5354,6 +5378,172 @@ class KotlinIntrospectorTest {
                 override operator fun compareTo(other: BoundedReceiverVersion): Int
             }
         """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class comparable to itself through F-bounded supertype with stdlib extensions on Comparable`() {
+        // BoundedReceiverEntity<BoundedReceiverUser> is Comparable<BoundedReceiverUser>,
+        // pinning T : Comparable<T> to the final class, so that its member coerceAtMost is called instead
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverUser"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverUser [page 1/1]
+            class BoundedReceiverUser : BoundedReceiverEntity<BoundedReceiverUser> {
+                override operator fun compareTo(other: BoundedReceiverUser): Int
+                fun coerceAtMost(maximumValue: BoundedReceiverUser): BoundedReceiverUser
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun <E : BoundedReceiverEntity<E>> E.save(): E
+            // from kotlin
+            inline infix fun <T> Comparable<T>.compareTo(other: T): Int
+            // from kotlin.ranges
+            fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T): T
+            fun <T : Comparable<T>> T.coerceIn(minimumValue: T?, maximumValue: T?): T
+            fun <T : Comparable<T>> T.coerceIn(range: ClosedFloatingPointRange<T>): T
+            fun <T : Comparable<T>> T.coerceIn(range: ClosedRange<T>): T
+            operator fun <T : Comparable<T>> T.rangeTo(that: T): ClosedRange<T>
+            operator fun <T : Comparable<T>> T.rangeUntil(that: T): OpenEndRange<T>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extensions on type parameter with self-referential bound satisfied by its supertype`() {
+        // E is inferred as BoundedReceiverMember, a BoundedReceiverEntity<BoundedReceiverMember>, and T as well,
+        // while BoundedReceiverAdmin, a Comparable<BoundedReceiverMember>, is not a BoundedReceiverEntity<BoundedReceiverAdmin>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverAdmin"
+        ) should {
+            have("fun <E : BoundedReceiverEntity<E>> E.save(): E" in lines())
+            have("fun <T : Comparable<T>> T.coerceAtMost(maximumValue: T): T" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve class comparable to itself through generic interface with stdlib extensions on Comparable`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverRank"
+        ) should {
+            have("fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T): T" in lines())
+        }
+    }
+
+    @Test
+    fun `should not resolve extension on Comparable of other library as member of class comparable to itself`() {
+        // like in the listing of BoundedReceiverVersion, listing only the ones of the standard library
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.BoundedReceiverVersion.isBetween") == null)
+    }
+
+    @Test
+    fun `should resolve class without extensions on type parameter pinned by self-referential bound shadowed by its members`() {
+        // N : BoundedReceiverNode<N> is pinned to the final class, so that its members linkTo and linkSuspending
+        // are called instead, unlike the other ones, see BoundedReceiverLeaf
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverLeaf"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverLeaf [page 1/1]
+            class BoundedReceiverLeaf : BoundedReceiverNode<BoundedReceiverLeaf> {
+                fun linkTo(next: BoundedReceiverLeaf): BoundedReceiverLeaf
+                fun linkAll(nodes: BoundedReceiverLeaf): BoundedReceiverLeaf
+                fun linkOrSelf(next: BoundedReceiverLeaf?): BoundedReceiverLeaf
+                context(log: Logger) fun linkInContext(next: BoundedReceiverLeaf): BoundedReceiverLeaf
+                suspend fun linkSuspending(next: BoundedReceiverLeaf): BoundedReceiverLeaf
+                fun linkMany(vararg next: BoundedReceiverLeaf): BoundedReceiverLeaf
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun <N : BoundedReceiverNode<N>> N.linkAll(vararg nodes: N): N
+            fun <N : BoundedReceiverNode<N>> N.linkInContext(next: N): N
+            fun <N : BoundedReceiverNode<N>> N.linkMany(next: N): N
+            fun <N : BoundedReceiverNode<N>> N.linkOrSelf(next: N? = …): N
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve extension on type parameter pinned by self-referential bound shadowed by suspend member`() {
+        // the member is called also outside a coroutine, failing to compile then
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverLeaf.linkSuspending"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverLeaf.linkSuspending [page 1/1]
+            suspend fun linkSuspending(next: BoundedReceiverLeaf): BoundedReceiverLeaf
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve extension on type parameter pinned by self-referential bound shadowed by inherited member`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverTwig.linkTo"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverTwig.linkTo [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.BoundedReceiverTwigBase
+            fun linkTo(next: BoundedReceiverTwig): BoundedReceiverTwig
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extensions on supertypes of matching type arguments`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverIntBox"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverIntBox [page 1/1]
+            class BoundedReceiverIntBox : BoundedReceiverBox<Int>, BoundedReceiverSource<Int>
+            // from com.xemantic.kotlin.introspection.test
+            fun <T> BoundedReceiverBox<T>.anyBox()
+            fun BoundedReceiverSource<Number>.firstNumber(): Number
+            fun <T, B> B.sameElements() where B : BoundedReceiverBox<T>, B : BoundedReceiverSource<T>
+            fun BoundedReceiverBox<Int>.sumOfInts(): Int
+            fun BoundedReceiverBox<out Number>.sumOfNumbers(): Double
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extensions on supertypes of other type arguments`() {
+        // B : BoundedReceiverSource<T> needs T = String, of which BoundedReceiverSource is the only one,
+        // while B : BoundedReceiverBox<T> needs T = Int
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverMixedBox"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverMixedBox [page 1/1]
+            class BoundedReceiverMixedBox : BoundedReceiverBox<Int>, BoundedReceiverSource<String>
+            // from com.xemantic.kotlin.introspection.test
+            fun <T> BoundedReceiverBox<T>.anyBox()
+            fun BoundedReceiverSource<String>.firstString(): String
+            fun BoundedReceiverBox<Int>.sumOfInts(): Int
+            fun BoundedReceiverBox<out Number>.sumOfNumbers(): Double
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve generic interface with extensions on it of any type arguments`() {
+        // the type parameter T of BoundedReceiverBox stands for any type argument
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverBox"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverBox [page 1/1]
+            interface BoundedReceiverBox<T>
+            // from com.xemantic.kotlin.introspection.test
+            fun <T> BoundedReceiverBox<T>.anyBox()
+            fun BoundedReceiverBox<String>.joinStrings(): String
+            fun BoundedReceiverBox<Int>.sumOfInts(): Int
+            fun BoundedReceiverBox<out Number>.sumOfNumbers(): Double
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class comparable to itself with extension on type parameter bounded by Comparable and its supertype`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverComparableE"
+        ) should {
+            have("fun <T> T.comparableE() where T : Comparable<T>, T : BoundedReceiverE" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve class comparable to another type without extension on type parameter bounded by Comparable`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverComparableToOtherE"
+        ) should {
+            have(lines().none { "comparableE" in it })
+        }
     }
 
     @Test
