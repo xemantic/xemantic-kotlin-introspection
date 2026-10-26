@@ -138,13 +138,7 @@ class ClassLoaderIntrospectionTest {
         // given
         // like by shading, relocating the binary name of the class, but not its name in the Kotlin metadata
         val root = isolatedTestFixturesCopy("relocated", "IsolatedTestClass.class")
-        val original = isolatedTestFixtures
-            .map { it.resolve("com/xemantic/kotlin/introspection/isolated/IsolatedTestClass.class") }
-            .single { it.exists() }
-        val relocatedName = "shaded/com/xemantic/kotlin/introspection/isolated/IsolatedTestClass"
-        val relocated = root.resolve("$relocatedName.class")
-        relocated.parent.createDirectories()
-        relocated.writeBytes(withClassName(original.readBytes(), relocatedName))
+        relocatedCopy(root, "IsolatedTestClass.class")
         val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
 
         // when
@@ -160,6 +154,46 @@ class ClassLoaderIntrospectionTest {
         searchResult sameAs """
             // search results for "IsolatedTestClass" [page 1/1]
             shaded.com.xemantic.kotlin.introspection.isolated.IsolatedTestClass
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should qualify relocated inner class with type parameters of its relocated outer class`() {
+        // given
+        val classFiles = arrayOf("RelocatedGenericOuter.class", "RelocatedGenericOuter\$Cursor.class")
+        val root = isolatedTestFixturesCopy("relocatedInner", *classFiles)
+        relocatedCopy(root, *classFiles)
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("shaded.com.xemantic.kotlin.introspection.isolated.RelocatedGenericOuter.Cursor")
+
+        // then
+        // the outer class is found by its relocated binary name, telling the names of its type parameters
+        signature sameAsKotlin """
+            // shaded.com.xemantic.kotlin.introspection.isolated.RelocatedGenericOuter.Cursor [page 1/1]
+            inner class RelocatedGenericOuter<K>.Cursor : Comparable<K> {
+                override operator fun compareTo(other: K): Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should list member extensions of relocated object from its relocated name`() {
+        // given
+        val root = isolatedTestFixturesCopy("relocatedObject", "RelocatedExtensions.class")
+        relocatedCopy(root, "RelocatedExtensions.class")
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.RelocatedExtensionTarget.relocatedExtension")
+
+        // then
+        // imported from the object by the name it can be resolved by
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.RelocatedExtensionTarget.relocatedExtension [page 1/1]
+            // from shaded.com.xemantic.kotlin.introspection.isolated.RelocatedExtensions
+            fun RelocatedExtensionTarget.relocatedExtension(): Int
         """.trimIndent()
     }
 
@@ -788,6 +822,27 @@ class ClassLoaderIntrospectionTest {
             inner class MissingGenericOuter<T0>.Inner : Comparable<T0> {
                 override operator fun compareTo(other: T0): Int
                 fun <R> map(f: (T0) -> R): R
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should declare type parameters of inner class whose outer class of its outer class has a class file`() {
+        // given
+        val introspector = introspectorWithoutAbsentClass("MissingMidHolder\$Mid.class")
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.MissingMidHolder.Mid.Leaf"
+        )
+
+        // then
+        // the type parameter of the outermost class is known, and the remaining one is given to the missing class
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.MissingMidHolder.Mid.Leaf [page 1/1]
+            inner class MissingMidHolder<A>.Mid<T1>.Leaf : Comparable<T1> {
+                override operator fun compareTo(other: T1): Int
+                fun pair(): Pair<A, T1>
             }
         """.trimIndent()
     }

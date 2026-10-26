@@ -202,6 +202,16 @@ class MissingGenericOuter<T> {
     }
 }
 
+// tests leave the class file of the middle class out, while the outermost one is there
+class MissingMidHolder<A> {
+    inner class Mid<B> {
+        inner class Leaf : Comparable<B> {
+            override fun compareTo(other: B): Int = 0
+            fun pair(): Pair<A, B> = TODO()
+        }
+    }
+}
+
 // the Java superclass cannot be loaded, so that its members and its generic supertypes are read from its class file
 abstract class AbsentGenericJavaLeaf : AbsentGenericJavaMid<String>() {
     override fun process(item: String) {}

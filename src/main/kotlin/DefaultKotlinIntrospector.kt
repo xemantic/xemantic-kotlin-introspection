@@ -1196,7 +1196,7 @@ internal class DefaultKotlinIntrospector(
     ): List<String> {
         // a member inherited by an interface is rendered as within it, like the ones of kotlin.Any
         val isInterface = kmClass.kind == ClassKind.INTERFACE || isInheritedByInterface
-        val typeParameters = typeParametersInScope(kmClass)
+        val typeParameters = typeParametersInScope(kmClass, declarations)
         return when (member) {
             is Member.Property -> formatApiProperty(
                 member.property, scope, declarations,
@@ -2019,7 +2019,7 @@ internal class DefaultKotlinIntrospector(
         val isEnum = kmClass.kind == ClassKind.ENUM_CLASS
         val isAnnotation = kmClass.kind == ClassKind.ANNOTATION_CLASS
         val isSealed = kmClass.modality == Modality.SEALED
-        val typeParameters = typeParametersInScope(kmClass)
+        val typeParameters = typeParametersInScope(kmClass, foundClass)
 
         // Extract the package name for context-aware type formatting
         val contextPackage = contextPackageOf(foundClass, kmClass)
@@ -2121,7 +2121,7 @@ internal class DefaultKotlinIntrospector(
             kmClass.kind == ClassKind.COMPANION_OBJECT && it == DEFAULT_COMPANION_NAME
         } ?: ""
         val header = formatClassHeader(
-            kmClass, formatResolvedClassName(kmClass, name), contextPackage, typeParameters, constructorDeclaration,
+            kmClass, formatResolvedClassName(kmClass, foundClass, name), contextPackage, typeParameters, constructorDeclaration,
             foundClass.classDeprecation
         )
 
@@ -2306,7 +2306,7 @@ internal class DefaultKotlinIntrospector(
         bodyExtensions: ListedExtensions
     ): List<Pair<String, List<String>>> {
         val isInterface = kmClass.kind == ClassKind.INTERFACE
-        val typeParameters = typeParametersInScope(kmClass)
+        val typeParameters = typeParametersInScope(kmClass, declarations)
         val contextPackage = contextPackageOf(declarations, kmClass)
         val isOpenForOverrides = isOpenForOverrides(kmClass, apiClass)
         val builtinClass = declarations as? BuiltinClass
@@ -2466,7 +2466,7 @@ internal class DefaultKotlinIntrospector(
      */
     private fun formatListedClassHeader(listed: ListedClass, contextPackage: String): String =
         formatClassHeader(
-            listed.kmClass, formatListedClassName(listed), contextPackage, typeParametersInScope(listed.kmClass),
+            listed.kmClass, formatListedClassName(listed), contextPackage, typeParametersInScope(listed.kmClass, listed.foundClass),
             deprecation = listed.foundClass.classDeprecation,
             kind = listed.kmClass.kind.takeUnless { it == ClassKind.COMPANION_OBJECT } ?: ClassKind.OBJECT
         )
@@ -2480,7 +2480,7 @@ internal class DefaultKotlinIntrospector(
     private fun formatListedClassName(listed: ListedClass): String {
         val segments = listed.name.split('.')
         val typeArguments = arrayOfNulls<String>(segments.size)
-        outerTypeParametersOf(listed.kmClass).forEachIndexed { index, outer ->
+        outerTypeParametersOf(listed.kmClass, listed.foundClass).forEachIndexed { index, outer ->
             val segment = segments.lastIndex - 1 - index
             if (segment >= 0) typeArguments[segment] = outer.formatTypeArguments()
         }
@@ -2494,8 +2494,8 @@ internal class DefaultKotlinIntrospector(
      * as nothing else declares them, also for the classes listed in it, like `inner class Leaf : Map.Entry<A, B>`
      * of `inner class Holder<A>.Mid<B>`.
      */
-    private fun formatResolvedClassName(kmClass: KmClass, name: String): String {
-        val outers = outerTypeParametersOf(kmClass)
+    private fun formatResolvedClassName(kmClass: KmClass, declarations: ClassDeclarations, name: String): String {
+        val outers = outerTypeParametersOf(kmClass, declarations)
         val qualifying = outers.take(outers.indexOfLast { it.typeParameters.isNotEmpty() } + 1).asReversed()
         return (qualifying.map { escapeIdentifier(simpleClassName(it.name)) + it.formatTypeArguments().orEmpty() } +
             escapeIdentifier(name)).joinToString(".")
@@ -2518,26 +2518,40 @@ internal class DefaultKotlinIntrospector(
 
     /**
      * The outer classes of the [kmClass], from the innermost one, as long as the class enclosed by each is inner,
-     * and can therefore refer to its type parameters, see [OuterTypeParameters].
+     * and can therefore refer to its type parameters, see [OuterTypeParameters],
+     * looked up by their located names, see [locatedNameOf], like the ones of a class relocated by shading,
+     * the [kmClass] being the one of the [declarations].
      * The names of the type parameters of an outer class whose declaration cannot be read,
-     * like when its class file is absent from the classpath, are not known, nor the ones of its own outer classes,
-     * so that the ones the [kmClass] refers to, which are not of the outer classes read, are given to it,
+     * like when its class file is absent from the classpath, are not known, nor whether it is inner itself,
+     * so that the ones the [kmClass] refers to, which are not of the other outer classes read,
+     * like the ones of an outer class of the outer class which cannot be read, are given to it,
      * named by their ids, like `T0`, see [referencedTypeParameterIds].
      */
-    private fun outerTypeParametersOf(kmClass: KmClass): List<OuterTypeParameters> {
+    private fun outerTypeParametersOf(kmClass: KmClass, declarations: ClassDeclarations): List<OuterTypeParameters> {
         val outers = mutableListOf<OuterTypeParameters>()
-        var current = kmClass
-        while (current.isInner) {
-            val outerName = enclosingClassNames(current.name).lastOrNull() ?: break
+        var currentName = (declarations as? FoundClass)?.binaryName?.let { locatedNameOf(it, kmClass.name) } ?: kmClass.name
+        var current: KmClass? = kmClass
+        // the ids referred to which are not told by the outer classes read, once one cannot be read, at that index
+        var unknown: MutableSet<Int>? = null
+        var unreadableIndex = -1
+        while (current?.isInner ?: unknown!!.isNotEmpty()) {
+            val outerName = enclosingClassNames(currentName).lastOrNull() ?: break
             val outer = loadKmClass(outerName)
-            if (outer == null) {
+            val typeParameters = outer?.typeParameters?.namesById().orEmpty()
+            if (outer == null && unknown == null) {
                 val known = kmClass.typeParameters.mapTo(HashSet()) { it.id } + outers.flatMap { it.typeParameters.keys }
-                val unknown = (referencedTypeParameterIds(kmClass) - known).sorted()
-                outers += OuterTypeParameters(outerName, unknown.associateWith { "T$it" })
-                break
+                unknown = (referencedTypeParameterIds(kmClass) - known).toMutableSet()
+                unreadableIndex = outers.size
             }
-            outers += OuterTypeParameters(outerName, outer.typeParameters.namesById())
+            unknown?.removeAll(typeParameters.keys)
+            outers += OuterTypeParameters(outerName, typeParameters)
+            currentName = outerName
             current = outer
+        }
+        if (unknown != null) {
+            outers[unreadableIndex] = OuterTypeParameters(
+                outers[unreadableIndex].name, unknown.sorted().associateWith { "T$it" }
+            )
         }
         return outers
     }
@@ -3089,8 +3103,8 @@ internal class DefaultKotlinIntrospector(
      * including the ones of its outer classes when it is an inner class, see [outerTypeParametersOf],
      * which can be declared in a class other than the one listing it, like a sealed subclass.
      */
-    private fun typeParametersInScope(kmClass: KmClass): Map<Int, String> =
-        outerTypeParametersOf(kmClass).flatMap { it.typeParameters.entries }.associate { it.key to it.value } +
+    private fun typeParametersInScope(kmClass: KmClass, declarations: ClassDeclarations): Map<Int, String> =
+        outerTypeParametersOf(kmClass, declarations).flatMap { it.typeParameters.entries }.associate { it.key to it.value } +
             kmClass.typeParameters.namesById()
 
     private fun KmType.isNullableAny(): Boolean =
@@ -3544,7 +3558,8 @@ internal class DefaultKotlinIntrospector(
                 val isObject = kmClass.kind == ClassKind.OBJECT || kmClass.kind == ClassKind.COMPANION_OBJECT
                 // by the located name, so that a class relocated by shading is indexed next to the original one
                 classes.getOrPut(locatedNameOf(className, kmClass.name)) {
-                    val source = kmClass.name.replace('/', '.')
+                    // the object to import them from, by the name it is found by, see locatedNameOf
+                    val source = locatedNameOf(className, kmClass.name).replace('/', '.')
                     IndexedClass(
                         name = kmClass.name,
                         binaryName = className,

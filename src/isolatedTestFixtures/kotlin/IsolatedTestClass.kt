@@ -27,3 +27,17 @@ fun IsolatedTestClass.isolatedExtension(): Int = value
 internal class RelocatedInternalOuter {
     class PublicNested
 }
+
+// tests relocate it, like shading, together with its inner class
+class RelocatedGenericOuter<K> {
+    inner class Cursor : Comparable<K> {
+        override fun compareTo(other: K): Int = 0
+    }
+}
+
+// tests relocate it, like shading, so that its member extensions are imported from its relocated name
+class RelocatedExtensionTarget
+
+object RelocatedExtensions {
+    fun RelocatedExtensionTarget.relocatedExtension(): Int = 0
+}
