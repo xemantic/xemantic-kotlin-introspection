@@ -1921,7 +1921,14 @@ class ClassLoaderIntrospectionTest {
         // both default-module fixtures write META-INF/main.kotlin_module onto the test classpath,
         // and only one of them would be seen by its resource name, depending on the classpath order,
         // so that a top-level declaration of either, mapped only there, might not be found
-        val moduleFiles = javaClass.classLoader.getResources("META-INF/main.kotlin_module").toList()
+        // a dependency might ship a module file of the same name, which is not checked
+        val fixtureRoots = listOf(
+            "com.xemantic.kotlin.introspection.defaultmodule.DefaultModuleBase",
+            "com.xemantic.kotlin.introspection.otherdefaultmodule.OtherDefaultModuleSubclass"
+        ).map { Class.forName(it).protectionDomain.codeSource.location.toString() }
+        val moduleFiles = javaClass.classLoader.getResources("META-INF/main.kotlin_module").toList().filter { url ->
+            fixtureRoots.any { url.toString().startsWith(it) }
+        }
 
         // when
         val packageParts = moduleFiles.map { url ->
@@ -2158,14 +2165,16 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
-    fun `should find DefaultImpls classes of interfaces without probing them by name when no class file is served`() {
+    fun `should not probe DefaultImpls classes of interfaces without member bodies when no class file is served`() {
         // given
-        val requestedClasses = Collections.synchronizedList(mutableListOf<String>())
+        val failedLoads = Collections.synchronizedList(mutableListOf<String>())
         // like an in-memory class loader, defining the classes without serving their class files as resources
         val classLoader = object : ClassLoader(javaClass.classLoader) {
-            override fun loadClass(name: String, resolve: Boolean): Class<*> {
-                requestedClasses += name
-                return super.loadClass(name, resolve)
+            override fun loadClass(name: String, resolve: Boolean): Class<*> = try {
+                super.loadClass(name, resolve)
+            } catch (e: ClassNotFoundException) {
+                failedLoads += name
+                throw e
             }
 
             override fun getResource(name: String): java.net.URL? =
@@ -2178,12 +2187,11 @@ class ClassLoaderIntrospectionTest {
 
         // when
         // the JVM methods of an interface owning an overload are reflected, also the ones relocated to DefaultImpls,
-        // found among the nested classes of the interface, which most interfaces do not have
+        // which only an interface with member bodies might have, as its metadata tells
         val greeter = introspector.resolve("com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsGreeter")
         val processor = introspector.resolve("com.xemantic.kotlin.introspection.test.OverloadingProcessorInterface")
 
         // then
-        // the private overload, present only in DefaultImpls, is not taken for a shrunk override
         greeter sameAsKotlin """
             // com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsGreeter [page 1/1]
             interface DefaultImplsGreeter : DefaultImplsBase {
@@ -2197,7 +2205,7 @@ class ClassLoaderIntrospectionTest {
                 fun process(item: Int)
             }
         """.trimIndent()
-        assert(requestedClasses.none { it.endsWith("\$DefaultImpls") })
+        assert(failedLoads.none { it.endsWith("\$DefaultImpls") })
     }
 
     /**

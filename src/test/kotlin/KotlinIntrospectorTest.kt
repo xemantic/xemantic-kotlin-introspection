@@ -2710,16 +2710,16 @@ class KotlinIntrospectorTest {
         """.trimIndent()
     }
 
-    // a @PublishedApi internal member is not mangled, so it is assumed to be overridden by a class of a module
-    // of the same name, as an unrelated module cannot be told from the same one then
+    // a @PublishedApi internal member is not mangled, so an unrelated module of the same name cannot be told
+    // from the same one by the JVM methods, but a final member of a final class is not an override
     @Test
-    fun `should mark members named like PublishedApi internal members of superclass of another module of the same name as override`() {
+    fun `should not mark final members named like PublishedApi internal members of superclass of another module of the same name as override`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.otherdefaultmodule.OtherDefaultModulePublishedApiSubclass"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.otherdefaultmodule.OtherDefaultModulePublishedApiSubclass [page 1/1]
             class OtherDefaultModulePublishedApiSubclass : com.xemantic.kotlin.introspection.defaultmodule.DefaultModulePublishedApiBase {
-                override fun publish(x: Int = …)
+                fun publish(x: Int)
             }
         """.trimIndent()
     }
@@ -2737,16 +2737,30 @@ class KotlinIntrospectorTest {
         """.trimIndent()
     }
 
-    // an accepted trade-off: a @PublishedApi internal member is not mangled, so that the public override
-    // of a friend module cannot be told from a member of the same name of an unrelated module,
-    // and it is rendered open, as an override not marked final is
+    // a @PublishedApi internal member is not mangled, so that the public override of a friend module
+    // cannot be told by the JVM methods from a member of the same name of an unrelated module,
+    // but an open member of a final class is an override
     @Test
-    fun `should not mark public overrides of PublishedApi internal members of superclass of a friend module as override`() {
+    fun `should mark public overrides of PublishedApi internal members of superclass of a friend module in final class`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.friendmodule.FriendModulePublishedApiSubclass"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.friendmodule.FriendModulePublishedApiSubclass [page 1/1]
             class FriendModulePublishedApiSubclass : com.xemantic.kotlin.introspection.othermodule.PublishedApiBase {
+                override fun publish()
+            }
+        """.trimIndent()
+    }
+
+    // an accepted trade-off: in a class which is not final, an open member might not be an override,
+    // so that the public override of a friend module cannot be told from a member of an unrelated module
+    @Test
+    fun `should not mark public overrides of PublishedApi internal members of superclass of a friend module in open class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.friendmodule.FriendModuleOpenPublishedApiSubclass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.friendmodule.FriendModuleOpenPublishedApiSubclass [page 1/1]
+            open class FriendModuleOpenPublishedApiSubclass : com.xemantic.kotlin.introspection.othermodule.PublishedApiBase {
                 open fun publish()
             }
         """.trimIndent()

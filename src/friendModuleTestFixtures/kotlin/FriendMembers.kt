@@ -35,3 +35,7 @@ class UnreflectableFriendModuleSubclass : InternalBase() {
 class FriendModulePublishedApiSubclass : com.xemantic.kotlin.introspection.othermodule.PublishedApiBase() {
     public override fun publish() {}
 }
+
+open class FriendModuleOpenPublishedApiSubclass : com.xemantic.kotlin.introspection.othermodule.PublishedApiBase() {
+    public override fun publish() {}
+}

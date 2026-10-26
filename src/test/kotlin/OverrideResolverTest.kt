@@ -132,23 +132,33 @@ class OverrideResolverTest {
     }
 
     @Test
-    fun `should find DefaultImpls among nested classes of interface whose class files are not served`() {
+    fun `should tell DefaultImpls of interface whose class files are not served from its metadata`() {
         // given
-        val requestedClasses = mutableListOf<String>()
-        fun loadClass(name: String): Class<*>? {
-            requestedClasses += name
-            return try {
-                Class.forName(binaryNameOf(name), false, javaClass.classLoader)
-            } catch (_: ClassNotFoundException) {
-                null
+        // like an in-memory class loader of a shrunk app, defining the classes without serving their class files,
+        // and without the InnerClasses attribute, which R8 removes unless told to keep it
+        val fixturesPackage = "com.xemantic.kotlin.introspection.defaultimpls."
+        val classLoader = object : ClassLoader(javaClass.classLoader) {
+            override fun loadClass(name: String, resolve: Boolean): Class<*> = synchronized(getClassLoadingLock(name)) {
+                if (!name.startsWith(fixturesPackage)) return super.loadClass(name, resolve)
+                findLoadedClass(name)?.let { return it }
+                val bytes = parent.getResourceAsStream(name.replace('.', '/') + ".class")
+                    ?.use { it.readBytes() }
+                    ?: throw ClassNotFoundException(name)
+                withoutInnerClasses(bytes).let { defineClass(name, it, 0, it.size) }
             }
+        }
+        val failedLoads = mutableListOf<String>()
+        fun loadClass(name: String): Class<*>? = try {
+            Class.forName(binaryNameOf(name), false, classLoader)
+        } catch (_: ClassNotFoundException) {
+            failedLoads += name
+            null
         }
         fun loadKmClass(name: String): KmClass? = loadClass(name)?.getAnnotation(Metadata::class.java)?.let {
             (KotlinClassMetadata.readStrict(it) as? KotlinClassMetadata.Class)?.kmClass
         }
-        // like an in-memory class loader, defining the classes without serving their class files as resources
         val resolver = OverrideResolver(
-            classLoader = javaClass.classLoader,
+            classLoader = classLoader,
             loadClassByMetadataName = ::loadClass,
             loadKmClassByMetadataName = ::loadKmClass,
             readClassBytesByMetadataName = { null },
@@ -157,19 +167,22 @@ class OverrideResolverTest {
             builtinClasses = { emptyMap() },
             builtinTypes = emptyMap()
         )
-        val greeterName = "com/xemantic/kotlin/introspection/defaultimpls/DefaultImplsGreeter"
-        val greeter = checkNotNull(loadKmClass(greeterName))
-        // compiled with -jvm-default=disable, its JVM method is only in DefaultImplsGreeter${'$'}DefaultImpls
+        // compiled with -jvm-default=disable, its private overload is only in DefaultImplsGreeter${'$'}DefaultImpls
+        val greeter = checkNotNull(loadKmClass("com/xemantic/kotlin/introspection/defaultimpls/DefaultImplsGreeter"))
         val privateOverload = greeter.functions.single { it.name == "greet" && it.visibility == Visibility.PRIVATE }
+        // compiled with the default -jvm-default, without any member body, so without DefaultImpls
+        val processor = checkNotNull(loadKmClass("com/xemantic/kotlin/introspection/test/OverloadingProcessorInterface"))
+        val overload = processor.functions.single { it.name == "process" }
 
         // when
-        val isOverride = resolver.isOverride(greeter, privateOverload)
+        val isPrivateOverloadOverride = resolver.isOverride(greeter, privateOverload)
+        val isOverloadOverride = resolver.isOverride(processor, overload)
 
         // then
         // the private overload, absent from the interface itself, is not taken for a shrunk override
-        assert(!isOverride)
-        // the DefaultImpls class, which most interfaces do not have, is not probed by its name
-        assert(requestedClasses.none { it.endsWith(".DefaultImpls") })
+        assert(!isPrivateOverloadOverride && !isOverloadOverride)
+        // the DefaultImpls class, which an interface without member bodies does not have, is not probed in vain
+        assert(failedLoads.none { it.endsWith(".DefaultImpls") })
     }
 
 }

@@ -127,4 +127,16 @@ internal fun withoutMetadata(bytes: ByteArray): ByteArray {
     return writer.toByteArray()
 }
 
+/**
+ * Removes the `InnerClasses` attribute from the class bytes, like R8 does unless told to keep it,
+ * so that reflection no longer tells the nested classes.
+ */
+internal fun withoutInnerClasses(bytes: ByteArray): ByteArray {
+    val writer = ClassWriter(0)
+    ClassReader(bytes).accept(object : ClassVisitor(Opcodes.ASM9, writer) {
+        override fun visitInnerClass(name: String, outerName: String?, innerName: String?, access: Int) {}
+    }, 0)
+    return writer.toByteArray()
+}
+
 private const val METADATA_DESCRIPTOR = "Lkotlin/Metadata;"
