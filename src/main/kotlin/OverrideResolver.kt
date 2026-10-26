@@ -25,6 +25,7 @@ import org.objectweb.asm.MethodVisitor
 import org.objectweb.asm.Opcodes
 import org.objectweb.asm.signature.SignatureReader
 import org.objectweb.asm.signature.SignatureVisitor
+import java.lang.module.ModuleFinder
 import java.lang.reflect.GenericArrayType
 import java.lang.reflect.MalformedParameterizedTypeException
 import java.lang.reflect.Method
@@ -314,13 +315,16 @@ internal class OverrideResolver(
     private val servesStdlibClassFiles: Boolean by lazy { classLoader.hasClassFile("kotlin.KotlinVersion") }
 
     /**
-     * Whether this class is a platform class, like `java.lang.Throwable`, defined by the bootstrap or the platform class loader,
-     * which is not shrunk with an app.
+     * Whether this class is a platform class, like `java.lang.Throwable`, which is not shrunk with an app:
+     * of a JDK module of the boot layer, whether defined by the bootstrap, the platform,
+     * or the application class loader, like `jdk.compiler`.
      */
     private val Class<*>.isPlatformClass: Boolean
-        get() = classLoader.let { it == null || it === platformClassLoader }
+        get() = this.module.let { it.layer === ModuleLayer.boot() && it.name in systemModuleNames }
 
-    private val platformClassLoader: ClassLoader? = ClassLoader.getPlatformClassLoader()
+    private val systemModuleNames: Set<String> by lazy {
+        ModuleFinder.ofSystem().findAll().mapTo(HashSet()) { it.descriptor().name() }
+    }
 
     /**
      * The Kotlin class names of the built-in types, like `kotlin/collections/Map.Entry`,
@@ -596,8 +600,8 @@ internal class OverrideResolver(
         modality: Modality,
         signature: JvmMethodSignature?
     ): Sequence<Overridable> {
-        val visible = evidence.filter { isVisible(it, owner, modality, isShrunk = true) }
-        return if (visible.isNotEmpty() && isShrunk(signature)) visible.asSequence() else emptySequence()
+        val visible = evidence.asSequence().filter { isVisible(it, owner, modality, isShrunk = true) }
+        return if (visible.any() && isShrunk(signature)) visible else emptySequence()
     }
 
     /**
@@ -748,8 +752,7 @@ internal class OverrideResolver(
 
             declaration.java?.let { javaClass ->
                 val substitution = javaSubstitution(javaClass, supertype)
-                val isPlatform = javaClass.isPlatformClass
-                javaMethods(javaClass, ownerPackage, substitution, isPlatform).forEach { (name, method) ->
+                javaMethods(javaClass, ownerPackage, substitution).forEach { (name, method) ->
                     if (name !in declaration.hiddenJavaMethods) {
                         functions.getOrPut(name) { mutableListOf() } += method
                     }
@@ -1287,12 +1290,11 @@ internal class OverrideResolver(
     private fun javaMethods(
         javaClass: Class<*>,
         ownerPackage: String,
-        substitution: JavaSubstitution,
-        isPlatform: Boolean
+        substitution: JavaSubstitution
     ): List<Pair<String, Overridable>> {
         // a method signature might refer to a class missing from the classpath
         val methods = reflectOrNull { javaClass.declaredMethods }
-            ?: return asmMethods(javaClass, ownerPackage, substitution, isPlatform)
+            ?: return asmMethods(javaClass, ownerPackage, substitution)
         val overridables = methods
             .filter { method ->
                 val modifiers = method.modifiers
@@ -1302,26 +1304,20 @@ internal class OverrideResolver(
                         javaClass.packageName == ownerPackage)
             }
         // a generic type, like a wildcard or a type variable bound, might refer to a class missing from the classpath
-        return reflectOrNull {
-            overridables.map { method -> method.name to javaOverridable(javaClass, method, substitution, isPlatform) }
-        } ?: asmMethods(javaClass, ownerPackage, substitution, isPlatform)
+        return reflectOrNull { overridables.map { method -> method.name to javaOverridable(javaClass, method, substitution) } }
+            ?: asmMethods(javaClass, ownerPackage, substitution)
     }
 
     /**
      * The generic types are resolved lazily, so this might throw when they refer to a class missing from the classpath.
      */
-    private fun javaOverridable(
-        javaClass: Class<*>,
-        method: Method,
-        substitution: JavaSubstitution,
-        isPlatform: Boolean
-    ): Overridable =
+    private fun javaOverridable(javaClass: Class<*>, method: Method, substitution: JavaSubstitution): Overridable =
         Overridable(
             receiver = null,
             parameters = method.genericParameterTypes.map { javaType(it, substitution, method) },
             typeParameterCount = method.typeParameters.size,
             isJava = true,
-            isPlatform = isPlatform,
+            isPlatform = javaClass.isPlatformClass,
             javaKey = javaMemberKey(javaClass.name, method.name, AsmType.getMethodDescriptor(method))
         )
 
@@ -1431,32 +1427,29 @@ internal class OverrideResolver(
     private fun asmMethods(
         javaClass: Class<*>,
         ownerPackage: String,
-        substitution: JavaSubstitution,
-        isPlatform: Boolean
+        substitution: JavaSubstitution
     ): List<Pair<String, Overridable>> {
         val bytes = readClassBytesByMetadataName(kotlinClassName(javaClass)) ?: return emptyList()
         // the methods of a class file which cannot be parsed are unknown
         val methods = readMethods(bytes) ?: return emptyList()
-        return asmMethods(
-            methods, javaClass.packageName, ownerPackage, substitution, className = javaClass.name, isPlatform = isPlatform
-        )
+        return asmMethods(methods, javaClass.packageName, ownerPackage, substitution, javaClass)
     }
 
     /**
      * The overridable [methods] of a Java class of the [packageName], read from its class file,
      * matched by the erasure of the parameter types.
      *
-     * @param className the binary name of the Java class, telling the keys of its methods, see [javaMemberKey].
-     * @param isPlatform whether the Java class is a platform class, see [Overridable.isPlatform].
+     * @param javaClass the Java class, if it can be loaded, telling the keys of its methods, see [javaMemberKey],
+     *   and whether it is a platform class, see [Overridable.isPlatform].
      */
     private fun asmMethods(
         methods: List<DeclaredMethod>,
         packageName: String,
         ownerPackage: String,
         substitution: JavaSubstitution,
-        className: String? = null,
-        isPlatform: Boolean = false
+        javaClass: Class<*>? = null
     ): List<Pair<String, Overridable>> {
+        val isPlatform = javaClass?.isPlatformClass == true
         return methods.mapNotNull { method ->
             val access = method.access
             val isOverridable = access and (Opcodes.ACC_STATIC or Opcodes.ACC_FINAL or Opcodes.ACC_PRIVATE or
@@ -1479,7 +1472,7 @@ internal class OverrideResolver(
                 typeParameterCount = generic?.typeParameters?.size ?: 0,
                 isJava = true,
                 isPlatform = isPlatform,
-                javaKey = className?.let { javaMemberKey(it, method.name, method.descriptor) }
+                javaKey = javaClass?.let { javaMemberKey(it.name, method.name, method.descriptor) }
             )
         }
     }

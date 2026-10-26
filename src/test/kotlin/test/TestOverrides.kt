@@ -828,3 +828,13 @@ abstract class OrderedList : java.util.AbstractList<String>() {
 abstract class OrderedMutableList : MutableList<String> {
     fun sort(descending: Boolean) {}
 }
+
+// A class of a JDK module defined by the application class loader, like jdk.compiler
+abstract class DepthScanner : com.sun.source.util.TreeScanner<Unit, Unit>() {
+    fun scan(depth: Int) {}
+}
+
+// A property whose getter, getProperty(int), is named like Properties.getProperty(String)
+class IndexedProperties : java.util.Properties() {
+    val Int.property: String get() = ""
+}

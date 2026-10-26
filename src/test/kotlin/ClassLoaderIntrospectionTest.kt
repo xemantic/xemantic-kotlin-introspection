@@ -2437,6 +2437,44 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should not mark shrunk overloads of members of classes of JDK modules defined by application class loader as override`() {
+        // given
+        val className = "com.xemantic.kotlin.introspection.test.DepthScanner"
+        val introspector = shrunkIntrospector(className, "scan")
+
+        // when
+        val signature = introspector.resolve(className)
+
+        // then
+        // like jdk.compiler, which is a part of the JDK, though not defined by the platform class loader
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DepthScanner [page 1/1]
+            abstract class DepthScanner : com.sun.source.util.TreeScanner<Unit, Unit> {
+                fun scan(depth: Int)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not mark shrunk properties named like getters of JDK classes as override`() {
+        // given
+        val className = "com.xemantic.kotlin.introspection.test.IndexedProperties"
+        val introspector = shrunkIntrospector(className, "getProperty")
+
+        // when
+        val signature = introspector.resolve(className)
+
+        // then
+        // a shrinker never removes Properties.getProperty(String), so it is not taken for the shrunk overridden getter
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.IndexedProperties [page 1/1]
+            class IndexedProperties : java.util.Properties {
+                val Int.property: String
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should not mark shrunk overloads of members of JDK classes as override`() {
         // given
         val exceptionName = "com.xemantic.kotlin.introspection.test.IndentedException"
