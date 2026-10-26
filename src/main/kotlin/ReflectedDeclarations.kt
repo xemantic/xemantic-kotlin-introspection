@@ -219,7 +219,8 @@ private fun reflectedModality(callable: KCallable<*>): Modality = when {
 private fun KTypeParameter.toKmTypeParameter(scope: ReflectedTypeParameters): KmTypeParameter =
     KmTypeParameter(name, scope.idOf(this), variance.toKmVariance()).also { typeParameter ->
         typeParameter.isReified = isReified
-        upperBounds.mapTo(typeParameter.upperBounds) { it.toKmType(scope) }
+        // like the implicit Any! bound of a Java type parameter, which admits nullable type arguments
+        upperBounds.mapTo(typeParameter.upperBounds) { it.toKmType(scope, platformAsNullable = true) }
     }
 
 /**
@@ -240,7 +241,9 @@ internal fun varargElementType(arrayType: KmType): KmType =
 
 private fun KParameter.toKmValueParameter(position: Int, scope: ReflectedTypeParameters): KmValueParameter =
     KmValueParameter(name ?: "arg$position").also { parameter ->
-        val type = type.toKmType(scope)
+        // a Java parameter of a platform type, like Any! of Object, accepts null,
+        // but a vararg one, whose array is never null, and which tells the nullability of its elements below
+        val type = type.toKmType(scope, platformAsNullable = !isVararg)
         parameter.type = type
         // a vararg parameter is typed as an array, like Array<out T> or IntArray, of its element type
         if (isVararg) {
@@ -273,14 +276,19 @@ private fun classType(name: String, nullable: Boolean = false): KmType = KmType(
 /**
  * The type of the Kotlin metadata described by this [KType], where the type parameters are in the [scope].
  *
+ * A platform type of Java, like `Any!`, see [isPlatformNullable], which cannot be rendered as valid Kotlin,
+ * is nullable when [platformAsNullable], like the type of a value parameter, or the bound of a type parameter,
+ * where it accepts `null`, and else not nullable, like a return type, which Kotlin lets be used as such,
+ * or a type argument, not to flood the signatures with the nullable types, like `Array<StackTraceElement?>`.
+ *
  * A function type is stored like in the Kotlin metadata, see [KmType.decodeFunctionType]:
  * a suspend function type, which kotlin-reflect describes with `R` in place of its trailing `Continuation<R>, Any?`,
  * see [KType.isSuspendFunctionType], gets them back,
  * and the type annotations telling its receiver, its context parameters, and the names of its parameters, are kept.
  */
-internal fun KType.toKmType(scope: ReflectedTypeParameters): KmType {
+internal fun KType.toKmType(scope: ReflectedTypeParameters, platformAsNullable: Boolean = false): KmType {
     val type = KmType()
-    type.isNullable = isMarkedNullable
+    type.isNullable = isMarkedNullable || (platformAsNullable && isPlatformNullable)
     val classifier = classifier
     val isSuspendFunctionType = isSuspendFunctionType
     // a FunctionN is only guessed to be a function type, which an undecodable shape does not confirm

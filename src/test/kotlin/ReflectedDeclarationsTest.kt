@@ -81,6 +81,35 @@ class ReflectedDeclarationsTest {
     }
 
     @Test
+    fun `should render Java parameter of platform type as nullable`() {
+        // given - Object is seen in Kotlin as Any!, accepting null
+        val describe = JavaUnnamedParameters::class.memberFunctions.single { it.name == "describe" }
+
+        // when
+        val rendered = introspector.formatReflectedFunction(describe)
+
+        // then - the return type, which Kotlin lets be used as not nullable, stays so
+        assert(rendered == "open fun describe(arg0: Any?): String")
+    }
+
+    @Test
+    fun `should render Java type parameter bound of platform type as nullable`() {
+        // given - the implicit bound of <T> is Object, seen in Kotlin as Any!
+        val functions = JavaUnnamedParameters::class.memberFunctions.filter { it.name == "first" || it.name == "listOf" }
+
+        // when
+        val rendered = functions.sortedBy { it.name }.map { introspector.formatReflectedFunction(it) }
+
+        // then
+        assert(
+            rendered == listOf(
+                "open fun <T> first(arg0: T?): T",
+                "fun <T> listOf(vararg arg0: T?): List<T>"
+            )
+        )
+    }
+
+    @Test
     fun `should degrade vararg of unknown array type to the array type`() {
         // given - no such vararg type today, but a future standard library could declare one
         val arrayType = KmType().also { it.classifier = KmClassifier.Class("kotlin/FutureArray") }

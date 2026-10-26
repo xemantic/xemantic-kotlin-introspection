@@ -2261,6 +2261,25 @@ internal class DefaultKotlinIntrospector(
     }
 
     /**
+     * The overload signatures, see [overloadSignature], of the extensions which a member [function] shadows,
+     * being called instead, as it accepts the same arguments:
+     * its own one, and the ones where any of its nullable parameters, like the platform type `Any!` of a Java parameter,
+     * see [toKmType], is not nullable, like `printStackTrace(java.io.PrintStream)`
+     * of the member `printStackTrace(arg0: java.io.PrintStream?)` of `java.lang.Throwable`.
+     */
+    private fun shadowingSignatures(function: KmFunction, classTypeParameters: Map<Int, String>): List<String> {
+        val typeParameters = classTypeParameters + function.typeParameters.namesById()
+        return function.valueParameters.fold(listOf(function.name + "(")) { prefixes, parameter ->
+            val separator = if (parameter === function.valueParameters.first()) "" else ", "
+            val types = listOfNotNull(
+                formatType(parameter.type, typeParameters = typeParameters),
+                parameter.type.takeIf { it.isNullable }?.let { formatType(it.notNullable(), typeParameters = typeParameters) }
+            )
+            prefixes.flatMap { prefix -> types.map { prefix + separator + it } }
+        }.map { "$it)" }
+    }
+
+    /**
      * The [listedExtensions] of a built-in type, the [kmClass], reading like its members, see [bodyReceiverSubstitution],
      * which its body lists, except the ones shadowed by its members, called instead,
      * which would read like duplicates of these members,
@@ -2277,7 +2296,7 @@ internal class DefaultKotlinIntrospector(
     ): ListedExtensions {
         val builtinClass = declarations as? BuiltinClass
         val memberFunctionSignatures = (kmClass.functions + builtinClass?.allJvmOnlyFunctions.orEmpty())
-            .mapTo(HashSet()) { overloadSignature(it, typeParameters) }
+            .flatMapTo(HashSet()) { shadowingSignatures(it, typeParameters) }
         val memberPropertyNames = (kmClass.properties + builtinClass?.jvmOnlyProperties.orEmpty()).mapTo(HashSet()) { it.name }
         val signatures = listedExtensions.functions.filter { !it.isObjectMember }.associateWith { extension ->
             bodyReceiverSubstitution(extension.function.receiverParameterType, extension.function.typeParameters, kmClass)
@@ -3112,6 +3131,20 @@ internal class DefaultKotlinIntrospector(
 
     private fun KmType.isNullableAny(): Boolean =
         (classifier as? KmClassifier.Class)?.name == "kotlin/Any" && isNullable
+
+    /**
+     * This type, but not nullable, as a copy, as the types of the metadata are shared.
+     */
+    private fun KmType.notNullable(): KmType = KmType().also { type ->
+        type.classifier = classifier
+        type.arguments += arguments
+        type.abbreviatedType = abbreviatedType
+        type.outerType = outerType
+        type.flexibleTypeUpperBound = flexibleTypeUpperBound
+        type.isSuspend = isSuspend
+        type.isDefinitelyNonNull = isDefinitelyNonNull
+        type.annotations += annotations
+    }
 
     /**
      * Format type parameter declarations, like `<K, out V : Any>`.

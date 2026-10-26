@@ -32,4 +32,17 @@ public class JavaUnnamedParameters {
         return null;
     }
 
+    public String describe(Object value) {
+        return null;
+    }
+
+    public <T> T first(T value) {
+        return null;
+    }
+
+    @SafeVarargs
+    public final <T> java.util.List<T> listOf(T... values) {
+        return null;
+    }
+
 }

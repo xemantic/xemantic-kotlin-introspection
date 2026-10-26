@@ -7818,6 +7818,15 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should not list in body of built-in type extension shadowed by JVM member accepting null`() {
+        // printStackTrace(PrintStream) of java.lang.Throwable, taking the platform type PrintStream!, is called instead
+        resolver.resolve("kotlin.Throwable", pageSize = 10000) should {
+            have("inline fun Throwable.printStackTrace(stream: java.io.PrintStream)" in lines())
+            have("    inline fun printStackTrace(stream: java.io.PrintStream)" !in lines())
+        }
+    }
+
+    @Test
     fun `should resolve JVM-only members of open built-in class as open`() {
         resolver.resolve("kotlin.Throwable", pageSize = 10000) should {
             have("    open fun fillInStackTrace(): Throwable" in lines())
