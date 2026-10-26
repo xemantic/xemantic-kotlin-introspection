@@ -2805,7 +2805,9 @@ internal class DefaultKotlinIntrospector(
      * like when its class file is absent from the classpath, are not known, nor whether it is inner itself,
      * so that the ones the [kmClass] refers to, which are not of the other outer classes read,
      * like the ones of an outer class of the outer class which cannot be read, are given to it,
-     * named by their ids, like `T0`, see [referencedTypeParameterIds].
+     * named by their ids, like `T0`, see [referencedTypeParameterIds],
+     * followed by as many `_` as needed to tell them apart from the type parameters declared otherwise,
+     * like `T0_` when the [kmClass], or one of its members, declares `T0`.
      */
     private fun outerTypeParametersOf(kmClass: KmClass, declarations: ClassDeclarations): List<OuterTypeParameters> {
         val outers = mutableListOf<OuterTypeParameters>()
@@ -2832,12 +2834,21 @@ internal class DefaultKotlinIntrospector(
             current = outer
         }
         if (unknown != null) {
+            val declared = declaredTypeParameterNames(kmClass) + outers.flatMap { it.typeParameters.values }
             outers[unreadableIndex] = OuterTypeParameters(
-                outers[unreadableIndex].name, unknown.sorted().associateWith { "T$it" }
+                outers[unreadableIndex].name,
+                unknown.sorted().associateWith { id -> generateSequence("T$id") { "${it}_" }.first { it !in declared } }
             )
         }
         return outers
     }
+
+    /**
+     * The names of the type parameters which the [kmClass] declares, and its members.
+     */
+    private fun declaredTypeParameterNames(kmClass: KmClass): Set<String> =
+        (kmClass.typeParameters + kmClass.functions.flatMap { it.typeParameters } + kmClass.properties.flatMap { it.typeParameters })
+            .mapTo(HashSet()) { it.name }
 
     /**
      * The ids of the type parameters which the types of the [kmClass] refer to, in its header, and in its members,

@@ -202,6 +202,14 @@ class MissingGenericOuter<T> {
     }
 }
 
+// tests leave the class file of the generic outer class out, while the inner class declares the names given to its type parameters
+class ClashingGenericOuter<T> {
+    inner class Inner<T0> : Comparable<T> {
+        override fun compareTo(other: T): Int = 0
+        fun <T0_> pair(a: T0, b: T0_): Pair<T, T0_> = TODO()
+    }
+}
+
 // tests leave the class file of the middle class out, while the outermost one is there
 class MissingMidHolder<A> {
     inner class Mid<B> {

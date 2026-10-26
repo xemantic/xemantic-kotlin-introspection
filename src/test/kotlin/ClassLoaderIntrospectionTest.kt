@@ -897,6 +897,27 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should name type parameters of outer class without class file apart from the ones of its inner class`() {
+        // given
+        val introspector = introspectorWithoutAbsentClass("ClashingGenericOuter.class")
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.ClashingGenericOuter.Inner"
+        )
+
+        // then
+        // T0, and T0_ of its member, are already declared by the inner class
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.ClashingGenericOuter.Inner [page 1/1]
+            inner class ClashingGenericOuter<T0__>.Inner<T0> : Comparable<T0__> {
+                override operator fun compareTo(other: T0__): Int
+                fun <T0_> pair(a: T0, b: T0_): Pair<T0__, T0_>
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should declare type parameters of inner class whose outer class of its outer class has a class file`() {
         // given
         val introspector = introspectorWithoutAbsentClass("MissingMidHolder\$Mid.class")

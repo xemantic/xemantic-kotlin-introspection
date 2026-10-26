@@ -61,9 +61,11 @@ internal fun binaryNameOf(metadataName: String): String {
  * unless the class is relocated, like by shading, rewriting the binary names, but not the Kotlin metadata,
  * like `shaded/com/example/Outer.Nested` of `shaded.com.example.Outer${'$'}Nested`,
  * so that the classes enclosing it are found by their relocated binary names too, see [binaryNameOf].
+ * The leading `.` of the metadata name of a local class is kept, telling it apart, see [ApiClasses].
  */
 internal fun locatedNameOf(binaryName: String, metadataName: String): String {
     val packageName = binaryName.substringBeforeLast('.', "")
     val simpleName = metadataName.substringAfterLast('/')
-    return if (packageName.isEmpty()) simpleName else "${packageName.replace('.', '/')}/$simpleName"
+    val localPrefix = if (metadataName.startsWith('.')) "." else ""
+    return localPrefix + if (packageName.isEmpty()) simpleName.removePrefix(".") else "${packageName.replace('.', '/')}/$simpleName"
 }
