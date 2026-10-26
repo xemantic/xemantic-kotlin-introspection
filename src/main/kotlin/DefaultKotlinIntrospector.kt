@@ -1627,15 +1627,23 @@ internal class DefaultKotlinIntrospector(
         declarations: ClassDeclarations,
         memberName: String,
         scope: ApiClass
-    ): List<Member> = apiMembersIncludingHidden(kmClass, declarations, memberName, scope).mapNotNull { (member, isHidden) ->
-        member.takeUnless { isHidden }
+    ): List<Member> = apiMembersIncludingHidden(kmClass, declarations, memberName, scope).mapNotNull { apiMember ->
+        apiMember.member.takeUnless { apiMember.isHidden }
+    }
+
+    /**
+     * A [member] of a class, see [apiMembersIncludingHidden], telling whether it [isHidden], deprecated as hidden,
+     * told only when asked, not to compute the deprecations of the members which only override.
+     */
+    private class ApiMember(val member: Member, isHidden: () -> Boolean) {
+        val isHidden: Boolean by lazy(LazyThreadSafetyMode.NONE, isHidden)
     }
 
     /**
      * The members named [memberName] which the [kmClass] declares, which are part of the API in the [scope], see [inApi]:
      * the properties, and the functions, followed by the JVM-only members of a built-in type, see [BuiltinClass],
      * also the ones deprecated as hidden, like the overrides, which hide the members they override, see [inheritedMembers],
-     * each paired with whether it is hidden.
+     * each telling whether it is hidden.
      *
      * @param scope the class of the API telling which of the members are part of it,
      *   the [kmClass] itself, or its subclass inheriting them, see [inheritedMembers].
@@ -1647,16 +1655,16 @@ internal class DefaultKotlinIntrospector(
         memberName: String,
         scope: ApiClass,
         jvmOnlyFunctions: List<KmFunction> = (declarations as? BuiltinClass)?.jvmOnlyFunctions.orEmpty()
-    ): List<Pair<Member, Boolean>> {
+    ): List<ApiMember> {
         val builtinClass = declarations as? BuiltinClass
         val properties = kmClass.properties.filter { it.name == memberName } +
             builtinClass?.jvmOnlyProperties.orEmpty().filter { it.name == memberName }
         val functions = kmClass.functions.filter { it.name == memberName } +
             jvmOnlyFunctions.filter { it.name == memberName }
         return properties.inApi(scope, deprecations = null).map {
-            Member.Property(it) to declarations.isHidden(it, scope)
+            ApiMember(Member.Property(it)) { declarations.isHidden(it, scope) }
         } + functions.inApi(scope, deprecations = null).map {
-            Member.Function(it) to declarations.isHidden(it)
+            ApiMember(Member.Function(it)) { declarations.isHidden(it) }
         }
     }
 
@@ -1713,7 +1721,8 @@ internal class DefaultKotlinIntrospector(
      *   the same for the members of the same signature of unrelated supertypes.
      * @param typeParameters the names of the type parameters the [member] refers to, by their ids.
      * @param isHidden whether the [member] is deprecated as hidden, so that it is not inherited,
-     *   while it still hides the members it overrides.
+     *   while it still hides the members it overrides,
+     *   and the members merged with it, when the compiler picks it of them, see [contribution].
      * @param jvmMethod the JVM method of the [member], see [JvmMethod],
      *   of a JVM-only member of a built-in type, see [BuiltinClass], or of a member of a Java class, see [JavaClass].
      */
@@ -1814,7 +1823,7 @@ internal class DefaultKotlinIntrospector(
      * its members not inherited, so that the members it overrides stand for its overrides, which the user code cannot see.
      * Which members are part of the API is decided by the inheriting class, the [scope],
      * like a protected member, inherited by a final class, which is not.
-     * The members of the [kmClass], see [apiMembersNamed], also the hidden ones, override the ones they match like any other override,
+     * The members of the [kmClass], see [apiMembersIncludingHidden], also the hidden ones, override the ones they match like any other override,
      * so that only the inherited overloads are listed next to them, like `add(element: E)` of `MutableList`
      * next to the `add(index: Int, element: E)` which `AbstractMutableList` declares.
      * A qualified [memberName], like `Nested.member`, names no member, so the supertypes are not walked then.
@@ -1832,6 +1841,38 @@ internal class DefaultKotlinIntrospector(
         contextPackage: String,
         hidingExtensions: MutableList<IndexedExtension>
     ): List<ListingItem.InheritedMember> {
+        val inherited = inheritedCandidates(kmClass, declarations, memberName, scope, hidingExtensions)
+        if (inherited.isEmpty()) return emptyList()
+        val isOpenForOverrides = isOpenForOverrides(kmClass, scope)
+        return inherited.map { candidate ->
+            ListingItem.InheritedMember(
+                candidate.kmClass.name.replace('/', '.'),
+                formatMember(
+                    candidate.member, candidate.kmClass, candidate.declarations, scope, contextPackage,
+                    isOwnerOpenForOverrides = isOpenForOverrides,
+                    // also the open member of a class, unless inherited by an interface,
+                    // where it is rendered as open, like its own members, telling it apart from an abstract one,
+                    // like the member with a body of an interface, rendered as within it
+                    isInheritedByFinalClass = !isOpenForOverrides && kmClass.kind != ClassKind.INTERFACE &&
+                        candidate.kmClass.kind != ClassKind.INTERFACE,
+                    isInheritedByInterface = kmClass.kind == ClassKind.INTERFACE,
+                    typeParameters = candidate.typeParameters
+                )
+            )
+        }
+    }
+
+    /**
+     * The members named [memberName] which the [kmClass] inherits from its supertypes, and does not override,
+     * as candidates rendered by [inheritedMembers], see there.
+     */
+    private fun inheritedCandidates(
+        kmClass: KmClass,
+        declarations: ClassDeclarations,
+        memberName: String,
+        scope: ApiClass,
+        hidingExtensions: MutableList<IndexedExtension>
+    ): List<InheritedCandidate> {
         if ('.' in memberName || kmClass.name == NOTHING_CLASS_NAME) return emptyList()
         // the type parameters in scope of the inheriting class, given as the type arguments of its supertypes,
         // renumbered apart from the ones of the supertypes, see inheritingTypeParameterId
@@ -1841,14 +1882,19 @@ internal class DefaultKotlinIntrospector(
         val visited = hashSetOf(kmClass.name, ANY_CLASS_NAME)
         val pending = ArrayDeque(kmClass.supertypes.map { it.substituted(inheriting) })
         val candidates = mutableListOf<InheritedCandidate>()
+        // the names of the direct supertypes of each class walked, in the order of declaration, see contribution
+        val directSupertypes = hashMapOf(kmClass.name to kmClass.supertypes.classNames())
         fun collect(name: String, supertype: KmType) {
             val superDeclarations = inheritedDeclarations(name)
             val superKmClass = superDeclarations?.kmClass
             if (superDeclarations == null || superKmClass == null) {
-                pending += rawJavaSupertypes(name)
+                val javaSupertypes = rawJavaSupertypes(name)
+                directSupertypes[name] = javaSupertypes.classNames()
+                pending += javaSupertypes
                 return
             }
             val substitution = supertypeSubstitution(superKmClass, supertype)
+            directSupertypes[name] = superKmClass.supertypes.classNames()
             pending += superKmClass.supertypes.map { it.substituted(substitution) }
             if (superDeclarations !is JavaClass && apiClasses.apiClass(superKmClass.name) == null) return
             val jvmOnlyFunctions = (superDeclarations as? BuiltinClass)?.jvmOnlyFunctions.orEmpty()
@@ -1865,7 +1911,8 @@ internal class DefaultKotlinIntrospector(
             val typeParameters = typeParametersInScope(superKmClass, superDeclarations) + inheritingNames
             apiMembersIncludingHidden(
                 superKmClass, superDeclarations, memberName, scope, jvmOnlyFunctionsNotHidden
-            ).forEach { (declared, isHidden) ->
+            ).forEach { apiMember ->
+                val declared = apiMember.member
                 val overridden = (superDeclarations as? JavaClass)?.overriddenMembers(declared)
                     ?: declared.overridden(overrideResolver, superKmClass)
                 val member = declared.substituted(substitution, inheritingNames)
@@ -1873,7 +1920,7 @@ internal class DefaultKotlinIntrospector(
                     superKmClass, superDeclarations, member, declared.key(superKmClass), overridden,
                     signature = member.signature(inheritingNames),
                     typeParameters = typeParameters,
-                    isHidden = isHidden,
+                    isHidden = apiMember.isHidden,
                     // a JVM-only member, or a member of a Java class, is a Java method of its own, which the Kotlin members are not
                     jvmMethod = (declared as? Member.Function)?.function?.let { function ->
                         when {
@@ -1948,7 +1995,7 @@ internal class DefaultKotlinIntrospector(
         val declaredSignatures = HashSet<String>()
         val declaredOverridden = HashSet<String>()
         // also a hidden one, hiding the member it overrides, which cannot be called on the class either
-        apiMembersIncludingHidden(kmClass, declarations, memberName, scope).forEach { (member, _) ->
+        apiMembersIncludingHidden(kmClass, declarations, memberName, scope).map { it.member }.forEach { member ->
             if (member is Member.Function && hasJavaCandidates) {
                 collectJavaOverrides(kmClass, member.declaration)
             }
@@ -1983,47 +2030,50 @@ internal class DefaultKotlinIntrospector(
         }
         // the compiler merges the members which the direct supertypes contribute, each its own, or the one it inherits,
         // also a hidden one overridden by another direct supertype, and picks the one of the most specific return type,
-        // or else the one of the first direct supertype, in the order of declaration,
+        // or else the one of the first direct supertype, in the order of declaration, see contribution,
         // so that none of them can be called when the picked one is hidden, like f() of `interface Join : Left, Right`,
         // whose Left hides the f() which Right does not, while the one of Right is picked for `interface Join : Right, Left`
-        val inherited = if (contenders.none { it.isHidden }) listed else {
-            val directSupertypes = kmClass.supertypes.mapNotNull { (it.classifier as? KmClassifier.Class)?.name }.distinct()
-            // the members each direct supertype contributes, the ones of its own, or of its supertypes, which it does not override
-            val contributed = directSupertypes.map { direct ->
-                val names = supertypeNamesOf(direct)
-                val reachable = contenders.filter {
-                    it.kmClass.name == direct || it.kmClass.name == ANY_CLASS_NAME || it.kmClass.name.replace('/', '.') in names
-                }
-                val overriddenInScope = reachable.flatMapTo(HashSet()) { it.overridden }
-                reachable.filter { it.key !in overriddenInScope }
-            }
-            listed.filter { candidate ->
-                val picks = contributed.map { members ->
-                    val merged = members.filter { it === candidate || it.isMergedWith(candidate) }
-                    if (merged.isEmpty()) null else winner(merged) ?: return@filter true
-                }
-                winner(picks.filterNotNull())?.isHidden != true
-            }
-        }
-
-        val isOpenForOverrides = isOpenForOverrides(kmClass, scope)
-        return inherited.map { candidate ->
-            ListingItem.InheritedMember(
-                candidate.kmClass.name.replace('/', '.'),
-                formatMember(
-                    candidate.member, candidate.kmClass, candidate.declarations, scope, contextPackage,
-                    isOwnerOpenForOverrides = isOpenForOverrides,
-                    // also the open member of a class, unless inherited by an interface,
-                    // where it is rendered as open, like its own members, telling it apart from an abstract one,
-                    // like the member with a body of an interface, rendered as within it
-                    isInheritedByFinalClass = !isOpenForOverrides && kmClass.kind != ClassKind.INTERFACE &&
-                        candidate.kmClass.kind != ClassKind.INTERFACE,
-                    isInheritedByInterface = kmClass.kind == ClassKind.INTERFACE,
-                    typeParameters = candidate.typeParameters
-                )
-            )
+        // the listed member still stands for the picked one, which is visible, like the implementation of an abstract member,
+        // declared by an interface of an intermediate class, of `abstract class Square : Shape, SquareBase()`,
+        // while the compiler picks the abstract one of Shape, the first direct supertype
+        if (candidates.none { it.isHidden }) return listed
+        val candidatesByClass = candidates.groupBy { it.kmClass.name }
+        return listed.filter { candidate ->
+            contribution(kmClass.name, directSupertypes, HashMap(), ::winner) { name ->
+                candidatesByClass[name].orEmpty().filter { it === candidate || it.isMergedWith(candidate) }
+            }.singleOrNull()?.isHidden != true
         }
     }
+
+    /**
+     * The members merged from the supertypes, of the ones of the same group, which the class named [name] contributes
+     * to its subclasses, as the compiler picks them, see [inheritedMembers]:
+     * its own one, of the [members] it declares, or else the one which the [winner] picks
+     * of the ones its [directSupertypes] contribute, in the order of declaration,
+     * like the hidden `f()` of `Left` for `interface Join : Left, Right`, also when `Right` overrides it,
+     * or none, or all of them, when the [winner] cannot pick one.
+     *
+     * @param contributions the members each class contributes, by its name, computed once.
+     */
+    private fun <T : Any> contribution(
+        name: String,
+        directSupertypes: Map<String, List<String>>,
+        contributions: MutableMap<String, List<T>>,
+        winner: (List<T>) -> T?,
+        members: (name: String) -> List<T>
+    ): List<T> = contributions[name] ?: run {
+        val own = members(name)
+        val merged = own.ifEmpty {
+            directSupertypes[name].orEmpty().map { contribution(it, directSupertypes, contributions, winner, members) }
+                .let { picks -> picks.firstOrNull { it.size > 1 } ?: picks.flatten().distinct() }
+        }
+        (winner(merged)?.let { listOf(it) } ?: merged).also { contributions[name] = it }
+    }
+
+    /**
+     * The names of the classes of these types, like the supertypes of a class.
+     */
+    private fun List<KmType>.classNames(): List<String> = mapNotNull { (it.classifier as? KmClassifier.Class)?.name }
 
     /**
      * The id standing for the type parameter of the [id] of a class inheriting the members of its supertypes,
@@ -2195,7 +2245,7 @@ internal class DefaultKotlinIntrospector(
             (kmClass.functions + builtinClass?.jvmOnlyFunctions.orEmpty())
                 .filter { it.name in names && it.receiverParameterType == null }
                 .inApi(apiClass, declarations) +
-                inheritedFunctionsNamed(kmClass, names, apiClass)
+                inheritedFunctionsNamed(kmClass, declarations, names, apiClass)
         }
         val companionDeprecation = companion?.deprecation ?: return unshadowed
         return unshadowed.withCompanionDeprecation("${kmClass.name}.${companion.name}", companionDeprecation)
@@ -2284,32 +2334,20 @@ internal class DefaultKotlinIntrospector(
      * The functions named any of the [names], which the [kmClass], without type parameters, inherits from its supertypes,
      * part of the API in the [scope], with the type arguments of the supertypes substituted, see [supertypeSubstitution],
      * like `fun coerceAtMost(maximumValue: Leaf)` of `fun coerceAtMost(maximumValue: T)` of `Base<Leaf>`,
-     * walked like by [inheritedMembers], but without telling the overridden ones apart, which are of the same signature,
-     * nor the JVM-only ones of a built-in supertype.
+     * as told by [inheritedCandidates], also leaving out the ones merged with a hidden one which the compiler picks,
+     * but the member extensions, and the JVM-only ones of a built-in supertype.
      */
-    private fun inheritedFunctionsNamed(kmClass: KmClass, names: Set<String>, scope: ApiClass): List<KmFunction> {
-        val visited = hashSetOf(kmClass.name)
-        val pending = ArrayDeque(kmClass.supertypes)
-        val functions = mutableListOf<KmFunction>()
-        while (pending.isNotEmpty()) {
-            val supertype = pending.removeFirst()
-            val name = (supertype.classifier as? KmClassifier.Class)?.name ?: continue
-            if (!visited.add(name)) continue
-            val superDeclarations = inheritedDeclarations(name)
-            val superKmClass = superDeclarations?.kmClass
-            if (superDeclarations == null || superKmClass == null) {
-                pending += rawJavaSupertypes(name)
-                continue
+    private fun inheritedFunctionsNamed(
+        kmClass: KmClass,
+        declarations: ClassDeclarations,
+        names: Set<String>,
+        scope: ApiClass
+    ): List<KmFunction> = names.flatMap { name ->
+        inheritedCandidates(kmClass, declarations, name, scope, hidingExtensions = mutableListOf()).mapNotNull { candidate ->
+            (candidate.member as? Member.Function)?.function?.takeUnless {
+                it.receiverParameterType != null || (candidate.declarations is BuiltinClass && candidate.jvmMethod != null)
             }
-            val substitution = supertypeSubstitution(superKmClass, supertype)
-            pending += superKmClass.supertypes.map { it.substituted(substitution) }
-            if (superDeclarations !is JavaClass && apiClasses.apiClass(superKmClass.name) == null) continue
-            functions += superKmClass.functions
-                .filter { it.name in names && it.receiverParameterType == null }
-                .inApi(scope, superDeclarations)
-                .map { it.substituted(substitution, names = emptyMap()) }
         }
-        return functions
     }
 
     /**
