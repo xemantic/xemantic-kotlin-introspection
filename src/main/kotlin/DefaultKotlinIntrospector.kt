@@ -2298,7 +2298,7 @@ internal class DefaultKotlinIntrospector(
             .flatMapTo(HashSet()) { shadowingSignatures(it, typeParameters) }
         val memberPropertyNames = (kmClass.properties + builtinClass?.jvmOnlyProperties.orEmpty()).mapTo(HashSet()) { it.name }
         val signatures = listedExtensions.functions.filter { !it.isObjectMember }.associateWith { extension ->
-            bodyReceiverSubstitution(extension.function.receiverParameterType, extension.function.typeParameters, kmClass)
+            bodyReceiverSubstitution(extension.function, kmClass)
                 ?.let { overloadSignature(extension.function, emptyMap(), it) }
                 ?.takeIf { extension.hidesMembers || it !in memberFunctionSignatures }
         }
@@ -2327,7 +2327,7 @@ internal class DefaultKotlinIntrospector(
     ): List<KmFunction> {
         val jvmOnlyFunctions = (declarations as? BuiltinClass)?.jvmOnlyFunctions.orEmpty()
         val hidden = extensions.functions.filter { it.hidesMembers && !it.isObjectMember }.mapNotNullTo(HashSet()) { extension ->
-            bodyReceiverSubstitution(extension.function.receiverParameterType, extension.function.typeParameters, kmClass)
+            bodyReceiverSubstitution(extension.function, kmClass)
                 ?.let { overloadSignature(extension.function, emptyMap(), it) }
         }
         if (hidden.isEmpty()) return jvmOnlyFunctions
@@ -2382,14 +2382,69 @@ internal class DefaultKotlinIntrospector(
             extension.function.name to listOf(
                 formatFunction(
                     extension.function, contextPackage = contextPackage,
-                    bodyReceiverSubstitution = bodyReceiverSubstitution(
-                        extension.function.receiverParameterType, extension.function.typeParameters, kmClass
-                    ),
+                    bodyReceiverSubstitution = bodyReceiverSubstitution(extension.function, kmClass),
                     deprecation = extension.deprecation
                 )
             )
         }
         return jvmOnlyProperties + jvmOnlyFunctions + bodyExtensionProperties + bodyExtensionFunctions
+    }
+
+    /**
+     * The type parameters of an extension [function] of a built-in type, the [kmClass], see [bodyReceiverSubstitution],
+     * telling the types of its context and value parameters.
+     */
+    @OptIn(ExperimentalContextParameters::class)
+    private fun bodyReceiverSubstitution(function: KmFunction, kmClass: KmClass): Map<Int, String>? =
+        bodyReceiverSubstitution(
+            function.receiverParameterType, function.typeParameters, kmClass,
+            signatureTypes = function.contextParameters.map { it.type } + function.valueParameters.map { it.type }
+        )
+
+    /**
+     * Whether the [type] of a parameter of an extension accepts the same arguments when the type parameter of the [id],
+     * of a type argument of the receiver projected with the [variance], is read as the type parameter of the class,
+     * like `Iterable<T>` read as `Iterable<E>` of `fun <T> MutableCollection<in T>.plusAssign(elements: Iterable<T>)`,
+     * where `T` stands for any subtype of `E`: when it occurs only where a subtype is accepted for `in`,
+     * like the type of the parameter itself, or an `out` type argument, or only where a supertype is accepted for `out`,
+     * like the parameter of a function type, like `(Map.Entry<K, V>) -> Unit` of `fun <K, V> Map<out K, V>.forEach(action)`.
+     * Unlike an invariant type argument, like `Array<T>`, accepting `Array<E>` only, narrower than `Array<out E>`,
+     * or the type of a parameter `key: K` of `fun <K, V> Map<out K, V>.minus(key: K)`, which accepts any supertype of `K`.
+     * The variance of a type parameter of a class which cannot be read is not told, and taken as invariant.
+     */
+    private fun acceptsAsClassTypeParameter(type: KmType, id: Int, variance: KmVariance): Boolean {
+        val required = if (variance == KmVariance.IN) 1 else -1
+        fun accepts(type: KmType, polarity: Int): Boolean {
+            val classifier = type.classifier
+            if (classifier is KmClassifier.TypeParameter && classifier.id == id) return polarity == required
+            val declaredVariances = (classifier as? KmClassifier.Class)?.name?.let(::declaredVariancesOf).orEmpty()
+            return type.arguments.withIndex().all { (index, argument) ->
+                val argumentType = argument.type ?: return@all true
+                val argumentVariance = argument.variance?.takeIf { it != KmVariance.INVARIANT }
+                    ?: declaredVariances.getOrNull(index)
+                    ?: KmVariance.INVARIANT
+                accepts(
+                    argumentType,
+                    when (argumentVariance) {
+                        KmVariance.OUT -> polarity
+                        KmVariance.IN -> -polarity
+                        KmVariance.INVARIANT -> 0
+                    }
+                )
+            } && type.outerType?.let { accepts(it, polarity) } != false
+        }
+        return accepts(type, polarity = 1)
+    }
+
+    /**
+     * The variances of the type parameters of the class of the metadata [name], like `[IN, OUT]` of `kotlin/Function1`,
+     * or none, if it cannot be read.
+     */
+    private fun declaredVariancesOf(name: String): List<KmVariance> {
+        parseFunctionTypeName(name)?.takeIf { it.kind == FunctionTypeKind.FUNCTION }?.let { functionType ->
+            return List(functionType.arity) { KmVariance.IN } + KmVariance.OUT
+        }
+        return (builtinClasses[name] ?: loadKmClass(name))?.typeParameters?.map { it.variance }.orEmpty()
     }
 
     /**
@@ -2405,12 +2460,21 @@ internal class DefaultKotlinIntrospector(
      * like of `fun Iterable<Int>.average()`,
      * or with type parameters which are not just placeholders for the ones of the class,
      * bounded by other types than them, like of `fun <T : Comparable<T>> List<T>.sorted()`, callable only on some of the lists,
-     * or a reified one, or another one sharing the name of a type parameter of the class, which would read like the same one.
+     * or a reified one, or another one sharing the name of a type parameter of the class, which would read like the same one,
+     * or one of a projected type argument, standing for any subtype, like `T` of `MutableCollection<in T>`,
+     * or any supertype, like `K` of `Map<out K, V>`, of the type parameter of the class, see [acceptsAsClassTypeParameter],
+     * unless the projection is the variance of the type parameter of the class, like `out T` of `List<out T>`,
+     * standing for its type argument, like `T` of `List<T>`.
+     *
+     * @param signatureTypes the types of the parameters of the extension, which read the type parameters
+     *   of the class in place of the projected ones, see [acceptsAsClassTypeParameter],
+     *   and the bounds of its other type parameters.
      */
     private fun bodyReceiverSubstitution(
         receiver: KmType?,
         typeParameters: List<KmTypeParameter>,
-        kmClass: KmClass
+        kmClass: KmClass,
+        signatureTypes: List<KmType> = emptyList()
     ): Map<Int, String>? {
         if (receiver == null || receiver.isNullable || (receiver.classifier as? KmClassifier.Class)?.name != kmClass.name) return null
         if (receiver.arguments.size != kmClass.typeParameters.size) return null
@@ -2423,6 +2487,11 @@ internal class DefaultKotlinIntrospector(
             val id = (type.classifier as? KmClassifier.TypeParameter)?.id ?: return null
             val typeParameter = typeParameters.firstOrNull { it.id == id } ?: return null
             if (typeParameter.isReified || substituted.put(typeParameter, classTypeParameter) != null) return null
+            val variance = argument.variance ?: KmVariance.INVARIANT
+            if (variance != KmVariance.INVARIANT && variance != classTypeParameter.variance) {
+                val otherBounds = typeParameters.filter { it.id != id }.flatMap { it.upperBounds }
+                if ((signatureTypes + otherBounds).any { !acceptsAsClassTypeParameter(it, id, variance) }) return null
+            }
         }
         val substitution = substituted.entries.associate { (typeParameter, classTypeParameter) ->
             typeParameter.id to classTypeParameter.name

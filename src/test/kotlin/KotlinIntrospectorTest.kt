@@ -7903,6 +7903,29 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should list extensions of built-in type on in-projected receiver in the class body only when accepting the same arguments`() {
+        // T of MutableCollection<in T> stands for any subtype of E, which Iterable<T> accepts as Iterable<E> does,
+        // unlike the invariant Array<T>, rendered as Array<E>, narrower than it is
+        resolver.resolve("kotlin.collections.MutableCollection", pageSize = 10000) should {
+            have("    inline operator fun plusAssign(element: E)" in lines())
+            have("    inline operator fun plusAssign(elements: Iterable<E>)" in lines())
+            have("    inline operator fun plusAssign(elements: Array<E>)" !in lines())
+            have("inline operator fun <T> MutableCollection<in T>.plusAssign(elements: Array<T>)" in lines())
+        }
+    }
+
+    @Test
+    fun `should list extensions of built-in type on out-projected receiver in the class body only when accepting the same arguments`() {
+        // K of Map<out K, V> stands for any supertype of the K of the class, which a function taking it accepts,
+        // unlike a parameter of the type K itself, rendered as K, narrower than it is
+        resolver.resolve("kotlin.collections.Map", pageSize = 10000) should {
+            have("    inline fun forEach(action: (Map.Entry<K, V>) -> Unit)" in lines())
+            have("    operator fun minus(key: K): Map<K, V>" !in lines())
+            have("operator fun <K, V> Map<out K, V>.minus(key: K): Map<K, V>" in lines())
+        }
+    }
+
+    @Test
     fun `should resolve member of built-in type inherited from its supertype`() {
         // MutableList.get is List.get, rendered as declared there, with the type parameter of List
         resolver.resolve(
