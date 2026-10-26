@@ -21,7 +21,6 @@ package com.xemantic.kotlin.introspection
 import com.xemantic.kotlin.test.assert
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicInteger
-import kotlin.concurrent.thread
 import kotlin.metadata.KmClass
 import kotlin.metadata.KmClassifier
 import kotlin.metadata.KmFunction
@@ -109,20 +108,20 @@ class OverrideResolverTest {
             lookups.incrementAndGet()
             if (name == "test/Base" && lookingUp.count > 0) {
                 lookingUp.countDown()
-                failed.await()
+                awaitOrFail(failed)
             }
             if (name == "test/Base") base else null
         }
         // a transient failure of a lookup of another computation, on another thread
-        val other = thread {
-            lookingUp.await()
+        val other = testThread {
+            awaitOrFail(lookingUp)
             transientFailures.mark()
             failed.countDown()
         }
 
         // when
         val first = resolver.isOverride(owner, function("foo"))
-        other.join()
+        joinOrFail(other)
         val lookupsOfFirst = lookups.get()
         val second = resolver.isOverride(owner, function("foo"))
 
