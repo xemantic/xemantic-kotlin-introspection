@@ -41,3 +41,20 @@ class RelocatedExtensionTarget
 object RelocatedExtensions {
     fun RelocatedExtensionTarget.relocatedExtension(): Int = 0
 }
+
+// tests relocate it, like shading, together with its nested classes and its companion object
+class RelocatedHolder {
+    class Nested
+    companion object {
+        fun create(): RelocatedHolder = RelocatedHolder()
+    }
+}
+
+// tests relocate it, like shading, together with its subclasses, one of them open, so that the protected declarations are listed
+sealed class RelocatedSealed {
+    protected class ProtectedNested
+    protected fun hook() {}
+    class Leaf : RelocatedSealed()
+}
+
+open class RelocatedOpenSubclass : RelocatedSealed()

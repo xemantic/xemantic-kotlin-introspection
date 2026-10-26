@@ -186,6 +186,14 @@ sealed interface KeywordSubclassSealed {
     class `in` : KeywordSubclassSealed
 }
 
+// tests leave the class Absent out, and fail reading this class file, so that its members cannot be reflected
+open class AbsentParameterHidden @Deprecated("replaced", level = DeprecationLevel.HIDDEN) constructor(absent: Absent) {
+    protected fun forSubclasses() {}
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    fun hidden(absent: Absent) {}
+    fun visible() {}
+}
+
 // tests leave the class file of the outer class out
 class MissingOuter {
     class Nested {
@@ -199,6 +207,17 @@ class MissingGenericOuter<T> {
         override fun compareTo(other: T): Int = 0
         // declaring its own type parameter, which is not one of the outer class
         fun <R> map(f: (T) -> R): R = f(TODO())
+    }
+}
+
+// tests leave the class file of the generic outer class out, while the inner class declares the names given to its type parameters
+class ClashingGenericOuter<T> {
+    inner class Inner<T0> : Comparable<T> {
+        override fun compareTo(other: T): Int = 0
+        fun <T0_> pair(a: T0, b: T0_): Pair<T, T0_> = TODO()
+        inner class Deep : Comparable<T> {
+            override fun compareTo(other: T): Int = 0
+        }
     }
 }
 

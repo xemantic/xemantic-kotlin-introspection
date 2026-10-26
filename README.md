@@ -224,9 +224,9 @@ com.example.AnnotationTestClass
   A class nested in a class whose class file is absent from the classpath is assumed to be part of the API,
   unlike the one nested in a class whose class file cannot be read.
   A class relocated by shading, whose Kotlin metadata keeps its original name,
-  is resolved and found by its relocated name, together with its enclosing classes,
-  but listed without its nested classes, its companion object, and its sealed subclasses,
-  which are still looked up by their original names.
+  is resolved, found, and listed by its relocated name,
+  together with its enclosing classes, its nested classes, its companion object, and its sealed subclasses,
+  while the types its declarations refer to keep their original names.
   A declaration within a protected class, like a protected companion object,
   resolved directly, follows a comment telling that class,
   like `// in protected companion object Outer.Named`,
@@ -285,7 +285,11 @@ com.example.AnnotationTestClass
   as nothing else in its listing declares the type parameters of its outer classes.
   When the class file of such an outer class is absent from the classpath,
   the names of its type parameters are not known,
-  and the ones the inner class refers to are named by their ids in the metadata, like `Outer<T0>.Inner`.
+  and the ones the inner class refers to are named by their ids in the metadata, like `Outer<T0>.Inner`,
+  followed by `_` when the inner class, one of its outer classes read, or one of their members,
+  declares a type parameter of the same name, like `Outer<T0_>.Inner<T0>`.
+  The ones it does not refer to are not known, nor how they are split between two such outer classes,
+  so that all of them are given to the innermost one, like `Mid<T0, T1>.Leaf`.
   A sealed subclass which cannot be listed is still told with a comment following them,
   as a `when` expression has to cover it:
   `// sealed subclass not found: com.example.Sub` when its class file is missing from the classpath,

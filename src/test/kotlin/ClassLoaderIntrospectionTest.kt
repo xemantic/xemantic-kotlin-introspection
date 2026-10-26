@@ -202,6 +202,71 @@ class ClassLoaderIntrospectionTest {
         """.trimIndent()
     }
 
+    @Test
+    fun `should list nested classes and companion object of relocated class`() {
+        // given
+        val classFiles = arrayOf("RelocatedHolder.class", "RelocatedHolder\$Nested.class", "RelocatedHolder\$Companion.class")
+        val root = isolatedTestFixturesCopy("relocatedHolder", *classFiles)
+        relocatedCopy(root, *classFiles)
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("shaded.com.xemantic.kotlin.introspection.isolated.RelocatedHolder")
+        val member = introspector.resolve("shaded.com.xemantic.kotlin.introspection.isolated.RelocatedHolder.create")
+
+        // then
+        // looked up by their relocated names, unlike the ones of the metadata,
+        // which the types still refer to, qualified, as they are not in the package of the relocated class
+        signature sameAsKotlin """
+            // shaded.com.xemantic.kotlin.introspection.isolated.RelocatedHolder [page 1/1]
+            class RelocatedHolder {
+                class Nested
+                companion object {
+                    fun create(): com.xemantic.kotlin.introspection.isolated.RelocatedHolder
+                }
+            }
+        """.trimIndent()
+        member sameAsKotlin """
+            // shaded.com.xemantic.kotlin.introspection.isolated.RelocatedHolder.create [page 1/1]
+            companion object {
+                fun create(): com.xemantic.kotlin.introspection.isolated.RelocatedHolder
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should list sealed subclasses of relocated sealed class, open through its relocated open subclass`() {
+        // given
+        val classFiles = arrayOf(
+            "RelocatedSealed.class",
+            "RelocatedSealed\$Leaf.class",
+            "RelocatedSealed\$ProtectedNested.class",
+            "RelocatedOpenSubclass.class"
+        )
+        val root = isolatedTestFixturesCopy("relocatedSealed", *classFiles)
+        relocatedCopy(root, *classFiles)
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("shaded.com.xemantic.kotlin.introspection.isolated.RelocatedSealed")
+        val searchResult = introspector.search("ProtectedNested")
+
+        // then
+        // the protected declarations can be used by a subclass of the open subclass,
+        // whose supertype is still the one of the metadata
+        signature sameAsKotlin """
+            // shaded.com.xemantic.kotlin.introspection.isolated.RelocatedSealed [page 1/1]
+            sealed class RelocatedSealed {
+                class Leaf : com.xemantic.kotlin.introspection.isolated.RelocatedSealed
+                open class RelocatedOpenSubclass : com.xemantic.kotlin.introspection.isolated.RelocatedSealed
+                protected class ProtectedNested
+                protected fun hook()
+            }
+        """.trimIndent()
+        // also by the classpath scan
+        assert(searchResult?.lines()?.contains("shaded.com.xemantic.kotlin.introspection.isolated.RelocatedSealed.ProtectedNested") == true)
+    }
+
     /**
      * A copy of the isolated test fixture class files named [fileNames], in the [root] directory,
      * relocated to the `shaded` package, like by shading, which does not rewrite their Kotlin metadata.
@@ -729,6 +794,63 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should neither resolve nor find nested class of outer class whose class file is there, but cannot be opened`() {
+        // given
+        val root = isolatedTestFixturesCopy("withoutUnopenedOuter", "StrippedOuter.class")
+        val outside = isolatedTestFixturesCopy("unopenedOuterOnly", isAbsent = { it != "StrippedOuter.class" })
+        val outsideLoader = URLClassLoader(arrayOf(outside.toUri().toURL()), null)
+        // like a URLClassLoader swallowing the IOException of opening a class file found outside the classpath roots,
+        // which it cannot load then either
+        val classLoader = object : URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader) {
+            override fun findResource(name: String): URL? = super.findResource(name) ?: outsideLoader.findResource(name)
+
+            override fun getResourceAsStream(name: String): InputStream? =
+                if (name.endsWith("/StrippedOuter.class")) null else super.getResourceAsStream(name)
+        }
+        val introspector = KotlinIntrospector(classLoader)
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.StrippedOuter.Nested")
+        val searchResult = introspector.search("Nested", pageSize = 1000)
+
+        // then
+        // the outer class is not absent, so it might be private, like it is
+        assert(signature == null)
+        assert(searchResult?.contains("StrippedOuter") != true)
+    }
+
+    @Test
+    fun `should find nested class of outer class served outside the classpath roots after a transient IOException`() {
+        // given
+        val root = isolatedTestFixturesCopy("withoutOuter", "MissingOuter.class")
+        val outside = isolatedTestFixturesCopy("outerOnly", isAbsent = { it != "MissingOuter.class" })
+        val outsideLoader = URLClassLoader(arrayOf(outside.toUri().toURL()), null)
+        val outerClassFile = "com/xemantic/kotlin/introspection/isolated/MissingOuter.class"
+        val outerReads = java.util.concurrent.atomic.AtomicInteger()
+        // like a class loader serving some classes from elsewhere than its classpath roots, failing to read one once
+        val classLoader = object : URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader) {
+            override fun findResource(name: String): URL? = super.findResource(name) ?: outsideLoader.findResource(name)
+
+            override fun getResourceAsStream(name: String): InputStream? =
+                if (name == outerClassFile && outerReads.incrementAndGet() == 1) {
+                    object : InputStream() {
+                        override fun read(): Int = throw IOException("transient failure of $name")
+                    }
+                } else {
+                    super.getResourceAsStream(name)
+                }
+        }
+
+        // when
+        val searchResult = KotlinIntrospector(classLoader).search("Nested", pageSize = 1000)
+
+        // then
+        // the class file of the outer class read again, telling it is public
+        assert(searchResult?.lines()?.contains("com.xemantic.kotlin.introspection.isolated.MissingOuter.Nested") == true)
+        assert(outerReads.get() == 2)
+    }
+
+    @Test
     fun `should tell sealed subclass without metadata as not read`() {
         // given
         val introspector = introspectorWithoutMetadata("StrippedSealed\$Stripped.class")
@@ -827,6 +949,38 @@ class ClassLoaderIntrospectionTest {
             inner class MissingGenericOuter<T0>.Inner : Comparable<T0> {
                 override operator fun compareTo(other: T0): Int
                 fun <R> map(f: (T0) -> R): R
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should name type parameters of outer class without class file apart from the ones of its inner class`() {
+        // given
+        val introspector = introspectorWithoutAbsentClass("ClashingGenericOuter.class")
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.ClashingGenericOuter.Inner"
+        )
+        val deep = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.ClashingGenericOuter.Inner.Deep"
+        )
+
+        // then
+        // T0, and T0_ of its member, are already declared by the inner class,
+        // also for the inner class nested in it, which its outer classes read declare too
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.ClashingGenericOuter.Inner [page 1/1]
+            inner class ClashingGenericOuter<T0__>.Inner<T0> : Comparable<T0__> {
+                inner class Deep : Comparable<T0__>
+                override operator fun compareTo(other: T0__): Int
+                fun <T0_> pair(a: T0, b: T0_): Pair<T0__, T0_>
+            }
+        """.trimIndent()
+        deep sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.ClashingGenericOuter.Inner.Deep [page 1/1]
+            inner class ClashingGenericOuter<T0__>.Inner<T0>.Deep : Comparable<T0__> {
+                override operator fun compareTo(other: T0__): Int
             }
         """.trimIndent()
     }
@@ -1098,21 +1252,62 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
-    fun `should read class file again after a transient IOException, to hide the members deprecated as HIDDEN`() {
+    fun `should read class file again after a transient IOException, to tell the scope and hide the members deprecated as HIDDEN`() {
         // given
-        // the deprecations of the properties of an interface compiled without the JVM default methods are told
-        // only by the class files, of the interface and of its DefaultImpls, not by the reflection of the interface
-        val target = "com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsHiddenProperties"
-        val classLoader = CountingClassLoader(javaClass.classLoader, unreadableOnce = setOf(target))
+        val root = isolatedTestFixturesCopy("absentParameterHidden", "Absent.class")
+        val reads = java.util.concurrent.atomic.AtomicInteger()
+        // like a URLClassLoader whose jar cannot be read for now, while the class is already loaded
+        val classLoader = object : URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader) {
+            override fun getResourceAsStream(name: String): InputStream? =
+                if (name.endsWith("/AbsentParameterHidden.class") && reads.incrementAndGet() == 1) {
+                    object : InputStream() {
+                        override fun read(): Int = throw IOException("transient failure of $name")
+                    }
+                } else {
+                    super.getResourceAsStream(name)
+                }
+        }
         val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
 
         // when
-        val signatures = List(2) { introspector.resolve(target) }
+        val signatures = List(2) { introspector.resolve("com.xemantic.kotlin.introspection.isolated.AbsentParameterHidden") }
 
         // then
-        assert(signatures[0] != null && "val hiddenAbstract: Int" in signatures[0]!!)
-        assert(signatures[1] != null && "hiddenAbstract" !in signatures[1]!!)
-        assert(classLoader.reads[target] == 2)
+        // reflected the first time, where none of the members can be, as a type of one of them cannot be loaded,
+        // and read from the class file the second time, telling the hidden members,
+        // like the constructor, so that the class cannot be subclassed
+        assert(signatures[0] != null && "protected fun forSubclasses()" in signatures[0]!! && "fun hidden(absent: Absent)" in signatures[0]!!)
+        signatures[1] sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.AbsentParameterHidden [page 1/1]
+            open class AbsentParameterHidden private constructor() {
+                fun visible()
+            }
+        """.trimIndent()
+        assert(reads.get() == 2)
+    }
+
+    @Test
+    fun `should reflect deprecations of interface properties kept in DefaultImpls, when the class file is not served`() {
+        // given
+        // the deprecations of the properties of an interface compiled without the JVM default methods
+        // are kept on the synthetic methods for their annotations in its DefaultImpls class
+        val target = "com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsHiddenProperties"
+        val classLoader = CountingClassLoader(
+            javaClass.classLoader,
+            unreadable = setOf(target, "$target\$DefaultImpls")
+        )
+        val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
+
+        // when
+        val signature = introspector.resolve(target)
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsHiddenProperties [page 1/1]
+            interface DefaultImplsHiddenProperties {
+                val visible: Int
+            }
+        """.trimIndent()
     }
 
     @Test
@@ -1134,23 +1329,6 @@ class ClassLoaderIntrospectionTest {
         // then
         // an absent enclosing class would be assumed public, while this one is there, only not read for now
         assert(signatures == listOf(null, null))
-    }
-
-    @Test
-    fun `should tell class scope again after a transient IOException reading its class file`() {
-        // given
-        val target = "com.xemantic.kotlin.introspection.test.HiddenConstructorOpenClass"
-        val classLoader = CountingClassLoader(javaClass.classLoader, unreadableOnce = setOf(target))
-        val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
-
-        // when
-        val signatures = List(2) { introspector.resolve(target) }
-
-        // then
-        // the hidden constructor is reflected while the class file cannot be read, and read from it once it can
-        assert(signatures[0] != null && "protectedMember" !in signatures[0]!!)
-        assert(signatures[1] == signatures[0])
-        assert(classLoader.reads[target] == 2)
     }
 
     @Test
