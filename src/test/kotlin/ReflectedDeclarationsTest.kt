@@ -194,6 +194,17 @@ class ReflectedDeclarationsTest {
     }
 
     @Test
+    fun `should leave parameterless Java-only members of built-in type described by kotlin-reflect to the JVM-only ones`() {
+        // when - like fillInStackTrace(), getLocalizedMessage(), or printStackTrace(), declared next to printStackTrace(arg0)
+        val throwable = Throwable::class.toKmBuiltinClass("kotlin/Throwable")
+        val collection = Collection::class.toKmBuiltinClass("kotlin/collections/Collection")
+
+        // then - like stream(), referring to a Java type, which no built-in declaration does
+        assert(throwable.functions.map { it.name }.isEmpty())
+        assert(collection.functions.map { it.name }.sorted() == listOf("contains", "containsAll", "isEmpty", "iterator"))
+    }
+
+    @Test
     fun `should degrade vararg of unknown array type to the array type`() {
         // given - no such vararg type today, but a future standard library could declare one
         val arrayType = KmType().also { it.classifier = KmClassifier.Class("kotlin/FutureArray") }
