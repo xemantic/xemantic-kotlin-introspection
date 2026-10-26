@@ -121,18 +121,10 @@ class ClassLoaderIntrospectionTest {
         vararg absentClassFiles: String,
         isAbsent: (fileName: String) -> Boolean = { false },
         transform: (fileName: String, bytes: ByteArray) -> ByteArray = { _, bytes -> bytes }
-    ): Path {
-        val root = tempDir.resolve(name)
-        isolatedTestFixtures.filter { it.exists() }.forEach { dir ->
-            val files = dir.walkTopDown().filter { it.isFile && it.name !in absentClassFiles && !isAbsent(it.name) }
-            files.forEach { file ->
-                val target = root.resolve(file.relativeTo(dir).path).toFile()
-                target.parentFile.mkdirs()
-                target.writeBytes(transform(file.name, file.readBytes()))
-            }
-        }
-        return root
-    }
+    ): Path = testFixturesCopy(
+        isolatedTestFixtures.filter { it.exists() }, tempDir.resolve(name),
+        isAbsent = { it in absentClassFiles || isAbsent(it) }, transform = transform
+    )
 
     @Test
     fun `should resolve and find class relocated without its metadata`() {

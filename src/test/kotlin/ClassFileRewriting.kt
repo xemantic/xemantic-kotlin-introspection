@@ -130,19 +130,21 @@ internal fun withContextReceiversInMetadata(bytes: ByteArray, vararg types: KmTy
  * see [withContextReceiversInMetadata], given the [fileName] and the [bytes] of a class file, keeping the other ones,
  * shared with the parse test of the rendered declarations, so that it parses the very listings rendered of them.
  */
-internal fun withLegacyContextReceivers(fileName: String, bytes: ByteArray): ByteArray {
-    val logger = KmType().apply { classifier = KmClassifier.Class("com/xemantic/kotlin/introspection/isolated/LegacyLogger") }
-    // the type parameter T of the class, or of the outer class
-    val comparator = KmType().apply {
-        classifier = KmClassifier.Class("kotlin/Comparator")
-        arguments += KmTypeProjection(KmVariance.INVARIANT, KmType().apply { classifier = KmClassifier.TypeParameter(0) })
-    }
-    return when (fileName) {
-        "LegacyContextReceiverClass.class" -> withContextReceiversInMetadata(bytes, logger, comparator)
-        "LegacyContextReceiverValue.class" -> withContextReceiversInMetadata(bytes, logger)
-        "LegacyContextReceiverOuter\$Inner.class" -> withContextReceiversInMetadata(bytes, comparator)
-        else -> bytes
-    }
+internal fun withLegacyContextReceivers(fileName: String, bytes: ByteArray): ByteArray = when (fileName) {
+    "LegacyContextReceiverClass.class" -> withContextReceiversInMetadata(bytes, legacyLogger, legacyComparator)
+    "LegacyContextReceiverValue.class" -> withContextReceiversInMetadata(bytes, legacyLogger)
+    "LegacyContextReceiverOuter\$Inner.class" -> withContextReceiversInMetadata(bytes, legacyComparator)
+    else -> bytes
+}
+
+private val legacyLogger = KmType().apply { classifier = KmClassifier.Class("com/xemantic/kotlin/introspection/isolated/LegacyLogger") }
+
+/**
+ * The `Comparator<T>` of the type parameter `T` of the class, or of the outer class.
+ */
+private val legacyComparator = KmType().apply {
+    classifier = KmClassifier.Class("kotlin/Comparator")
+    arguments += KmTypeProjection(KmVariance.INVARIANT, KmType().apply { classifier = KmClassifier.TypeParameter(0) })
 }
 
 internal fun withMetadataKind(bytes: ByteArray, kind: Int): ByteArray = withMetadata(bytes) {

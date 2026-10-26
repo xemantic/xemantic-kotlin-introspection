@@ -128,13 +128,14 @@ class RenderedDeclarationsParseTest {
 
             // when
             listOf("LegacyContextReceiverClass", "LegacyContextReceiverValue", "LegacyContextReceiverOuter").map { name ->
-                introspector.resolve("com.xemantic.kotlin.introspection.isolated.$name")!!
+                val className = "com.xemantic.kotlin.introspection.isolated.$name"
+                requireNotNull(introspector.resolve(className)) { className }
             }
         }
         val errors = listings.flatMap { parseErrors(toParsableKotlin(it)) }
 
         // then
-        assert(listings.all { "context(" in it })
+        assert(listings.all { "context(" in it && "/* legacy context receivers" in it })
         assert(errors.isEmpty())
     }
 
@@ -209,15 +210,7 @@ private val kotlinClassLoader = object : ClassLoader(getPlatformClassLoader()) {
  * seen through their own class loader, like the [introspectedClassLoader].
  */
 private fun legacyContextReceiversClassLoader(root: Path): URLClassLoader {
-    requireNotNull(System.getProperty("isolatedTestFixtures")) { "run via ./gradlew parseTest" }
-        .split(File.pathSeparator).filter { it.isNotEmpty() }.map(::File).filter { it.exists() }
-        .forEach { dir ->
-            dir.walkTopDown().filter { it.isFile }.forEach { file ->
-                val target = root.resolve(file.relativeTo(dir).path).toFile()
-                target.parentFile.mkdirs()
-                target.writeBytes(withLegacyContextReceivers(file.name, file.readBytes()))
-            }
-        }
+    testFixturesCopy(testFixtures("isolatedTestFixtures"), root, transform = ::withLegacyContextReceivers)
     return URLClassLoader(arrayOf(root.toUri().toURL()), kotlinClassLoader)
 }
 

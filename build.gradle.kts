@@ -158,8 +158,6 @@ tasks.test {
 testing {
     suites {
         register<JvmTestSuite>("parseTest") {
-            // the logging configured like for the other tests
-            sources.resources.srcDir("src/test/resources")
             dependencies {
                 implementation(project())
                 implementation(libs.kotlin.test.junit5)
