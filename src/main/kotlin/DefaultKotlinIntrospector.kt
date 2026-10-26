@@ -914,15 +914,19 @@ internal class DefaultKotlinIntrospector(
      * and which is not cached, as the names whose misses are not cached come from the user input.
      */
     private fun lookUpClassByBinaryName(binaryName: String, isMissCached: Boolean = true): ClassLookup {
-        while (true) {
+        repeat(2) {
             val computed = foundClasses.getOrCompute(binaryName) {
                 val lookup = attemptLookUpClass(binaryName, isMissProbed = isMissCached)
                 BoundedCache.Computed(lookup, isCacheable = lookup.isFinal && lookup.isMissProbed)
             }
             // also when computed by another thread
-            if (isMissCached && !computed.value.isMissProbed) continue
-            return computed.value.markedUnlessFinal()
+            if (!isMissCached || computed.value.isMissProbed) return computed.value.markedUnlessFinal()
         }
+        // after the misses of two concurrent lookups by name in a row, looked up outside the cache entry,
+        // which the lookups by name might keep taking for good, cached unless it might be transient
+        val lookup = attemptLookUpClass(binaryName, isMissProbed = true)
+        if (lookup.isFinal) foundClasses.put(binaryName, lookup)
+        return lookup.markedUnlessFinal()
     }
 
     /**
@@ -966,7 +970,7 @@ internal class DefaultKotlinIntrospector(
      * @param classFileAbsence whether the class file of a class which is not found is absent, see [isAbsent],
      *   told only when needed, `null` when its class file is known to be there.
      * @param isMissProbed whether the class is found, or its miss told apart from a class failing to load, see [lookUpClass],
-     *   unlike a miss which is not probed.
+     *   unlike a miss which is not probed, unless it is caused by an `IOException`.
      */
     private class ClassLookup(
         val foundClass: FoundClass?,
@@ -992,13 +996,15 @@ internal class DefaultKotlinIntrospector(
     private fun lookUpClass(binaryName: String, isMissProbed: Boolean): ClassLookup = try {
         val clazz = classLoader.loadClass(binaryName)
         ClassLookup(FoundClass(binaryName, clazz), isFinal = true)
-    } catch (_: ClassNotFoundException) {
-        // also thrown when the class file is there, but cannot be read, like by a URLClassLoader after an IOException
+    } catch (e: ClassNotFoundException) {
+        // also thrown when the class file is there, but cannot be read, like by a URLClassLoader after an IOException,
+        // which then tells a transient failure without probing the class file, when kept as the cause
+        val isIOFailure = isCausedByIOException(e)
         ClassLookup(
             null,
-            isFinal = !isMissProbed || !classLoader.hasClassFile(binaryName),
+            isFinal = !isIOFailure && (!isMissProbed || !classLoader.hasClassFile(binaryName)),
             classFileAbsence = classFileAbsence(binaryName),
-            isMissProbed = isMissProbed
+            isMissProbed = isMissProbed || isIOFailure
         )
     } catch (e: LinkageError) {
         // the class file is there, but refers to a class which is not, like its supertype,
@@ -1028,9 +1034,14 @@ internal class DefaultKotlinIntrospector(
      * also when the class loader does not keep the `IOException` as a cause, which then cannot be told.
      */
     private fun isTransientLinkageError(e: LinkageError): Boolean =
-        e.javaClass == LinkageError::class.java || e is ClassCircularityError ||
-            // bounded, as the causes might form a cycle
-            generateSequence(e.cause) { it.cause }.take(16).any { it is IOException }
+        e.javaClass == LinkageError::class.java || e is ClassCircularityError || isCausedByIOException(e)
+
+    /**
+     * Whether the failure [e] is caused by an `IOException`, maybe transient, like of a class file which cannot be read for now.
+     */
+    private fun isCausedByIOException(e: Throwable): Boolean =
+        // bounded, as the causes might form a cycle
+        generateSequence(e.cause) { it.cause }.take(16).any { it is IOException }
 
     /**
      * Reads the class file of a class by its JVM [binaryName] for the [overrideResolver],

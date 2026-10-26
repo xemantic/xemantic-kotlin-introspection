@@ -86,3 +86,13 @@ internal fun pollUntil(condition: () -> Boolean): Boolean {
     }
     return true
 }
+
+/**
+ * Whether this thread waits for a value of a [BoundedCache] computed by another thread,
+ * blocked on the lock of its lazy value, and not momentarily on anything else, like on loading a class,
+ * to be polled, see [pollUntil], as it might never wait at all.
+ */
+internal fun Thread.isWaitingForComputation(): Boolean =
+    state == Thread.State.BLOCKED && stackTrace.firstOrNull().let { frame ->
+        frame != null && "Lazy" in frame.className && frame.methodName == "getValue"
+    }

@@ -64,15 +64,6 @@ class BoundedCacheTest {
         assert(computations.get() == 1 && secondValue == "first")
     }
 
-    /**
-     * Whether this thread is blocked within the cache, like on the lock of the value computed by another thread,
-     * and not momentarily on anything else, like on loading a class.
-     */
-    private fun Thread.isWaitingForComputation(): Boolean =
-        state == Thread.State.BLOCKED && stackTrace.firstOrNull().let { frame ->
-            frame != null && (frame.className == BoundedCache::class.java.name || frame.methodName == "getValue")
-        }
-
     @Test
     fun `should evict least recently used value beyond capacity`() {
         // given

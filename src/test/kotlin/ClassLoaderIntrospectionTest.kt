@@ -1075,6 +1075,30 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should count failing lookup by name after ClassNotFoundException caused by IOException`() {
+        // given
+        val holder = "com.xemantic.kotlin.introspection.test.TypeParametersNestedHolder"
+        val nested = "$holder\$Sorted"
+        // like a URLClassLoader failing to read the class file, telling a transient failure even when not probed
+        val classLoader = CountingClassLoader(
+            javaClass.classLoader,
+            failure = { ClassNotFoundException(it, IOException("transient failure of $it")) }
+        )
+        classLoader.failing += nested
+        val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
+
+        // when
+        introspector.resolve("$holder.Sorted")
+        val signatures = List(2) { introspector.resolve(holder) }
+
+        // then
+        assert(signatures.all { it != null && "class Sorted<T>" !in it })
+        // retried by the resolve by name, and by the first resolve of the holder, deeming the failure final,
+        // rather than the miss by name taken as final, telling nothing about the failure
+        assert(classLoader.loads[nested] == 2)
+    }
+
+    @Test
     fun `should load nested class again after NoClassDefFoundError and failed read of its class file`() {
         // given
         val nested = "com.xemantic.kotlin.introspection.test.TypeParametersNestedHolder\$Sorted"
@@ -1380,13 +1404,6 @@ class ClassLoaderIntrospectionTest {
         override fun getResourceAsStream(name: String): InputStream? =
             if (name == blockedResource && isHidden) null else super.getResourceAsStream(name)
     }
-
-    /**
-     * Whether this thread waits for a value of a [BoundedCache] computed by another thread, if it does,
-     * see [pollUntil], as it might also wait momentarily for anything else.
-     */
-    private fun Thread.isWaitingForComputation(): Boolean =
-        state == Thread.State.BLOCKED && stackTrace.any { "Lazy" in it.className }
 
     @Test
     fun `should share class found by name with concurrent lookup of the same class`() {
