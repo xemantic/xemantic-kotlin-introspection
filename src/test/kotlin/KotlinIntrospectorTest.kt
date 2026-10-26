@@ -3331,7 +3331,6 @@ class KotlinIntrospectorTest {
             protected open fun toArray(): Array<Any?>
             protected open fun <T> toArray(array: Array<T>): Array<T>
         """.trimIndent()
-
     }
 
     @Test
@@ -3564,6 +3563,22 @@ class KotlinIntrospectorTest {
             resolver.resolve("com.xemantic.kotlin.introspection.test.$name.forEach") should {
                 have(lines().none { "forEach(arg0: " in it })
             }
+        }
+    }
+
+    @Test
+    fun `should not resolve inherited JVM-only member of built-in type overridden by intermediate class`() {
+        // the override of the superclass wins over the JVM member of kotlin.Throwable, or kotlin.collections.Iterable
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJvmOverridingLeafException.printStackTrace"
+        ) should {
+            have("// inherited from com.xemantic.kotlin.introspection.test.InheritedJvmOverridingBaseException" in lines())
+            have(lines().none { "printStackTrace(arg0: java.io.PrintStream" in it })
+        }
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJvmOverridingLeafIterable.forEach"
+        ) should {
+            have(lines().none { "forEach(arg0: " in it })
         }
     }
 

@@ -161,3 +161,17 @@ class InheritedJvmOverridingIterable : Iterable<String> {
 abstract class InheritedJvmOverridingList : java.util.AbstractList<String>() {
     override fun forEach(action: java.util.function.Consumer<in String>?) {}
 }
+
+// The same overrides declared by an intermediate class
+open class InheritedJvmOverridingBaseException : Exception() {
+    override fun printStackTrace(s: java.io.PrintStream) {}
+}
+
+class InheritedJvmOverridingLeafException : InheritedJvmOverridingBaseException()
+
+open class InheritedJvmOverridingBaseIterable : Iterable<String> {
+    override fun iterator(): Iterator<String> = emptyList<String>().iterator()
+    override fun forEach(action: java.util.function.Consumer<in String>) {}
+}
+
+class InheritedJvmOverridingLeafIterable : InheritedJvmOverridingBaseIterable()

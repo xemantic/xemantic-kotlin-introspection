@@ -67,7 +67,7 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   the `context(Ctx) suspend () -> Unit` order, which the GitHub issues used, does not compile.
 
 - kotlin-reflect reports a synthetic `@Deprecated("This member is not fully supported by Kotlin compiler, …")` on the JDK members of the built-in types newer than the mapped ones, like `String.strip()` or `describeConstable()`,
-  mirroring the warning of K1, while K2 does not resolve these members at all (`unresolved reference`), so they are omitted from the listings and lookups, see `isUnsupportedByCompiler`.
+  mirroring the K1 warning; K2 rejects them outright, see `isUnsupportedByCompiler`.
 
 ## Anti-patterns to avoid
 

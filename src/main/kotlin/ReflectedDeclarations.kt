@@ -74,6 +74,10 @@ internal fun isUnsupportedByCompiler(callable: KCallable<*>): Boolean = try {
     callable.annotations.any { it is Deprecated && it.message.startsWith(UNSUPPORTED_MEMBER_MESSAGE) }
 } catch (_: Exception) {
     false
+} catch (e: Error) {
+    // like the KotlinReflectionInternalError of a member kotlin-reflect cannot describe
+    if (e is VirtualMachineError) throw e
+    false
 }
 
 private const val UNSUPPORTED_MEMBER_MESSAGE = "This member is not fully supported by Kotlin compiler"
@@ -146,7 +150,6 @@ internal fun KClass<*>.toKmBuiltinClass(name: String): KmClass {
         .mapTo(kmClass.supertypes) { it.toKmType(typeParameters) }
     declaredMemberFunctions
         .filter { '$' !in it.name && !isUnsupportedByCompiler(it) }
-
         .mapTo(kmClass.functions) { function ->
             function.toKmFunction(typeParameters).also { it.modality = it.modality.finalIn(kmClass) }
         }
@@ -376,7 +379,6 @@ private fun reflectedClassName(kClass: KClass<*>): String {
 }
 
 private fun KTypeProjection.toKmTypeProjection(scope: ReflectedTypeParameters): KmTypeProjection {
-
     val projectionType = type ?: return KmTypeProjection.STAR
     return KmTypeProjection(variance?.toKmVariance() ?: KmVariance.INVARIANT, projectionType.toKmType(scope))
 }

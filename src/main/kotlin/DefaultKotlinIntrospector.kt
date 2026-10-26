@@ -1305,12 +1305,13 @@ internal class DefaultKotlinIntrospector(
             val supertype = classDeclarations(name) ?: return
             val superKmClass = supertype.kmClass
             pending.addAll(supertypeMetadataNames(superKmClass, supertype))
-            val superApiClass = superKmClass?.let { apiClasses.apiClass(it.name) } ?: return
+            if (superKmClass == null || apiClasses.apiClass(superKmClass.name) == null) return
             val jvmOnlyFunctions = (supertype as? BuiltinClass)?.jvmOnlyFunctions.orEmpty()
             val jvmOnlyFunctionsNotHidden = if (jvmOnlyFunctions.any { it.name == memberName }) {
-                val hiding = listedExtensions(
-                    superKmClass, superKmClass.name.replace('/', '.'), superApiClass, supertype, isBuiltin = true
-                ).functions.filter { it.hidesMembers && it.function.name == memberName }
+                // only an extension on the built-in type itself reads like its member, see bodyReceiverSubstitution
+                val hiding = extensionIndex[superKmClass.name.replace('/', '.')].orEmpty().filter {
+                    it.hidesMembers && it.function.name == memberName && isPublicKotlinPackageSource(it.sourceClass)
+                }
                 val notHidden = jvmOnlyFunctionsNotHidden(superKmClass, supertype, ListedExtensions(hiding, emptyList()))
                 if (notHidden.size < jvmOnlyFunctions.size) hidingExtensions += hiding
                 notHidden
@@ -1326,7 +1327,12 @@ internal class DefaultKotlinIntrospector(
                     is Member.Function -> InheritedCandidate(
                         superKmClass, supertype, member, memberKey(superKmClass, member.function),
                         overrideResolver.overriddenMembers(superKmClass, member.function),
-                        javaKey = (supertype as? BuiltinClass)?.javaMemberKeyOf(member.function)
+                        // only a JVM-only member is a Java method of its own, which the Kotlin members are not
+                        javaKey = if (jvmOnlyFunctionsNotHidden.any { it === member.function }) {
+                            (supertype as? BuiltinClass)?.javaMemberKeyOf(member.function)
+                        } else {
+                            null
+                        }
                     )
                 }
             }
@@ -1342,7 +1348,16 @@ internal class DefaultKotlinIntrospector(
         // or else, for a declared override whose overridden Kotlin members are not told, like of a Java supertype,
         // by the same signature, compared as written, without substituting the type arguments of the supertypes
         val overridden = candidates.flatMapTo(HashSet()) { it.overridden }
+        // the JVM-only members are overridden by the declared members, or by the ones of the other supertypes,
+        // like an override declared by an intermediate class
         val overriddenJavaMembers = HashSet<String>()
+        if (candidates.any { it.javaKey != null }) {
+            candidates.filter { it.declarations !is BuiltinClass }.forEach { candidate ->
+                (candidate.member as? Member.Function)?.let {
+                    overriddenJavaMembers += overrideResolver.overriddenJavaMembers(candidate.kmClass, it.function)
+                }
+            }
+        }
         val declaredSignatures = HashSet<String>()
         apiMembersNamed(kmClass, declarations, memberName, scope).forEach { member ->
             if (member is Member.Function && candidates.any { it.javaKey != null }) {
@@ -2249,7 +2264,6 @@ internal class DefaultKotlinIntrospector(
                 constructorItems.forEach { add(ListingItem.Declaration(it)) }
                 (propertyItems + functionItems +
                     builtinBodyItems(kmClass, foundClass, apiClass, typeParameters, listedExtensions, bodyExtensions))
-
                     .sortedBy { (name, _) -> name }
                     .forEach { (_, lines) -> add(ListingItem.Declaration(lines)) }
             } else {
@@ -2421,6 +2435,7 @@ internal class DefaultKotlinIntrospector(
         extensions: ListedExtensions
     ): List<KmFunction> {
         val jvmOnlyFunctions = (declarations as? BuiltinClass)?.jvmOnlyFunctions.orEmpty()
+        if (jvmOnlyFunctions.isEmpty()) return jvmOnlyFunctions
         val hiding = extensions.functions.filter { it.hidesMembers && !it.isObjectMember }.mapNotNull { extension ->
             bodyReceiverSubstitution(extension.function, kmClass)?.let { callSignature(extension.function, it) }
         }
