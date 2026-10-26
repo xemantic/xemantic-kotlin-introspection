@@ -119,6 +119,24 @@ class BuiltinsWithoutDeclarationsTest {
     }
 
     @Test
+    fun `should list extensions of companion object of built-in type described by kotlin-reflect`() {
+        // given - the extensions are indexed by scanning the classpath
+        val introspector = DefaultKotlinIntrospector(readBuiltinClasses = { emptyMap() })
+
+        // when
+        val listing = introspector.resolve("kotlin.String", pageSize = 10000)
+        val signatures = introspector.resolve("kotlin.String.format")
+
+        // then
+        listing should {
+            have(lines().any { it.startsWith("inline fun String.Companion.format(format: String, ") })
+        }
+        signatures should {
+            have(lines().any { it.startsWith("inline fun String.Companion.format(format: String, ") })
+        }
+    }
+
+    @Test
     fun `should not resolve mutable collection type which kotlin-reflect cannot tell apart from the read-only one`() {
         // when
         val listing = introspector.resolve("kotlin.collections.MutableList")

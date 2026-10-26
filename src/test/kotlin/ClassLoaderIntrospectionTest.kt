@@ -47,6 +47,7 @@ import kotlin.io.path.writeBytes
 import kotlin.metadata.KmClassifier
 import kotlin.metadata.KmType
 import kotlin.metadata.jvm.KotlinModuleMetadata
+import kotlin.metadata.jvm.moduleName
 import kotlin.test.Test
 
 /**
@@ -3210,6 +3211,55 @@ class ClassLoaderIntrospectionTest {
                 context(Comparator<T>) /* legacy context receivers, not compiled by Kotlin 2.2+ */ inner class Inner
             }
         """.trimIndent()
+    }
+
+    @Test
+    fun `should list extension of standard library with built-in type by Kotlin package of its file facade`() {
+        // given - like the file facades of kotlin-stdlib relocated to another JVM package by @JvmPackageName
+        val introspector = introspectorWithStdlibFacade("jvmPackageName", "kotlin/text/jdk8/IsolatedTestClassKt")
+
+        // when
+        val signatures = introspector.resolve("kotlin.String.isolatedExtension")
+
+        // then
+        signatures sameAsKotlin """
+            // kotlin.String.isolatedExtension [page 1/1]
+            // from kotlin.text
+            fun String.isolatedExtension(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not list extension of standard library relocated by shading with built-in type`() {
+        // given - like relocated by shading, keeping the Kotlin package in the metadata
+        val introspector = introspectorWithStdlibFacade("shadedStdlib", "shaded/kotlin/text/IsolatedTestClassKt")
+
+        // when
+        val signatures = introspector.resolve("kotlin.String.isolatedExtension")
+
+        // then
+        assert(signatures == null)
+    }
+
+    /**
+     * An introspector of the isolated test fixtures, with the file facade of `IsolatedTestClass.kt` moved to the JVM class
+     * of the [binaryName], declaring `fun String.isolatedExtension()` in the `kotlin.text` package of `kotlin-stdlib`,
+     * copied to the [name] directory.
+     */
+    private fun introspectorWithStdlibFacade(name: String, binaryName: String): KotlinIntrospector {
+        val root = isolatedTestFixturesCopy(name, "IsolatedTestClassKt.class")
+        val original = isolatedTestFixtures
+            .map { it.resolve("com/xemantic/kotlin/introspection/isolated/IsolatedTestClassKt.class") }
+            .single { it.exists() }
+        val facade = withKotlinPackageInMetadata(original.readBytes(), "kotlin.text") {
+            it.moduleName = "kotlin-stdlib"
+            it.functions.single { function -> function.name == "isolatedExtension" }.receiverParameterType =
+                KmType().apply { classifier = KmClassifier.Class("kotlin/String") }
+        }
+        val relocated = root.resolve("$binaryName.class")
+        relocated.parent.createDirectories()
+        relocated.writeBytes(withClassName(facade, binaryName))
+        return KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
     }
 
     /**
