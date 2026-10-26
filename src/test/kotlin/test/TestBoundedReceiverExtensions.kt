@@ -19,9 +19,11 @@
 package com.xemantic.kotlin.introspection.test
 
 import com.xemantic.kotlin.introspection.test.other.JavaBoundedReceiverBase
+import com.xemantic.kotlin.introspection.test.other.JavaBoxBase
 import com.xemantic.kotlin.introspection.test.other.JavaComparableBase
 import com.xemantic.kotlin.introspection.test.other.JavaFunctionBase
 import com.xemantic.kotlin.introspection.test.other.JavaLinkBase
+import com.xemantic.kotlin.introspection.test.other.JavaNamedLinkBase
 
 // Extensions on type parameter receivers, listed for the classes satisfying their bounds,
 // names avoid the "TestClass" suffix to keep search result tests stable
@@ -352,3 +354,26 @@ class BoundedReceiverJavaComparable : JavaComparableBase()
 
 // a method of a Java supertype, which never shadows the extension, called by leaf.linkTo(next = leaf)
 class BoundedReceiverJavaLeaf : JavaLinkBase<BoundedReceiverJavaLeaf>(), BoundedReceiverNode<BoundedReceiverJavaLeaf>
+
+// the methods of a Java supertype taking parameters, never shadowing the extensions, which a named argument calls,
+// like picker.pick(arg0 = picker), also when the Java parameter is named like the one of the extension,
+// unlike a Java method taking none
+interface BoundedReceiverJavaNode<N : BoundedReceiverJavaNode<N>>
+
+fun <N : BoundedReceiverJavaNode<N>> N.pick(arg0: N): N = arg0
+
+fun <N : BoundedReceiverJavaNode<N>> N.linkNext(next: N): N = next
+
+fun <N : BoundedReceiverJavaNode<N>> N.self(): N = this
+
+class BoundedReceiverJavaPicker : JavaLinkBase<BoundedReceiverJavaPicker>(), BoundedReceiverJavaNode<BoundedReceiverJavaPicker>
+
+class BoundedReceiverJavaNamedLeaf : JavaNamedLinkBase<BoundedReceiverJavaNamedLeaf>(), BoundedReceiverJavaNode<BoundedReceiverJavaNamedLeaf>
+
+// the type arguments given to a Java supertype, platform types in its supertypes, unless nullable,
+// like BoundedReceiverBox<String!> of BoundedReceiverStringBox, but BoundedReceiverBox<String?> of BoundedReceiverNullableStringBox
+fun BoundedReceiverBox<String?>.joinNullableStrings(): String = ""
+
+class BoundedReceiverStringBox : JavaBoxBase<String>()
+
+class BoundedReceiverNullableStringBox : JavaBoxBase<String?>()

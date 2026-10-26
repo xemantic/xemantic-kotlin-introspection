@@ -19,13 +19,24 @@
 package com.xemantic.kotlin.introspection.test.other;
 
 /**
- * A Java class whose method does not shadow a same-named extension on a type parameter pinned to its Kotlin subclass,
- * as a call with a named argument, which a Java method does not take, still calls the extension.
+ * A Java class whose methods taking parameters do not shadow a same-named extension on a type parameter
+ * pinned to its Kotlin subclass, as a call with a named argument, which a Java method does not take,
+ * still calls the extension, unlike its method taking none.
+ * Compiled without {@code -parameters}, so that kotlin-reflect names their parameters like {@code arg0}.
  */
 public class JavaLinkBase<T> {
 
     public T linkTo(T next) {
         return next;
+    }
+
+    public T pick(T value) {
+        return value;
+    }
+
+    @SuppressWarnings("unchecked")
+    public T self() {
+        return (T) this;
     }
 
 }

@@ -71,9 +71,9 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 
 - Reflecting the members of a class one by one does not get around a missing parameter type, see `reflectedMembersFile`.
 
-- A Java method never shadows a same-named extension on a type parameter pinned to the class:
-  K2 picks the Java member for `leaf.linkTo(leaf)`, but `leaf.linkTo(next = leaf)` calls the extension, as a Java method takes no named argument —
-  so the extension stays listed, see `BoundedReceiverJavaLeaf`.
+- A Java method taking parameters never shadows a same-named extension, whatever its parameter names (`arg0`, or real ones with `-parameters`):
+  K2 picks the Java member for `leaf.linkTo(leaf)`, but `leaf.linkTo(next = leaf)` calls the extension, as Kotlin passes no named argument to a Java method;
+  a parameterless one, like `self()`, does shadow, see `isShadowingJavaMethod`.
 
 ## Anti-patterns to avoid
 

@@ -5805,6 +5805,61 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve class with extensions on type parameter pinned to class next to Java methods taking parameters`() {
+        // the Java methods take no named argument, like picker.pick(arg0 = picker), calling the extension,
+        // also when kotlin-reflect names their parameters like the ones of the extensions,
+        // while the Java method taking none, self(), is always called instead
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverJavaPicker"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverJavaPicker [page 1/1]
+            class BoundedReceiverJavaPicker : com.xemantic.kotlin.introspection.test.other.JavaLinkBase<BoundedReceiverJavaPicker>, BoundedReceiverJavaNode<BoundedReceiverJavaPicker>
+            // from com.xemantic.kotlin.introspection.test
+            fun <N : BoundedReceiverJavaNode<N>> N.linkNext(next: N): N
+            fun <N : BoundedReceiverJavaNode<N>> N.pick(arg0: N): N
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension on type parameter pinned to class next to Java method with named parameter`() {
+        // compiled with -parameters, the Java method still takes no named argument, unlike the extension
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverJavaNamedLeaf.linkNext"
+        ) should {
+            have("fun <N : BoundedReceiverJavaNode<N>> N.linkNext(next: N): N" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve class with extensions on Kotlin supertype of Java supertype of either nullability of platform type argument`() {
+        // a BoundedReceiverBox<String!> of the Java supertype is both a BoundedReceiverBox<String>, and a BoundedReceiverBox<String?>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverStringBox"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverStringBox [page 1/1]
+            class BoundedReceiverStringBox : com.xemantic.kotlin.introspection.test.other.JavaBoxBase<String>
+            // from com.xemantic.kotlin.introspection.test
+            fun <T> BoundedReceiverBox<T>.anyBox()
+            fun BoundedReceiverBox<String?>.joinNullableStrings(): String
+            fun BoundedReceiverBox<String>.joinStrings(): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extension on Kotlin supertype of Java supertype of not nullable type argument`() {
+        // the nullable type argument given to the Java supertype is not a platform type
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverNullableStringBox"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverNullableStringBox [page 1/1]
+            class BoundedReceiverNullableStringBox : com.xemantic.kotlin.introspection.test.other.JavaBoxBase<String?>
+            // from com.xemantic.kotlin.introspection.test
+            fun <T> BoundedReceiverBox<T>.anyBox()
+            fun BoundedReceiverBox<String?>.joinNullableStrings(): String
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve class comparable to its Java supertype with stdlib extensions on Comparable`() {
         // T is inferred as JavaComparableBase, a Comparable<JavaComparableBase>, told by its generic signature
         resolver.resolve(
@@ -5917,6 +5972,7 @@ class KotlinIntrospectorTest {
             interface BoundedReceiverBox<T>
             // from com.xemantic.kotlin.introspection.test
             fun <T> BoundedReceiverBox<T>.anyBox()
+            fun BoundedReceiverBox<String?>.joinNullableStrings(): String
             fun BoundedReceiverBox<String>.joinStrings(): String
             fun BoundedReceiverBox<Int>.sumOfInts(): Int
             fun BoundedReceiverBox<out Number>.sumOfNumbers(): Double

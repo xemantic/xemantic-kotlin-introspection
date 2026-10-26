@@ -2248,7 +2248,8 @@ internal class DefaultKotlinIntrospector(
         )
         val builtinClass = declarations as? BuiltinClass
         val unshadowed = callable.withoutShadowed(supertypes) { names ->
-            (kmClass.functions + builtinClass?.jvmOnlyFunctions.orEmpty())
+            // a JVM-only function is a Java method, see isShadowingJavaMethod
+            (kmClass.functions + builtinClass?.jvmOnlyFunctions.orEmpty().filter { it.isShadowingJavaMethod })
                 .filter { it.name in names && it.receiverParameterType == null }
                 .inApi(apiClass, declarations) +
                 inheritedFunctionsNamed(kmClass, declarations, names, apiClass)
@@ -2277,7 +2278,8 @@ internal class DefaultKotlinIntrospector(
      * like `fun Int.coerceAtLeast(minimumValue: Int)`, called instead,
      * unless the type argument is given explicitly, like `5.coerceAtLeast<Int>(3)`:
      * a member function of the class, also an inherited one, given by [memberFunctions] their names,
-     * other than a member extension, or one of these extensions on the class itself,
+     * other than a member extension, or a Java method taking parameters, see [isShadowingJavaMethod],
+     * or one of these extensions on the class itself,
      * imported from the same package as the shadowed one.
      * Any other extension on a type parameter is listed, as the type parameter can be inferred as a supertype of the class,
      * like for `ps.foo(object : PD {})` of `fun <T : PD> T.foo(value: T)`, next to the member `foo(value: PS)`.
@@ -2341,7 +2343,8 @@ internal class DefaultKotlinIntrospector(
      * part of the API in the [scope], with the type arguments of the supertypes substituted, see [supertypeSubstitution],
      * like `fun coerceAtMost(maximumValue: Leaf)` of `fun coerceAtMost(maximumValue: T)` of `Base<Leaf>`,
      * as told by [inheritedCandidates], also leaving out the ones merged with a hidden one which the compiler picks,
-     * but the member extensions, and the JVM-only ones of a built-in supertype.
+     * but the member extensions, the JVM-only ones of a built-in supertype,
+     * and the methods of a Java supertype taking parameters, see [isShadowingJavaMethod].
      */
     private fun inheritedFunctionsNamed(
         kmClass: KmClass,
@@ -2351,7 +2354,8 @@ internal class DefaultKotlinIntrospector(
     ): List<KmFunction> = names.flatMap { name ->
         inheritedCandidates(kmClass, declarations, name, scope, hidingExtensions = mutableListOf()).mapNotNull { candidate ->
             (candidate.member as? Member.Function)?.function?.takeUnless {
-                it.receiverParameterType != null || (candidate.declarations is BuiltinClass && candidate.jvmMethod != null)
+                it.receiverParameterType != null || (candidate.declarations is BuiltinClass && candidate.jvmMethod != null) ||
+                    (candidate.declarations is JavaClass && !it.isShadowingJavaMethod)
             }
         }
     }
@@ -2662,7 +2666,7 @@ internal class DefaultKotlinIntrospector(
      * by their names, like [javaSupertypeNames], with the type arguments told by its generic signature,
      * see [FoundClass.javaClassHeader], and the ones of the [type] substituted for its type parameters,
      * like `Comparable<Base>` of `class Base implements Comparable<Base>`,
-     * the types they give, as platform types, matching either nullability, see [isNullabilityMatched],
+     * the types they give, as platform types, matching either nullability, see [javaSignatureType],
      * or none, when its type arguments are not known, like of a raw type.
      */
     private fun javaSupertypeTypes(metadataName: String, type: KmType?): Map<String, KmType> {
@@ -2673,7 +2677,7 @@ internal class DefaultKotlinIntrospector(
             else -> substitutionOf(header, type) ?: return emptyMap()
         }
         return header.supertypes.associate { supertype ->
-            receiverIndexKeys(supertype).single() to supertype.substituted(substitution).withPlatformArguments()
+            receiverIndexKeys(supertype).single() to supertype.javaSignatureType(substitution)
         }
     }
 
@@ -6073,6 +6077,13 @@ private fun KmFunction.shadows(function: KmFunction, className: String): Boolean
 }
 
 /**
+ * Whether this function, a Java method, can shadow an extension, see [shadows]: only when it takes no value parameter,
+ * as Kotlin passes no named argument to a Java method, so that a call naming the arguments,
+ * like `leaf.linkTo(next = leaf)`, calls the extension, whatever the names of the parameters of the Java method.
+ */
+private val KmFunction.isShadowingJavaMethod: Boolean get() = valueParameters.isEmpty()
+
+/**
  * The extensions of this index on a type parameter with multiple bounds, see [receiverBoundsOf], under each of them,
  * looked up under every supertype of a class, see `listedFor`, unlike the many other ones.
  */
@@ -6117,7 +6128,7 @@ private fun KmVariance.compose(inner: KmVariance): KmVariance = when {
  * like a nullable one in a covariant position, which is a supertype of the not nullable one.
  */
 private fun isNullabilityMatched(expected: KmType, actual: KmType, variance: KmVariance): Boolean = when {
-    // a platform type of Java, see withPlatformArguments
+    // a platform type of Java, see javaSignatureType
     actual.flexibleTypeUpperBound != null -> true
     variance == KmVariance.INVARIANT -> expected.isNullable == actual.isNullable
     variance == KmVariance.OUT -> expected.isNullable || !actual.isNullable
@@ -6125,23 +6136,31 @@ private fun isNullabilityMatched(expected: KmType, actual: KmType, variance: KmV
 }
 
 /**
- * This type, a supertype told by a Java class, with its type arguments as the platform types of Java,
- * like `Comparable<Base!>`, flexible from not nullable to nullable, see [isNullabilityMatched].
+ * This type, a supertype told by the signature of a Java class, with the type arguments of the [substitution],
+ * by the ids of the type parameters of the Java class, substituted for them,
+ * its type arguments, also the nested ones, as the platform types of Java, like `Comparable<Base!>`,
+ * flexible from not nullable to nullable, see [isNullabilityMatched],
+ * also a not nullable type argument substituted for a type parameter, like `Box<String!>` of `Box<T>` for `T` of `String`,
+ * but not a nullable one, like `Box<String?>` for `T` of `String?`, nor the nested type arguments of either,
+ * declared by Kotlin.
  */
-private fun KmType.withPlatformArguments(): KmType = KmType().also { type ->
-    type.classifier = classifier
-    type.isNullable = isNullable
-    arguments.mapTo(type.arguments) { argument ->
-        val argumentType = argument.type ?: return@mapTo argument
-        KmTypeProjection(argument.variance, argumentType.withPlatformArguments().also { platformType ->
-            if (platformType.classifier is KmClassifier.Class) {
-                platformType.flexibleTypeUpperBound = KmFlexibleTypeUpperBound(
-                    platformType.withPlatformArguments().also { it.isNullable = true }, typeFlexibilityId = null
-                )
-            }
-        })
-    }
-}
+private fun KmType.javaSignatureType(substitution: Map<Int, KmType>): KmType = copy(
+    arguments = arguments.map { argument ->
+        val type = argument.type ?: return@map argument
+        val classifier = type.classifier
+        val argumentType = if (classifier is KmClassifier.TypeParameter) {
+            substitution[classifier.id]?.copy() ?: return@map argument
+        } else {
+            type.javaSignatureType(substitution)
+        }
+        if (!argumentType.isNullable && argumentType.classifier is KmClassifier.Class) {
+            argumentType.flexibleTypeUpperBound =
+                KmFlexibleTypeUpperBound(argumentType.copy().also { it.isNullable = true }, typeFlexibilityId = null)
+        }
+        KmTypeProjection(argument.variance, argumentType)
+    },
+    outerType = outerType?.javaSignatureType(substitution)
+)
 
 /**
  * Whether the [shadowedType] of a parameter of an extension on the type parameter of the [receiverTypeParameterId]
