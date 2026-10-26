@@ -8011,6 +8011,19 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should render protected override of var with setter deprecated with hidden level without setter line`() {
+        // the setter has the visibility of the property, so no line implies a setter wider than the property
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ProtectedHiddenSetterOverride"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ProtectedHiddenSetterOverride [page 1/1]
+            open class ProtectedHiddenSetterOverride : ProtectedHiddenSetterOverrideBase {
+                @set:Deprecated("replaced", level = DeprecationLevel.HIDDEN) protected override var value: Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve member var with setter deprecated with hidden level as val`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.HiddenSetterHolder.inBody"
