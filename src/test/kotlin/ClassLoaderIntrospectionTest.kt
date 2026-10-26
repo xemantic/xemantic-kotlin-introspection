@@ -2165,6 +2165,40 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should not load DefaultImpls class of interface whose class file is served without the one of DefaultImpls`() {
+        // given
+        val defaultImplsName = "com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsOverloader\$DefaultImpls"
+        val requestedClasses = Collections.synchronizedList(mutableListOf<String>())
+        val classLoader = object : ClassLoader(javaClass.classLoader) {
+            override fun loadClass(name: String, resolve: Boolean): Class<*> {
+                requestedClasses += name
+                return super.loadClass(name, resolve)
+            }
+
+            override fun getResource(name: String): java.net.URL? =
+                if (name == defaultImplsName.replace('.', '/') + ".class") null else super.getResource(name)
+
+            override fun getResourceAsStream(name: String): InputStream? =
+                if (name == defaultImplsName.replace('.', '/') + ".class") null else super.getResourceAsStream(name)
+        }
+        val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
+
+        // when
+        // the JVM methods of the interface are read to tell whether its overload of a supertype member is shrunk
+        val greeter = introspector.resolve("com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsOverloader")
+
+        // then
+        greeter sameAsKotlin """
+            // com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsOverloader [page 1/1]
+            interface DefaultImplsOverloader : DefaultImplsBase {
+                open fun greet(times: Int): String
+            }
+        """.trimIndent()
+        // the class file of the interface is served, so the absence of the one of DefaultImpls tells there is none
+        assert(defaultImplsName !in requestedClasses)
+    }
+
+    @Test
     fun `should not probe DefaultImpls classes of interfaces without member bodies when no class file is served`() {
         // given
         val failedLoads = Collections.synchronizedList(mutableListOf<String>())

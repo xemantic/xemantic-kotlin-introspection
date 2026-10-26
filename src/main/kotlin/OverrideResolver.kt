@@ -52,7 +52,6 @@ import kotlin.metadata.modality
 import kotlin.metadata.jvm.JvmMethodSignature
 import kotlin.metadata.jvm.getterSignature
 import kotlin.metadata.jvm.hasMethodBodiesInInterface
-import kotlin.metadata.jvm.isCompiledInCompatibilityMode
 import kotlin.metadata.jvm.moduleName
 import kotlin.metadata.jvm.signature
 import kotlin.metadata.visibility
@@ -508,7 +507,7 @@ internal class OverrideResolver(
         when (val visibility = overridable.visibility) {
             MemberVisibility.Visible -> true
             is MemberVisibility.Unmangled ->
-                if (owner.kind != ClassKind.INTERFACE && owner.modality == Modality.FINAL) {
+                if (owner.modality == Modality.FINAL) {
                     modality != Modality.FINAL
                 } else {
                     visibility.isSameModuleName
@@ -699,15 +698,19 @@ internal class OverrideResolver(
 
     /**
      * Whether this Kotlin class is an interface which might have a `DefaultImpls` class
-     * holding the bodies of its members, as told by its metadata:
-     * compiled with `-jvm-default=disable`, or in the compatibility mode, like with the default `-jvm-default=enable`,
+     * holding the bodies of its members, absent from the interface itself, as told by its metadata:
+     * compiled with `-jvm-default=disable`, without the method bodies in the interface,
      * and declaring a member with a body, which most interfaces do not,
      * so that the `DefaultImpls` class is neither looked up nor loaded in vain,
      * and without depending on the `InnerClasses` attribute, which a shrinker, like R8, might remove.
+     * In the compatibility mode, like with the default `-jvm-default=enable`,
+     * the `DefaultImpls` class only mirrors the default methods of the interface, the private members staying there.
+     * A `DefaultImpls` class of an interface without member bodies, holding only the methods
+     * of the default values of its parameters, like `find${'$'}default`, or of the annotations of its properties,
+     * like `getName${'$'}annotations`, holds no JVM method of a member, so it does not matter here.
      */
     private val KmClass.mayHaveDefaultImpls: Boolean
-        get() = kind == ClassKind.INTERFACE &&
-            (!hasMethodBodiesInInterface || isCompiledInCompatibilityMode) &&
+        get() = kind == ClassKind.INTERFACE && !hasMethodBodiesInInterface &&
             (functions.any { it.modality != Modality.ABSTRACT } || properties.any { it.modality != Modality.ABSTRACT })
 
     /**
@@ -717,20 +720,24 @@ internal class OverrideResolver(
      * or `null` if the methods of the class itself can be neither read nor reflected.
      * The class is reflected only when its class file is not served, or cannot be parsed,
      * which is then the same evidence, as the class is already loaded, being the owner of the resolved members,
-     * and so is its `DefaultImpls` class, loaded then by its name.
+     * and so is its `DefaultImpls` class, loaded by its name, unless the class file of the interface is served,
+     * when the absence of the class file of `DefaultImpls` tells that there is none.
      */
     private fun jvmMethods(className: String, hasDefaultImpls: Boolean): Set<String>? {
         // the package is separated with '/', and nested classes with '.'
         val internalName = className.replace('.', '$')
-        val methods = declaredMethods(className, readClassBytesByMetadataName(className))
+        val classFile = readClassBytesByMetadataName(className)
+        val methods = declaredMethods(className, classFile)
             ?.mapTo(mutableSetOf()) { it.name + it.descriptor }
             ?: return null
-        if (hasDefaultImpls) {
-            val defaultImplsName = "$className.DefaultImpls"
+        if (!hasDefaultImpls) return methods
+        val defaultImplsName = "$className.DefaultImpls"
+        val defaultImplsFile = readClassBytesByMetadataName(defaultImplsName)
+        if (defaultImplsFile != null || classFile == null) {
             // the static method of DefaultImpls takes the interface instance as the first parameter
             val instanceParameter = "(L$internalName;"
             // the methods of the interface itself are still known when the ones of DefaultImpls are not
-            declaredMethods(defaultImplsName, readClassBytesByMetadataName(defaultImplsName))?.forEach { method ->
+            declaredMethods(defaultImplsName, defaultImplsFile)?.forEach { method ->
                 if (method.access and Opcodes.ACC_STATIC != 0 && method.descriptor.startsWith(instanceParameter)) {
                     methods += method.name + "(" + method.descriptor.removePrefix(instanceParameter)
                 }

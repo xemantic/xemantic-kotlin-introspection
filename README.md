@@ -298,6 +298,9 @@ com.example.AnnotationTestClass
   - in such a class, a member named like a `@PublishedApi internal` member of an unrelated module of the same name,
     like two modules both compiled with the default `main`, is marked `override`,
     as that module cannot be told from the same one;
+  - in a final class, a member of the same name as a `@PublishedApi internal` member of a supertype,
+    marked `open` in vain, is marked `override`,
+    while its override marked `final override` in vain is not;
   - an override in a friend module is not marked when a shrinker, like R8, removed the bridge telling it.
 * The whole classpath visible to the given class loader is scanned on creation, which takes a while,
   so the instance should be created once and reused.
