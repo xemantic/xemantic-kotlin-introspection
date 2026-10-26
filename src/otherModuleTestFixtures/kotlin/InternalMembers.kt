@@ -36,6 +36,12 @@ open class PublishedApiBase {
     internal open fun publish() {}
 }
 
+// An internal member overloaded by a public one
+open class OverloadedInternalBase {
+    internal open fun reset() {}
+    open fun reset(force: Boolean) {}
+}
+
 // Left out of the class loader of a test, so that the classes referring to it cannot be reflected
 class OtherModuleMarker
 

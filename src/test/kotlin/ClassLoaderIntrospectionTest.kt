@@ -2113,34 +2113,12 @@ class ClassLoaderIntrospectionTest {
     @Test
     fun `should mark shrunk overrides of internal members of superclass of the same module named by default`() {
         // given
-        val shrunkResource = "com/xemantic/kotlin/introspection/defaultmodule/DefaultModuleSubclass.class"
+        val className = "com.xemantic.kotlin.introspection.defaultmodule.DefaultModuleSubclass"
         // like R8 removing both the override of clear and its bridge clear$main, keeping the metadata
-        val classLoader = object : ClassLoader(javaClass.classLoader) {
-            override fun getResourceAsStream(name: String): InputStream? {
-                val stream = super.getResourceAsStream(name)
-                return if (stream != null && name == shrunkResource) {
-                    val writer = ClassWriter(0)
-                    ClassReader(stream.use { it.readBytes() }).accept(object : ClassVisitor(Opcodes.ASM9, writer) {
-                        override fun visitMethod(
-                            access: Int,
-                            name: String,
-                            descriptor: String,
-                            signature: String?,
-                            exceptions: Array<out String>?
-                        ): MethodVisitor? = if (name == "clear" || name == "clear\$main") {
-                            null
-                        } else {
-                            super.visitMethod(access, name, descriptor, signature, exceptions)
-                        }
-                    }, 0)
-                    writer.toByteArray().inputStream()
-                } else stream
-            }
-        }
-        val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
+        val introspector = shrunkIntrospector(className, "clear")
 
         // when
-        val signature = introspector.resolve("com.xemantic.kotlin.introspection.defaultmodule.DefaultModuleSubclass")
+        val signature = introspector.resolve(className)
 
         // then
         signature sameAsKotlin """
@@ -2148,6 +2126,198 @@ class ClassLoaderIntrospectionTest {
             class DefaultModuleSubclass : DefaultModuleBase {
                 override val state: Int
                 override fun clear()
+            }
+        """.trimIndent()
+    }
+
+    /**
+     * An introspector of the class named [className], whose JVM methods named like the [shrunkMembers]
+     * are removed, together with their bridges, the names mangled with a module name, like R8 might,
+     * while keeping the metadata.
+     */
+    private fun shrunkIntrospector(className: String, vararg shrunkMembers: String): KotlinIntrospector {
+        val shrunkResource = className.replace('.', '/') + ".class"
+        val classLoader = object : ClassLoader(javaClass.classLoader) {
+            override fun getResourceAsStream(name: String): InputStream? {
+                val stream = super.getResourceAsStream(name) ?: return null
+                if (name != shrunkResource) return stream
+                return withoutMethods(stream.use { it.readBytes() }) { methodName, _ ->
+                    methodName.substringBefore('$') in shrunkMembers
+                }.inputStream()
+            }
+        }
+        return KotlinIntrospector(classLoader, scanEntireClasspath = false)
+    }
+
+    @Test
+    fun `should not mark shrunk members named like internal members of superclass of another module as override`() {
+        // given
+        val className = "com.xemantic.kotlin.introspection.test.OtherModuleSubclass"
+        val introspector = shrunkIntrospector(className, "reset", "getState")
+
+        // when
+        val signature = introspector.resolve(className)
+
+        // then
+        // the internal members of another module are not visible, so the shrunk members are not overrides
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OtherModuleSubclass [page 1/1]
+            class OtherModuleSubclass : com.xemantic.kotlin.introspection.othermodule.InternalBase {
+                val state: Int
+                fun reset()
+                override fun keep()
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not mark shrunk members named like PublishedApi internal members of superclass of another module as override`() {
+        // given
+        val className = "com.xemantic.kotlin.introspection.test.PublishedApiSubclass"
+        val introspector = shrunkIntrospector(className, "publish")
+
+        // when
+        val signature = introspector.resolve(className)
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PublishedApiSubclass [page 1/1]
+            class PublishedApiSubclass : com.xemantic.kotlin.introspection.othermodule.PublishedApiBase {
+                fun publish()
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not mark shrunk overloads of public members as override when internal member of another module is matched`() {
+        // given
+        val className = "com.xemantic.kotlin.introspection.test.OverloadedInternalSubclass"
+        val introspector = shrunkIntrospector(className, "reset")
+
+        // when
+        val signature = introspector.resolve(className)
+
+        // then
+        // the shrunk member matches the signature of the internal member, not of the public overload
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OverloadedInternalSubclass [page 1/1]
+            class OverloadedInternalSubclass : com.xemantic.kotlin.introspection.othermodule.OverloadedInternalBase {
+                fun reset()
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not mark shrunk overloads of public members as override when no member is matched`() {
+        // given
+        val className = "com.xemantic.kotlin.introspection.test.OverloadingInternalSubclass"
+        val introspector = shrunkIntrospector(className, "reset")
+
+        // when
+        val signature = introspector.resolve(className)
+
+        // then
+        // the members of a Kotlin supertype are known by the metadata, also when their JVM methods are shrunk
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OverloadingInternalSubclass [page 1/1]
+            class OverloadingInternalSubclass : com.xemantic.kotlin.introspection.othermodule.OverloadedInternalBase {
+                fun reset(name: String)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not mark shrunk properties named like Java methods taking parameters as override`() {
+        // given
+        val className = "com.xemantic.kotlin.introspection.test.JavaLocalizedNameSubclass"
+        val introspector = shrunkIntrospector(className, "getName")
+
+        // when
+        val signature = introspector.resolve(className)
+
+        // then
+        // a getter takes no parameters, unless the property has a receiver
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaLocalizedNameSubclass [page 1/1]
+            class JavaLocalizedNameSubclass : com.xemantic.kotlin.introspection.test.other.JavaLocalizedNameBase {
+                val name: String
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark shrunk overrides of internal members of superclass of a friend module in final class`() {
+        // given
+        val className = "com.xemantic.kotlin.introspection.friendmodule.FriendModuleSubclass"
+        // the bridge telling the friend module is removed as well
+        val introspector = shrunkIntrospector(className, "getState")
+
+        // when
+        val signature = introspector.resolve(className)
+
+        // then
+        // only an override is open in a final class
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.friendmodule.FriendModuleSubclass [page 1/1]
+            class FriendModuleSubclass : com.xemantic.kotlin.introspection.othermodule.InternalBase {
+                override val state: Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark shrunk overrides of PublishedApi internal members of superclass of a friend module in final class`() {
+        // given
+        val className = "com.xemantic.kotlin.introspection.friendmodule.FriendModulePublishedApiSubclass"
+        val introspector = shrunkIntrospector(className, "publish")
+
+        // when
+        val signature = introspector.resolve(className)
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.friendmodule.FriendModulePublishedApiSubclass [page 1/1]
+            class FriendModulePublishedApiSubclass : com.xemantic.kotlin.introspection.othermodule.PublishedApiBase {
+                override fun publish()
+            }
+        """.trimIndent()
+    }
+
+    // the accepted trade-off of an unshrunk member applies, see the KotlinIntrospectorTest
+    @Test
+    fun `should not mark shrunk overrides of PublishedApi internal members of superclass of a friend module in open class`() {
+        // given
+        val className = "com.xemantic.kotlin.introspection.friendmodule.FriendModuleOpenPublishedApiSubclass"
+        val introspector = shrunkIntrospector(className, "publish")
+
+        // when
+        val signature = introspector.resolve(className)
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.friendmodule.FriendModuleOpenPublishedApiSubclass [page 1/1]
+            open class FriendModuleOpenPublishedApiSubclass : com.xemantic.kotlin.introspection.othermodule.PublishedApiBase {
+                open fun publish()
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not mark shrunk final members named like internal members of superclass of another module of the same name as override`() {
+        // given
+        val className = "com.xemantic.kotlin.introspection.otherdefaultmodule.OtherDefaultModuleSubclass"
+        val introspector = shrunkIntrospector(className, "reset", "getState")
+
+        // when
+        val signature = introspector.resolve(className)
+
+        // then
+        // a final member of a final class is not an override, though the module of the same name cannot be told
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.otherdefaultmodule.OtherDefaultModuleSubclass [page 1/1]
+            class OtherDefaultModuleSubclass : com.xemantic.kotlin.introspection.defaultmodule.DefaultModuleBase {
+                val state: Int
+                fun reset()
             }
         """.trimIndent()
     }
@@ -2312,23 +2482,22 @@ class ClassLoaderIntrospectionTest {
         val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
 
         // when
-        // the JVM methods of an interface owning an overload are read, also the ones relocated to DefaultImpls,
-        // which most interfaces do not have, compiled with the default -jvm-default
-        val greeter = introspector.resolve("com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsGreeter")
-        val processor = introspector.resolve("com.xemantic.kotlin.introspection.test.OverloadingProcessorInterface")
+        // the JVM methods of an interface owning an overload of a Java member are read,
+        // also the ones relocated to DefaultImpls, which most interfaces do not have, compiled with the default -jvm-default
+        val runner = introspector.resolve("com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsRunner")
+        val runnable = introspector.resolve("com.xemantic.kotlin.introspection.test.OverloadingRunnableInterface")
 
         // then
-        greeter sameAsKotlin """
-            // com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsGreeter [page 1/1]
-            interface DefaultImplsGreeter : DefaultImplsBase {
-                open override val label: String
-                open override fun greet(name: String): String
+        runner sameAsKotlin """
+            // com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsRunner [page 1/1]
+            interface DefaultImplsRunner : java.lang.Runnable {
+                open fun run(times: Int)
             }
         """.trimIndent()
-        processor sameAsKotlin """
-            // com.xemantic.kotlin.introspection.test.OverloadingProcessorInterface [page 1/1]
-            interface OverloadingProcessorInterface : Processor<String> {
-                fun process(item: Int)
+        runnable sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OverloadingRunnableInterface [page 1/1]
+            interface OverloadingRunnableInterface : java.lang.Runnable {
+                fun run(times: Int)
             }
         """.trimIndent()
         assert(requestedClasses.none { it.endsWith("\$DefaultImpls") })
@@ -2337,7 +2506,7 @@ class ClassLoaderIntrospectionTest {
     @Test
     fun `should not load DefaultImpls class of interface whose class file is served without the one of DefaultImpls`() {
         // given
-        val defaultImplsName = "com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsOverloader\$DefaultImpls"
+        val defaultImplsName = "com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsRunner\$DefaultImpls"
         val requestedClasses = Collections.synchronizedList(mutableListOf<String>())
         val classLoader = object : ClassLoader(javaClass.classLoader) {
             override fun loadClass(name: String, resolve: Boolean): Class<*> {
@@ -2354,14 +2523,14 @@ class ClassLoaderIntrospectionTest {
         val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
 
         // when
-        // the JVM methods of the interface are read to tell whether its overload of a supertype member is shrunk
-        val greeter = introspector.resolve("com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsOverloader")
+        // the JVM methods of the interface are read to tell whether its overload of a Java member is shrunk
+        val runner = introspector.resolve("com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsRunner")
 
         // then
-        greeter sameAsKotlin """
-            // com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsOverloader [page 1/1]
-            interface DefaultImplsOverloader : DefaultImplsBase {
-                open fun greet(times: Int): String
+        runner sameAsKotlin """
+            // com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsRunner [page 1/1]
+            interface DefaultImplsRunner : java.lang.Runnable {
+                open fun run(times: Int)
             }
         """.trimIndent()
         // the class file of the interface is served, so the absence of the one of DefaultImpls tells there is none
@@ -2390,23 +2559,23 @@ class ClassLoaderIntrospectionTest {
         val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
 
         // when
-        // the JVM methods of an interface owning an overload are reflected, also the ones relocated to DefaultImpls,
-        // which only an interface with member bodies might have, as its metadata tells
-        val greeter = introspector.resolve("com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsGreeter")
-        val processor = introspector.resolve("com.xemantic.kotlin.introspection.test.OverloadingProcessorInterface")
+        // the JVM methods of an interface owning an overload of a Java member are reflected,
+        // also the ones relocated to DefaultImpls, which only an interface with member bodies might have,
+        // as its metadata tells
+        val runner = introspector.resolve("com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsRunner")
+        val runnable = introspector.resolve("com.xemantic.kotlin.introspection.test.OverloadingRunnableInterface")
 
         // then
-        greeter sameAsKotlin """
-            // com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsGreeter [page 1/1]
-            interface DefaultImplsGreeter : DefaultImplsBase {
-                open override val label: String
-                open override fun greet(name: String): String
+        runner sameAsKotlin """
+            // com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsRunner [page 1/1]
+            interface DefaultImplsRunner : java.lang.Runnable {
+                open fun run(times: Int)
             }
         """.trimIndent()
-        processor sameAsKotlin """
-            // com.xemantic.kotlin.introspection.test.OverloadingProcessorInterface [page 1/1]
-            interface OverloadingProcessorInterface : Processor<String> {
-                fun process(item: Int)
+        runnable sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OverloadingRunnableInterface [page 1/1]
+            interface OverloadingRunnableInterface : java.lang.Runnable {
+                fun run(times: Int)
             }
         """.trimIndent()
         assert(failedLoads.none { it.endsWith("\$DefaultImpls") })
@@ -2438,14 +2607,23 @@ class ClassLoaderIntrospectionTest {
         // given
         val interfaceResource = "com/xemantic/kotlin/introspection/defaultimpls/DefaultImplsOverloader.class"
         val defaultImplsName = "com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsOverloader\$DefaultImpls"
+        val baseName = "com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsBase"
         val classLoader = object : ClassLoader(javaClass.classLoader) {
             override fun loadClass(name: String, resolve: Boolean): Class<*> =
-                if (name == defaultImplsName) throw ClassNotFoundException(name) else super.loadClass(name, resolve)
+                when (name) {
+                    defaultImplsName -> throw ClassNotFoundException(name)
+                    // like when a supertype of the class is missing, so that it is read from its class file
+                    baseName -> throw NoClassDefFoundError(name)
+                    else -> super.loadClass(name, resolve)
+                }
 
             override fun getResourceAsStream(name: String): InputStream? {
                 val stream = super.getResourceAsStream(name) ?: return null
                 val bytes = stream.use { it.readBytes() }
                 return when (name) {
+                    // the supertype is known only by its JVM methods, like a Java one,
+                    // so that the overload cannot be told from an override of a JVM method removed as well
+                    baseName.replace('.', '/') + ".class" -> withoutMetadata(bytes)
                     // the JVM method of the overload is removed, like by R8
                     interfaceResource -> withoutMethods(bytes) { methodName, descriptor ->
                         methodName == "greet" && descriptor == "(I)Ljava/lang/String;"
