@@ -1477,7 +1477,8 @@ internal class DefaultKotlinIntrospector(
             // a library extends the companion object of a built-in type only deliberately, like with serializer()
             val isCompanion = kmClass.kind == ClassKind.COMPANION_OBJECT
             fun isListed(sourceClass: String, receiver: KmType?) = isPublicKotlinPackageSource(sourceClass) ||
-                (isCompanion && (receiver?.classifier as? KmClassifier.Class)?.name == kmClass.name)
+                (isCompanion && !isInternalPackageSource(sourceClass) &&
+                    (receiver?.classifier as? KmClassifier.Class)?.name == kmClass.name)
             ListedExtensions(
                 listed.functions.filter { isListed(it.sourceClass, it.function.receiverParameterType) },
                 listed.properties.filter { isListed(it.sourceClass, it.property.receiverParameterType) }
@@ -1916,7 +1917,13 @@ internal class DefaultKotlinIntrospector(
      * have the same signature as the ones of the standard library, imported from another package.
      */
     private fun isPublicKotlinPackageSource(sourceClass: String): Boolean =
-        sourceClass.startsWith("kotlin.") && !sourceClass.split('.').contains("internal")
+        sourceClass.startsWith("kotlin.") && !isInternalPackageSource(sourceClass)
+
+    /**
+     * Whether the [sourceClass] is declared in an internal package, like `kotlin.reflect.jvm.internal`,
+     * or `kotlinx.serialization.internal`, not meant to be used by the user code.
+     */
+    private fun isInternalPackageSource(sourceClass: String): Boolean = sourceClass.split('.').contains("internal")
 
     /**
      * The `@JvmInline` annotation, which a value class with a single underlying property requires on the JVM.

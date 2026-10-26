@@ -7113,6 +7113,13 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should not resolve companion object of built-in type with the extensions of an internal package`() {
+        resolver.resolve("kotlin.Int.Companion", pageSize = 1000) should {
+            have(lines().none { "internalPackageHelper" in it })
+        }
+    }
+
+    @Test
     fun `should resolve extension of companion object of built-in type from any library`() {
         resolver.resolve("kotlin.UInt.Companion.serializer") sameAsKotlin """
             // kotlin.UInt.Companion.serializer [page 1/1]
