@@ -158,8 +158,6 @@ tasks.test {
 testing {
     suites {
         register<JvmTestSuite>("parseTest") {
-            // the logging configured like for the other tests
-            sources.resources.srcDir("src/test/resources")
             dependencies {
                 implementation(project())
                 implementation(libs.kotlin.test.junit5)
@@ -171,6 +169,10 @@ testing {
             }
             targets.configureEach {
                 testTask.configure {
+                    // the legacy context receivers added to their metadata, like by the tests, see ClassFileRewriting
+                    val isolatedTestFixturesDirs = isolatedTestFixtures.output.classesDirs
+                    inputs.files(isolatedTestFixturesDirs).withPropertyName("isolatedTestFixtures")
+                    systemProperty("isolatedTestFixtures", isolatedTestFixturesDirs.asPath)
                     val introspectedClasspath = sourceSets.test.get().runtimeClasspath
                     inputs.files(introspectedClasspath)
                         .withPropertyName("introspectedClasspath")
@@ -184,9 +186,11 @@ testing {
     }
 }
 
-// reading the names of the built-in types, which the search does not find
+// reading the names of the built-in types, which the search does not find,
+// and rewriting the class files of the fixtures, like the tests do, see ClassFileRewriting
 kotlin.target.compilations.matching { it.name == "parseTest" }.configureEach {
     associateWith(kotlin.target.compilations.getByName("main"))
+    associateWith(kotlin.target.compilations.getByName("test"))
 }
 
 tasks.check {

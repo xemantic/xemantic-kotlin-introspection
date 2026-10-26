@@ -23,8 +23,10 @@ import org.objectweb.asm.ClassReader
 import org.objectweb.asm.ClassVisitor
 import org.objectweb.asm.ClassWriter
 import org.objectweb.asm.Opcodes
-import kotlin.metadata.ExperimentalContextReceivers
+import kotlin.metadata.KmClassifier
 import kotlin.metadata.KmType
+import kotlin.metadata.KmTypeProjection
+import kotlin.metadata.KmVariance
 import kotlin.metadata.jvm.KotlinClassMetadata
 import kotlin.metadata.jvm.Metadata
 
@@ -117,12 +119,32 @@ internal fun withoutNestedClassInMetadata(bytes: ByteArray, nestedClass: String)
  * Adds the legacy context receivers of the [types] to the class metadata,
  * like of `context(Logger) class Foo` compiled with `-Xcontext-receivers`, which the current compiler no longer compiles.
  */
-@OptIn(ExperimentalContextReceivers::class)
-@Suppress("DEPRECATION")
 internal fun withContextReceiversInMetadata(bytes: ByteArray, vararg types: KmType): ByteArray = withMetadata(bytes) {
     val metadata = KotlinClassMetadata.readStrict(it) as KotlinClassMetadata.Class
-    metadata.kmClass.contextReceiverTypes += types
+    metadata.kmClass.legacyContextReceiverTypes += types
     metadata.write()
+}
+
+/**
+ * Adds the legacy context receivers to the metadata of the classes of `LegacyContextReceivers.kt` of the isolated test fixtures,
+ * see [withContextReceiversInMetadata], given the [fileName] and the [bytes] of a class file, keeping the other ones,
+ * shared with the parse test of the rendered declarations, so that it parses the very listings rendered of them.
+ */
+internal fun withLegacyContextReceivers(fileName: String, bytes: ByteArray): ByteArray = when (fileName) {
+    "LegacyContextReceiverClass.class" -> withContextReceiversInMetadata(bytes, legacyLogger, legacyComparator)
+    "LegacyContextReceiverValue.class" -> withContextReceiversInMetadata(bytes, legacyLogger)
+    "LegacyContextReceiverOuter\$Inner.class" -> withContextReceiversInMetadata(bytes, legacyComparator)
+    else -> bytes
+}
+
+private val legacyLogger = KmType().apply { classifier = KmClassifier.Class("com/xemantic/kotlin/introspection/isolated/LegacyLogger") }
+
+/**
+ * The `Comparator<T>` of the type parameter `T` of the class, or of the outer class.
+ */
+private val legacyComparator = KmType().apply {
+    classifier = KmClassifier.Class("kotlin/Comparator")
+    arguments += KmTypeProjection(KmVariance.INVARIANT, KmType().apply { classifier = KmClassifier.TypeParameter(0) })
 }
 
 internal fun withMetadataKind(bytes: ByteArray, kind: Int): ByteArray = withMetadata(bytes) {

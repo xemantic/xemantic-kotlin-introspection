@@ -429,6 +429,11 @@ internal class DefaultKotlinIntrospector(
          */
         private const val SEALED_SUBCLASSES_OMITTED = "// sealed subclasses not part of the API omitted"
 
+        /**
+         * Marks the legacy context receivers of a class, see [formatClassContextReceivers].
+         */
+        private const val LEGACY_CONTEXT_RECEIVERS = "/* legacy context receivers, not compiled by Kotlin 2.2+ */"
+
         private const val DEFAULT_IMPLS = "DefaultImpls"
 
         /**
@@ -2865,16 +2870,17 @@ internal class DefaultKotlinIntrospector(
 
     /**
      * The legacy context receivers of a class, like `context(Logger) `, compiled with `-Xcontext-receivers`
-     * by a Kotlin compiler before 2.2, in their own syntax, without names, as a class cannot declare context parameters.
-     * The ones of a function or a property are read as its context parameters by kotlin-metadata-jvm.
+     * by a Kotlin compiler before 2.2, in their own syntax, without names, as a class cannot declare context parameters,
+     * followed by the [LEGACY_CONTEXT_RECEIVERS] comment, as Kotlin 2.2+ cannot compile the header copied from the listing.
+     * The ones of a function or a property are read as its context parameters by kotlin-metadata-jvm,
+     * rendered like `context(_: Logger) `, which Kotlin 2.2+ compiles.
      */
-    @OptIn(ExperimentalContextReceivers::class)
-    @Suppress("DEPRECATION")
     private fun formatClassContextReceivers(
         kmClass: KmClass,
         contextPackage: String,
         typeParameters: Map<Int, String>
-    ): String = formatContext(kmClass.contextReceiverTypes.map { formatType(it, contextPackage, typeParameters) })
+    ): String = formatContext(kmClass.legacyContextReceiverTypes.map { formatType(it, contextPackage, typeParameters) })
+        .let { if (it.isEmpty()) it else "$it$LEGACY_CONTEXT_RECEIVERS " }
 
     /**
      * The header of a [listed] class, like a nested class, see [formatClassHeader], without its constructor,
@@ -5195,3 +5201,14 @@ private fun Map<String, List<String>>.withFunctionTypeClasses(): Map<String, Lis
  */
 internal fun receiverBoundsOf(receiverIndexKeys: List<String>): Set<String> =
     if (receiverIndexKeys.size > 1) receiverIndexKeys.toSet() else emptySet()
+
+/**
+ * The legacy context receivers of a class, see [DefaultKotlinIntrospector.formatClassContextReceivers],
+ * the only read of the deprecated [KmClass.contextReceiverTypes], which has no replacement,
+ * as a class cannot declare context parameters, so that a kotlin-metadata-jvm upgrade removing it breaks only this place.
+ * Mutable, so that the tests can add them to the metadata of a class, which the current compiler no longer compiles.
+ */
+@OptIn(ExperimentalContextReceivers::class)
+@Suppress("DEPRECATION")
+internal val KmClass.legacyContextReceiverTypes: MutableList<KmType>
+    get() = contextReceiverTypes

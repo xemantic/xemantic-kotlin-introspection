@@ -84,3 +84,24 @@ internal fun testFixtures(property: String): List<File> = System.getProperty(pro
     .split(File.pathSeparator)
     .map { File(it) }
     .filter { it.exists() }
+
+/**
+ * Copies the files of the [fixtures] directories to the [root],
+ * without the ones [isAbsent] tells by their file names, transforming the bytes by their file names,
+ * like the class files of the isolated test fixtures, see [testFixtures].
+ */
+internal fun testFixturesCopy(
+    fixtures: List<File>,
+    root: Path,
+    isAbsent: (fileName: String) -> Boolean = { false },
+    transform: (fileName: String, bytes: ByteArray) -> ByteArray = { _, bytes -> bytes }
+): Path {
+    fixtures.forEach { dir ->
+        dir.walkTopDown().filter { it.isFile && !isAbsent(it.name) }.forEach { file ->
+            val target = root.resolve(file.relativeTo(dir).path).toFile()
+            target.parentFile.mkdirs()
+            target.writeBytes(transform(file.name, file.readBytes()))
+        }
+    }
+    return root
+}

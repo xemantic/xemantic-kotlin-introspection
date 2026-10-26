@@ -260,6 +260,12 @@ com.example.AnnotationTestClass
   To keep the signature compact,
   only the first line of the message is rendered, followed by `…` if there are more,
   and only the expression of `ReplaceWith`, without its imports.
+* A class compiled with `-Xcontext-receivers` by a Kotlin compiler before 2.2 keeps its legacy context receivers in its header,
+  without names, as a class cannot declare context parameters,
+  marked with a comment, as Kotlin 2.2+ cannot compile such a header:
+  `context(Logger) /* legacy context receivers, not compiled by Kotlin 2.2+ */ class Foo`.
+  The legacy context receivers of its functions and properties are rendered as their context parameters,
+  like `context(_: Logger) fun bar()`, which Kotlin 2.2+ compiles.
 * A class header without a constructor, like `class Foo`, means the implicit public constructor without parameters,
   as in Kotlin,
   so an explicit one is rendered whenever it differs,
