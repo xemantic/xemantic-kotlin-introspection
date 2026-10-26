@@ -177,4 +177,50 @@ class BoundedCacheTest {
         assert(cache.getIfCached("absent") == "put")
     }
 
+    @Test
+    fun `should not cache value put if absent while computation not cacheable is in progress`() {
+        // given
+        val cache = BoundedCache<String, String>(capacity = 1)
+        val computing = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val computation = testThread {
+            cache.getOrCompute("key") {
+                computing.countDown()
+                awaitOrFail(release)
+                BoundedCache.Computed("transient", isCacheable = false)
+            }
+        }
+        awaitOrFail(computing)
+
+        // when
+        try {
+            cache.putIfAbsent("key", "put")
+        } finally {
+            release.countDown()
+        }
+        joinOrFail(computation)
+
+        // then
+        // dropped with the entry of the computation, which is to be computed again
+        assert(cache.getIfCached("key") == null)
+        assert(cache.getOrPut("key") { "computed" } == "computed")
+    }
+
+    @Test
+    fun `should not refresh cached value when not put if absent`() {
+        // given
+        val cache = BoundedCache<String, String>(capacity = 2)
+        cache.put("eldest", "eldest")
+        cache.put("other", "other")
+
+        // when
+        cache.putIfAbsent("eldest", "replacing")
+        cache.put("evicting", "evicting")
+
+        // then
+        // still the least recently used one, evicted
+        assert(cache.getIfCached("eldest") == null)
+        assert(cache.getIfCached("other") == "other")
+    }
+
 }

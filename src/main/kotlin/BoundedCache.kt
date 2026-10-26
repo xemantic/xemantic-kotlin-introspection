@@ -71,11 +71,14 @@ internal class BoundedCache<K : Any, V>(private val capacity: Int) {
 
     /**
      * Caches the [value] of the [key], unless one is cached, or being computed, see [getOrCompute],
-     * like a value computed outside the cache, which might be older than the one cached meanwhile.
+     * like a value computed outside the cache, which might be older than the one cached meanwhile,
+     * without counting as a use of the one kept, which is not to outlive the more recently used ones.
+     * Dropped with the computation in progress, if any, when its value is not cacheable.
      */
     fun putIfAbsent(key: K, value: V) {
         synchronized(entries) {
-            entries.putIfAbsent(key, lazyOf(Computed(value, isCacheable = true)))
+            // unlike putIfAbsent of an access-ordered map, which counts as an access of the value kept
+            if (!entries.containsKey(key)) entries[key] = lazyOf(Computed(value, isCacheable = true))
         }
     }
 

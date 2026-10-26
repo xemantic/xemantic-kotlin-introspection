@@ -1236,8 +1236,9 @@ internal class DefaultKotlinIntrospector(
      * while a miss of such a lookup caused by an `IOException` is probed, and, if its class file is there,
      * is a failing attempt like of any other lookup, cached once deemed final.
      * After the misses of two such lookups in a row, the lookup whose miss is cached looks the class up on its own,
-     * outside the cache entry, so not shared with the concurrent lookups, caching it, if final,
-     * unless a lookup is cached, or computed, meanwhile, which might have found the class later.
+     * outside the cache entry, so not shared with the concurrent lookups, caching the class, if found, over any other lookup,
+     * as a class once found stays loadable, and a final miss unless a lookup is cached, or computed, meanwhile,
+     * which might have found the class later.
      */
     private fun lookUpClassByBinaryName(binaryName: String, isMissCached: Boolean = true): ClassLookup {
         repeat(2) {
@@ -1251,7 +1252,11 @@ internal class DefaultKotlinIntrospector(
         }
         // after the misses of two concurrent lookups by name in a row, which might keep taking the cache entry for good
         val lookup = attemptLookUpClass(binaryName, isMissProbed = true)
-        if (lookup.isFinal) foundClasses.putIfAbsent(binaryName, lookup)
+        // a class once found stays loadable, unlike a miss, which might be older than the lookup cached meanwhile,
+        // while a class found only from its class file after a linkage error which might be transient is not cached at all
+        if (lookup.isFinal) {
+            if (lookup.foundClass != null) foundClasses.put(binaryName, lookup) else foundClasses.putIfAbsent(binaryName, lookup)
+        }
         return lookup.markedUnlessFinal()
     }
 
