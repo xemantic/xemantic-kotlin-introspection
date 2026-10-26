@@ -196,6 +196,14 @@ private val KmProperty.declaredSetterVisibility: Visibility? get() = if (isVar) 
 private fun isOpenForOverridesByDefault(owner: KmClass?): Boolean = owner != null && owner.modality != Modality.FINAL
 
 /**
+ * Whether the user code can override the members of the [kmClass], the [apiClass] of the API:
+ * the ones of an interface, unless sealed, which the user code can implement,
+ * or else the ones of a class which it can subclass, see [ApiClass.isOpen].
+ */
+private fun isOpenForOverrides(kmClass: KmClass, apiClass: ApiClass): Boolean =
+    if (kmClass.kind == ClassKind.INTERFACE) kmClass.modality != Modality.SEALED else apiClass.isOpen
+
+/**
  * Whether this is a data class, or a value class, which cannot be declared without a property for each parameter
  * of its primary constructor, never a data object, which cannot have a constructor.
  */
@@ -1126,7 +1134,7 @@ internal class DefaultKotlinIntrospector(
         apiClass: ApiClass,
         contextPackage: String
     ): List<List<String>> {
-        val isOpenForOverrides = apiClass.isOpen
+        val isOpenForOverrides = isOpenForOverrides(kmClass, apiClass)
         return apiMembersNamed(kmClass, declarations, memberName, apiClass).map { member ->
             formatMember(member, kmClass, declarations, apiClass, contextPackage, isOpenForOverrides)
         }
@@ -1318,7 +1326,7 @@ internal class DefaultKotlinIntrospector(
             }
         }
 
-        val isOpenForOverrides = scope.isOpen
+        val isOpenForOverrides = isOpenForOverrides(kmClass, scope)
         return inherited.map { candidate ->
             ListingItem.InheritedMember(
                 candidate.kmClass.name.replace('/', '.'),
@@ -2010,7 +2018,7 @@ internal class DefaultKotlinIntrospector(
         val declaredConstructor = constructors.header as? HeaderConstructor.Declared
         val secondaryConstructors = constructors.secondary
         // whether the user code can override the members, see formatModalityModifiers
-        val isOpenForOverrides = apiClass.isOpen
+        val isOpenForOverrides = isOpenForOverrides(kmClass, apiClass)
         // The properties declared by the parameters of the rendered constructor, by the parameter name,
         // also the ones which are not part of the API of a data class, or a value class,
         // whose parameters must all declare properties, like `private val rawValue: Long`
@@ -2285,7 +2293,7 @@ internal class DefaultKotlinIntrospector(
         val isInterface = kmClass.kind == ClassKind.INTERFACE
         val typeParameters = typeParametersInScope(kmClass)
         val contextPackage = contextPackageOf(declarations, kmClass)
-        val isOpenForOverrides = apiClass.isOpen
+        val isOpenForOverrides = isOpenForOverrides(kmClass, apiClass)
         val builtinClass = declarations as? BuiltinClass
         val jvmOnlyProperties = builtinClass?.jvmOnlyProperties.orEmpty().inApi(apiClass, declarations).map { property ->
             property.name to formatApiProperty(
