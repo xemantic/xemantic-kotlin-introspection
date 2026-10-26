@@ -5453,6 +5453,7 @@ class KotlinIntrospectorTest {
             class BoundedReceiverNumberSink : BoundedReceiverSink<Number>
             // from com.xemantic.kotlin.introspection.test
             fun BoundedReceiverSink<Int>.sinkInt()
+            fun BoundedReceiverSink<Nothing>.sinkNothing()
         """.trimIndent()
     }
 
@@ -5513,8 +5514,9 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should resolve class with extensions on JVM supertypes of built-in type argument`() {
-        // String is java.io.Serializable on the JVM, like Array is also Cloneable, unlike told by the built-in declarations
+    fun `should resolve class with extension on JVM supertype of built-in type argument`() {
+        // String is java.io.Serializable on the JVM, unlike told by the built-in declarations,
+        // but not a java.lang.constant.Constable, as Kotlin does not see it
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.BoundedReceiverStrings"
         ) sameAsKotlin """
@@ -5524,6 +5526,11 @@ class KotlinIntrospectorTest {
             fun BoundedReceiverSource<java.io.Serializable>.firstSerializable()
             fun BoundedReceiverSource<String>.firstString(): String
         """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extensions on JVM supertypes of array type argument`() {
+        // Array is also Cloneable on the JVM
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.BoundedReceiverArrays"
         ) sameAsKotlin """
@@ -5536,6 +5543,48 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve class without extension on JVM supertype of built-in type argument which Kotlin does not see`() {
+        // java.lang.Integer is a java.lang.constant.Constable, not seen by Kotlin
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverInts"
+        ) should {
+            have("fun BoundedReceiverSource<Number>.firstNumber(): Number" in lines())
+            have(lines().none { "firstConstable" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve class without extension on mutable JVM supertype of read-only built-in type argument`() {
+        // java.util.List is a java.util.Collection, seen as MutableCollection, unlike the read-only List
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverLists"
+        ) should {
+            have(lines().none { "addRow" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve object of Nothing type argument with extensions on supertypes of any type argument`() {
+        // Nothing is a subtype of any type, like of String, for the BoundedReceiverSource<out T>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverNone"
+        ) should {
+            have("fun BoundedReceiverSource<String>.firstString(): String" in lines())
+            have("fun BoundedReceiverSource<Number>.firstNumber(): Number" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve class with extension on contravariant supertype of Nothing type argument`() {
+        // a BoundedReceiverSink<Int> is a BoundedReceiverSink<Nothing>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverIntSink"
+        ) should {
+            have("fun BoundedReceiverSink<Nothing>.sinkNothing()" in lines())
+        }
+    }
+
+    @Test
     fun `should resolve class with extension on contravariant supertype of built-in type argument of JVM supertype`() {
         // a BoundedReceiverSink<java.io.Serializable> is a BoundedReceiverSink<Int>, but not a BoundedReceiverSink<Any>
         resolver.resolve(
@@ -5545,6 +5594,7 @@ class KotlinIntrospectorTest {
             class BoundedReceiverSerializableSink : BoundedReceiverSink<java.io.Serializable>
             // from com.xemantic.kotlin.introspection.test
             fun BoundedReceiverSink<Int>.sinkInt()
+            fun BoundedReceiverSink<Nothing>.sinkNothing()
         """.trimIndent()
     }
 

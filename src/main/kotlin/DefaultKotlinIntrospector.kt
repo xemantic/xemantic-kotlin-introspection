@@ -2610,32 +2610,32 @@ internal class DefaultKotlinIntrospector(
 
     /**
      * The names of the supertypes which the JVM classes of the built-in types of the given [names] add
-     * to the ones told by their built-in declarations, like `java.io.Serializable` of `kotlin.String`,
-     * or `kotlin.Cloneable` of `kotlin.Array`, as Kotlin/JVM sees them.
+     * to the ones told by their built-in declarations, as Kotlin/JVM sees them,
+     * `java.io.Serializable`, like of `kotlin.String`, and `kotlin.Cloneable`, like of `kotlin.Array`,
+     * but none of the other ones of the JVM classes, which Kotlin does not see,
+     * like `java.lang.constant.Constable` of `java.lang.Integer`, or `java.util.Collection` of `java.util.List`.
      */
-    private fun jvmSupertypeNamesOfBuiltins(names: Set<String>): Set<String> {
-        val jvmSupertypeNames = linkedSetOf<String>()
-        val pending = ArrayDeque(names.mapNotNull { name ->
-            DefaultKotlinIntrospector.builtinTypes[name]?.let { reflectedValue(default = null) { it.javaObjectType } }
-        })
-        while (pending.isNotEmpty()) {
-            val javaClass = pending.removeFirst()
-            reflectedValue(default = emptyList()) { listOfNotNull(javaClass.superclass) + javaClass.interfaces }.forEach { supertype ->
-                val name = reflectedValue(default = null) {
-                    (overrideResolver.builtinNameOfJavaClass(supertype.name) ?: kotlinClassName(supertype)).replace('/', '.')
-                }
-                if (name != null && jvmSupertypeNames.add(name)) pending += supertype
+    private fun jvmSupertypeNamesOfBuiltins(names: Set<String>): Set<String> =
+        names.flatMapTo(HashSet()) { name ->
+            jvmSupertypeNamesOfBuiltin.getOrPut(name) {
+                val javaClass = DefaultKotlinIntrospector.builtinTypes[name]
+                    ?.let { reflectedValue(default = null) { it.javaObjectType } }
+                    ?: return@getOrPut emptySet()
+                JVM_SUPERTYPES_OF_BUILTINS.filterTo(HashSet()) { (_, jvmClass) -> jvmClass.isAssignableFrom(javaClass) }
+                    .mapTo(HashSet()) { (supertypeName, _) -> supertypeName }
             }
-        }
-        return jvmSupertypeNames - names
-    }
+        } - names
+
+    // the JVM supertypes of the built-in types, by their names, see jvmSupertypeNamesOfBuiltins
+    private val jvmSupertypeNamesOfBuiltin = ConcurrentHashMap<String, Set<String>>()
 
     /**
      * Whether the class of the metadata name [subtype] is the class of the metadata name [supertype], or its subtype,
      * also when it is not known, like of a class absent from the classpath, but `kotlin.Any`, a subtype of no other class.
      */
     private fun ClassSupertypes.isSubclass(subtype: String, supertype: String): Boolean {
-        if (subtype == supertype || supertype == ANY_CLASS_NAME) return true
+        // Nothing is a subtype of any type
+        if (subtype == supertype || supertype == ANY_CLASS_NAME || subtype == NOTHING_CLASS_NAME) return true
         if (subtype == ANY_CLASS_NAME) return false
         val names = supertypeNamesOf(subtype)
         return names.isEmpty() || supertype.replace('/', '.') in names
@@ -5979,6 +5979,15 @@ private fun kotlinPackageOf(binaryName: String, packageName: String): String =
 private const val ANY_RECEIVER_KEY = "kotlin.Any"
 
 private const val COMPARABLE_CLASS_NAME = "kotlin.Comparable"
+
+/**
+ * The supertypes which Kotlin/JVM sees for the JVM classes of the built-in types, see `jvmSupertypeNamesOfBuiltins`,
+ * by their names, with their JVM classes.
+ */
+private val JVM_SUPERTYPES_OF_BUILTINS = listOf(
+    "java.io.Serializable" to java.io.Serializable::class.java,
+    "kotlin.Cloneable" to java.lang.Cloneable::class.java
+)
 
 /**
  * Whether the extensions declared in the class of the JVM binary name [sourceClass], imported from the [source],

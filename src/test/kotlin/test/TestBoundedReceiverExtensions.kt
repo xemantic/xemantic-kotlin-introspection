@@ -285,3 +285,20 @@ class BoundedReceiverRunnables : BoundedReceiverSource<Runnable>
 
 // a type parameter bounded by the class of other type arguments, not standing for the class
 abstract class BoundedReceiverStarred<X, T : BoundedReceiverStarred<String, T>> : Comparable<T>
+
+// Nothing, a subtype of any type, as a type argument, like of an Arrow-style None
+object BoundedReceiverNone : BoundedReceiverSource<Nothing>
+
+class BoundedReceiverIntSink : BoundedReceiverSink<Int>
+
+fun BoundedReceiverSink<Nothing>.sinkNothing() {}
+
+// the JVM supertypes of a built-in type, which Kotlin does not see, like java.lang.constant.Constable of Int,
+// or java.util.Collection of List, seen as MutableCollection
+class BoundedReceiverInts : BoundedReceiverSource<Int>
+
+class BoundedReceiverLists : BoundedReceiverSource<List<String>>
+
+fun BoundedReceiverSource<java.lang.constant.Constable>.firstConstable() {}
+
+fun BoundedReceiverSource<MutableCollection<String>>.addRow() {}
