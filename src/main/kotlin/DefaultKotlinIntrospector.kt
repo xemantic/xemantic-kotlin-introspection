@@ -260,7 +260,10 @@ internal class DefaultKotlinIntrospector(
     private val classLoader: ClassLoader = Thread.currentThread().contextClassLoader,
     scanEntireClasspath: Boolean = true,
     // the declarations of the built-in types, see readKotlinBuiltinClasses, replaced only by the tests
-    private val readBuiltinClasses: () -> Map<String, KmClass> = { readKotlinBuiltinClasses() }
+    private val readBuiltinClasses: () -> Map<String, KmClass> = { readKotlinBuiltinClasses() },
+    // called by a lookup whose miss is cached, on receiving a miss of a concurrent lookup by name which is not probed,
+    // before looking the class up again, see lookUpClassByBinaryName, replaced only by the tests
+    private val onUnprobedMissReceived: (binaryName: String) -> Unit = {}
 ) : KotlinIntrospector {
 
     private val logger = KotlinLogging.logger {}
@@ -307,6 +310,8 @@ internal class DefaultKotlinIntrospector(
     /**
      * The failures of the class lookups, and of the class file reads of the [overrideResolver], which might be transient,
      * retried once per resolve, so that the [overrideResolver] does not cache what it computes from them meanwhile.
+     * Every entry point looking classes up is to run as an operation, see [TransientFailures.operation], like [resolve],
+     * as an attempt outside an operation is retried on every access, never deemed final.
      */
     private val transientFailures = TransientFailures()
 
@@ -1231,7 +1236,9 @@ internal class DefaultKotlinIntrospector(
      * while a miss of such a lookup caused by an `IOException` is probed, and, if its class file is there,
      * is a failing attempt like of any other lookup, cached once deemed final.
      * After the misses of two such lookups in a row, the lookup whose miss is cached looks the class up on its own,
-     * outside the cache entry, so not shared with the concurrent lookups, caching it, if final, over the cached one, if any.
+     * outside the cache entry, so not shared with the concurrent lookups, caching the class, if found, over any other lookup,
+     * as a class once found stays loadable, and a final miss unless a lookup is cached, or computed, meanwhile,
+     * which might have found the class later.
      */
     private fun lookUpClassByBinaryName(binaryName: String, isMissCached: Boolean = true): ClassLookup {
         repeat(2) {
@@ -1241,10 +1248,15 @@ internal class DefaultKotlinIntrospector(
             }
             // also when computed by another thread
             if (!isMissCached || computed.value.isMissProbed) return computed.value.markedUnlessFinal()
+            onUnprobedMissReceived(binaryName)
         }
         // after the misses of two concurrent lookups by name in a row, which might keep taking the cache entry for good
         val lookup = attemptLookUpClass(binaryName, isMissProbed = true)
-        if (lookup.isFinal) foundClasses.put(binaryName, lookup)
+        // a class once found stays loadable, unlike a miss, which might be older than the lookup cached meanwhile,
+        // while a class found only from its class file after a linkage error which might be transient is not cached at all
+        if (lookup.isFinal) {
+            if (lookup.foundClass != null) foundClasses.put(binaryName, lookup) else foundClasses.putIfAbsent(binaryName, lookup)
+        }
         return lookup.markedUnlessFinal()
     }
 
@@ -1358,6 +1370,8 @@ internal class DefaultKotlinIntrospector(
 
     /**
      * Whether the failure [e] is caused by an `IOException`, maybe transient, like of a class file which cannot be read for now.
+     * A permanent one, like a `ZipException` of a corrupt jar, cannot be told apart from a transient one,
+     * like of a jar being replaced, so it costs one more attempt, until its failure is deemed final, see [TransientFailures].
      */
     private fun isCausedByIOException(e: Throwable): Boolean =
         // bounded, as the causes might form a cycle
