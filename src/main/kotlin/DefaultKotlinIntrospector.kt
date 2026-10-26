@@ -2441,7 +2441,7 @@ internal class DefaultKotlinIntrospector(
             bodyReceiverSubstitution(extension.function, kmClass)?.let { callSignature(extension.function, it) }
         }
         if (hiding.isEmpty()) return jvmOnlyFunctions
-        val typeParameters = typeParametersInScope(kmClass)
+        val typeParameters = typeParametersInScope(kmClass, declarations)
         return jvmOnlyFunctions.filter { function ->
             val member = memberCallSignature(function, typeParameters)
             hiding.none { member.shadows(it) }

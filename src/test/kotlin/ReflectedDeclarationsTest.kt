@@ -90,8 +90,9 @@ class ReflectedDeclarationsTest {
         // when
         val rendered = introspector.formatReflectedFunction(describe)
 
-        // then - the return type, which Kotlin lets be used as not nullable, stays so
-        assert(rendered == "open fun describe(arg0: Any?): String")
+        // then - the return type, which Kotlin lets be used as not nullable, stays so,
+        // and without the owner, which the user code might subclass, the member is not rendered as open
+        assert(rendered == "fun describe(arg0: Any?): String")
     }
 
     @Test
@@ -105,7 +106,7 @@ class ReflectedDeclarationsTest {
         // then
         assert(
             rendered == listOf(
-                "open fun <T> first(arg0: T?): T",
+                "fun <T> first(arg0: T?): T",
                 "fun <T> listOf(vararg arg0: T?): List<T>"
             )
         )
