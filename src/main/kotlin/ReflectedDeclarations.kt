@@ -232,9 +232,12 @@ internal fun KClass<*>.toKmBuiltinClass(name: String): KmClass {
         .mapTo(kmClass.constructors) { constructor ->
             KmConstructor().also { kmConstructor ->
                 kmConstructor.visibility = Visibility.PUBLIC
-                // a constructor infers the type arguments of the class at the call, like a function its own ones
+                // a constructor infers the type arguments of the class at the call, like a function its own ones,
+                // so that whether it is of a JDK class does not matter
                 constructor.parameters.withIndex().mapTo(kmConstructor.valueParameters) { (position, parameter) ->
-                    parameter.toKmValueParameter(position, typeParameters, ownTypeParameters = this.typeParameters)
+                    parameter.toKmValueParameter(
+                        position, typeParameters, ownTypeParameters = this.typeParameters, isJdkMember = lazyOf(true)
+                    )
                 }
             }
         }
@@ -598,8 +601,8 @@ internal fun varargElementType(arrayType: KmType): KmType =
 private fun KParameter.toKmValueParameter(
     position: Int,
     scope: ReflectedTypeParameters,
-    ownTypeParameters: List<KTypeParameter> = emptyList(),
-    isJdkMember: Lazy<Boolean> = lazyOf(true)
+    ownTypeParameters: List<KTypeParameter>,
+    isJdkMember: Lazy<Boolean>
 ): KmValueParameter =
     KmValueParameter(name ?: "arg$position").also { parameter ->
         // a Java parameter of a platform type, like Any! of Object, accepts null,

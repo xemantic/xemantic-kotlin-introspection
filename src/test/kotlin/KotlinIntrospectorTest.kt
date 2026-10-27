@@ -4460,6 +4460,18 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve JVM-only member of mutable list of JDK 21 overridden by Java class outside of JDK once`() {
+        // the override is the one member addFirst in K2, taking E!, like for l.addFirst(null) of a JavaFirstList<String>,
+        // as it overrides on the JVM the addFirst of java.util.List, which the Kotlin members do not tell
+        assumeTrue(runCatching { List::class.java.getMethod("addFirst", Any::class.java) }.isSuccess, "JDK 21+")
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaFirstList.addFirst") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaFirstList.addFirst [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaFirstList
+            override fun addFirst(arg0: E?)
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve JVM-only member of mutable list of JDK 21 overridden by Java superclass as declared by built-in type`() {
         assumeTrue(runCatching { List::class.java.getMethod("addFirst", Any::class.java) }.isSuccess, "JDK 21+")
         resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaArrayList.addFirst") sameAsKotlin """

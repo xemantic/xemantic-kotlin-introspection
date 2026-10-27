@@ -224,7 +224,7 @@ class TypeSubstitutionTest {
         val extensionScope = TypeParameterScope.EMPTY.withDeclared(listOf(typeParameter("T", 0), typeParameter("U", 1)))
 
         // when
-        val scope = extensionScope.withNames(mapOf(0 to "A", 1 to "B"), classScope)
+        val scope = extensionScope.withStandingFor(mapOf(0 to typeParameter("A", 0), 1 to typeParameter("B", 1)), classScope)
 
         // then - T & Any, rendered as A & Any, would not compile
         assert(scope.names == mapOf(0 to "A", 1 to "B") && scope.notNullable == setOf(0))

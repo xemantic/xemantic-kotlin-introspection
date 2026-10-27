@@ -247,6 +247,8 @@ class InheritedJavaSelfKeyMap<V : Comparable<V>> : com.xemantic.kotlin.introspec
 
 class InheritedJavaRawMap : com.xemantic.kotlin.introspection.test.other.JavaRawMap()
 
+class InheritedJavaFirstList<E> : com.xemantic.kotlin.introspection.test.other.JavaFirstList<E>()
+
 class InheritedFromJava : com.xemantic.kotlin.introspection.test.other.JavaInheritedMid<String>()
 
 open class OpenInheritedFromJava : com.xemantic.kotlin.introspection.test.other.JavaInheritedMid<String>()
