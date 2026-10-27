@@ -36,6 +36,8 @@ public abstract class JavaUndescribableBase<T> {
 
     public abstract @org.jetbrains.annotations.Nullable String nullable(@org.jetbrains.annotations.Nullable T value);
 
+    public abstract @org.jetbrains.annotations.Nullable String[] nullableElements();
+
     @Override
     public Object clone() {
         return this;
