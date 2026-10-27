@@ -2038,7 +2038,11 @@ internal class DefaultKotlinIntrospector(
          * or less, a negative one, or equally, `0`, or `null` if they cannot be compared, see [compareSpecificity],
          * a platform type, see [returnsPlatformType], being as specific as either nullability, like the `String!` of `call()`
          * of `java.util.concurrent.Callable<String>`, as `String`, or `String?`, though less specific than the type
-         * equally specific otherwise, as the compiler prefers the one which is not a platform type.
+         * equally specific otherwise, as the compiler prefers the one which is not a platform type, of the merged members.
+         * So the result is not `0` when exactly one of them is a platform type, which tells the pick of the compiler
+         * among the merged members, see [inheritedCandidates], also of two Java members, like a JDK method whose return type
+         * K2 enhances, see [ENHANCED_RETURN_JDK_METHODS], merged with one returning a platform type,
+         * while for an override, see [refines], the overridden member is always a Kotlin one.
          */
         fun compareReturnType(other: InheritedCandidate, supertypeNamesOf: (String) -> Set<String>): Int? {
             val isPlatformRivalry = returnsPlatformType != other.returnsPlatformType
@@ -2077,7 +2081,9 @@ internal class DefaultKotlinIntrospector(
 
         /**
          * Whether the [member] overriding the one of the [overridden] candidate makes it more visible,
-         * like a public override of a protected member, or returns a more specific type, see [compareReturnType].
+         * like a public override of a protected member, or returns a more specific type, see [compareReturnType],
+         * the [overridden] candidate being a Kotlin member, which never returns a platform type,
+         * so that a platform type of the [member], as specific otherwise, never refines it.
          */
         fun refines(overridden: InheritedCandidate, supertypeNamesOf: (String) -> Set<String>): Boolean =
             raisesVisibility(overridden) || (compareReturnType(overridden, supertypeNamesOf) ?: 0) > 0
@@ -2383,23 +2389,26 @@ internal class DefaultKotlinIntrospector(
                     it.interfaceModality == null -> it.interfaceModality = modality
                 }
             }
-            implemented.isNotEmpty() ||
+            val method = lazy(LazyThreadSafetyMode.NONE) {
+                (candidate.member as? Member.Function)?.let { javaClass.javaMethodOf(it.declaration) }
+            }
+            // the method overriding it in a JVM class below, see overridingBelow, and the unlisted candidate declaring it, if any
+            val overriding = lazy(LazyThreadSafetyMode.NONE) { method.value?.let { overridingBelow(it, declarations.clazz) } }
+            val unlisted = lazy(LazyThreadSafetyMode.NONE) {
+                overriding.value?.let { unlistedOverride(it, unlistedKotlinCandidates) }
+            }
+            val isRemoved = implemented.isNotEmpty() ||
                 (candidate.overridden.isEmpty() && candidate.overridesHiddenJdkMethod(exposedJdkMethods)) ||
                 jvmOnlyCandidates.any { jvmOnly ->
                     jvmOnly.signature == candidate.signature && !candidate.raisesVisibility(jvmOnly)
                 } ||
-                (candidate.member as? Member.Function)?.let { function ->
-                    javaClass.javaMethodOf(function.declaration)?.let { method ->
-                        overridesHiddenJdkMethod(method) || overridingBelow(method, declarations.clazz)?.let { overriding ->
-                            val unlisted = unlistedOverride(overriding, unlistedKotlinCandidates)
-                            // standing for the visible override, of its modality, like final, or open of an abstract method
-                            if (unlisted != null && !unlisted.isHidden && candidate.implementationModality == null) {
-                                candidate.implementationModality = unlisted.member.modality
-                            }
-                            unlisted == null
-                        } == true
-                    }
-                } == true
+                method.value?.let { overridesHiddenJdkMethod(it) || (overriding.value != null && unlisted.value == null) } == true
+            // the Java method kept, standing for the visible override of a supertype which is not part of the API,
+            // is of its modality, like final, or open of an abstract method
+            if (!isRemoved && candidate.implementationModality == null) {
+                unlisted.value?.takeUnless { it.isHidden }?.let { candidate.implementationModality = it.member.modality }
+            }
+            isRemoved
         }
         if (candidates.isEmpty()) return emptyList()
         // the getter of a Java class implementing an abstract Kotlin property is no candidate, being named otherwise,

@@ -10733,6 +10733,13 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should not resolve top-level functions of JVM signatures of members of Any deprecated with hidden level`() {
+        // they override nothing, so that their hidden deprecation applies
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.other.HiddenAnyNamedFunctionsKt.hashCode") == null)
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.other.HiddenAnyNamedFunctionsKt.toString") == null)
+    }
+
+    @Test
     fun `should not resolve merged member hidden in first supertype`() {
         // of the members of HiddenMergedLeft and HiddenMergedRight, equally specific, the compiler picks the hidden one of the first
         assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenMergedJoin.f") == null)

@@ -243,7 +243,7 @@ interface HiddenAnyOverride {
 
 abstract class HiddenAnyOverrideSub : HiddenAnyOverride
 
-// but it does of an override of equals, so that neither equalsOverride.equals(null), nor equalsOverrideSub.equals(null) compiles
+// but it does of an override of equals, which kotlinc 2.4 rejects equalsOverride.equals(null) of, unchecked by the build
 interface HiddenAnyEqualsOverride {
     @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
     override fun equals(other: Any?): Boolean
@@ -484,7 +484,8 @@ internal abstract class HiddenMergedInternalThread : Thread() {
 @Suppress("EXPOSED_SUPER_CLASS")
 abstract class HiddenMergedInternalThreadSub : HiddenMergedInternalThread()
 
-// of the modality of the override, so that finalThread.run() cannot be overridden, while callable.call() can be
+// of the modality of the override, the final one of HiddenMergedInternalFinalThread, which kotlinc 2.4 does not let
+// a subclass override, unchecked by the build, or the open one of HiddenMergedInternalCallable, overridden below
 internal open class HiddenMergedInternalFinalThread : Thread() {
     final override fun run() {}
 }
@@ -498,6 +499,10 @@ internal abstract class HiddenMergedInternalCallable : java.util.concurrent.Call
 
 @Suppress("EXPOSED_SUPER_CLASS")
 abstract class HiddenMergedInternalCallableSub : HiddenMergedInternalCallable()
+
+abstract class HiddenMergedInternalCallableOverride : HiddenMergedInternalCallableSub() {
+    override fun call(): String = "overridden"
+}
 
 // the hidden member of the same JVM signature as the Java method of the first direct supertype does not hide it,
 // so that join.run() compiles, while reversed.run() calls the run scope function instead
@@ -593,7 +598,8 @@ abstract class HiddenMergedJavaFunctionOverloadJoin :
 
 // the visible member of the first direct supertype is still picked when the hidden one of the second overrides
 // a visible override of it in turn, which stands for it only on the second supertype, so that join.f() compiles,
-// while reversed.f() does not, also through a superclass, and the run() of Runnable next to a superclass of java.lang.Thread
+// also through a superclass, and the run() of Runnable next to a superclass of java.lang.Thread,
+// while kotlinc 2.4 rejects reversed.f(), unchecked by the build
 interface HiddenMergedMid : HiddenMergedRoot {
     override fun f(): Int
 }
