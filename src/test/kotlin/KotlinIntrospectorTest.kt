@@ -6066,9 +6066,10 @@ class KotlinIntrospectorTest {
         // java.lang.StringBuilder is a Comparable<StringBuilder>, but not a Comparable<java.io.File>, nor a Comparable<String>
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.BoundedReceiverStringBuilders"
-        ) should {
-            have(lines().none { "firstComparable" in it })
-        }
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverStringBuilders [page 1/1]
+            class BoundedReceiverStringBuilders : BoundedReceiverComparables<java.lang.StringBuilder>
+        """.trimIndent()
     }
 
     @Test
@@ -6076,11 +6077,12 @@ class KotlinIntrospectorTest {
         // JavaGenericComparable<String> is a Comparable<JavaGenericComparable<String>>, but not of JavaGenericComparable<Int>
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.BoundedReceiverJavaGenericComparables"
-        ) should {
-            have(lines().filter { "firstComparable" in it } == listOf(
-                "fun BoundedReceiverComparables<Comparable<com.xemantic.kotlin.introspection.test.other.JavaGenericComparable<String>>>.firstComparableGenericString()"
-            ))
-        }
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverJavaGenericComparables [page 1/1]
+            class BoundedReceiverJavaGenericComparables : BoundedReceiverComparables<com.xemantic.kotlin.introspection.test.other.JavaGenericComparable<String>>
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverComparables<Comparable<com.xemantic.kotlin.introspection.test.other.JavaGenericComparable<String>>>.firstComparableGenericString()
+        """.trimIndent()
     }
 
     @Test
@@ -6113,6 +6115,7 @@ class KotlinIntrospectorTest {
     @Test
     fun `should resolve class with extensions on read-only and mutable list of Java list type argument`() {
         // a java.util.List<String> is the flexible (Mutable)List<String!>!, either a List<String>, or a MutableList<String>,
+        // also a MutableCollection<String>, but a MutableList<*> is not a MutableList<String> in an invariant position,
         // while readAnyRows is listed, as a star projection matches any type argument, like on main
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.BoundedReceiverStringRows"
@@ -6121,39 +6124,59 @@ class KotlinIntrospectorTest {
             class BoundedReceiverStringRows : com.xemantic.kotlin.introspection.test.other.JavaListRows<String>
             // from com.xemantic.kotlin.introspection.test
             fun BoundedReceiverRows<MutableList<String>>.addStringRow()
+            fun BoundedReceiverRows<out MutableCollection<String>>.addStringRows()
             fun BoundedReceiverRows<List<*>>.readAnyRows()
             fun BoundedReceiverRows<List<String>>.readStringRows()
         """.trimIndent()
     }
 
     @Test
-    fun `should resolve class without extension on mutable list of star projection of Java list type argument`() {
-        // a MutableList<*> is not a MutableList<String> in an invariant position
-        resolver.resolve(
-            "com.xemantic.kotlin.introspection.test.BoundedReceiverStringRows"
-        ) should {
-            have(lines().none { "addAnyRow" in it })
-        }
-    }
-
-    @Test
     fun `should resolve class without extensions on mutable list of Java list of wildcard type argument`() {
-        // a (Mutable)List<out String!>! is not a MutableList<String>, nor a MutableList<*>, in an invariant position
+        // a (Mutable)List<out String!>! is not a MutableList<String>, nor a MutableList<*>, in an invariant position,
+        // nor a MutableCollection<String>, while a projected type argument matches any type, like on main,
+        // listing also readIntRows and readMutableRows
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.BoundedReceiverWildcardRows"
-        ) should {
-            have(lines().none { "addStringRow" in it || "addAnyRow" in it })
-        }
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverWildcardRows [page 1/1]
+            class BoundedReceiverWildcardRows : com.xemantic.kotlin.introspection.test.other.JavaWildcardRows<String>
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverRows<List<*>>.readAnyRows()
+            fun BoundedReceiverRows<List<Int>>.readIntRows()
+            fun BoundedReceiverRows<List<MutableList<String>>>.readMutableRows()
+            fun BoundedReceiverRows<List<String>>.readStringRows()
+        """.trimIndent()
     }
 
     @Test
     fun `should resolve class without extensions on mutable list of nested Java list of unbounded wildcard`() {
-        // a (Mutable)List<*>! is not a MutableList<String>, nor is the outer list a MutableList<String>
+        // a (Mutable)List<*>! is not a MutableList<String>, nor is the outer list a MutableList<String>,
+        // while readAnyRows is listed, as a star projection matches any type argument, like on main
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.BoundedReceiverNestedRows"
-        ) should {
-            have(lines().none { "MutableList" in it })
-        }
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverNestedRows [page 1/1]
+            class BoundedReceiverNestedRows : com.xemantic.kotlin.introspection.test.other.JavaNestedRows
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverRows<List<*>>.readAnyRows()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extensions on supertypes of mutable list of Java list of unbounded wildcard`() {
+        // a (Mutable)List<*>! is no MutableCollection<Int>, nor MutableCollection<String>, nor MutableIterable<Int>,
+        // while a star projection matches any type argument, like on main, listing the read-only ones
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverAnyRows"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverAnyRows [page 1/1]
+            class BoundedReceiverAnyRows : com.xemantic.kotlin.introspection.test.other.JavaAnyRows
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverRows<List<*>>.readAnyRows()
+            fun BoundedReceiverRows<List<Int>>.readIntRows()
+            fun BoundedReceiverRows<List<MutableList<String>>>.readMutableRows()
+            fun BoundedReceiverRows<List<String>>.readStringRows()
+        """.trimIndent()
     }
 
     @Test

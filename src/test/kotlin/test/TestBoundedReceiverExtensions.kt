@@ -19,6 +19,7 @@
 package com.xemantic.kotlin.introspection.test
 
 import com.xemantic.kotlin.introspection.test.other.JavaBoundedReceiverBase
+import com.xemantic.kotlin.introspection.test.other.JavaAnyRows
 import com.xemantic.kotlin.introspection.test.other.JavaBoxBase
 import com.xemantic.kotlin.introspection.test.other.JavaComparableBase
 import com.xemantic.kotlin.introspection.test.other.JavaFace
@@ -430,3 +431,13 @@ fun BoundedReceiverRows<List<MutableList<String>>>.readMutableRows() {}
 class BoundedReceiverWildcardRows : JavaWildcardRows<String>()
 
 class BoundedReceiverNestedRows : JavaNestedRows()
+
+// the supertypes of the mutable list, matched only when its type arguments are told, unlike of a star projection,
+// or of a Java wildcard
+fun BoundedReceiverRows<out MutableCollection<Int>>.addIntRows() {}
+
+fun BoundedReceiverRows<out MutableCollection<String>>.addStringRows() {}
+
+fun BoundedReceiverRows<out MutableIterable<Int>>.removeIntRows() {}
+
+class BoundedReceiverAnyRows : JavaAnyRows()
