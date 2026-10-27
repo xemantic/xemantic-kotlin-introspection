@@ -4734,6 +4734,100 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve not null annotated member of Java superclass whose members kotlin-reflect cannot describe`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaUndescribable.notNull"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaUndescribable.notNull [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaUndescribableBase
+            abstract fun notNull(arg0: String): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve nullable annotated member of Java superclass whose members kotlin-reflect cannot describe`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaUndescribable.nullable"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaUndescribable.nullable [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaUndescribableBase
+            abstract fun nullable(arg0: String?): String?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve clone of Java superclass whose members kotlin-reflect cannot describe`() {
+        // the clone() of java.lang.Object is no member of kotlin.Any, which the one of JavaUndescribableBase would override
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaUndescribable.clone"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaUndescribable.clone [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaUndescribableBase
+            open fun clone(): Any
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve overload of equals of Java superclass whose members kotlin-reflect cannot describe`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaUndescribable.equals"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaUndescribable.equals [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaUndescribableBase
+            open fun equals(arg0: com.xemantic.kotlin.introspection.test.other.JavaUndescribableBase<*>?): Boolean
+            // inherited from kotlin.Any
+            open operator fun equals(other: Any?): Boolean
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve JDK member inherited through Java subclass of JDK class like through JDK class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaInheritingDeque.spliterator"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaInheritingDeque.spliterator [page 1/1]
+            // inherited from kotlin.collections.Collection
+            open override fun spliterator(): java.util.Spliterator<String>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve size function of java util Collection named as supertype which Kotlin sees as Java interface`() {
+        // kotlinc sees size() of java.util.Collection, not the size of Collection
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaCollectionSubclass.size"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaCollectionSubclass.size [page 1/1]
+            // inherited from java.util.Collection
+            fun size(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve size property of java util List named as supertype which Kotlin sees as built-in type`() {
+        // kotlinc sees the size of List, not size() of java.util.List
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaListSubclass.size"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaListSubclass.size [page 1/1]
+            // inherited from kotlin.collections.Collection
+            val size: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve getter of property of mapped Java interface named as supertype`() {
+        // kotlinc sees both the key, and getKey(), of java.util.Map.Entry
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaMapEntrySubclass.getKey"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaMapEntrySubclass.getKey [page 1/1]
+            // inherited from java.util.Map.Entry
+            fun getKey(): String
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve own member of Java superclass whose members kotlin-reflect cannot describe since JDK 21`() {
         assumeTrue(Runtime.version().feature() >= 21, "kotlin-reflect fails on the members of java.util.LinkedHashSet since JDK 21")
         resolver.resolve(
@@ -11120,6 +11214,29 @@ class KotlinIntrospectorTest {
     fun `should not resolve enhanced member inherited through Java class of first supertype overridden by hidden one`() {
         // the get() of Supplier, inherited through JavaInheritingSupplier, loses the enhancement there, returning String!
         assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenMergedJavaInheritedSupplierJoin.get") == null)
+    }
+
+    @Test
+    fun `should resolve enhanced member inherited also directly next to Java class of first supertype overridden by hidden one`() {
+        // the get() of Supplier, a direct supertype too, keeps the enhancement, which JavaInheritingSupplier, walked first, loses
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedJavaInheritedDirectSupplierJoin.get"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedJavaInheritedDirectSupplierJoin.get [page 1/1]
+            // inherited from java.util.function.Supplier
+            fun get(): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve suspend invoke of function type of first supertype overridden by hidden one`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedSuspendInvokeJoin.invoke"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedSuspendInvokeJoin.invoke [page 1/1]
+            // inherited from kotlin.coroutines.SuspendFunction1
+            suspend operator fun invoke(p1: Int): String
+        """.trimIndent()
     }
 
     @Test

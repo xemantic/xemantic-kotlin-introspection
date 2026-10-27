@@ -1285,10 +1285,14 @@ internal class DefaultKotlinIntrospector(
      * on its inherited `clone()`, they are converted from the Java reflection, see [javaMembersOf],
      * and so are the members of a Java class which kotlin-reflect describes as a built-in type,
      * like `java.util.ListIterator` as `ListIterator`, named as a supertype, whose own members Kotlin sees then,
-     * which the built-in type does not tell, like `set(E)`, see [javaMembersOf].
+     * which the built-in type does not tell, like `set(E)`, see [javaMembersOf],
+     * or all of them, instead of the ones of the built-in type, see [JAVA_VIEWED_BUILTIN_INTERFACES].
      */
     private fun reflectedJavaClass(clazz: Class<*>): JavaClass? = reflectedValue(default = null) {
         val kClass = clazz.kotlin
+        // a Java class described as a built-in type, like java.util.ListIterator as ListIterator
+        val isBuiltin = reflectedValue(default = false) { kClass.qualifiedName != clazz.canonicalName }
+        val isJavaViewed = isBuiltin && clazz.name in JAVA_VIEWED_BUILTIN_INTERFACES
         val kmClass = kClass.toKmJavaClassHeader(kotlinClassName(clazz), ::javaSupertypeMetadataName)
         val typeParameters = ReflectedTypeParameters.classTypeParameters(kmClass.typeParameters)
         // kotlin-reflect tells no visibility of a protected Java member, which is also visible within its package
@@ -1297,7 +1301,7 @@ internal class DefaultKotlinIntrospector(
         val functions = IdentityHashMap<KmFunction, JavaFunction>()
         // the overloads ordered by their numbers of parameters, and their JVM descriptors,
         // as kotlin-reflect tells them in no particular order
-        val reflectedFunctions = reflectedValue(default = null) { kClass.declaredMemberFunctions }
+        val reflectedFunctions = if (isJavaViewed) emptyList() else reflectedValue(default = null) { kClass.declaredMemberFunctions }
         reflectedFunctions.orEmpty()
             .map { function ->
                 val arity = reflectedValue(default = 0) { function.parameters.size }
@@ -1319,7 +1323,7 @@ internal class DefaultKotlinIntrospector(
                 }
             }
         val properties = IdentityHashMap<KmProperty, JavaProperty>()
-        val reflectedProperties = reflectedValue(default = null) { kClass.declaredMemberProperties }
+        val reflectedProperties = if (isJavaViewed) emptyList() else reflectedValue(default = null) { kClass.declaredMemberProperties }
         reflectedProperties.orEmpty().forEach { property ->
             reflectedValue(default = null) {
                 property.takeIf { '$' !in it.name && !isUnsupportedByCompiler(it) }
@@ -1335,22 +1339,17 @@ internal class DefaultKotlinIntrospector(
                 properties[kmProperty] = JavaProperty(property, field = null)
             }
         }
-        // a Java class described as a built-in type, like java.util.ListIterator as ListIterator
-        val isBuiltin = reflectedValue(default = false) { kClass.qualifiedName != clazz.canonicalName }
         // the type variables of the Java class by their positions, named otherwise by the built-in type, like E of T
         val javaTypeParameters by lazy(LazyThreadSafetyMode.NONE) {
             ReflectedTypeParameters(clazz.typeParameters.map { it.name }.zip(kmClass.typeParameters.map { it.id }).toMap())
         }
         val javaMembers by lazy(LazyThreadSafetyMode.NONE) { javaMembersOf(clazz) }
         if (reflectedFunctions == null || isBuiltin) {
-            // the names of the members the built-in type tells, like the hasNext() of ListIterator, or the key of Map.Entry,
-            // also called by their getters, like getKey(), whose Java methods are not converted again
+            // the names of the members the built-in type tells, like the hasNext() of ListIterator, or the size of java.util.List,
+            // which Kotlin sees instead of its size() then, while the getters of the properties are seen too, like getKey() of key
             val described = if (!isBuiltin) emptySet() else buildSet {
                 reflectedFunctions.orEmpty().mapTo(this) { it.name }
-                reflectedProperties.orEmpty().forEach { property ->
-                    add(property.name)
-                    add("get" + property.name.replaceFirstChar { it.uppercaseChar() })
-                }
+                reflectedProperties.orEmpty().mapTo(this) { it.name }
             }
             javaMembers.methods.filter { it.name !in described }.forEach { method ->
                 reflectedValue(default = null) {
@@ -1377,6 +1376,15 @@ internal class DefaultKotlinIntrospector(
         }
         JavaClass(clazz, kmClass, functions, properties)
     }
+
+    /**
+     * The Java interfaces described as built-in types by kotlin-reflect, see [reflectedJavaClass],
+     * which Kotlin sees as Java ones, when named as a supertype, like `size()` of `java.util.Collection`,
+     * with none of the members of their built-in types, like the `size` of `Collection`,
+     * unlike `java.util.List`, and `java.util.Set`, of the `size` of their built-in types, but no `size()`,
+     * as the compiler tells, see `CLAUDE.md`.
+     */
+    private val JAVA_VIEWED_BUILTIN_INTERFACES = setOf("java.util.Collection", "java.util.Map", "java.lang.CharSequence")
 
     /**
      * The members of a Java class converted from the Java reflection, see [reflectedJavaClass],
@@ -2097,9 +2105,6 @@ internal class DefaultKotlinIntrospector(
      *   when the compiler picks it, the member it overrides standing for it, see [inheritedCandidates].
      * @param jvmMethod the JVM method of the [member], see [JvmMethod],
      *   of a JVM-only member of a built-in type, see [BuiltinClass], or of a member of a Java class, see [JavaClass].
-     * @param isEnhancementLost whether the [member], of a JDK class, is inherited through a Java class of the user code,
-     *   which the compiler sees returning a platform type, though it enhances the return type of the JDK method,
-     *   like `get()` of `java.util.function.Supplier`, see [returnsPlatformType].
      */
     private inner class InheritedCandidate(
         val kmClass: KmClass,
@@ -2111,9 +2116,15 @@ internal class DefaultKotlinIntrospector(
         val typeParameters: TypeParameterScope,
         val isHidden: Boolean,
         val jvmMethod: JvmMethod?,
-        val isApi: Boolean,
-        val isEnhancementLost: Boolean = false
+        val isApi: Boolean
     ) {
+
+        /**
+         * Whether the [member], of a JDK class, is inherited only through a Java class of the user code,
+         * which the compiler sees returning a platform type, though it enhances the return type of the JDK method,
+         * like `get()` of `java.util.function.Supplier`, unless reached also directly, or through the JDK, see [inheritedCandidates].
+         */
+        var isEnhancementLost: Boolean = false
 
         /**
          * The modality of the method of the nearest Java class implementing the [member], which is inherited in its place,
@@ -2138,15 +2149,32 @@ internal class DefaultKotlinIntrospector(
 
         /**
          * Whether the [member], of a Java class, returns a platform type of Java, see [JavaClass.returnsPlatformType],
-         * as substituted, unlike the `V!` of `call()` of `java.util.concurrent.Callable<String?>`, which is `String?`,
-         * or [standsForPlatformType].
+         * as substituted, unlike the `V!` of `call()` of `java.util.concurrent.Callable<String?>`, which is `String?`.
          */
         val returnsPlatformType: Boolean by lazy(LazyThreadSafetyMode.NONE) {
             val function = (member as? Member.Function)?.declaration
-            function != null && !member.returnType.isNullable && (
-                standsForPlatformType || (declarations as? JavaClass)?.returnsPlatformType(function, isEnhancementLost) == true
-            )
+            function != null && !member.returnType.isNullable && (declarations as? JavaClass)?.returnsPlatformType(function) == true
         }
+
+        /**
+         * Whether the [member] returns a platform type, see [returnsPlatformType], against a hidden member merged with it,
+         * also when the JDK enhancement of its return type is lost, see [isEnhancementLost], or [standsForPlatformType],
+         * which decides only whether the compiler picks the hidden member, see [compareReturnType],
+         * not to change which one of the visible members is listed.
+         */
+        val returnsPlatformTypeAgainstHidden: Boolean by lazy(LazyThreadSafetyMode.NONE) {
+            val function = (member as? Member.Function)?.declaration
+            returnsPlatformType || (
+                function != null && !member.returnType.isNullable && (
+                    standsForPlatformType ||
+                        (isEnhancementLost && (declarations as? JavaClass)?.returnsPlatformType(function, isEnhancementLost = true) == true)
+                    )
+                )
+        }
+
+        // the platform type rivalry with the other candidate, see compareReturnType
+        private fun returnsPlatformTypeAgainst(other: InheritedCandidate): Boolean =
+            if (other.isHidden) returnsPlatformTypeAgainstHidden else returnsPlatformType
 
         /**
          * Whether the return type of the [member] is more specific than the one of the [other] candidate, a positive number,
@@ -2160,7 +2188,8 @@ internal class DefaultKotlinIntrospector(
          * while for an override, see [refines], the overridden member is always a Kotlin one.
          */
         fun compareReturnType(other: InheritedCandidate, supertypeNamesOf: (String) -> Set<String>): Int? {
-            val isPlatformRivalry = returnsPlatformType != other.returnsPlatformType
+            val returnsPlatformType = returnsPlatformTypeAgainst(other)
+            val isPlatformRivalry = returnsPlatformType != other.returnsPlatformTypeAgainst(this)
             val specificity = compareSpecificity(
                 member.returnType, other.member.returnType, supertypeNamesOf, ignoreNullability = isPlatformRivalry
             )
@@ -2389,8 +2418,8 @@ internal class DefaultKotlinIntrospector(
         val candidates = mutableListOf<InheritedCandidate>()
         // the names of the direct supertypes of each class walked, in the order of declaration, see contribution below
         val directSupertypes = hashMapOf(kmClass.name to kmClass.supertypes.classNames())
-        // the names of the classes reached through a Java class of the user code, see InheritedCandidate.isEnhancementLost
-        val throughUserJavaClass = HashSet<String>()
+        // the names of the Java classes of the user code walked, see InheritedCandidate.isEnhancementLost
+        val userJavaClasses = HashSet<String>()
         fun collect(name: String, supertype: KmType) {
             val superDeclarations = inheritedDeclarations(name)
             val superKmClass = superDeclarations?.kmClass
@@ -2398,15 +2427,14 @@ internal class DefaultKotlinIntrospector(
                 val javaSupertypes = rawJavaSupertypes(name)
                 directSupertypes[name] = javaSupertypes.classNames()
                 pending += javaSupertypes
-                if (name in throughUserJavaClass) throughUserJavaClass += javaSupertypes.classNames()
                 return
             }
             val substitution = supertypeSubstitution(superKmClass, supertype)
             directSupertypes[name] = superKmClass.supertypes.classNames()
             pending += superKmClass.supertypes.map { it.substituted(substitution) }
-            val isEnhancementLost = name in throughUserJavaClass
-            val isUserJavaClass = superDeclarations is JavaClass && !reflectedValue(default = true) { superDeclarations.clazz.isJdkClass }
-            if (isEnhancementLost || isUserJavaClass) throughUserJavaClass += superKmClass.supertypes.classNames()
+            if (superDeclarations is JavaClass && !reflectedValue(default = true) { superDeclarations.clazz.isJdkClass }) {
+                userJavaClasses += name
+            }
             // a Kotlin supertype which is not part of the API contributes members which are never inherited:
             // the hidden ones, which still hide the ones they override, like of an internal supertype, or one deprecated as hidden,
             // and the visible ones, which stop the hidden ones they override, see InheritedCandidate.isApi
@@ -2448,8 +2476,7 @@ internal class DefaultKotlinIntrospector(
                             else -> null
                         }
                     },
-                    isApi = isApi,
-                    isEnhancementLost = isEnhancementLost && superDeclarations is JavaClass
+                    isApi = isApi
                 )
             }
         }
@@ -2460,6 +2487,24 @@ internal class DefaultKotlinIntrospector(
             if (visited.add(name)) collect(name, supertype)
         }
         if (kmClass.name != ANY_CLASS_NAME) collect(ANY_CLASS_NAME, classType(ANY_CLASS_NAME))
+        // the members of a JDK class reached only through a Java class of the user code lose the enhancement of their return types,
+        // like the get() of java.util.function.Supplier for a subclass of a Java class implementing it without declaring it again,
+        // unless reached also directly, or through the JDK, or a Kotlin class not overriding them, whatever the order of the supertypes
+        if (userJavaClasses.isNotEmpty()) {
+            val candidatesByName = candidates.groupBy { it.kmClass.name }
+            candidates.filter { it.declarations is JavaClass && it.kmClass.name !in userJavaClasses }.forEach { candidate ->
+                val keepingEnhancement = HashSet<String>()
+                val reached = ArrayDeque(directSupertypes[kmClass.name].orEmpty())
+                while (reached.isNotEmpty()) {
+                    val name = reached.removeFirst()
+                    if (!keepingEnhancement.add(name) || name in userJavaClasses) continue
+                    if (candidatesByName[name].orEmpty().none { it !== candidate && it.overrides(candidate) }) {
+                        reached += directSupertypes[name].orEmpty()
+                    }
+                }
+                candidate.isEnhancementLost = candidate.kmClass.name !in keepingEnhancement
+            }
+        }
         // the supertypes of the return types compared, see compareSpecificity, walked once per class
         val supertypeNames = HashMap<String, Set<String>>()
         val supertypeNamesOf = { name: String ->
@@ -2530,7 +2575,7 @@ internal class DefaultKotlinIntrospector(
             val standingJvmOnly = jvmOnlyCandidates.firstOrNull { jvmOnly ->
                 jvmOnly.signature == candidate.signature && !candidate.raisesVisibility(jvmOnly)
             }
-            if (standingJvmOnly != null && candidate.returnsPlatformType) standingJvmOnly.standsForPlatformType = true
+            if (standingJvmOnly != null && candidate.returnsPlatformTypeAgainstHidden) standingJvmOnly.standsForPlatformType = true
             val isRemoved = implemented.isNotEmpty() ||
                 (candidate.overridden.isEmpty() && candidate.overridesHiddenJdkMethod(exposedJdkMethods)) ||
                 standingJvmOnly != null ||
@@ -2696,9 +2741,11 @@ internal class DefaultKotlinIntrospector(
     }
 
     /**
-     * The names of the classes of these types, like the supertypes of a class.
+     * The names of the classes of these types, like the supertypes of a class,
+     * of a suspend function type the one of its own class, like `kotlin/coroutines/SuspendFunction1`, see [withSuspendFunctionTypeClass].
      */
-    private fun List<KmType>.classNames(): List<String> = mapNotNull { (it.classifier as? KmClassifier.Class)?.name }
+    private fun List<KmType>.classNames(): List<String> =
+        mapNotNull { (it.withSuspendFunctionTypeClass().classifier as? KmClassifier.Class)?.name }
 
     /**
      * The id standing for the type parameter of the [id] of a class inheriting the members of its supertypes,

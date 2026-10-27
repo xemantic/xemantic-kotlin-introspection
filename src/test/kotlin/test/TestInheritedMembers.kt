@@ -347,6 +347,12 @@ abstract class JavaListIteratorSubclass : java.util.ListIterator<String>
 
 abstract class JavaMapEntrySubclass : java.util.Map.Entry<String, Int>
 
+// Mapped Java interfaces named as supertypes, which Kotlin sees as Java ones, like java.util.Collection,
+// or as their built-in types, like java.util.List, see JAVA_VIEWED_BUILTIN_INTERFACES
+abstract class JavaCollectionSubclass : java.util.Collection<String>
+
+abstract class JavaListSubclass : java.util.List<String>
+
 // A Java superclass whose members kotlin-reflect cannot describe, failing on all of them at once,
 // so that they are converted from the Java reflection
 abstract class InheritedJavaUndescribable : com.xemantic.kotlin.introspection.test.other.JavaUndescribableBase<String>()
@@ -364,3 +370,6 @@ abstract class InheritedLinkedHashSetHidingFirst : java.util.LinkedHashSet<Strin
 abstract class InheritedFunctionType : (Int) -> String
 
 abstract class InheritedSuspendFunctionType : suspend (Int) -> String
+
+// JDK members inherited through a Java subclass of java.util.ArrayDeque, merged as through the JDK class itself
+abstract class InheritedJavaInheritingDeque : com.xemantic.kotlin.introspection.test.other.JavaInheritingDeque()

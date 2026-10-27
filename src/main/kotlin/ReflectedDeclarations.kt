@@ -18,6 +18,13 @@
 
 package com.xemantic.kotlin.introspection
 
+import org.objectweb.asm.AnnotationVisitor
+import org.objectweb.asm.ClassReader
+import org.objectweb.asm.ClassVisitor
+import org.objectweb.asm.MethodVisitor
+import org.objectweb.asm.Opcodes
+import org.objectweb.asm.TypePath
+import org.objectweb.asm.TypeReference
 import org.objectweb.asm.Type as AsmType
 import java.lang.reflect.Field
 import java.lang.reflect.GenericArrayType
@@ -142,8 +149,9 @@ internal fun overridesHiddenJdkMethod(method: Method): Boolean =
 /**
  * Whether the Java [method] overrides a method of a supertype of its class which kotlin-reflect describes as a built-in type,
  * like the `contains(Object)` of `java.util.Collection`, described as `Collection`, or the `hashCode()` of `java.lang.Object`,
- * by the same name and parameter types, or of the erasures of the type arguments given, see [toKmJavaFunction],
- * like `compareTo(File)` of `java.io.File` the `compareTo(T)` of `java.lang.Comparable<File>`, erased to `Object`.
+ * by the same name and parameter types, or of the erasures of the type arguments given for its type variables,
+ * see [toKmJavaFunction], like `compareTo(File)` of `java.io.File` the `compareTo(T)` of `java.lang.Comparable<File>`,
+ * erased to `Object`, unlike an overload, like `equals(File)`, or `clone()`, a member of `java.lang.Object` but not of `kotlin.Any`.
  */
 internal fun overridesBuiltinJavaMethod(method: Method): Boolean {
     val parameterTypes = method.parameterTypes
@@ -162,7 +170,12 @@ internal fun overridesBuiltinJavaMethod(method: Method): Boolean {
         if (type.kotlin.qualifiedName != type.canonicalName &&
             type.declaredMethods.any { overridden ->
                 overridden.name == method.name && overridden.parameterCount == parameterTypes.size &&
-                    overridden.parameterTypes.zip(parameterTypes).all { (erased, parameterType) -> erased.isAssignableFrom(parameterType) }
+                    (type != Any::class.java || overridden.name in ANY_MEMBER_NAMES) &&
+                    overridden.genericParameterTypes.indices.all { index ->
+                        val erased = overridden.parameterTypes[index]
+                        erased == parameterTypes[index] ||
+                            (overridden.genericParameterTypes[index] is TypeVariable<*> && erased.isAssignableFrom(parameterTypes[index]))
+                    }
             }
         ) {
             return true
@@ -171,6 +184,9 @@ internal fun overridesBuiltinJavaMethod(method: Method): Boolean {
     }
     return false
 }
+
+// the methods of java.lang.Object which kotlin.Any declares, see overridesBuiltinJavaMethod
+private val ANY_MEMBER_NAMES = setOf("equals", "hashCode", "toString")
 
 /**
  * The JVM signature of the [method], like `java/util/List.reversed()Ljava/util/List;`, see [HIDDEN_JDK_METHODS].
@@ -358,7 +374,8 @@ private fun KClass<*>.toKmClassHeader(name: String, supertypes: (ReflectedTypePa
 
 /**
  * The declaration of this function in the Kotlin metadata, as kotlin-reflect describes it,
- * where the type parameters of its class are the [typeParameters], see [ReflectedTypeParameters].
+ * where the type parameters of its class are the [typeParameters], see [ReflectedTypeParameters],
+ * of a Java method of the nullability its annotations tell in the class file, see [enhanceJavaNullability].
  */
 @OptIn(ExperimentalContextParameters::class)
 internal fun KFunction<*>.toKmFunction(typeParameters: ReflectedTypeParameters): KmFunction {
@@ -378,6 +395,7 @@ internal fun KFunction<*>.toKmFunction(typeParameters: ReflectedTypeParameters):
         parameter.toKmValueParameter(position, scope, ownTypeParameters = this.typeParameters)
     }
     function.returnType = returnType.toKmType(scope)
+    reflectedValue(default = null) { javaMethod }?.let { enhanceJavaNullability(it, function) }
     enhanceDefinitelyNotNull(function)
     enhanceNullableReturn(function)
     return function
@@ -844,10 +862,10 @@ internal fun KFunction<*>.returnsPlatformType(isEnhancementLost: Boolean): Boole
 
 /**
  * Whether this Java method returns a platform type of Java, see [KFunction.returnsPlatformType],
- * any type but a primitive one, as the nullability annotations are not read, see [toKmJavaFunction].
+ * any type but a primitive one, or one told by the nullability annotations, see [javaNullabilityOf].
  */
 internal fun Method.returnsPlatformType(isEnhancementLost: Boolean): Boolean {
-    if (returnType.isPrimitive) return false
+    if (returnType.isPrimitive || javaNullabilityOf(this)?.returnType != null) return false
     if (isEnhancementLost) return true
     return !reflectedValue(default = false) {
         isEnhancedJdkMethod(this, ENHANCED_RETURN_JDK_METHODS) { it.declaringClass.isJdkClass }
@@ -1006,8 +1024,8 @@ private fun KVariance.toKmVariance(): KmVariance = when (this) {
  * or describes another class, like the read-only built-in type `ListIterator` of `java.util.ListIterator`,
  * whose `set(E)` it does not tell.
  * The types are converted as kotlin-reflect converts them, see [toKmJavaType],
- * and enhanced like the ones of the JDK methods it describes, see [enhanceDefinitelyNotNull], and [enhanceNullableReturn],
- * while the nullability annotations are not read, which the JDK does not use.
+ * nullable, or not, as the nullability annotations tell, see [enhanceJavaNullability],
+ * and enhanced like the ones of the JDK methods it describes, see [enhanceDefinitelyNotNull], and [enhanceNullableReturn].
  * An open method of a final class, the [isFinalClass], is final, see [finalIn].
  */
 internal fun Method.toKmJavaFunction(typeParameters: ReflectedTypeParameters, isFinalClass: Boolean): KmFunction {
@@ -1048,6 +1066,7 @@ internal fun Method.toKmJavaFunction(typeParameters: ReflectedTypeParameters, is
         }
     }
     function.returnType = genericReturnType.toKmJavaType(scope)
+    enhanceJavaNullability(this, function)
     enhanceDefinitelyNotNull(this, function)
     enhanceNullableReturn(this, function)
     return function
@@ -1167,4 +1186,140 @@ private fun Type.toKmJavaTypeProjection(scope: ReflectedTypeParameters): KmTypeP
     lowerBounds.firstOrNull()?.let { return KmTypeProjection(KmVariance.IN, it.toKmJavaType(scope)) }
     val upperBound = upperBounds.firstOrNull()?.takeUnless { it == Any::class.java } ?: return KmTypeProjection.STAR
     return KmTypeProjection(KmVariance.OUT, upperBound.toKmJavaType(scope))
+}
+
+/**
+ * The nullability annotations of Java, by their descriptors, which the compiler reads, like kotlin-reflect,
+ * telling a type nullable, like `@org.jetbrains.annotations.Nullable`, see [javaNullabilityOf]:
+ * the `NULLABLE_ANNOTATIONS` of `JvmAnnotationNames` of the compiler, and the ones of JSpecify, which K2 reads as strict,
+ * but not `javax.annotation.Nonnull` of JSR-305, which only warns by default.
+ */
+private val NULLABLE_ANNOTATIONS: Set<String> = setOf(
+    "org.jetbrains.annotations.Nullable",
+    "androidx.annotation.Nullable",
+    "android.support.annotation.Nullable",
+    "android.annotation.Nullable",
+    "com.android.annotations.Nullable",
+    "org.eclipse.jdt.annotation.Nullable",
+    "org.checkerframework.checker.nullness.qual.Nullable",
+    "org.checkerframework.checker.nullness.compatqual.NullableDecl",
+    "org.checkerframework.checker.nullness.compatqual.NullableType",
+    "javax.annotation.Nullable",
+    "javax.annotation.CheckForNull",
+    "edu.umd.cs.findbugs.annotations.CheckForNull",
+    "edu.umd.cs.findbugs.annotations.Nullable",
+    "edu.umd.cs.findbugs.annotations.PossiblyNull",
+    "io.reactivex.annotations.Nullable",
+    "io.reactivex.rxjava3.annotations.Nullable",
+    "org.jspecify.annotations.Nullable",
+    "org.jspecify.nullness.Nullable"
+).mapTo(HashSet()) { "L" + it.replace('.', '/') + ";" }
+
+/**
+ * The nullability annotations of Java telling a type not nullable, like `@org.jetbrains.annotations.NotNull`,
+ * like the [NULLABLE_ANNOTATIONS]: the `NOT_NULL_ANNOTATIONS` of `JvmAnnotationNames` of the compiler, and the ones of JSpecify.
+ */
+private val NOT_NULL_ANNOTATIONS: Set<String> = setOf(
+    "org.jetbrains.annotations.NotNull",
+    "edu.umd.cs.findbugs.annotations.NonNull",
+    "androidx.annotation.NonNull",
+    "android.support.annotation.NonNull",
+    "android.annotation.NonNull",
+    "com.android.annotations.NonNull",
+    "org.eclipse.jdt.annotation.NonNull",
+    "org.checkerframework.checker.nullness.qual.NonNull",
+    "org.checkerframework.checker.nullness.compatqual.NonNullDecl",
+    "org.checkerframework.checker.nullness.compatqual.NonNullType",
+    "lombok.NonNull",
+    "io.reactivex.annotations.NonNull",
+    "io.reactivex.rxjava3.annotations.NonNull",
+    "org.jspecify.annotations.NonNull",
+    "org.jspecify.nullness.NonNull"
+).mapTo(HashSet()) { "L" + it.replace('.', '/') + ";" }
+
+/**
+ * The nullability of the types of a Java method told by its annotations, see [NULLABLE_ANNOTATIONS],
+ * of its [returnType], and of its [parameters], by their positions, `true` of a nullable type, `false` of a not nullable one,
+ * none of a platform type.
+ */
+internal class JavaNullability(val returnType: Boolean?, val parameters: Map<Int, Boolean>)
+
+/**
+ * Marks the types of the [function], converted from the [method], nullable, or not, as its nullability annotations tell,
+ * see [javaNullabilityOf], which kotlin-reflect, reading the annotations retained at runtime only, does not tell of most,
+ * like of `@org.jetbrains.annotations.NotNull`, retained in the class file only, which the compiler reads.
+ */
+private fun enhanceJavaNullability(method: Method, function: KmFunction) {
+    val nullability = javaNullabilityOf(method) ?: return
+    nullability.returnType?.let { function.returnType.isNullable = it && !method.returnType.isPrimitive }
+    nullability.parameters.forEach { (position, isNullable) ->
+        val parameter = function.valueParameters.getOrNull(position) ?: return@forEach
+        if (!method.parameterTypes[position].isPrimitive) parameter.type.isNullable = isNullable
+    }
+}
+
+/**
+ * The nullability of the [method] told by its annotations, see [JavaNullability], or `null` if none is annotated,
+ * read from the class file, as the annotations which the compiler reads, like `@org.jetbrains.annotations.NotNull`,
+ * are mostly not retained at runtime, the declaration annotations, and the type annotations of the types themselves,
+ * like `@org.jspecify.annotations.Nullable String`, not of their type arguments, nor of the elements of an array.
+ */
+internal fun javaNullabilityOf(method: Method): JavaNullability? =
+    javaNullabilities.get(method.declaringClass)[method.name + AsmType.getMethodDescriptor(method)]
+
+/**
+ * The nullabilities of the methods of a class, by their names and JVM descriptors, see [javaNullabilityOf],
+ * read once per class, none of a JDK class, which is not annotated so.
+ */
+private val javaNullabilities = object : ClassValue<Map<String, JavaNullability>>() {
+    override fun computeValue(type: Class<*>): Map<String, JavaNullability> =
+        if (type.isJdkClass) emptyMap() else reflectedValue(default = emptyMap()) { readJavaNullabilities(type) }
+}
+
+private fun readJavaNullabilities(type: Class<*>): Map<String, JavaNullability> {
+    val bytes = type.getResourceAsStream("/" + AsmType.getInternalName(type) + ".class")?.use { it.readBytes() } ?: return emptyMap()
+    val nullabilities = HashMap<String, JavaNullability>()
+    fun nullabilityOf(descriptor: String): Boolean? = when (descriptor) {
+        in NULLABLE_ANNOTATIONS -> true
+        in NOT_NULL_ANNOTATIONS -> false
+        else -> null
+    }
+    ClassReader(bytes).accept(object : ClassVisitor(Opcodes.ASM9) {
+        override fun visitMethod(
+            access: Int,
+            name: String,
+            descriptor: String,
+            signature: String?,
+            exceptions: Array<out String>?
+        ): MethodVisitor = object : MethodVisitor(Opcodes.ASM9) {
+            var returnType: Boolean? = null
+            val parameters = HashMap<Int, Boolean>()
+
+            override fun visitAnnotation(annotation: String, visible: Boolean): AnnotationVisitor? {
+                nullabilityOf(annotation)?.let { returnType = it }
+                return null
+            }
+
+            override fun visitParameterAnnotation(parameter: Int, annotation: String, visible: Boolean): AnnotationVisitor? {
+                nullabilityOf(annotation)?.let { parameters[parameter] = it }
+                return null
+            }
+
+            override fun visitTypeAnnotation(typeRef: Int, typePath: TypePath?, annotation: String, visible: Boolean): AnnotationVisitor? {
+                // the annotation of the type itself, not of a type argument, nor of an array element
+                val nullability = nullabilityOf(annotation)?.takeIf { typePath == null } ?: return null
+                val reference = TypeReference(typeRef)
+                when (reference.sort) {
+                    TypeReference.METHOD_RETURN -> returnType = nullability
+                    TypeReference.METHOD_FORMAL_PARAMETER -> parameters[reference.formalParameterIndex] = nullability
+                }
+                return null
+            }
+
+            override fun visitEnd() {
+                if (returnType != null || parameters.isNotEmpty()) nullabilities[name + descriptor] = JavaNullability(returnType, parameters)
+            }
+        }
+    }, ClassReader.SKIP_CODE or ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES)
+    return nullabilities
 }

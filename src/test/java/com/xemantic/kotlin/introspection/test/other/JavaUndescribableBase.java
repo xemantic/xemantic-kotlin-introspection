@@ -32,6 +32,19 @@ public abstract class JavaUndescribableBase<T> {
 
     protected abstract T first();
 
+    public abstract @org.jetbrains.annotations.NotNull String notNull(@org.jetbrains.annotations.NotNull String value);
+
+    public abstract @org.jetbrains.annotations.Nullable String nullable(@org.jetbrains.annotations.Nullable T value);
+
+    @Override
+    public Object clone() {
+        return this;
+    }
+
+    public boolean equals(JavaUndescribableBase<?> other) {
+        return other == this;
+    }
+
     public final java.util.Map<String, T> index() {
         return null;
     }
