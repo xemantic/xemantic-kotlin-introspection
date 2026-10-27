@@ -858,6 +858,15 @@ abstract class SizedJavaProbeList : com.xemantic.kotlin.introspection.test.other
     fun toArray(size: Int): Array<Any?> = arrayOfNulls(size)
 }
 
+abstract class TaggedJavaProbeExecutor : com.xemantic.kotlin.introspection.test.other.JavaProbeExecutor() {
+    fun submit(tag: String) {}
+}
+
+class DeepJavaCopyable : com.xemantic.kotlin.introspection.test.other.JavaCopyable() {
+    fun clone(deep: Boolean): Any = this
+    fun finalize(timeout: Int) {}
+}
+
 // An overload of a Java method named like a member of a built-in type, but not overriding its JVM method
 abstract class RadixCountingNumber : com.xemantic.kotlin.introspection.test.other.JavaCountingNumber() {
     fun toInt(radix: Int): Int = radix

@@ -2605,6 +2605,12 @@ class ClassLoaderIntrospectionTest {
             "com/xemantic/kotlin/introspection/friendmodule/UnreflectableFriendModuleSubclass.class",
             "com/xemantic/kotlin/introspection/friendmodule/UnreflectableOpenFriendModuleSubclass.class"
         )
+        // a new Unreflectable fixture must be listed above, or it would stay readable
+        val unreflectableFixtures = root.toFile().walkTopDown()
+            .filter { it.isFile && it.name.startsWith("Unreflectable") }
+            .map { it.relativeTo(root.toFile()).invariantSeparatorsPath }
+            .toSet()
+        assert(unreflectableFixtures == unreadableResources)
         // loading the fixtures of both modules itself, without the marker class, which their methods refer to
         val classLoader = object : URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader) {
             override fun loadClass(name: String, resolve: Boolean): Class<*> =
@@ -2936,6 +2942,34 @@ class ClassLoaderIntrospectionTest {
             // com.xemantic.kotlin.introspection.test.IndexedJavaProperties [page 1/1]
             class IndexedJavaProperties : com.xemantic.kotlin.introspection.test.other.JavaDefaultedProperties {
                 val Int.property: String
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not mark shrunk overloads of raw and Object methods overridden by application Java classes as override`() {
+        // given
+        val executorName = "com.xemantic.kotlin.introspection.test.TaggedJavaProbeExecutor"
+        val copyableName = "com.xemantic.kotlin.introspection.test.DeepJavaCopyable"
+
+        // when
+        val executor = shrunkIntrospector(executorName, "submit").resolve(executorName)
+        val copyable = shrunkIntrospector(copyableName, "clone", "finalize").resolve(copyableName)
+
+        // then
+        // a raw override of the generic <T> submit(Runnable, T) of a JDK class overrides it all the same
+        executor sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.TaggedJavaProbeExecutor [page 1/1]
+            abstract class TaggedJavaProbeExecutor : com.xemantic.kotlin.introspection.test.other.JavaProbeExecutor {
+                fun submit(tag: String)
+            }
+        """.trimIndent()
+        // the overrides of the methods of Object which are no members of Any, like clone() and finalize(), are no evidence either
+        copyable sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DeepJavaCopyable [page 1/1]
+            class DeepJavaCopyable : com.xemantic.kotlin.introspection.test.other.JavaCopyable {
+                fun clone(deep: Boolean): Any
+                fun finalize(timeout: Int)
             }
         """.trimIndent()
     }

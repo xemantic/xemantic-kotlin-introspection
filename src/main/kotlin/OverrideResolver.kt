@@ -229,8 +229,7 @@ internal class OverrideResolver(
      * @param isPlatform whether the member is a Java method of a platform class, like `Throwable.toString()`,
      *   also of the JVM type of a built-in type, like `java.util.List.sort`, which a shrinker never removes,
      *   so that it is no evidence for a shrunk override, see [shrunkOverridden],
-     *   or a Kotlin function of `Any`, like `Any.toString()`, whose JVM class, `Object`, contributes no Java methods,
-     *   telling the overrides of platform methods by the Java methods of an application, see [shrinkableJava].
+     *   nor are the Java methods of an application overriding it, see [shrinkableJava].
      * @param declaresDefaultValues the indices of the value parameters declaring a default value,
      *   which only a Kotlin function can.
      * @param key the key of a member of a Kotlin supertype, see [memberKey], telling which one is overridden.
@@ -253,8 +252,8 @@ internal class OverrideResolver(
      *   or `null` if they can be neither read nor reflected;
      *   only needed to tell a shrunk member or a friend module, so read lazily, once, see [FinalOnce],
      *   and again after a transient failure, which might happen after the overridables are cached.
-     * @param hiddenPlatformFunctions the Java methods of the JVM types of the built-in collection types,
-     *   hidden from their members, like `toArray`, by their names,
+     * @param hiddenPlatformFunctions the Java methods of the JVM types of the built-in types hidden from their members,
+     *   like `toArray` of the collection types, or `clone()` and `finalize()` of `Object`, by their names,
      *   only telling the overrides of platform methods by the Java methods of an application, see [shrinkableJava].
      */
     private class Overridables(
@@ -353,6 +352,15 @@ internal class OverrideResolver(
             }
 
     private val platformClassLoader: ClassLoader? = ClassLoader.getPlatformClassLoader()
+
+    /**
+     * The overridable Java methods of `Object`, by their names, also the ones which are no members of `Any`,
+     * like `clone()` and `finalize()`, telling the overrides of platform methods, see [shrinkableJava].
+     */
+    private val objectMethods: Map<String, List<Overridable>> by lazy {
+        javaMethods(Any::class.java, ownerPackage = "", JavaSubstitution(emptyList()))
+            .groupBy({ (name, _) -> name }, { (_, method) -> method })
+    }
 
     /**
      * The Kotlin class names of the built-in types, like `kotlin/collections/Map.Entry`,
@@ -661,9 +669,12 @@ internal class OverrideResolver(
             parameters.zip(method.parameters).all { (overridden, overriding) ->
                 val erasure = erasure(overridden)
                 erasure != null && erasure == erasure(overriding) &&
-                    // an int is erased to the same Kotlin class as an Integer
-                    (overridden as? ClassType)?.isJavaPrimitive == (overriding as? ClassType)?.isJavaPrimitive
+                    // an int is erased to the same Kotlin class as an Integer,
+                    // while a type variable, erased to Object, is overridden by Object in a raw override
+                    overridden.isJavaPrimitive == overriding.isJavaPrimitive
             }
+
+    private val MemberType.isJavaPrimitive: Boolean get() = (this as? ClassType)?.isJavaPrimitive == true
 
     /**
      * Whether the JVM method of a member, declared in the metadata, has been removed from the class file of its owner,
@@ -733,7 +744,8 @@ internal class OverrideResolver(
         val ownerPackage = owner.name.substringBeforeLast('/', "").replace('/', '.')
         val functions = mutableMapOf<String, MutableList<Overridable>>()
         val properties = mutableMapOf<String, MutableList<Overridable>>()
-        val hiddenPlatformFunctions = mutableMapOf<String, MutableList<Overridable>>()
+        // the methods of Object, as Any, a supertype of every class, has no Java class, see findDeclaration
+        val hiddenPlatformFunctions = objectMethods.mapValuesTo(mutableMapOf()) { (_, methods) -> methods.toMutableList() }
         val pending = ArrayDeque(ownerClass.supertypes.mapNotNull { kotlinType(it, ownerSubstitution) as? ClassType })
         // every class and interface is a subtype of Any, also when it is reached only through Java interfaces
         pending += ClassType("kotlin/Any")
@@ -763,10 +775,6 @@ internal class OverrideResolver(
 
             declaration.kotlin?.let { kmClass ->
                 val substitution = supertypeSubstitution(owner, kmClass, supertype)
-                // the members of Any, as Object contributes no Java methods, see Declaration,
-                // while the other built-in types contribute the Java methods of their JVM classes, named like on the JVM,
-                // unlike their Kotlin members, like Number.toInt() of intValue()
-                val isPlatform = kmClass.name == "kotlin/Any"
                 val isSameModuleName = kmClass.moduleName == ownerClass.moduleName
                 // the JVM name of an internal member is mangled with the module name, sanitized like by the compiler,
                 // unless it is a @PublishedApi one; the module name is absent only from the built-in declarations,
@@ -796,7 +804,6 @@ internal class OverrideResolver(
                         },
                         typeParameterCount = function.typeParameters.size,
                         isJava = false,
-                        isPlatform = isPlatform,
                         visibility = memberVisibility,
                         declaresDefaultValues = function.valueParameters.indices.filter {
                             function.valueParameters[it].declaresDefaultValue
