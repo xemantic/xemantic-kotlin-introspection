@@ -125,3 +125,9 @@ interface RelocatedDefaultInterface {
 }
 
 class RelocatedJavaBaseImpl : RelocatedJavaBase(), RelocatedDefaultInterface
+
+// tests relocate its Java interface, and the classes it takes, but not itself, and remove the JVM method of its override
+class RelocatedShrunkEventListener : RelocatedEventListener {
+    override fun handle(event: RelocatedEvent) {}
+    fun handle(event: com.xemantic.kotlin.introspection.isolated.sub.RelocatedEvent) {}
+}

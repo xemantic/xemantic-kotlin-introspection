@@ -43,6 +43,7 @@ import java.util.jar.JarOutputStream
 import java.util.jar.Manifest
 import kotlin.io.path.createDirectories
 import kotlin.io.path.outputStream
+import kotlin.io.path.readBytes
 import kotlin.io.path.writeBytes
 import kotlin.metadata.KmClassifier
 import kotlin.metadata.KmType
@@ -422,6 +423,37 @@ class ClassLoaderIntrospectionTest {
             // com.xemantic.kotlin.introspection.isolated.RelocatedJavaBaseImpl.jm [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.isolated.RelocatedJavaBase
             fun jm(arg0: RelocatedEvent?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should tell shrunk override of relocated Java supertype next to overload taking relocated class of the same simple name`() {
+        // given
+        // like an app shading its dependencies, and shrinking its classes, removing the JVM method of the override
+        val dependencies = arrayOf("RelocatedEventListener.class", "RelocatedEvent.class", "sub/RelocatedEvent.class")
+        val dependent = "RelocatedShrunkEventListener.class"
+        val root = isolatedTestFixturesCopy("relocatedShrunkOverride", *dependencies, dependent)
+        relocatedCopy(root, *dependencies, dependents = listOf(dependent))
+        val dependentFile = root.resolve("com/xemantic/kotlin/introspection/isolated/$dependent")
+        dependentFile.writeBytes(
+            withoutMethods(dependentFile.readBytes()) { name, descriptor ->
+                name == "handle" && descriptor == "(Lshaded/com/xemantic/kotlin/introspection/isolated/RelocatedEvent;)V"
+            }
+        )
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.RelocatedShrunkEventListener")
+
+        // then
+        // the JVM method of the overload, the only one of its shape, is not paired with both JVM signatures of the metadata,
+        // which would relocate RelocatedEvent to the subpackage, and the package of the Java interface to two packages
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.RelocatedShrunkEventListener [page 1/1]
+            class RelocatedShrunkEventListener : RelocatedEventListener {
+                override fun handle(event: RelocatedEvent)
+                fun handle(event: com.xemantic.kotlin.introspection.isolated.sub.RelocatedEvent)
+            }
         """.trimIndent()
     }
 

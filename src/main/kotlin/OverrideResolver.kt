@@ -1548,8 +1548,8 @@ internal class OverrideResolver(
     /**
      * The class names of the JVM [signatures] of the metadata, like `com/example/Event` of `on(Lcom/example/Event;)V`,
      * which the [methods] of the class file name otherwise, mapped to these names, like `shaded/com/example/Event`,
-     * told method by method: a signature which the class file does not declare is paired with the only JVM method
-     * the metadata does not declare, of the same name, and of the same descriptor but for the packages of its classes,
+     * told method by method: the only signature which the class file does not declare of its shape, see [methodShape],
+     * is paired with the only JVM method of this shape which the metadata does not declare,
      * like `on(Lshaded/com/example/Event;)V`, as a class relocated by shading keeps its simple name,
      * so that neither a JVM method of no member, nor one removed by a shrinker, tells a relocation,
      * and neither does a class paired with more than one other,
@@ -1569,7 +1569,10 @@ internal class OverrideResolver(
         val unknownJvmMethods = jvmMethods.filter { it !in signatureSet }.groupBy { methodShape(it) }
         if (unknownJvmMethods.isEmpty()) return emptyMap()
         val jvmMethodSet = jvmMethods.toHashSet()
-        return signatures.filter { it !in jvmMethodSet }.flatMap { signature ->
+        // paired one to one, as a JVM method of the same shape as more than one signature might be the one of any of them,
+        // like of an overload next to a shrunk one
+        val unknownSignatures = signatures.filter { it !in jvmMethodSet }.groupBy { methodShape(it) }
+        return unknownSignatures.values.mapNotNull { it.singleOrNull() }.flatMap { signature ->
             val jvmMethod = unknownJvmMethods[methodShape(signature)]?.singleOrNull() ?: return@flatMap emptyList()
             methodClassNames(signature).zip(methodClassNames(jvmMethod)).filter { (metadataName, jvmName) ->
                 metadataName != jvmName && metadataName.isRelocatable
