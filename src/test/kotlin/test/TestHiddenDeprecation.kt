@@ -482,6 +482,37 @@ abstract class HiddenMergedRunOverrideJoin : Runnable, HiddenMergedRunOverride
 
 abstract class HiddenMergedRunOverrideJoinReversed : HiddenMergedRunOverride, Runnable
 
+// of a platform return type, like the V! of call(), or the Thread! of newThread(r), the Java member loses to the hidden one,
+// equally specific, though declared first, so that neither join.call(), nor join.newThread(r) compiles
+interface HiddenMergedCall : java.util.concurrent.Callable<String> {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    override fun call(): String
+}
+
+abstract class HiddenMergedCallJoin : java.util.concurrent.Callable<String>, HiddenMergedCall
+
+interface HiddenMergedNullableCall : java.util.concurrent.Callable<String> {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    override fun call(): String?
+}
+
+abstract class HiddenMergedNullableCallJoin : java.util.concurrent.Callable<String>, HiddenMergedNullableCall
+
+interface HiddenMergedThreadFactory : java.util.concurrent.ThreadFactory {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    override fun newThread(r: Runnable): Thread
+}
+
+abstract class HiddenMergedThreadFactoryJoin : java.util.concurrent.ThreadFactory, HiddenMergedThreadFactory
+
+// while the get() of Supplier, which Kotlin enhances not to return a platform type, is still picked, so that join.get() compiles
+interface HiddenMergedSupplier : java.util.function.Supplier<String> {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    override fun get(): String
+}
+
+abstract class HiddenMergedSupplierJoin : java.util.function.Supplier<String>, HiddenMergedSupplier
+
 // compiles, as the merged members picked are not hidden
 @Suppress("unused")
 private fun callMergedMembers(
@@ -492,6 +523,7 @@ private fun callMergedMembers(
     @Suppress("DEPRECATION_ERROR") restoredClass: HiddenMergedHiddenRestoredClassSub,
     restoredLeft: HiddenMergedInternalRestoredLeftSub,
     runOverrideJoin: HiddenMergedRunOverrideJoin,
+    supplierJoin: HiddenMergedSupplierJoin,
     runJoin: HiddenMergedRunJoin,
     runThread: HiddenMergedRunThread,
     joinReversed: HiddenMergedJoinReversed,
@@ -510,6 +542,7 @@ private fun callMergedMembers(
     restoredClass.f()
     restoredLeft.f()
     runOverrideJoin.run()
+    supplierJoin.get()
     runJoin.run()
     runThread.run()
     joinReversed.f()

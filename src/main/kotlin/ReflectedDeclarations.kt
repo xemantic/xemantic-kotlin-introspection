@@ -516,6 +516,62 @@ private val KType.isPlatformNullable: Boolean
 private val nullableNothing: KType = typeOf<Nothing?>()
 
 /**
+ * The JDK methods whose return types K2 enhances, as not nullable, or nullable, so that they are not platform types,
+ * like the `T` of `get()` of `java.util.function.Supplier`, by their JVM signatures:
+ * the ones of `PREDEFINED_FUNCTION_ENHANCEMENT_INFO_BY_SIGNATURE` of the compiler, of the classes which are not final,
+ * compared with the copy of kotlin-reflect by `ReflectedDeclarationsTest`,
+ * as kotlin-reflect applies them, though its public API still tells such a type as a platform type, like `T!`.
+ */
+internal val ENHANCED_RETURN_JDK_METHODS: Set<String> = setOf(
+    "java/lang/Iterable.spliterator()Ljava/util/Spliterator;",
+    "java/lang/ref/Reference.get()Ljava/lang/Object;",
+    "java/util/Collection.parallelStream()Ljava/util/stream/Stream;",
+    "java/util/Collection.stream()Ljava/util/stream/Stream;",
+    "java/util/LinkedHashMap.putFirst(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;",
+    "java/util/LinkedHashMap.putLast(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;",
+    "java/util/LinkedHashSet.getFirst()Ljava/lang/Object;",
+    "java/util/LinkedHashSet.getLast()Ljava/lang/Object;",
+    "java/util/LinkedHashSet.removeFirst()Ljava/lang/Object;",
+    "java/util/LinkedHashSet.removeLast()Ljava/lang/Object;",
+    "java/util/LinkedList.removeFirst()Ljava/lang/Object;",
+    "java/util/LinkedList.removeLast()Ljava/lang/Object;",
+    "java/util/List.removeFirst()Ljava/lang/Object;",
+    "java/util/List.removeLast()Ljava/lang/Object;",
+    "java/util/Map.compute(Ljava/lang/Object;Ljava/util/function/BiFunction;)Ljava/lang/Object;",
+    "java/util/Map.computeIfAbsent(Ljava/lang/Object;Ljava/util/function/Function;)Ljava/lang/Object;",
+    "java/util/Map.computeIfPresent(Ljava/lang/Object;Ljava/util/function/BiFunction;)Ljava/lang/Object;",
+    "java/util/Map.merge(Ljava/lang/Object;Ljava/lang/Object;Ljava/util/function/BiFunction;)Ljava/lang/Object;",
+    "java/util/Map.putIfAbsent(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;",
+    "java/util/Map.replace(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;",
+    "java/util/function/BiFunction.apply(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;",
+    "java/util/function/Function.apply(Ljava/lang/Object;)Ljava/lang/Object;",
+    "java/util/function/Supplier.get()Ljava/lang/Object;"
+)
+
+// the JDK classes declaring the methods, by the names of the methods, telling most methods apart without loading them
+private val enhancedReturnJdkMethods: Map<String, List<Pair<String, Int>>> =
+    ENHANCED_RETURN_JDK_METHODS.groupBy({ it.substringAfter('.').substringBefore('(') }) { signature ->
+        signature.substringBefore('.').replace('/', '.') to AsmType.getArgumentTypes(signature.substring(signature.indexOf('('))).size
+    }
+
+/**
+ * Whether this function, of a Java class, returns a platform type of Java, see [isPlatformNullable],
+ * unless K2 enhances it, see [ENHANCED_RETURN_JDK_METHODS], also of a method overriding the JDK one, which inherits the enhancement,
+ * like the `get()` of a Java class implementing `java.util.function.Supplier`.
+ */
+internal val KFunction<*>.returnsPlatformType: Boolean
+    get() {
+        if (!returnType.isPlatformNullable) return false
+        val owners = enhancedReturnJdkMethods[name] ?: return true
+        val method = reflectedValue(default = null) { javaMethod } ?: return true
+        return owners.none { (owner, parameterCount) ->
+            parameterCount == method.parameterCount && reflectedValue(default = false) {
+                Class.forName(owner).isAssignableFrom(method.declaringClass)
+            }
+        }
+    }
+
+/**
  * The type of the Kotlin metadata described by this [KType], where the type parameters are in the [scope].
  *
  * A platform type of Java, like `Any!`, see [isPlatformNullable], which cannot be rendered as valid Kotlin,
