@@ -118,6 +118,33 @@ class DeprecatedCompanionHolder {
     }
 }
 
+// classes enclosing a declaration, whose deprecations Kotlin reports on each of their names the caller writes,
+// like DeprecatedEnclosingClass.Mid.Inner.create(), also of an outer class only, like ShallowDeprecatedEnclosingClass.Mid.Inner
+@Deprecated("Use DeprecationTarget")
+class DeprecatedEnclosingClass {
+    @Deprecated("Use DeprecationTarget.create()", level = DeprecationLevel.ERROR)
+    class Mid {
+        class Inner {
+            fun member(): Int = 0
+            companion object {
+                fun create(): Inner = Inner()
+            }
+        }
+    }
+}
+
+@Deprecated("Use DeprecationTarget")
+class ShallowDeprecatedEnclosingClass {
+    class Mid {
+        class Inner
+    }
+}
+
+@Deprecated("Use DeprecationTarget.create()")
+object DeprecatedObject {
+    fun member(): Int = 0
+}
+
 // the constructor of an enum class is always private, called only by its entries
 enum class DeprecatedConstructorEnum @Deprecated("Old") constructor(val v: Int) {
     A(1)

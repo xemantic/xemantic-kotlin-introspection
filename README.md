@@ -100,13 +100,19 @@ com.example.AnnotationTestClass
   as Kotlin does not resolve `Foo.Builder` either.
   The deprecation of a companion object deprecated with the `WARNING` or the `ERROR` level,
   which Kotlin reports for `Foo.parse()`, and `Foo.Companion.parse()`,
-  is told on its extensions listed with the class, or resolved by its name, in a comment, as no annotation compiles there,
+  is told on its extensions listed with the class, or resolved by the name of the class, like `com.example.Foo.parse`,
+  in a comment, as no annotation compiles there,
   after the deprecation of the extension itself, if any,
   like `/* companion object deprecated: "Use the constructor", level = DeprecationLevel.ERROR */ fun Foo.Companion.parse(): Foo`.
-  The deprecation of the class itself, which Kotlin reports for `Foo.parse()` too,
-  is not told there, but only by the header of the class when the class itself is resolved,
-  like for the members of its companion object, or its nested classes,
-  as Kotlin reports it on the name of the class, which the caller writes, like for any other use of the class.
+  The deprecation of the class itself, which Kotlin reports for `Foo.parse()` too, on the name of the class the caller writes,
+  is told by the header of the class when the class itself is resolved,
+  and by a comment on every page of whatever is resolved by a name going through it,
+  like its members, the members and the extensions of its companion object, or its nested classes,
+  one for each deprecated class the name goes through, the outermost first,
+  like `// in @Deprecated("Use Bar", level = DeprecationLevel.ERROR) class Foo` for `com.example.Foo.Nested.create`,
+  also for a companion object resolved by its own name, like `com.example.Foo.Companion.parse`,
+  as Kotlin reports each of them, like for `Foo.Nested.create()`.
+  A class deprecated as hidden is not resolved, and neither is anything within it.
   The members a class inherits from its supertypes, without redeclaring them, are not listed, not to bloat the listing,
   but they are resolved by its name, after the members it declares, which override them, and before the extensions,
   each as declared by the nearest supertype declaring it, under its `// inherited from` header,

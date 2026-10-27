@@ -580,8 +580,10 @@ internal class DefaultKotlinIntrospector(
                     } ?: continue
                     if (memberName != null) {
                         resolveMember(kmClass, apiClass, className, foundClass, memberName)
+                            ?.withDeprecatedClasses(kmClass, foundClass, includingClass = true)
                     } else {
                         formatClass(kmClass, apiClass, className, foundClass)
+                            .withDeprecatedClasses(kmClass, foundClass, includingClass = false)
                     }
                 }
 
@@ -1690,12 +1692,9 @@ internal class DefaultKotlinIntrospector(
         val contextPackage = contextPackageOf(declarations, kmClass)
         // like in the listing of the class, also the extensions a built-in type lists in its body, with their receivers,
         // only the ones of the name, which alone can hide its JVM-only members of the name, see jvmOnlyFunctionsNotHidden
-        val listedExtensions = listedExtensions(kmClass, className, apiClass, declarations, isBuiltin, memberName).let { listed ->
-            // Kotlin reports the deprecation of a companion object also for its extensions called on its name,
-            // like Foo.Companion.of(), which, resolved directly, unlike in its listing, are not rendered under its header
-            val deprecation = declarations.classDeprecation.takeIf { kmClass.kind == ClassKind.COMPANION_OBJECT }
-            if (deprecation == null) listed else listed.withCompanionDeprecation(kmClass.name, deprecation)
-        }
+        // the deprecation of a companion object, reported for its extensions called on its name, like Foo.Companion.of(),
+        // is told before them when resolved directly, like the one of any class, see withDeprecatedClasses
+        val listedExtensions = listedExtensions(kmClass, className, apiClass, declarations, isBuiltin, memberName)
         // also the JVM-only members hidden by an extension, which are not listed, but still override the inherited ones
         val apiMembers = apiMembersNamed(kmClass, declarations, memberName, apiClass)
         val hiddenJvmOnlyFunctions = (declarations as? BuiltinClass)?.jvmOnlyFunctions.orEmpty() -
@@ -2725,8 +2724,9 @@ internal class DefaultKotlinIntrospector(
 
     /**
      * These extensions, telling on the ones on the companion object named [companionName], like `com/example/Foo.Companion`,
-     * its [deprecation], as Kotlin reports it when they are called, like `Foo.of()`, or `Foo.Companion.of()`,
-     * rendered next to their own one, see [formatCompanionDeprecation].
+     * its [deprecation], as Kotlin reports it when they are called, like `Foo.of()`,
+     * rendered next to their own one, see [formatCompanionDeprecation],
+     * while the ones resolved by the name of the companion object, like `Foo.Companion.of`, follow it, see [withDeprecatedClasses].
      */
     private fun ListedExtensions.withCompanionDeprecation(companionName: String, deprecation: Deprecation): ListedExtensions {
         fun KmType?.isCompanion() = (this?.classifier as? KmClassifier.Class)?.name == companionName
@@ -2888,6 +2888,37 @@ internal class DefaultKotlinIntrospector(
         val protectedName = names[index]
         val kind = formatClassKind(apiClass.scopes[index].kind)
         return "// in protected $kind${escapeQualifiedName(protectedName.substringAfterLast('/'))}"
+    }
+
+    /**
+     * This declaration, resolved by a qualified name going through the [kmClass], following a comment
+     * for each deprecated class enclosing it, the outermost first, on every page, like
+     * `// in @Deprecated("Use Bar", level = DeprecationLevel.ERROR) class Foo`,
+     * as Kotlin reports the deprecation of each class on its name the caller writes,
+     * like `Foo.create()`, `Foo.Companion.create()`, or `Foo.Nested()`, also when calling an extension, like `Foo.parse()`,
+     * unlike in the listing of the class, whose header tells its own deprecation.
+     * A class deprecated as hidden is never told, as nothing within it is resolved, see [ClassScope.isUsable].
+     *
+     * @param declarations the declarations of the [kmClass], telling the located names of the classes enclosing it.
+     * @param includingClass whether the [kmClass] itself counts, as for its members,
+     *   unlike for the class resolved directly, whose header tells its own deprecation.
+     */
+    private fun <T : ListingItem> Resolved<T>.withDeprecatedClasses(
+        kmClass: KmClass,
+        declarations: ClassDeclarations,
+        includingClass: Boolean
+    ): Resolved<T> {
+        val enclosing = enclosingClassNames(kmClass.name).map { name ->
+            name to classDeclarations(declarations.located(name))
+        }
+        val classes = if (includingClass) enclosing + (kmClass.name to declarations) else enclosing
+        return classes.foldRight(this) { (name, enclosingDeclarations), resolved ->
+            val deprecation = enclosingDeclarations?.classDeprecation?.takeUnless { it.isHidden }
+            val kind = enclosingDeclarations?.kmClass?.kind
+            if (deprecation == null || kind == null) resolved else resolved.withContext(
+                "// in ${formatDeprecation(deprecation)}${formatClassKind(kind)}${escapeQualifiedName(name.substringAfterLast('/'))}"
+            )
+        }
     }
 
     /**
@@ -6487,7 +6518,8 @@ private fun <T : ListingItem> Resolved<T>.withContext(context: String): Resolved
 
 /**
  * The [resolved] declaration, its every page following the [context] comment,
- * like the deprecated typealias a member is resolved through, see `DefaultKotlinIntrospector.resolveTypeAlias`.
+ * like the deprecated typealias a member is resolved through, see `DefaultKotlinIntrospector.resolveTypeAlias`,
+ * or a deprecated class enclosing it, see `DefaultKotlinIntrospector.withDeprecatedClasses`.
  */
 private class ContextualResolved<T : ListingItem>(private val resolved: Resolved<T>, private val context: String) : Resolved<T> {
 
