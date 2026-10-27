@@ -657,27 +657,17 @@ internal val ENHANCED_RETURN_JDK_METHODS: Set<String> = setOf(
     "java/util/function/Supplier.get()Ljava/lang/Object;"
 )
 
-// the JDK classes declaring the methods, by the names of the methods, telling most methods apart without loading them
-private val enhancedReturnJdkMethods: Map<String, List<Pair<String, Int>>> =
-    ENHANCED_RETURN_JDK_METHODS.groupBy({ it.substringAfter('.').substringBefore('(') }) { signature ->
-        signature.substringBefore('.').replace('/', '.') to AsmType.getArgumentTypes(signature.substring(signature.indexOf('('))).size
-    }
-
 /**
  * Whether this function, of a Java class, returns a platform type of Java, see [isPlatformNullable],
- * unless K2 enhances it, see [ENHANCED_RETURN_JDK_METHODS], also of a method overriding the JDK one, which inherits the enhancement,
- * like the `get()` of a Java class implementing `java.util.function.Supplier`.
+ * unless it is one of the JDK methods K2 enhances, see [ENHANCED_RETURN_JDK_METHODS], by its declaring class and JVM descriptor,
+ * as a Java method overriding it does not inherit the enhancement, like the `String get()` of a Java interface
+ * extending `java.util.function.Supplier<String>`, returning `String!`, and neither does an overload of the same name.
  */
 internal val KFunction<*>.returnsPlatformType: Boolean
     get() {
         if (!returnType.isPlatformNullable) return false
-        val owners = enhancedReturnJdkMethods[name] ?: return true
         val method = reflectedValue(default = null) { javaMethod } ?: return true
-        return owners.none { (owner, parameterCount) ->
-            parameterCount == method.parameterCount && reflectedValue(default = false) {
-                Class.forName(owner).isAssignableFrom(method.declaringClass)
-            }
-        }
+        return jvmSignature(method) !in ENHANCED_RETURN_JDK_METHODS
     }
 
 /**

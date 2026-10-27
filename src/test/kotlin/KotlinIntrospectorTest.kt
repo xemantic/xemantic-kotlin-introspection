@@ -10613,6 +10613,31 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should not resolve Java override of enhanced member of first supertype overridden by hidden one`() {
+        // the get() of JavaHiddenMergedSupplier does not inherit the enhancement of the one of Supplier, returning String!
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenMergedJavaSupplierJoin.get") == null)
+    }
+
+    @Test
+    fun `should not resolve Java override of enhanced function member of first supertype overridden by hidden one`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenMergedJavaFunctionJoin.apply") == null)
+    }
+
+    @Test
+    fun `should not resolve Java override of enhanced function member of second supertype overridden by hidden one`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenMergedJavaFunctionJoinReversed.apply") == null)
+    }
+
+    @Test
+    fun `should not list Java overload of enhanced member of first supertype overridden by hidden one`() {
+        // apply(s: CharSequence) of the same name and parameter count as the enhanced apply(t: T) of Function, which it does not override,
+        // while the apply(t: T) of Function itself is still listed, as before
+        resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenMergedJavaFunctionOverloadJoin.apply") should {
+            have("CharSequence" !in this)
+        }
+    }
+
+    @Test
     fun `should resolve Java member of first supertype of same JVM signature as hidden one of second supertype`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.HiddenMergedRunJoin.run"
