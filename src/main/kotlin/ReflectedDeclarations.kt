@@ -246,7 +246,8 @@ internal fun KClass<*>.toKmBuiltinClass(name: String): KmClass {
  * the ones whose parameter names are not known, like `initCause(arg0: Throwable?)`, see [hasSyntheticParameterNames],
  * the ones referring to a platform type, like `fillInStackTrace(): Throwable!`, or to a Java class,
  * like `stream(): java.util.stream.Stream<E>` of `Collection`, which no built-in declaration does,
- * and the overloads of these, like `printStackTrace()`, as a built-in type never overloads a JDK method it does not map.
+ * and the overloads of these, like `printStackTrace()`, as a built-in type never overloads a JDK method it does not map,
+ * which `ReflectedDeclarationsTest` guards, comparing the members left with the ones of the `.kotlin_builtins` declarations.
  */
 private fun javaOnlyFunctions(functions: List<KFunction<*>>): Set<KFunction<*>> {
     val javaOnly = functions.filterTo(HashSet()) { function ->

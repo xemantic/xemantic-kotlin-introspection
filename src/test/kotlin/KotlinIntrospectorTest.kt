@@ -8398,6 +8398,31 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should list inherited JVM-only member next to function taking its nullable counterpart`() {
+        // the addFirst(E) of JDK 21 comes through as definitely not nullable, not as a platform type, so kotlinc 2.4.21
+        // tells `override fun addFirst(element: String?)` "overrides nothing", and compiles it without override as an overload,
+        // which a subclass can declare next to addFirst(String), calls with null and with a String resolving both
+        assumeTrue(runCatching { List::class.java.getMethod("addFirst", Any::class.java) }.isSuccess, "JDK 21+")
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NullableSequencedStringList.addFirst") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NullableSequencedStringList.addFirst [page 1/1]
+            fun addFirst(element: String?)
+            // inherited from kotlin.collections.MutableList
+            open fun addFirst(arg0: String)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should list inherited Java member taking primitive next to function taking its nullable counterpart`() {
+        // the int of prim(int) is not a platform type, so prim(x: Int?) is an overload, not an override
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaPrimitiveSubclass.prim") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaPrimitiveSubclass.prim [page 1/1]
+            fun prim(x: Int?)
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaPrimitiveBase
+            fun prim(arg0: Int)
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve JVM-only member of mutable list`() {
         assumeNoParameterNames(List::class.java.getMethod("replaceAll", java.util.function.UnaryOperator::class.java))
         resolver.resolve("kotlin.collections.MutableList.replaceAll") sameAsKotlin """
