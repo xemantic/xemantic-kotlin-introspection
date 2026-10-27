@@ -4293,6 +4293,7 @@ internal class DefaultKotlinIntrospector(
                 bodyReceiverSubstitution = bodyReceiverSubstitution(
                     extension.property.receiverParameterType, extension.property.typeParameters, kmClass
                 ),
+                bodyReceiverScope = typeParameters,
                 deprecation = extension.deprecation
             )
         }
@@ -4301,6 +4302,7 @@ internal class DefaultKotlinIntrospector(
                 formatFunction(
                     extension.function, contextPackage = contextPackage,
                     bodyReceiverSubstitution = bodyReceiverSubstitution(extension.function, kmClass),
+                    bodyReceiverScope = typeParameters,
                     deprecation = extension.deprecation
                 )
             )
@@ -4979,6 +4981,8 @@ internal class DefaultKotlinIntrospector(
      *   like the ones of a class inheriting the [function], given for the ones of its class.
      * @param bodyReceiverSubstitution the substitution of an extension listed in the body of its receiver class,
      *   rendered without its receiver, see [bodyReceiverSubstitution], or `null` to render the receiver.
+     * @param bodyReceiverScope the type parameters in scope of the receiver class, named by the [bodyReceiverSubstitution],
+     *   see [TypeParameterScope.withNames].
      * @param deprecation the deprecation of the [function], see [formatDeprecation].
      * @param companionDeprecation the deprecation of the companion object the [function] extends,
      *   see [formatCompanionDeprecation].
@@ -4995,13 +4999,15 @@ internal class DefaultKotlinIntrospector(
         contextPackage: String? = null,
         classTypeParameters: TypeParameterScope = TypeParameterScope.EMPTY,
         bodyReceiverSubstitution: Map<Int, String>? = null,
+        bodyReceiverScope: TypeParameterScope = TypeParameterScope.EMPTY,
         deprecation: Deprecation? = null,
         companionDeprecation: Deprecation? = null,
         isOwnerOpenForOverrides: Boolean = isOpenForOverridesByDefault(owner?.kmClass),
         isInheritedByFinalClass: Boolean = false,
         declaration: KmFunction = function
     ): String = buildString {
-        val typeParameters = classTypeParameters.withDeclared(function.typeParameters).withNames(bodyReceiverSubstitution.orEmpty())
+        val typeParameters = classTypeParameters.withDeclared(function.typeParameters)
+            .withNames(bodyReceiverSubstitution.orEmpty(), bodyReceiverScope)
         // the type parameters standing for the ones of the class are not declared
         val declaredTypeParameters = function.typeParameters.filter { it.id !in bodyReceiverSubstitution.orEmpty() }
 
@@ -5133,6 +5139,7 @@ internal class DefaultKotlinIntrospector(
      * @param classTypeParameters the type parameters in scope of the class, like for [formatFunction].
      * @param bodyReceiverSubstitution the substitution of an extension listed in the body of its receiver class,
      *   like for [formatFunction].
+     * @param bodyReceiverScope the type parameters in scope of the receiver class, like for [formatFunction].
      * @param deprecation the deprecation of the [property], see [formatDeprecation].
      * @param companionDeprecation the deprecation of the companion object the [property] extends, like for [formatFunction].
      * @param isOwnerOpenForOverrides whether the user code might override the members of the [owner], like for [formatFunction].
@@ -5147,13 +5154,15 @@ internal class DefaultKotlinIntrospector(
         contextPackage: String? = null,
         classTypeParameters: TypeParameterScope = TypeParameterScope.EMPTY,
         bodyReceiverSubstitution: Map<Int, String>? = null,
+        bodyReceiverScope: TypeParameterScope = TypeParameterScope.EMPTY,
         deprecation: Deprecation? = null,
         companionDeprecation: Deprecation? = null,
         isOwnerOpenForOverrides: Boolean = isOpenForOverridesByDefault(owner?.kmClass),
         isInheritedByFinalClass: Boolean = false,
         declaration: KmProperty = property
     ): List<String> = buildList {
-        val typeParameters = classTypeParameters.withDeclared(property.typeParameters).withNames(bodyReceiverSubstitution.orEmpty())
+        val typeParameters = classTypeParameters.withDeclared(property.typeParameters)
+            .withNames(bodyReceiverSubstitution.orEmpty(), bodyReceiverScope)
         // the type parameters standing for the ones of the class are not declared
         val declaredTypeParameters = property.typeParameters.filter { it.id !in bodyReceiverSubstitution.orEmpty() }
         val isOverride = isOverride(owner, declaration)

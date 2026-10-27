@@ -241,6 +241,12 @@ class InheritedJavaListValueMap<T> : com.xemantic.kotlin.introspection.test.othe
 
 class InheritedJavaListKeyMap<T, V> : com.xemantic.kotlin.introspection.test.other.JavaListKeyMap<T, V>()
 
+class InheritedJavaTypeVariableKeyMap<K : CharSequence, V> : com.xemantic.kotlin.introspection.test.other.JavaTypeVariableKeyMap<K, V>()
+
+class InheritedJavaSelfKeyMap<V : Comparable<V>> : com.xemantic.kotlin.introspection.test.other.JavaSelfKeyMap<V>()
+
+class InheritedJavaRawMap : com.xemantic.kotlin.introspection.test.other.JavaRawMap()
+
 class InheritedFromJava : com.xemantic.kotlin.introspection.test.other.JavaInheritedMid<String>()
 
 open class OpenInheritedFromJava : com.xemantic.kotlin.introspection.test.other.JavaInheritedMid<String>()

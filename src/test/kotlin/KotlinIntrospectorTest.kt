@@ -4409,6 +4409,47 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve member of Java map overriding JVM-only member with type variable key taking key nullable`() {
+        // the override is a member of its own, whose key is K! in K2, unlike the K of the merge of MutableMap,
+        // in fun <V> f(m: InheritedJavaTypeVariableKeyMap<String, V>, v: V & Any) m.merge(null, v) { … } compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariableKeyMap.merge") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariableKeyMap.merge [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypeVariableKeyMap
+            override fun merge(arg0: K?, arg1: V & Any, arg2: java.util.function.BiFunction<in V & Any, in V & Any, out V?>): V?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of Java map overriding JVM-only member with type variable key passing value definitely not nullable to function`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariableKeyMap.computeIfPresent") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariableKeyMap.computeIfPresent [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypeVariableKeyMap
+            override fun computeIfPresent(arg0: K?, arg1: java.util.function.BiFunction<in K, in V & Any, out V?>): V?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of Java map overriding JVM-only member with key and value of same type variable`() {
+        // only the value is enhanced, the key stays V! in K2, while V & Any of the V : Comparable<V> does not compile
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaSelfKeyMap.merge") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaSelfKeyMap.merge [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaSelfKeyMap
+            override fun merge(arg0: V?, arg1: V, arg2: java.util.function.BiFunction<in V, in V, out V?>): V?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of Java map of raw supertype overriding JVM-only member taking raw type as star projected`() {
+        // K2 sees the raw BiFunction as (BiFunction<Any!, Any!, Any?>..BiFunction<*, *, *>), overridden by BiFunction<*, *, *>,
+        // but not by BiFunction<Any, Any, Any>, while the value, the erased V & Any, is Any
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaRawMap.merge") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaRawMap.merge [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaRawMap
+            override fun merge(arg0: Any?, arg1: Any, arg2: java.util.function.BiFunction<*, *, *>): Any?
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve inherited JVM-only member of mutable map of inner class taking value of outer type parameter bounded not nullable`() {
         assumeNoParameterNames(MERGE_METHOD)
         resolver.resolve("com.xemantic.kotlin.introspection.test.OuterNotNull.InnerMap.merge") sameAsKotlin """
@@ -4821,12 +4862,13 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve method of Java superclass overriding method of its own Java superclass`() {
+        // the T of a Java class, not of the JDK, is T! in K2, accept(null) compiles
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.InheritedFromJava.accept"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.InheritedFromJava.accept [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.other.JavaInheritedMid
-            override fun accept(arg0: String)
+            override fun accept(arg0: String?)
         """.trimIndent()
     }
 
