@@ -118,3 +118,10 @@ open class RelocatedInheritedBase {
 }
 
 class RelocatedInheritedImpl : RelocatedInheritedBase()
+
+// tests relocate it, like shading, together with the Java class implementing it, but not its subclass
+interface RelocatedDefaultInterface {
+    fun kf(event: RelocatedEvent) {}
+}
+
+class RelocatedJavaBaseImpl : RelocatedJavaBase(), RelocatedDefaultInterface

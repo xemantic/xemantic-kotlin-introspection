@@ -19,6 +19,7 @@
 package com.xemantic.kotlin.introspection.test
 
 import com.xemantic.kotlin.introspection.othermodule.InternalBase
+import com.xemantic.kotlin.introspection.test.other.JavaAppListener
 import com.xemantic.kotlin.introspection.test.other.JavaArrayBase
 import com.xemantic.kotlin.introspection.test.other.JavaClassBoundBase
 import com.xemantic.kotlin.introspection.test.other.JavaDollarBase
@@ -880,4 +881,14 @@ abstract class RadixCountingNumber : com.xemantic.kotlin.introspection.test.othe
 
 class IndexedJavaProperties : com.xemantic.kotlin.introspection.test.other.JavaDefaultedProperties() {
     val Int.property: String get() = ""
+}
+
+// A class which is not relocated, implementing a Java interface taking a class of the app, and overloading its method
+class AppListenedEvent
+
+class AppListenedOther
+
+class AppListener : JavaAppListener {
+    override fun on(event: AppListenedEvent) {}
+    fun on(event: AppListenedOther) {}
 }
