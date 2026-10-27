@@ -243,6 +243,14 @@ interface HiddenAnyOverride {
 
 abstract class HiddenAnyOverrideSub : HiddenAnyOverride
 
+// but it does of an override of equals, so that neither equalsOverride.equals(null), nor equalsOverrideSub.equals(null) compiles
+interface HiddenAnyEqualsOverride {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    override fun equals(other: Any?): Boolean
+}
+
+abstract class HiddenAnyEqualsOverrideSub : HiddenAnyEqualsOverride
+
 // the members of the same signature merged from several supertypes, one of them hidden:
 // the compiler picks the one of the most specific return type, or else the one of the first direct supertype,
 // in the order of declaration, and none can be called when the picked one is hidden
@@ -475,6 +483,21 @@ internal abstract class HiddenMergedInternalThread : Thread() {
 
 @Suppress("EXPOSED_SUPER_CLASS")
 abstract class HiddenMergedInternalThreadSub : HiddenMergedInternalThread()
+
+// of the modality of the override, so that finalThread.run() cannot be overridden, while callable.call() can be
+internal open class HiddenMergedInternalFinalThread : Thread() {
+    final override fun run() {}
+}
+
+@Suppress("EXPOSED_SUPER_CLASS")
+open class HiddenMergedInternalFinalThreadSub : HiddenMergedInternalFinalThread()
+
+internal abstract class HiddenMergedInternalCallable : java.util.concurrent.Callable<String> {
+    override fun call(): String = ""
+}
+
+@Suppress("EXPOSED_SUPER_CLASS")
+abstract class HiddenMergedInternalCallableSub : HiddenMergedInternalCallable()
 
 // the hidden member of the same JVM signature as the Java method of the first direct supertype does not hide it,
 // so that join.run() compiles, while reversed.run() calls the run scope function instead

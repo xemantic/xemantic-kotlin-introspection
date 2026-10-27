@@ -10726,6 +10726,13 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should not resolve override of equals deprecated with hidden level`() {
+        // unlike of toString() and hashCode(), the compiler reports the hidden deprecation of an override of equals
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenAnyEqualsOverride.equals") == null)
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenAnyEqualsOverrideSub.equals") == null)
+    }
+
+    @Test
     fun `should not resolve merged member hidden in first supertype`() {
         // of the members of HiddenMergedLeft and HiddenMergedRight, equally specific, the compiler picks the hidden one of the first
         assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenMergedJoin.f") == null)
@@ -10840,6 +10847,28 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.test.HiddenMergedInternalThreadSub.run [page 1/1]
             // inherited from java.lang.Thread
             override fun run()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member overridden as final by internal superclass as final`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedInternalFinalThreadSub.run"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedInternalFinalThreadSub.run [page 1/1]
+            // inherited from java.lang.Thread
+            final override fun run()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve abstract Java member implemented by internal superclass as open`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedInternalCallableSub.call"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedInternalCallableSub.call [page 1/1]
+            // inherited from java.util.concurrent.Callable
+            open fun call(): String
         """.trimIndent()
     }
 

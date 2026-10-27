@@ -848,11 +848,12 @@ internal class DefaultKotlinIntrospector(
 
         // the deprecation of a declaration of this class, see ClassFile, reflected when the class file cannot be read,
         // see reflectedMembersFile, like the one of a hidden constructor, telling whether the class can be subclassed,
-        // but the hidden one of an override of a member of kotlin.Any, which the compiler does not report, see ANY_MEMBER_SIGNATURES
+        // but the hidden one of an override of toString() or hashCode() of kotlin.Any, which the compiler does not report,
+        // see UNREPORTED_HIDDEN_ANY_MEMBERS, not of a top-level function of the same JVM signature, of a file facade
 
         override fun deprecation(function: KmFunction): Deprecation? =
             (classFile ?: reflectedMembersFile).deprecation(function)?.takeUnless {
-                it.isHidden && function.signature in ANY_MEMBER_SIGNATURES
+                it.isHidden && function.signature in UNREPORTED_HIDDEN_ANY_MEMBERS && kmClass != null
             }
 
         override fun deprecation(constructor: KmConstructor): Deprecation? =
@@ -1220,15 +1221,15 @@ internal class DefaultKotlinIntrospector(
         }
 
     /**
-     * Whether the JVM [method] is the one of one of the [unlistedCandidates], which are never listed:
+     * The one of the [unlistedCandidates], which are never listed, whose JVM method is the [method], or `null`:
      * a hidden one, see [InheritedCandidate.isHidden], which hides the Java method it overrides only when the compiler picks it,
      * or a visible one of a supertype which is not part of the API, see [InheritedCandidate.isApi], which the Java method stands for,
      * see [inheritedCandidates], unlike the override of a JVM class, see [overridingBelow].
      */
-    private fun isUnlistedOverride(method: Method, unlistedCandidates: List<InheritedCandidate>): Boolean =
-        reflectedValue(default = false) {
+    private fun unlistedOverride(method: Method, unlistedCandidates: List<InheritedCandidate>): InheritedCandidate? =
+        reflectedValue(default = null) {
             val signature = JvmMethodSignature(method.name, AsmType.getMethodDescriptor(method))
-            unlistedCandidates.any { candidate ->
+            unlistedCandidates.firstOrNull { candidate ->
                 candidate.declarations.clazz == method.declaringClass &&
                     (candidate.member as? Member.Function)?.declaration?.signature == signature
             }
@@ -2036,13 +2037,16 @@ internal class DefaultKotlinIntrospector(
          * Whether the return type of the [member] is more specific than the one of the [other] candidate, a positive number,
          * or less, a negative one, or equally, `0`, or `null` if they cannot be compared, see [compareSpecificity],
          * a platform type, see [returnsPlatformType], being as specific as either nullability, like the `String!` of `call()`
-         * of `java.util.concurrent.Callable<String>`, as `String`, or `String?`.
+         * of `java.util.concurrent.Callable<String>`, as `String`, or `String?`, though less specific than the type
+         * equally specific otherwise, as the compiler prefers the one which is not a platform type.
          */
-        fun compareReturnType(other: InheritedCandidate, supertypeNamesOf: (String) -> Set<String>): Int? =
-            compareSpecificity(
-                member.returnType, other.member.returnType, supertypeNamesOf,
-                ignoreNullability = returnsPlatformType != other.returnsPlatformType
+        fun compareReturnType(other: InheritedCandidate, supertypeNamesOf: (String) -> Set<String>): Int? {
+            val isPlatformRivalry = returnsPlatformType != other.returnsPlatformType
+            val specificity = compareSpecificity(
+                member.returnType, other.member.returnType, supertypeNamesOf, ignoreNullability = isPlatformRivalry
             )
+            return if (specificity == 0 && isPlatformRivalry) (if (returnsPlatformType) -1 else 1) else specificity
+        }
 
         /**
          * The [member] as rendered, of the modality of the Java method implementing it, see [implementationModality],
@@ -2386,8 +2390,14 @@ internal class DefaultKotlinIntrospector(
                 } ||
                 (candidate.member as? Member.Function)?.let { function ->
                     javaClass.javaMethodOf(function.declaration)?.let { method ->
-                        overridesHiddenJdkMethod(method) ||
-                            overridingBelow(method, declarations.clazz)?.let { !isUnlistedOverride(it, unlistedKotlinCandidates) } == true
+                        overridesHiddenJdkMethod(method) || overridingBelow(method, declarations.clazz)?.let { overriding ->
+                            val unlisted = unlistedOverride(overriding, unlistedKotlinCandidates)
+                            // standing for the visible override, of its modality, like final, or open of an abstract method
+                            if (unlisted != null && !unlisted.isHidden && candidate.implementationModality == null) {
+                                candidate.implementationModality = unlisted.member.modality
+                            }
+                            unlisted == null
+                        } == true
                     }
                 } == true
         }
@@ -2408,11 +2418,11 @@ internal class DefaultKotlinIntrospector(
         // by the same signature, with the type arguments of the supertypes substituted,
         // and so do the visible members of the other supertypes, like an override declared by an intermediate class,
         // while the ones overridden only by hidden ones are told apart, see below
-        // the visible members of the supertypes which are not part of the API override nothing, see InheritedCandidate.isApi
-        // the Java members are overridden by the declared members, or by the ones of the other supertypes,
-        // like an override declared by an intermediate class, also by a function of the same JVM signature,
-        // overriding the JVM method on the JVM, though its metadata does not tell, like `ArrayDeque.addFirst(element: E)`
-        // of the standard library, compiled against JDK 8, of `addFirst` of `java.util.List` since JDK 21
+        // the Java members are overridden by the declared members, or by the ones of the other supertypes, alike,
+        // also by a function of the same JVM signature, overriding the JVM method on the JVM, though its metadata does not tell,
+        // like `ArrayDeque.addFirst(element: E)` of the standard library, compiled against JDK 8,
+        // of `addFirst` of `java.util.List` since JDK 21, see JavaOverrides
+        // the members overridden by hidden ones, told first, as they decide which of the visible ones override, see below
         val (hiddenCandidates, visibleCandidates) = candidates.partition { it.isHidden }
         val overriddenByHidden = hiddenCandidates.flatMapTo(HashSet()) { it.overridden }
         val javaOverrides = JavaOverrides()
@@ -2426,8 +2436,10 @@ internal class DefaultKotlinIntrospector(
         if (hasJavaCandidates) collectJavaOverrides(hiddenJavaOverrides, hiddenCandidates)
         fun isOverriddenByHidden(candidate: InheritedCandidate): Boolean = candidate.key in overriddenByHidden ||
             candidate.jvmMethod?.let { hiddenJavaOverrides.overrides(it) } == true
-        // a visible member overridden by a hidden one in turn stands for the members it overrides only on the supertype
-        // declaring the hidden one, which hides them there, so that it overrides nothing, see below,
+        // the visible members of the other supertypes overriding the members below them, and the Java members,
+        // but the ones of the supertypes which are not part of the API, which override nothing, see InheritedCandidate.isApi,
+        // and the ones overridden by a hidden one in turn, which stand for the members they override only on the supertype
+        // declaring the hidden one, which hides them there, see below,
         // like the f() of Mid for `interface Join : Root, Left`, where `Mid : Root` overrides it, and `Left : Mid` as hidden
         val overriding = visibleCandidates.filter { it.isApi && !isOverriddenByHidden(it) }
         val overridden = overriding.flatMapTo(HashSet()) { it.overridden }
@@ -2463,11 +2475,11 @@ internal class DefaultKotlinIntrospector(
             }
         }
         // whether the member a wins over the merged member b, of a less specific return type, see compareReturnType,
-        // or else of a platform return type, while the compiler prefers the one which is not, or else declared later
+        // or else declared later
         fun wins(a: InheritedCandidate, aIndex: Int, b: InheritedCandidate, bIndex: Int): Boolean =
             when (val specificity = a.compareReturnType(b, supertypeNamesOf)) {
                 null -> false
-                0 -> if (a.returnsPlatformType != b.returnsPlatformType) b.returnsPlatformType else aIndex < bIndex
+                0 -> aIndex < bIndex
                 else -> specificity > 0
             }
         // the member winning over all the others, or none, when some cannot be compared
@@ -7050,14 +7062,13 @@ private const val ANY_RECEIVER_KEY = "kotlin.Any"
 private const val COMPARABLE_CLASS_NAME = "kotlin.Comparable"
 
 /**
- * The JVM signatures of the members of `kotlin.Any`, whose overrides the compiler reports no hidden deprecation of,
+ * The JVM signatures of the members of `kotlin.Any` whose overrides the compiler reports no hidden deprecation of,
  * like `@Deprecated(level = HIDDEN) override fun toString()`, which can still be called,
- * while it does report the other levels.
+ * while it does report the other levels, and the hidden one of an override of `equals`.
  */
-private val ANY_MEMBER_SIGNATURES = setOf(
+private val UNREPORTED_HIDDEN_ANY_MEMBERS = setOf(
     JvmMethodSignature("toString", "()Ljava/lang/String;"),
-    JvmMethodSignature("hashCode", "()I"),
-    JvmMethodSignature("equals", "(Ljava/lang/Object;)Z")
+    JvmMethodSignature("hashCode", "()I")
 )
 
 /**
