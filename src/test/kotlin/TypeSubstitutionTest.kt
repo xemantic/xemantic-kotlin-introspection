@@ -254,15 +254,29 @@ class TypeSubstitutionTest {
     }
 
     @Test
-    fun `should tell all type parameters not nullable when ignoring definitely not nullable`() {
-        // given
-        val names = mapOf(0 to "T", 1 to "R")
+    fun `should render no definitely not nullable use when ignoring definitely not nullable`() {
+        // given - T & Any of a T in scope, and of a type parameter outside of it, like the -1 of kotlin-reflect
+        val introspector = DefaultKotlinIntrospector(scanEntireClasspath = false)
+        val scope = TypeParameterScope.ignoringDefinitelyNotNull(mapOf(0 to "T"))
 
         // when
-        val scope = TypeParameterScope.ignoringDefinitelyNotNull(names)
+        val rendered = listOf(0, -1).map { introspector.formatType(typeParameterUse(it, definitelyNonNull = true), typeParameters = scope) }
+
+        // then - the type parameter outside of the scope is rendered as T, like any unknown one
+        assert(rendered == listOf("T", "T"))
+    }
+
+    @Test
+    fun `should keep ignoring definitely not nullable in scope with declared type parameters`() {
+        // given - the R & Any of a member <R> declared in a scope ignoring definitely not nullable
+        val introspector = DefaultKotlinIntrospector(scanEntireClasspath = false)
+        val scope = TypeParameterScope.ignoringDefinitelyNotNull(mapOf(0 to "T")).withDeclared(listOf(typeParameter("R", 1)))
+
+        // when
+        val rendered = introspector.formatType(typeParameterUse(1, definitelyNonNull = true), typeParameters = scope)
 
         // then
-        assert(scope.names == names && scope.notNullable == setOf(0, 1))
+        assert(rendered == "R")
     }
 
 }

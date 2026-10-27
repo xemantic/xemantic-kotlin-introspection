@@ -362,14 +362,20 @@ private val definitelyNotNullJdkMethodNames: Set<String> =
     DEFINITELY_NOT_NULL_JDK_TYPES.keys.mapTo(HashSet()) { it.substringAfter('.').substringBefore('(') }
 
 /**
- * The methods of `java.util.Map` of the [DEFINITELY_NOT_NULL_JDK_TYPES], with their enhanced types.
+ * A [method] of `java.util.Map` of the [DEFINITELY_NOT_NULL_JDK_TYPES], with its [genericParameterTypes],
+ * and its [enhanced] types, by the positions of its value parameters.
  */
-private val definitelyNotNullMapMethods: Map<Method, Map<Int, Set<Int>>> by lazy {
+private class EnhancedMapMethod(val method: Method, val genericParameterTypes: List<Type>, val enhanced: Map<Int, Set<Int>>)
+
+/**
+ * The methods of `java.util.Map` of the [DEFINITELY_NOT_NULL_JDK_TYPES], read once.
+ */
+private val definitelyNotNullMapMethods: List<EnhancedMapMethod> by lazy {
     val mapClass = Map::class.java
     mapClass.methods.mapNotNull { method ->
         val signature = AsmType.getInternalName(mapClass) + "." + method.name + AsmType.getMethodDescriptor(method)
-        DEFINITELY_NOT_NULL_JDK_TYPES[signature]?.let { method to it }
-    }.toMap()
+        DEFINITELY_NOT_NULL_JDK_TYPES[signature]?.let { EnhancedMapMethod(method, method.genericParameterTypes.toList(), it) }
+    }
 }
 
 /**
@@ -387,10 +393,8 @@ private fun KFunction<*>.enhanceDefinitelyNotNull(function: KmFunction) {
     if (name !in definitelyNotNullJdkMethodNames) return
     val method = reflectedValue(default = null) { javaMethod } ?: return
     val overridden = reflectedValue(default = null) { overriddenMapMethod(method) } ?: return
-    val enhanced = definitelyNotNullMapMethods[overridden] ?: return
-    val mapParameterTypes = reflectedValue(default = null) { overridden.genericParameterTypes } ?: return
-    enhanced.forEach { (position, indices) ->
-        val mapType = mapParameterTypes.getOrNull(position) ?: return@forEach
+    overridden.enhanced.forEach { (position, indices) ->
+        val mapType = overridden.genericParameterTypes.getOrNull(position) ?: return@forEach
         val types = alignedTypes(mapType, function.valueParameters.getOrNull(position)?.type)
         indices.mapNotNull { types.getOrNull(it) }.filter { it.classifier is KmClassifier.TypeParameter }.forEach { type ->
             type.isNullable = false
@@ -400,15 +404,17 @@ private fun KFunction<*>.enhanceDefinitelyNotNull(function: KmFunction) {
 }
 
 /**
- * The method of `java.util.Map` of the [DEFINITELY_NOT_NULL_JDK_TYPES], which the [method] declares or overrides,
+ * The method of `java.util.Map` of the [DEFINITELY_NOT_NULL_JDK_TYPES], see [EnhancedMapMethod], which the [method] declares or overrides,
  * or `null` if none.
  * An override might take narrower parameter types, like `merge(String, V, BiFunction)`
  * of a Java `StringKeyMap<V> extends HashMap<String, V>`, of a JVM signature of its own,
  * which overrides by the Java rule: its parameter types are the erasures of the ones of the `java.util.Map` method,
  * of the type arguments of `java.util.Map` given by the class declaring the [method], see [supertypeErasures].
  */
-private fun overriddenMapMethod(method: Method): Method? {
-    val candidates = definitelyNotNullMapMethods.keys.filter { it.name == method.name && it.parameterCount == method.parameterCount }
+private fun overriddenMapMethod(method: Method): EnhancedMapMethod? {
+    val candidates = definitelyNotNullMapMethods.filter {
+        it.method.name == method.name && it.genericParameterTypes.size == method.parameterCount
+    }
     if (candidates.isEmpty()) return null
     val erasures = mapErasures.get(method.declaringClass) ?: return null
     val parameterTypes = method.parameterTypes.toList()
@@ -450,6 +456,8 @@ private fun alignedTypes(mapType: Type, type: KmType?): List<KmType?> = buildLis
  * where the type variables of the [javaClass] are the erasures of their bounds,
  * like `String` and `Object` of `K` and `V` of `java.util.Map` seen from a `StringKeyMap<V> extends HashMap<String, V>`,
  * or `null` if the [target] is not a supertype of the [javaClass].
+ * It does not reuse the Java erasure of the [OverrideResolver], whose `javaSubstitution` resolves the types,
+ * by their Kotlin names, of the members of an owner class it reads, while this compares the JVM classes of a reflected method.
  */
 private fun supertypeErasures(
     javaClass: Class<*>,

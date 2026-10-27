@@ -4878,7 +4878,7 @@ internal class DefaultKotlinIntrospector(
 
         override fun isDefinitelyNonNull(type: KmType): Boolean {
             val classifier = type.classifier as? KmClassifier.TypeParameter ?: return false
-            return type.isDefinitelyNonNull && !type.isNullable && classifier.id !in typeParameters.notNullable
+            return type.isDefinitelyNonNull && !type.isNullable && typeParameters.isRenderedDefinitelyNotNull(classifier.id)
         }
 
         override fun parameterName(type: KmType): String? = type.parameterName

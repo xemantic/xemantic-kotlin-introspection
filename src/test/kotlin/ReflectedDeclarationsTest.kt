@@ -242,7 +242,7 @@ class ReflectedDeclarationsTest {
         val kmClass = kClass.toKmJavaClassHeader("java/util/HashMap") { kotlinClassName(it) }
 
         // then - so that its V used as definitely not nullable, like the V & Any of merge, is rendered so
-        assert(kmClass.typeParameters.flatMap { it.upperBounds }.all { it.isNullable })
+        assert(kmClass.typeParameters.all { it.upperBounds.isNotEmpty() && it.upperBounds.all { bound -> bound.isNullable } })
         assert(notNullableTypeParameters(kmClass.typeParameters).isEmpty())
     }
 
