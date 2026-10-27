@@ -145,6 +145,28 @@ object DeprecatedObject {
     fun member(): Int = 0
 }
 
+// called on an instance, like deprecatedClass.instanceExtension(), for which Kotlin reports no deprecation of the class
+fun DeprecatedClass.instanceExtension(): Int = 0
+
+// called on the name of the object, like DeprecatedObject.objectExtension(), for which Kotlin reports its deprecation
+fun DeprecatedObject.objectExtension(): Int = 0
+
+// a deprecated class which is protected, and a deprecated class within a protected one
+open class DeprecatedProtectedHolder {
+    @Deprecated("Use DeprecationTarget")
+    protected class DeprecatedProtected {
+        companion object {
+            fun create(): Int = 0
+        }
+    }
+    protected class ProtectedOuter {
+        @Deprecated("Use DeprecationTarget")
+        class Inner {
+            fun member(): Int = 0
+        }
+    }
+}
+
 // the constructor of an enum class is always private, called only by its entries
 enum class DeprecatedConstructorEnum @Deprecated("Old") constructor(val v: Int) {
     A(1)

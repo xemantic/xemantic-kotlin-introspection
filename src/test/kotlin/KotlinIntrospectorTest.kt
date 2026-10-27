@@ -9687,6 +9687,8 @@ class KotlinIntrospectorTest {
             @Deprecated("Use DeprecationTarget instead", ReplaceWith("DeprecationTarget")) class DeprecatedClass {
                 @Deprecated("Nested in deprecated") class Nested
             }
+            // from com.xemantic.kotlin.introspection.test
+            fun DeprecatedClass.instanceExtension(): Int
         """.trimIndent()
     }
 
@@ -9848,6 +9850,56 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.DeprecatedObject.member [page 1/1]
             // in @Deprecated("Use DeprecationTarget.create()") object DeprecatedObject
+            fun member(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension of deprecated object with its deprecation`() {
+        // called on the name of the object, DeprecatedObject.objectExtension()
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.DeprecatedObject.objectExtension"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DeprecatedObject.objectExtension [page 1/1]
+            // in @Deprecated("Use DeprecationTarget.create()") object DeprecatedObject
+            // from com.xemantic.kotlin.introspection.test
+            fun DeprecatedObject.objectExtension(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension of deprecated class called on its instance without the deprecation of the class`() {
+        // called on an instance, deprecatedClass.instanceExtension(), for which Kotlin reports no deprecation
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.DeprecatedClass.instanceExtension"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DeprecatedClass.instanceExtension [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            fun DeprecatedClass.instanceExtension(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should tell protected deprecated class on a single line`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.DeprecatedProtectedHolder.DeprecatedProtected.create"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DeprecatedProtectedHolder.DeprecatedProtected.create [page 1/1]
+            // in @Deprecated("Use DeprecationTarget") protected class DeprecatedProtectedHolder.DeprecatedProtected
+            companion object {
+                fun create(): Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should tell protected class and deprecated class within it outermost first`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.DeprecatedProtectedHolder.ProtectedOuter.Inner.member"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DeprecatedProtectedHolder.ProtectedOuter.Inner.member [page 1/1]
+            // in protected class DeprecatedProtectedHolder.ProtectedOuter
+            // in @Deprecated("Use DeprecationTarget") class DeprecatedProtectedHolder.ProtectedOuter.Inner
             fun member(): Int
         """.trimIndent()
     }

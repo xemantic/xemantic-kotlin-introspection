@@ -111,7 +111,12 @@ com.example.AnnotationTestClass
   one for each deprecated class the name goes through, the outermost first,
   like `// in @Deprecated("Use Bar", level = DeprecationLevel.ERROR) class Foo` for `com.example.Foo.Nested.create`,
   also for a companion object resolved by its own name, like `com.example.Foo.Companion.parse`,
-  as Kotlin reports each of them, like for `Foo.Nested.create()`.
+  or an object, also of its extensions, like `Obj.ext()`,
+  as Kotlin reports each of them, like for `Foo.Nested.create()`,
+  merged with the comment telling a protected class, like `// in @Deprecated("Use Bar") protected class Outer.Foo`,
+  but not on a page with only the extensions of the class called on its instance, like `foo.ext()`, where Kotlin reports nothing.
+  The comment of a nested class marks its uses by the qualified name, like its constructor, or its companion object,
+  as Kotlin reports nothing for the nested class used only as a type, like `val nested: Foo.Nested`.
   A class deprecated as hidden is not resolved, and neither is anything within it.
   The members a class inherits from its supertypes, without redeclaring them, are not listed, not to bloat the listing,
   but they are resolved by its name, after the members it declares, which override them, and before the extensions,
