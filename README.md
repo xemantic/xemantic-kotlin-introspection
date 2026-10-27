@@ -145,7 +145,10 @@ com.example.AnnotationTestClass
   and the ones the compiler hides, like `Enum.getDeclaringClass()`, or `List.reversed()` of JDK 21,
   whose calls resolve to the extensions instead, like `fun <T> Iterable<T>.reversed()`.
   The mutable collection types also list the members of their JVM types only,
-  like `MutableCollection.removeIf(arg0: java.util.function.Predicate<in E>)`, or `MutableList.removeFirst()` of JDK 21.
+  like `MutableCollection.removeIf(arg0: java.util.function.Predicate<in E>)`, or `MutableList.removeFirst()` of JDK 21,
+  and the types the compiler enhances as definitely not nullable are rendered so,
+  like `MutableMap.merge(arg0: K, arg1: V & Any, arg2: java.util.function.BiFunction<in V & Any, in V & Any, out V?>): V?`,
+  or as just the type argument given for `V` when it is not nullable anyway, like the `Int` of a `HashMap<String, Int>`, or a `V : Any`.
   An extension hiding a member of the same signature, annotated with `@kotlin.internal.HidesMembers` in the standard library,
   is listed in place of that member, while a member accepting more arguments is still listed next to it,
   like `Throwable.addSuppressed(arg0: Throwable?)`, called by `addSuppressed(null)`,

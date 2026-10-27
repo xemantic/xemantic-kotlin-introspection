@@ -62,3 +62,27 @@ class GenericInnerTypes(
 class JavaGenericOuterString : JavaGenericOuter<String>() {
     inner class Sub : JavaGenericOuter<String>.Inner<Int>()
 }
+
+// A type parameter used as definitely not nullable, rendered so by the members inheriting it
+// only when the type argument might be nullable, as `U & Any` of a `U : Any` does not compile
+open class DefinitelyNonNullBox<T> {
+    fun orDefault(value: T, default: T & Any): T & Any = value ?: default
+    fun orNull(): T? = null
+    fun <R : T> narrowed(value: R & Any): R & Any = value
+    fun applyTo(block: (T & Any).() -> Unit) {}
+}
+
+class NullableDefinitelyNonNullBox<X> : DefinitelyNonNullBox<X>()
+
+class NotNullDefinitelyNonNullBox<U : Any> : DefinitelyNonNullBox<U>()
+
+class BoundNotNullDefinitelyNonNullBox<A : Any, B : A> : DefinitelyNonNullBox<B>()
+
+class DefinitelyNonNullArgumentBox<U> : DefinitelyNonNullBox<U & Any>()
+
+class StringDefinitelyNonNullBox : DefinitelyNonNullBox<String>()
+
+class OuterNotNull<T : Any> {
+    inner class InnerBox : DefinitelyNonNullBox<T>()
+    inner class InnerMap : java.util.HashMap<String, T>()
+}

@@ -41,6 +41,9 @@ internal fun assumeNoParameterNames(method: Method) {
     assumeFalse(method.parameters.any { it.isNamePresent }, "$method has parameter names")
 }
 
+private val MERGE_METHOD: Method =
+    Map::class.java.getMethod("merge", Any::class.java, Any::class.java, java.util.function.BiFunction::class.java)
+
 class KotlinIntrospectorTest {
 
     @Test
@@ -4039,6 +4042,140 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve member taking type parameter as definitely not nullable`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.DefinitelyNonNullBox.orDefault"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DefinitelyNonNullBox.orDefault [page 1/1]
+            fun orDefault(value: T, default: T & Any): T & Any
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member taking function type of receiver definitely not nullable`() {
+        // T & Any.() -> Unit does not parse
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.DefinitelyNonNullBox.applyTo"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DefinitelyNonNullBox.applyTo [page 1/1]
+            fun applyTo(block: (T & Any).() -> Unit)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve inherited member taking type parameter as definitely not nullable of type argument admitting null`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.NullableDefinitelyNonNullBox.orDefault"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NullableDefinitelyNonNullBox.orDefault [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.DefinitelyNonNullBox
+            fun orDefault(value: X, default: X & Any): X & Any
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve inherited member taking own type parameter as definitely not nullable of bound admitting null`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.NullableDefinitelyNonNullBox.narrowed"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NullableDefinitelyNonNullBox.narrowed [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.DefinitelyNonNullBox
+            fun <R : X> narrowed(value: R & Any): R & Any
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve inherited member taking type parameter as definitely not nullable of type argument bounded not nullable`() {
+        // U & Any of a U : Any does not compile
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.NotNullDefinitelyNonNullBox.orDefault"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NotNullDefinitelyNonNullBox.orDefault [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.DefinitelyNonNullBox
+            fun orDefault(value: U, default: U): U
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve inherited member taking type parameter as definitely not nullable of type argument bounded by not nullable one`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundNotNullDefinitelyNonNullBox.orDefault"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundNotNullDefinitelyNonNullBox.orDefault [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.DefinitelyNonNullBox
+            fun orDefault(value: B, default: B): B
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve inherited member taking own type parameter as definitely not nullable of bound substituted not nullable`() {
+        // R & Any of an R : U, of a U : Any, does not compile
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.NotNullDefinitelyNonNullBox.narrowed"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NotNullDefinitelyNonNullBox.narrowed [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.DefinitelyNonNullBox
+            fun <R : U> narrowed(value: R): R
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve inherited member taking own type parameter as definitely not nullable of bound substituted by class type`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.StringDefinitelyNonNullBox.narrowed"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.StringDefinitelyNonNullBox.narrowed [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.DefinitelyNonNullBox
+            fun <R : String> narrowed(value: R): R
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve inherited member taking type parameter as definitely not nullable of class type argument`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.StringDefinitelyNonNullBox.orDefault"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.StringDefinitelyNonNullBox.orDefault [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.DefinitelyNonNullBox
+            fun orDefault(value: String, default: String): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve inherited member taking type parameter as definitely not nullable of definitely not nullable type argument`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.DefinitelyNonNullArgumentBox.orDefault"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DefinitelyNonNullArgumentBox.orDefault [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.DefinitelyNonNullBox
+            fun orDefault(value: U & Any, default: U & Any): U & Any
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve inherited member taking type parameter as nullable of definitely not nullable type argument`() {
+        // (U & Any)? does not compile, it is U?
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.DefinitelyNonNullArgumentBox.orNull"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DefinitelyNonNullArgumentBox.orNull [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.DefinitelyNonNullBox
+            fun orNull(): U?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of inner class taking type parameter as definitely not nullable of outer type parameter bounded not nullable`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.OuterNotNull.InnerBox.orDefault"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OuterNotNull.InnerBox.orDefault [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.DefinitelyNonNullBox
+            fun orDefault(value: T, default: T): T
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve JVM-only member of mutable collection overridden by Java superclass as declared by built-in type`() {
         // removeIf of java.util.ArrayList overrides the one of java.util.Collection, a JVM-only member of MutableCollection
         assumeNoParameterNames(Collection::class.java.getMethod("removeIf", java.util.function.Predicate::class.java))
@@ -4057,6 +4194,59 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.test.InheritedJavaHashMap.putIfAbsent [page 1/1]
             // inherited from kotlin.collections.MutableMap
             open fun putIfAbsent(arg0: String, arg1: Int): Int?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve inherited JVM-only member of mutable map taking value definitely not nullable`() {
+        // K2 enhances the signature of java.util.Map.merge, which neither takes, nor passes to the function, a null value
+        assumeNoParameterNames(MERGE_METHOD)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedGenericJavaHashMap.merge") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedGenericJavaHashMap.merge [page 1/1]
+            // inherited from kotlin.collections.MutableMap
+            open fun merge(arg0: String, arg1: V & Any, arg2: java.util.function.BiFunction<in V & Any, in V & Any, out V?>): V?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve inherited JVM-only member of mutable map taking value definitely not nullable of type parameter bounded not nullable`() {
+        // V & Any of a V : Any does not compile
+        assumeNoParameterNames(MERGE_METHOD)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedHashtable.merge") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedHashtable.merge [page 1/1]
+            // inherited from kotlin.collections.MutableMap
+            open fun merge(arg0: K, arg1: V, arg2: java.util.function.BiFunction<in V, in V, out V?>): V?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve inherited JVM-only member of mutable map taking value definitely not nullable of class type argument`() {
+        assumeNoParameterNames(MERGE_METHOD)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaHashMap.merge") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaHashMap.merge [page 1/1]
+            // inherited from kotlin.collections.MutableMap
+            open fun merge(arg0: String, arg1: Int, arg2: java.util.function.BiFunction<in Int, in Int, out Int?>): Int?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve inherited JVM-only member of mutable map taking value definitely not nullable of nullable class type argument`() {
+        // m.merge(null, null) { … } does not compile, "null cannot be a value of a non-null type 'Int'"
+        assumeNoParameterNames(MERGE_METHOD)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedNullableJavaHashMap.merge") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedNullableJavaHashMap.merge [page 1/1]
+            // inherited from kotlin.collections.MutableMap
+            open fun merge(arg0: String?, arg1: Int, arg2: java.util.function.BiFunction<in Int, in Int, out Int?>): Int?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve inherited JVM-only member of mutable map of inner class taking value of outer type parameter bounded not nullable`() {
+        assumeNoParameterNames(MERGE_METHOD)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OuterNotNull.InnerMap.merge") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OuterNotNull.InnerMap.merge [page 1/1]
+            // inherited from kotlin.collections.MutableMap
+            open fun merge(arg0: String, arg1: T, arg2: java.util.function.BiFunction<in T, in T, out T?>): T?
         """.trimIndent()
     }
 
@@ -8208,6 +8398,26 @@ class KotlinIntrospectorTest {
             have("    open fun remove(key: K, value: V): Boolean" in lines())
             have(lines().none { it.startsWith("    open fun remove(key: K?") })
         }
+    }
+
+    @Test
+    fun `should resolve JVM-only member of mutable map taking value definitely not nullable`() {
+        // K2 enhances the signature of java.util.Map.merge, so that in fun <K, V> f(m: MutableMap<K, V>, k: K, v: V)
+        // m.merge(k, v) { … } does not compile, "'V' but 'V & Any' was expected"
+        assumeNoParameterNames(MERGE_METHOD)
+        resolver.resolve("kotlin.collections.MutableMap.merge") sameAsKotlin """
+            // kotlin.collections.MutableMap.merge [page 1/1]
+            open fun merge(arg0: K, arg1: V & Any, arg2: java.util.function.BiFunction<in V & Any, in V & Any, out V?>): V?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve JVM-only member of mutable map passing value definitely not nullable to function`() {
+        assumeNoParameterNames(Map::class.java.getMethod("computeIfPresent", Any::class.java, java.util.function.BiFunction::class.java))
+        resolver.resolve("kotlin.collections.MutableMap.computeIfPresent") sameAsKotlin """
+            // kotlin.collections.MutableMap.computeIfPresent [page 1/1]
+            open fun computeIfPresent(arg0: K, arg1: java.util.function.BiFunction<in K, in V & Any, out V?>): V?
+        """.trimIndent()
     }
 
     @Test

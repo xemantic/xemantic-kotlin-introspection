@@ -325,7 +325,68 @@ internal fun KFunction<*>.toKmFunction(typeParameters: ReflectedTypeParameters):
         parameter.toKmValueParameter(position, scope, ownTypeParameters = this.typeParameters)
     }
     function.returnType = returnType.toKmType(scope)
+    enhanceDefinitelyNotNull(function)
     return function
+}
+
+/**
+ * The types of the JDK methods which K2 enhances as definitely not nullable, like `V & Any`,
+ * by the JVM signatures of the methods, like `java/util/Map.merge(…)`,
+ * and the positions of their value parameters, like `1` of the value of `merge`,
+ * by the positions of the types in each one, the type itself first, then its type arguments, in depth-first order,
+ * like `1` and `2` of the `V` and `V` of `BiFunction<V, V, V>`:
+ * the definitely not nullable ones of `PREDEFINED_FUNCTION_ENHANCEMENT_INFO_BY_SIGNATURE` of the compiler,
+ * but the ones of `java.util.Optional`, a final class, whose members are never inherited,
+ * compared with the copy of kotlin-reflect by `ReflectedDeclarationsTest`,
+ * which also guards that they are only the value parameters of the methods of `java.util.Map`,
+ * the only ones [enhanceDefinitelyNotNull] applies.
+ * kotlin-reflect applies them too, though its public API does not tell such a type apart from a type parameter
+ * of a Java method overriding a mapped member, like `E` of `add` of `java.util.TreeSet`, which is not enhanced so.
+ */
+internal val DEFINITELY_NOT_NULL_JDK_TYPES: Map<String, Map<Int, Set<Int>>> = mapOf(
+    "java/util/Map.computeIfPresent(Ljava/lang/Object;Ljava/util/function/BiFunction;)Ljava/lang/Object;" to
+        mapOf(1 to setOf(2)),
+    "java/util/Map.merge(Ljava/lang/Object;Ljava/lang/Object;Ljava/util/function/BiFunction;)Ljava/lang/Object;" to
+        mapOf(1 to setOf(0), 2 to setOf(1, 2))
+)
+
+// telling most functions apart without resolving their JVM methods
+private val definitelyNotNullJdkMethodNames: Set<String> =
+    DEFINITELY_NOT_NULL_JDK_TYPES.keys.mapTo(HashSet()) { it.substringAfter('.').substringBefore('(') }
+
+/**
+ * Marks the types of the value parameters of the [function], converted from this one,
+ * which K2 enhances as definitely not nullable, see [DEFINITELY_NOT_NULL_JDK_TYPES],
+ * also of a method overriding the JDK one, like `merge` of `java.util.HashMap`, which inherits the enhancement,
+ * when they are type parameters, like the `V` of the value of `merge`, unlike a type argument given by a subclass.
+ * Whether such a type is rendered as definitely not nullable, like `V & Any`, is decided by the bounds of its type parameter,
+ * see [notNullableTypeParameters], as the one substituted for it might be not nullable, like the `V` of a `V : Any`.
+ */
+private fun KFunction<*>.enhanceDefinitelyNotNull(function: KmFunction) {
+    if (name !in definitelyNotNullJdkMethodNames) return
+    val method = reflectedValue(default = null) { javaMethod } ?: return
+    val mapClass = Map::class.java
+    if (!mapClass.isAssignableFrom(method.declaringClass)) return
+    val signature = AsmType.getInternalName(mapClass) + "." + method.name + AsmType.getMethodDescriptor(method)
+    DEFINITELY_NOT_NULL_JDK_TYPES[signature]?.forEach { (position, indices) ->
+        val types = function.valueParameters.getOrNull(position)?.type?.depthFirst().orEmpty()
+        indices.mapNotNull { types.getOrNull(it) }.filter { it.classifier is KmClassifier.TypeParameter }.forEach { type ->
+            type.isNullable = false
+            type.isDefinitelyNonNull = true
+        }
+    }
+}
+
+/**
+ * This type and its type arguments, in depth-first order, a star projection standing for `null`,
+ * see [DEFINITELY_NOT_NULL_JDK_TYPES].
+ */
+private fun KmType.depthFirst(): List<KmType?> = buildList {
+    fun visit(type: KmType?) {
+        add(type)
+        type?.arguments?.forEach { visit(it.type) }
+    }
+    visit(this@depthFirst)
 }
 
 /**
