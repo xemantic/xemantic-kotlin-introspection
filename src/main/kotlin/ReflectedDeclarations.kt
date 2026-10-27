@@ -284,15 +284,46 @@ internal fun KClass<*>.toKmJavaClassHeader(
     supertypeName: (Class<*>) -> String
 ): KmClass =
     toKmClassHeader(name) { typeParameters ->
+        val genericSupertypes = (listOfNotNull(java.genericSuperclass) + java.genericInterfaces)
+            .filterIsInstance<ParameterizedType>()
+            .associateBy { it.rawType }
         supertypes.map { supertype ->
             supertype.toKmType(typeParameters).also { type ->
                 (supertype.classifier as? KClass<*>)?.let { supertypeClass ->
                     type.classifier = KmClassifier.Class(supertypeName(supertypeClass.java))
                     objectWildcards(supertypeClass.java).forEach { path -> type.projectObjectWildcard(path) }
+                    genericSupertypes[supertypeClass.java]?.let { type.markRawTypeArguments(it) }
                 }
             }
         }
     }
+
+/**
+ * Marks the type arguments of this type, also the nested ones, which are raw types of the [javaType],
+ * like `Map` of `Comparable<Map>`, as [JAVA_RAW_MARKER], which kotlin-reflect tells by the erasures of their bounds,
+ * like `Map<Any?, Any?>`, see [isJavaRaw].
+ */
+private fun KmType.markRawTypeArguments(javaType: ParameterizedType) {
+    javaType.actualTypeArguments.forEachIndexed { index, argument ->
+        val type = arguments.getOrNull(index)?.type ?: return@forEachIndexed
+        when {
+            argument is Class<*> && argument.typeParameters.isNotEmpty() && type.arguments.isNotEmpty() ->
+                type.annotations += KmAnnotation(JAVA_RAW_MARKER, emptyMap())
+            argument is ParameterizedType -> type.markRawTypeArguments(argument)
+        }
+    }
+}
+
+/**
+ * The marker of a raw type in a type argument of a Java supertype, see [markRawTypeArguments], never rendered,
+ * seen by Kotlin as flexible from its erasure to its star projection, like `(MutableMap<Any?, Any?>..Map<*, *>?)`.
+ */
+internal const val JAVA_RAW_MARKER = "com/xemantic/kotlin/introspection/JavaRaw"
+
+/**
+ * Whether this type is a raw type of a Java supertype, see [JAVA_RAW_MARKER].
+ */
+internal val KmType.isJavaRaw: Boolean get() = annotations.any { it.className == JAVA_RAW_MARKER }
 
 /**
  * Projects the star projection at the [path] of the type arguments of this type, see [toKmJavaClassHeader],
