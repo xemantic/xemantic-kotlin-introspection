@@ -33,7 +33,9 @@ import com.xemantic.kotlin.introspection.test.other.JavaNamedLinkBase
 import com.xemantic.kotlin.introspection.test.other.JavaNestedRows
 import com.xemantic.kotlin.introspection.test.other.JavaProjectedAnyRows
 import com.xemantic.kotlin.introspection.test.other.JavaProjectedObjectArrayRows
+import com.xemantic.kotlin.introspection.test.other.JavaProjectedObjectWildcardRows
 import com.xemantic.kotlin.introspection.test.other.JavaProjectedStringArrayRows
+import com.xemantic.kotlin.introspection.test.other.JavaProjectedStringArraySource
 import com.xemantic.kotlin.introspection.test.other.JavaProjectedStringListRows
 import com.xemantic.kotlin.introspection.test.other.JavaProjectedWildcardSource
 import com.xemantic.kotlin.introspection.test.other.JavaWildcardRows
@@ -530,6 +532,11 @@ class BoundedReceiverProjectedJavaAnyRows : JavaProjectedAnyRows()
 
 class BoundedReceiverProjectedJavaStringRows : JavaProjectedStringListRows()
 
+// a Java wildcard bounded by Object, out Any!, also a List<Any>
+fun BoundedReceiverProjectedRows<List<Any>>.projectedNotNullAnyRows() {}
+
+class BoundedReceiverProjectedJavaObjectRows : JavaProjectedObjectWildcardRows()
+
 // a Java array, seen by Kotlin as the flexible Array<(out) String!>!, either an Array<String>, or an Array<out String>
 fun BoundedReceiverProjectedRows<Array<String>>.projectedStringArray() {}
 
@@ -575,3 +582,28 @@ fun BoundedReceiverProjectedSink<MutableList<out String>>.sinkOutStrings() {}
 class BoundedReceiverProjectedStringListSink : BoundedReceiverProjectedSink<List<String>>
 
 class BoundedReceiverProjectedCollectionSink : BoundedReceiverProjectedSink<MutableCollection<String>>
+
+// a Java array, Array<(out) String!>!, of the supertype of the type argument of the extension, an Array<out String> as well
+interface BoundedReceiverProjectedSrc<T>
+
+fun BoundedReceiverProjectedSink<JavaProjectedStringArraySource>.sinkJavaArraySource() {}
+
+class BoundedReceiverProjectedOutArraySink : BoundedReceiverProjectedSink<BoundedReceiverProjectedSrc<Array<out String>>>
+
+// a projected type argument of a class nested in a type argument of its supertype, approximated like by kotlinc,
+// like List<MutableList<out String>> of BoundedReceiverNest<out String>
+interface BoundedReceiverNest<E> : List<MutableList<E>>
+
+interface BoundedReceiverNestedSource<out T>
+
+fun BoundedReceiverNestedSource<List<MutableList<out String>>>.nestedOutStrings() {}
+
+fun BoundedReceiverNestedSource<List<CharSequence>>.nestedCharSequences() {}
+
+fun <T> BoundedReceiverNestedSource<List<Array<T>>>.nestedArrays() {}
+
+fun <T> BoundedReceiverNestedSource<List<Array<out T>>>.nestedOutArrays() {}
+
+class BoundedReceiverOutNestSource : BoundedReceiverNestedSource<BoundedReceiverNest<out String>>
+
+class BoundedReceiverInArraysSource : BoundedReceiverNestedSource<List<Array<in String>>>

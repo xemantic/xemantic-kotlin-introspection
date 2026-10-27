@@ -6669,7 +6669,9 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve class with extensions on Java list of unbounded wildcard as star projection of invariant type argument`() {
-        // a (Mutable)List<*>! is the same type as a List<*>, or a List<Any?>, but not a List<Int>
+        // a (Mutable)List<*>! is the same type as a List<*>, or a List<Any?>, but not a List<Int>,
+        // while it is listed with projectedNotNullAnyRows, which kotlinc rejects, as kotlin-reflect tells the wildcard ?
+        // just like ? extends Object, the (Mutable)List<out Any!>! of a List<Any>
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.BoundedReceiverProjectedJavaAnyRows"
         ) sameAsKotlin """
@@ -6677,6 +6679,7 @@ class KotlinIntrospectorTest {
             class BoundedReceiverProjectedJavaAnyRows : com.xemantic.kotlin.introspection.test.other.JavaProjectedAnyRows
             // from com.xemantic.kotlin.introspection.test
             fun BoundedReceiverProjectedRows<List<*>>.projectedAnyRows()
+            fun BoundedReceiverProjectedRows<List<Any>>.projectedNotNullAnyRows()
             fun BoundedReceiverProjectedRows<List<Any?>>.projectedNullableAnyRows()
         """.trimIndent()
     }
@@ -6695,6 +6698,61 @@ class KotlinIntrospectorTest {
             fun <T : MutableList<String>> BoundedReceiverProjectedRows<T>.projectedMutableStringListRows()
             fun BoundedReceiverProjectedRows<MutableList<out String>>.projectedOutStringRows()
             fun <T : List<String>> BoundedReceiverProjectedRows<T>.projectedStringListRows()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extensions on Java list of wildcard bounded by Object as not nullable Any`() {
+        // a (Mutable)List<out Any!>! is a List<Any>, a List<*>, and a List<Any?>, but not a List<T> of T : Comparable<T>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverProjectedJavaObjectRows"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverProjectedJavaObjectRows [page 1/1]
+            class BoundedReceiverProjectedJavaObjectRows : com.xemantic.kotlin.introspection.test.other.JavaProjectedObjectWildcardRows
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverProjectedRows<List<*>>.projectedAnyRows()
+            fun BoundedReceiverProjectedRows<List<Any>>.projectedNotNullAnyRows()
+            fun BoundedReceiverProjectedRows<List<Any?>>.projectedNullableAnyRows()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extension on contravariant subtype of supertype of Java array type argument`() {
+        // the Array<(out) String!>! of JavaProjectedStringArraySource is an Array<out String>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverProjectedOutArraySink"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverProjectedOutArraySink [page 1/1]
+            class BoundedReceiverProjectedOutArraySink : BoundedReceiverProjectedSink<BoundedReceiverProjectedSrc<Array<out String>>>
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverProjectedSink<com.xemantic.kotlin.introspection.test.other.JavaProjectedStringArraySource>.sinkJavaArraySource()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extension on approximated supertype of projected type argument nested in its type argument`() {
+        // BoundedReceiverNest<out String> is a List<MutableList<out String>>, but not a List<CharSequence>,
+        // nor a List<Array<T>>, nor a List<Array<out T>>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverOutNestSource"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverOutNestSource [page 1/1]
+            class BoundedReceiverOutNestSource : BoundedReceiverNestedSource<BoundedReceiverNest<out String>>
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverNestedSource<List<MutableList<out String>>>.nestedOutStrings()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extension on covariant projection of type parameter containing contravariant projection`() {
+        // an Array<in String> is an Array<out Any?>, an Array<out T> for T of Any?, but not an Array<T>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverInArraysSource"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverInArraysSource [page 1/1]
+            class BoundedReceiverInArraysSource : BoundedReceiverNestedSource<List<Array<in String>>>
+            // from com.xemantic.kotlin.introspection.test
+            fun <T> BoundedReceiverNestedSource<List<Array<out T>>>.nestedOutArrays()
         """.trimIndent()
     }
 

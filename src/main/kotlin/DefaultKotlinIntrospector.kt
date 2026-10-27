@@ -423,7 +423,7 @@ internal class DefaultKotlinIntrospector(
         private const val NOTHING_CLASS_NAME = "kotlin/Nothing"
 
         // a star projection, as the projection it stands for, see ReceiverMatcher.projected, never modified
-        private val STAR = KmVariance.OUT to classType(ANY_CLASS_NAME, nullable = true)
+        private val STAR = KmVariance.OUT to NULLABLE_ANY_TYPE
 
         // a star projection of a contravariant type parameter, see STAR
         private val STAR_OF_CONTRAVARIANT = KmVariance.IN to classType(NOTHING_CLASS_NAME)
@@ -3100,7 +3100,7 @@ internal class DefaultKotlinIntrospector(
                 pending += metadataName to type
             }
         }
-        fun visitSupertypes(supertypes: List<KmType>, projections: Map<Int, KmTypeProjection>?) {
+        fun visitSupertypes(supertypes: List<KmType>, projections: TypeProjections?) {
             for (supertype in supertypes) {
                 val classifier = supertype.classifier as? KmClassifier.Class ?: continue
                 val type = if (types != null && projections != null) {
@@ -3116,7 +3116,7 @@ internal class DefaultKotlinIntrospector(
             val (supertypeName, type) = pending.removeFirst()
             val supertypeKmClass = kmClassOf(supertypeName)
             if (supertypeKmClass != null) {
-                val projections = if (isClassItself) emptyMap() else type?.let { projectionsOf(supertypeKmClass, it) }
+                val projections = if (isClassItself) NO_PROJECTIONS else type?.let { projectionsOf(supertypeKmClass, it) }
                 visitSupertypes(supertypeKmClass.supertypes, projections)
             } else {
                 val javaTypes = if (types != null) javaSupertypeTypes(supertypeName, type) else emptyMap()
@@ -3168,12 +3168,12 @@ internal class DefaultKotlinIntrospector(
     private fun javaSupertypeTypes(metadataName: String, type: KmType?): Map<String, KmType> {
         val header = findClassByMetadataName(metadataName)?.javaClassHeader ?: return emptyMap()
         val projections = when {
-            header.typeParameters.isEmpty() -> emptyMap()
+            header.typeParameters.isEmpty() -> NO_PROJECTIONS
             type == null -> return emptyMap()
             else -> projectionsOf(header, type) ?: return emptyMap()
         }
-        return header.supertypes.mapNotNull { supertype ->
-            supertype.substitutedProjecting(projections) { javaSignatureType(it) }?.let { receiverIndexKeys(supertype).single() to it }
+        return header.supertypes.map { supertype ->
+            receiverIndexKeys(supertype).single() to supertype.substitutedProjecting(projections) { javaSignatureType(it) }
         }.toMap()
     }
 
@@ -3434,6 +3434,56 @@ internal class DefaultKotlinIntrospector(
     }
 
     /**
+     * This supertype of a class with the type arguments of a type of the class, the [projections], substituted
+     * by the [substitute] function for its type parameters, keeping their projections, combined with the ones of this type,
+     * like `AbstractList<out String>` of `ArrayList<out String>`, `Collection<*>` of `MutableList<*>`,
+     * or `Collection<in String>` of `MutableList<in String>`, which stands for a star projection, see [projectedVariance],
+     * and approximating a type argument the projected one is nested in by its supertype, like kotlinc,
+     * like `List<MutableList<out String>>` of `Nest<out String>`, where `interface Nest<E> : List<MutableList<E>>`,
+     * or `Box<out MutableList<out String>>` of an invariant `Box`, or `Comparable<*>` of a contravariant `Comparable`.
+     */
+    private fun KmType.substitutedProjecting(
+        projections: TypeProjections,
+        substitute: KmType.(substitution: Map<Int, KmType>) -> KmType
+    ): KmType {
+        val substituted = substitute(projections.substitution)
+        return if (projections.projected.isEmpty()) substituted else approximated(substituted, projections).first
+    }
+
+    /**
+     * The [substituted] type of this one, see [substitutedProjecting], with the projections of the [projections] kept,
+     * paired with whether it is approximated by a supertype, which a type argument it is given for is projected for then.
+     */
+    private fun KmType.approximated(substituted: KmType, projections: TypeProjections): Pair<KmType, Boolean> {
+        val projected = projections.projected
+        val declared = (classifier as? KmClassifier.Class)?.name?.let(::declaredVariances)?.takeIf { it.size == arguments.size }
+        var isApproximated = false
+        val approximatedArguments = substituted.arguments.mapIndexed { index, argument ->
+            val original = arguments[index]
+            val type = original.type ?: return@mapIndexed argument
+            val id = (type.classifier as? KmClassifier.TypeParameter)?.id
+            if (id != null) {
+                if (id !in projected) return@mapIndexed argument
+                isApproximated = true
+                val projection = projections.projections.getValue(id)
+                val variance = projection.variance?.let { combinedVariance(original.variance!!, it) }
+                return@mapIndexed if (variance == null) KmTypeProjection.STAR else KmTypeProjection(variance, argument.type)
+            }
+            if (type.refersOnlyTo { it !in projected }) return@mapIndexed argument
+            val (approximatedType, isTypeApproximated) = type.approximated(argument.type!!, projections)
+            if (!isTypeApproximated) return@mapIndexed KmTypeProjection(argument.variance, approximatedType)
+            isApproximated = true
+            // a supertype of the type argument, in a covariant position, or else any type
+            when (projectedVariance(declared?.get(index) ?: KmVariance.INVARIANT, original.variance!!)) {
+                KmVariance.INVARIANT -> KmTypeProjection(KmVariance.OUT, approximatedType)
+                KmVariance.OUT -> KmTypeProjection(original.variance, approximatedType)
+                else -> KmTypeProjection.STAR
+            }
+        }
+        return substituted.copy(arguments = approximatedArguments) to isApproximated
+    }
+
+    /**
      * Matches the types of an extension, declaring the [typeParameters], against the types of the supertypes of a class,
      * see [isCallableOn], inferring its type parameters from the types matched against each of them, see [infer],
      * and the type parameter receiver of the [receiverTypeParameterId] standing for the class of the metadata name [self].
@@ -3494,9 +3544,10 @@ internal class DefaultKotlinIntrospector(
          * and in an invariant one, they are the same, like a redundant `out String` of `List`, and `String`,
          * but not `MutableList<out String>`, and `MutableList<String>`.
          * A star projection is `out Any?`, or `in Nothing` of a contravariant type parameter, see [projected],
-         * so that `List<*>` is the same type as `List<Any?>`, containing any type argument, also of the other variance,
-         * like `in String`, which then tells nothing to infer.
-         * A Java wildcard is a projection, like `out String!` of `? extends String`, or a star projection of `?`.
+         * so that `List<*>` is the same type as `List<Any?>`.
+         * A projection of the other variance is contained only by its bound, like `in String` in `out T`, for `T` of `Any?`,
+         * or in `out Any?`, which contains any type argument then, like a star projection.
+         * A Java wildcard is a projection, like `out String!` of `? extends String`, see [javaSignatureType].
          */
         private fun argumentMatches(
             expected: KmTypeProjection,
@@ -3507,21 +3558,24 @@ internal class DefaultKotlinIntrospector(
         ): Boolean {
             val (expectedVariance, expectedType) = expected.projected(declaredVariance)
             val (actualVariance, actualType) = actual.projected(declaredVariance)
-            if (expectedVariance != actualVariance) {
-                if (variance == KmVariance.INVARIANT) return false
-                // the variance of the containing type argument, and of the contained one, in a covariant position
-                val (containing, contained) = if (variance == KmVariance.IN) {
-                    (actualVariance to actualType) to expectedVariance
-                } else {
-                    (expectedVariance to expectedType) to actualVariance
-                }
-                // only an invariant type argument is contained in a projected one of another variance,
-                // like String in out String, but not in String, nor in in String,
-                // unless in the equivalent of a star projection, like in String in out Any?
-                if (contained != KmVariance.INVARIANT) return containing.isStarProjection()
-                return matches(expectedType, actualType, variance.compose(containing.first), isStrict)
+            if (expectedVariance == actualVariance) return matches(expectedType, actualType, variance.compose(expectedVariance), isStrict)
+            if (variance == KmVariance.INVARIANT) return false
+            // the variance of the containing type argument, and of the contained one
+            val (containing, contained) = if (variance == KmVariance.IN) {
+                actualVariance to expectedVariance
+            } else {
+                expectedVariance to actualVariance
             }
-            return matches(expectedType, actualType, variance.compose(expectedVariance), isStrict)
+            if (containing == KmVariance.INVARIANT) return false
+            // an invariant type argument is contained in a projected one, like String in out String
+            if (contained == KmVariance.INVARIANT) return matches(expectedType, actualType, variance.compose(containing), isStrict)
+            // a projection of the other variance by its bound, like in String by Any? in out T
+            val bound = if (containing == KmVariance.OUT) STAR.second else STAR_OF_CONTRAVARIANT.second
+            return if (variance == KmVariance.IN) {
+                matches(bound, actualType, variance.compose(containing), isStrict)
+            } else {
+                matches(expectedType, bound, variance.compose(containing), isStrict)
+            }
         }
 
         /**
@@ -3537,16 +3591,6 @@ internal class DefaultKotlinIntrospector(
                 type != null && variance != null -> variance to type
                 declaredVariance == KmVariance.IN -> STAR_OF_CONTRAVARIANT
                 else -> STAR
-            }
-        }
-
-        // whether this projection is the one of a star projection, see projected, like out Any?
-        private fun Pair<KmVariance, KmType>.isStarProjection(): Boolean {
-            val name = (second.classifier as? KmClassifier.Class)?.name
-            return when (first) {
-                KmVariance.OUT -> name == ANY_CLASS_NAME && second.isNullable
-                KmVariance.IN -> name == NOTHING_CLASS_NAME
-                KmVariance.INVARIANT -> false
             }
         }
 
@@ -3577,19 +3621,25 @@ internal class DefaultKotlinIntrospector(
                 }
                 is KmClassifier.Class -> isNullabilityMatched(expected, actual, variance) && run {
                     // a Java collection, like (Mutable)List<String!>! of java.util.List<String>, is the read-only one,
-                    // or else the mutable one, see isJavaCollection, and matchesMutable, either the actual one,
-                    // or the expected one, of a supertype of the type argument of the extension, see classMatches
+                    // or else the mutable one, see isJavaCollection, either the actual one,
+                    // or the expected one, of a supertype of the type argument of the extension, see classMatches,
+                    // or in an invariant position, any type between them, see matchesMutable
                     val mutable = actual.mutableAlternative()
                     val expectedMutable = expected.mutableAlternative()
                     if (mutable == null && expectedMutable == null) {
                         classMatches(expected, classifier.name, actual, actualClassifier.name, variance, isStrict)
                     } else {
                         val inferredCounts = inferredCounts()
+                        val isInvariant = variance == KmVariance.INVARIANT
                         classMatches(expected, classifier.name, actual, actualClassifier.name, variance, isStrict) ||
-                            (mutable != null && matchesMutable(expected, mutable, variance, inferredCounts)) ||
-                            (expectedMutable != null && matchesMutable(expectedMutable, actual, variance, inferredCounts)) ||
-                            (mutable != null && variance == KmVariance.INVARIANT &&
-                                matchesFlexible(expected, mutable, actual, inferredCounts))
+                            (mutable != null && retrying(inferredCounts) { matchesMutable(expected, mutable, variance) }) ||
+                            (expectedMutable != null && retrying(inferredCounts) { matchesMutable(expectedMutable, actual, variance) }) ||
+                            (mutable != null && isInvariant && retrying(inferredCounts) {
+                                matchesMutable(expected, mutable, KmVariance.OUT) && matchesMutable(expected, actual, KmVariance.IN)
+                            }) ||
+                            (expectedMutable != null && isInvariant && retrying(inferredCounts) {
+                                matchesMutable(expectedMutable, actual, KmVariance.IN) && matchesMutable(expected, actual, KmVariance.OUT)
+                            })
                     }
                 }
                 is KmClassifier.TypeAlias -> !isStrict
@@ -3603,6 +3653,12 @@ internal class DefaultKotlinIntrospector(
         private fun forgetInferredSince(counts: Map<Int, Int>) {
             inferred.keys.retainAll(counts.keys)
             counts.forEach { (id, count) -> inferred.getValue(id).let { it.subList(count, it.size).clear() } }
+        }
+
+        // whether the alternative matches, forgetting what is inferred since the given counts before, and when it does not
+        private inline fun retrying(inferredCounts: Map<Int, Int>, alternative: () -> Boolean): Boolean {
+            forgetInferredSince(inferredCounts)
+            return alternative().also { isMatched -> if (!isMatched) forgetInferredSince(inferredCounts) }
         }
 
         /**
@@ -3620,19 +3676,20 @@ internal class DefaultKotlinIntrospector(
             isStrict: Boolean
         ): Boolean {
             if (name == actualName) {
-                if (!actual.isJavaArray) return argumentsMatch(name, expected.arguments, actual.arguments, variance, isStrict)
-                // a Java array, like Array<(out) String!>!, is the invariant one, or else the covariant one,
-                // forgetting what the invariant one inferred, see matchesMutable
+                if (!actual.isJavaArray && !expected.isJavaArray) {
+                    return argumentsMatch(name, expected.arguments, actual.arguments, variance, isStrict)
+                }
+                // a Java array, like Array<(out) String!>!, either the actual one, or the expected one,
+                // is the invariant one, or else the covariant one
                 val inferredCounts = inferredCounts()
-                if (argumentsMatch(name, expected.arguments, actual.arguments, variance, isStrict)) return true
-                forgetInferredSince(inferredCounts)
-                val covariant = actual.arguments.map { argument ->
-                    argument.type?.takeIf { argument.variance == KmVariance.INVARIANT }?.let { KmTypeProjection(KmVariance.OUT, it) } ?: argument
-                }
-                return argumentsMatch(name, expected.arguments, covariant, variance, isStrict).also { isMatched ->
-                    if (!isMatched) forgetInferredSince(inferredCounts)
-                }
+                return argumentsMatch(name, expected.arguments, actual.arguments, variance, isStrict) ||
+                    retrying(inferredCounts) {
+                        argumentsMatch(name, expected.javaArrayArguments(), actual.javaArrayArguments(), variance, isStrict)
+                    }
             }
+            // any type is an Any?, and Nothing is any type, as far as their nullability matches, see matches
+            if (variance == KmVariance.OUT && (name == ANY_CLASS_NAME || actualName == NOTHING_CLASS_NAME)) return true
+            if (variance == KmVariance.IN && (actualName == ANY_CLASS_NAME || name == NOTHING_CLASS_NAME)) return true
             // the type arguments of the supertype matched, like the String of Comparable<String> of String
             fun supertypeMatches(subtype: KmType, supertypeName: String, match: (supertype: KmType) -> Boolean): Boolean {
                 val supertype = supertypes.supertypeOf(subtype, supertypeName) ?: return !isStrict
@@ -3656,33 +3713,15 @@ internal class DefaultKotlinIntrospector(
          * so that the mutable alternative adds only the extensions which can be called, as far as they are told,
          * like on `MutableList<String>`, but not on `MutableList<in String>` for `(Mutable)List<String!>!`,
          * while a type parameter of the class still stands for any type, see [matches],
-         * forgetting what the read-only one, and then the mutable one, inferred, when they do not match,
-         * since the [inferredCounts] taken before either of them.
+         * also telling, in an invariant position, whether a type is between the mutable and the read-only one,
+         * the bounds of the flexible type it is the same type as, matched in a covariant and a contravariant position,
+         * like `MutableList<out String>`, a supertype of `MutableList<String!>`, and a subtype of `List<String!>`,
+         * each of them [retrying], forgetting what the ones not matched inferred.
          */
-        private fun matchesMutable(expected: KmType, actual: KmType, variance: KmVariance, inferredCounts: Map<Int, Int>): Boolean {
-            forgetInferredSince(inferredCounts)
+        private fun matchesMutable(expected: KmType, actual: KmType, variance: KmVariance): Boolean {
             val name = (expected.classifier as KmClassifier.Class).name
             val actualName = (actual.classifier as KmClassifier.Class).name
-            return classMatches(expected, name, actual, actualName, variance, isStrict = true).also { isMatched ->
-                if (!isMatched) forgetInferredSince(inferredCounts)
-            }
-        }
-
-        /**
-         * Whether the [expected] type in an invariant position is between the [mutable] alternative of a Java collection,
-         * and the [readOnly] one, see [matchesMutable], the bounds of the flexible type it is the same type as,
-         * like `MutableList<out String>`, a supertype of `MutableList<String!>`, and a subtype of `List<String!>`,
-         * of `(Mutable)List<String!>!`, after neither of them is the same type.
-         */
-        private fun matchesFlexible(expected: KmType, mutable: KmType, readOnly: KmType, inferredCounts: Map<Int, Int>): Boolean {
-            forgetInferredSince(inferredCounts)
-            val name = (expected.classifier as KmClassifier.Class).name
-            val mutableName = (mutable.classifier as KmClassifier.Class).name
-            val readOnlyName = (readOnly.classifier as KmClassifier.Class).name
-            return (
-                classMatches(expected, name, mutable, mutableName, KmVariance.OUT, isStrict = true) &&
-                    classMatches(expected, name, readOnly, readOnlyName, KmVariance.IN, isStrict = true)
-                ).also { isMatched -> if (!isMatched) forgetInferredSince(inferredCounts) }
+            return classMatches(expected, name, actual, actualName, variance, isStrict = true)
         }
 
         /**
@@ -6869,42 +6908,39 @@ private fun <E : ReceiverBounded> Map<String, List<E>>.withMultipleBounds(): Map
     mapValues { (_, extensions) -> extensions.filter { it.receiverBounds.isNotEmpty() } }.filterValues { it.isNotEmpty() }
 
 /**
- * The type arguments of the [type] of the [kmClass], by the ids of its type parameters they are given for,
- * or `null` if they do not match, like of a raw Java type.
+ * The type arguments of a type of a class, substituted for its type parameters in its supertypes,
+ * see [DefaultKotlinIntrospector.substitutedProjecting].
+ *
+ * @property projections the type arguments by the ids of the type parameters they are given for,
+ *   a projection repeating the variance of its type parameter, like `out String` of `Node<out E>`, being no projection.
+ * @property substitution their types by the same ids, `Any?` of a star projection, projected again.
+ * @property projected the ids of the type parameters given a star projection, or another projection.
  */
-private fun projectionsOf(kmClass: KmClass, type: KmType): Map<Int, KmTypeProjection>? {
-    if (kmClass.typeParameters.size != type.arguments.size) return null
-    return kmClass.typeParameters.zip(type.arguments).associate { (typeParameter, argument) -> typeParameter.id to argument }
+private class TypeProjections(val projections: Map<Int, KmTypeProjection>) {
+    val substitution: Map<Int, KmType> = projections.mapValues { (_, projection) -> projection.type ?: NULLABLE_ANY_TYPE }
+    val projected: Set<Int> = projections.filterValues { it.type == null || it.variance != KmVariance.INVARIANT }.keys
 }
 
+// the type of Any?, never modified, see TypeProjections
+private val NULLABLE_ANY_TYPE = classType("kotlin/Any", nullable = true)
+
+// the type arguments of a class without type parameters, or of the class itself, see TypeProjections
+private val NO_PROJECTIONS = TypeProjections(emptyMap())
+
 /**
- * This supertype of a class with the type arguments of a type of the class, see [projectionsOf], substituted
- * by the [substitute] function for its type parameters, keeping their projections, combined with the ones of this type,
- * like `AbstractList<out String>` of `ArrayList<out String>`, `Collection<*>` of `MutableList<*>`,
- * or `Collection<in String>` of `MutableList<in String>`, which stands for a star projection, see [projectedVariance],
- * or `null` if a projected one is given for a type parameter nested in a type argument, like `E` of `Comparable<Box<E>>`,
- * whose projection is not told.
+ * The type arguments of the [type] of the [kmClass], see [TypeProjections],
+ * or `null` if they do not match, like of a raw Java type.
  */
-private fun KmType.substitutedProjecting(
-    projections: Map<Int, KmTypeProjection>,
-    substitute: KmType.(substitution: Map<Int, KmType>) -> KmType
-): KmType? {
-    val projected = projections.filterValues { it.type == null || it.variance != KmVariance.INVARIANT }.keys
-    // a star projection substituted as Any?, and projected again
-    val substitution = projections.mapValues { (_, projection) -> projection.type ?: classType("kotlin/Any", nullable = true) }
-    if (projected.isEmpty()) return substitute(substitution)
-    fun KmType.isProjected() = (classifier as? KmClassifier.TypeParameter)?.id in projected
-    fun KmType.refersToProjected() = !refersOnlyTo { it !in projected }
-    if (outerType?.refersToProjected() == true || arguments.any { it.type?.let { type -> !type.isProjected() && type.refersToProjected() } == true }) {
-        return null
-    }
-    val substituted = substitute(substitution)
-    return substituted.copy(
-        arguments = substituted.arguments.mapIndexed { index, argument ->
-            val type = arguments[index].type?.takeIf { it.isProjected() } ?: return@mapIndexed argument
-            val projection = projections.getValue((type.classifier as KmClassifier.TypeParameter).id)
-            val variance = projection.variance?.let { combinedVariance(arguments[index].variance!!, it) }
-            if (variance == null) KmTypeProjection.STAR else KmTypeProjection(variance, argument.type)
+private fun projectionsOf(kmClass: KmClass, type: KmType): TypeProjections? {
+    if (kmClass.typeParameters.size != type.arguments.size) return null
+    return TypeProjections(
+        kmClass.typeParameters.zip(type.arguments).associate { (typeParameter, argument) ->
+            val argumentType = argument.type
+            typeParameter.id to if (argumentType != null && argument.variance == typeParameter.variance) {
+                KmTypeProjection(KmVariance.INVARIANT, argumentType)
+            } else {
+                argument
+            }
         }
     )
 }
@@ -6970,7 +7006,9 @@ private fun isNullabilityMatched(expected: KmType, actual: KmType, variance: KmV
  */
 private fun KmType.javaSignatureType(substitution: Map<Int, KmType>): KmType = copy(
     arguments = arguments.map { argument ->
-        val type = argument.type ?: return@map argument
+        // a wildcard, also ? extends Object, which kotlin-reflect tells as a star projection, is out Any!
+        val type = argument.type ?: classType("kotlin/Any")
+        val argumentVariance = argument.variance ?: KmVariance.OUT
         val classifier = type.classifier
         val argumentType = if (classifier is KmClassifier.TypeParameter) {
             substitution[classifier.id]?.copy() ?: return@map argument
@@ -6988,7 +7026,7 @@ private fun KmType.javaSignatureType(substitution: Map<Int, KmType>): KmType = c
                 argumentType.annotations += KmAnnotation(JAVA_ARRAY_MARKER, emptyMap())
             }
         }
-        KmTypeProjection(argument.variance, argumentType)
+        KmTypeProjection(argumentVariance, argumentType)
     },
     outerType = outerType?.javaSignatureType(substitution)
 )
@@ -7006,6 +7044,13 @@ private const val ARRAY_CLASS_NAME = "kotlin/Array"
  * seen by Kotlin as flexible from invariant to covariant, like `Array<(out) String!>!`, see [javaSignatureType].
  */
 private val KmType.isJavaArray: Boolean get() = annotations.any { it.className == JAVA_ARRAY_MARKER }
+
+/**
+ * The type arguments of this type, covariant if it is a Java array, see [isJavaArray], like `out String!` of `String[]`.
+ */
+private fun KmType.javaArrayArguments(): List<KmTypeProjection> = if (!isJavaArray) arguments else arguments.map { argument ->
+    argument.type?.takeIf { argument.variance == KmVariance.INVARIANT }?.let { KmTypeProjection(KmVariance.OUT, it) } ?: argument
+}
 
 /**
  * Whether this type is a Java collection of the signature of a Java class, like `java.util.List<T>`,
