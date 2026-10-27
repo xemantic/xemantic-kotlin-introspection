@@ -25,6 +25,7 @@ import com.xemantic.kotlin.introspection.test.NonGenericInnerTypes
 import com.xemantic.kotlin.introspection.test.ReflectedValueParametersSample
 import com.xemantic.kotlin.introspection.test.other.JavaConvertedShapes
 import com.xemantic.kotlin.introspection.test.other.JavaLabelBase
+import com.xemantic.kotlin.introspection.test.other.JavaNullableMergeMap
 import com.xemantic.kotlin.introspection.test.other.JavaUnnamedParameters
 import com.xemantic.kotlin.introspection.test.other.Upper.JavaUpperCasePackage
 import com.xemantic.kotlin.test.assert
@@ -687,6 +688,18 @@ class ReflectedDeclarationsTest {
 
         // then
         assert(mismatches.isEmpty())
+    }
+
+    @Test
+    fun `should convert value of Java override of enhanced Map method annotated nullable as not definitely not nullable`() {
+        // given - the value of merge, which the compiler enhances as V & Any, annotated nullable
+        val merge = JavaNullableMergeMap::class.declaredMemberFunctions.single { it.name == "merge" }
+
+        // when
+        val value = merge.toKmFunction(ReflectedTypeParameters.classTypeParameters(emptyList())).valueParameters[1].type
+
+        // then
+        assert(value.isNullable && !value.isDefinitelyNonNull)
     }
 
 }

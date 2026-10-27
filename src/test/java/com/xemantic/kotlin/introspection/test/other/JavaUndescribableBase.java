@@ -38,6 +38,16 @@ public abstract class JavaUndescribableBase<T> {
 
     public abstract @org.jetbrains.annotations.Nullable String[] nullableElements();
 
+    public abstract @javax.annotation.Nonnull(when = javax.annotation.meta.When.MAYBE) String maybe();
+
+    public abstract @javax.annotation.Nonnull(when = javax.annotation.meta.When.NEVER) String never();
+
+    public abstract @javax.annotation.Nonnull(when = javax.annotation.meta.When.UNKNOWN) String unknown();
+
+    @javax.annotation.CheckForNull
+    @javax.annotation.Nonnull(when = javax.annotation.meta.When.UNKNOWN)
+    public abstract String checkedUnknown();
+
     @Override
     public Object clone() {
         return this;

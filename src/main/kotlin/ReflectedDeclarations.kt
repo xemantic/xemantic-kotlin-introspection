@@ -1218,7 +1218,8 @@ private val NULLABLE_ANNOTATIONS: Set<String> = setOf(
 /**
  * The nullability annotations of Java telling a type not nullable, like `@org.jetbrains.annotations.NotNull`,
  * like the [NULLABLE_ANNOTATIONS]: the `NOT_NULL_ANNOTATIONS` of `JvmAnnotationNames` of the compiler, the ones of JSpecify,
- * and `javax.annotation.Nonnull` of JSR-305, which K2 reads as strict too, unless its `when` is not `ALWAYS`, see [JSR305_NONNULL].
+ * and `javax.annotation.Nonnull` of JSR-305, which K2 reads as strict too, as nullable of a `when` of `MAYBE`, or `NEVER`,
+ * and as telling nothing of an `UNKNOWN` one, see [JSR305_NONNULL].
  */
 private val NOT_NULL_ANNOTATIONS: Set<String> = setOf(
     "org.jetbrains.annotations.NotNull",
@@ -1239,7 +1240,7 @@ private val NOT_NULL_ANNOTATIONS: Set<String> = setOf(
     "javax.annotation.Nonnull"
 ).mapTo(HashSet()) { "L" + it.replace('.', '/') + ";" }
 
-// javax.annotation.Nonnull, telling nothing of the nullability when its `when` is not ALWAYS, see NOT_NULL_ANNOTATIONS
+// javax.annotation.Nonnull, of the nullability told by its `when`, see NOT_NULL_ANNOTATIONS
 private const val JSR305_NONNULL = "Ljavax/annotation/Nonnull;"
 
 /**
@@ -1257,11 +1258,17 @@ internal class JavaNullability(val returnType: Boolean?, val parameters: Map<Int
  */
 private fun enhanceJavaNullability(method: Method, function: KmFunction) {
     val nullability = javaNullabilityOf(method) ?: return
-    nullability.returnType?.let { function.returnType.isNullable = it && !method.returnType.isPrimitive }
+    nullability.returnType?.let { if (!method.returnType.isPrimitive) function.returnType.markNullable(it) }
     nullability.parameters.forEach { (position, isNullable) ->
         val parameter = function.valueParameters.getOrNull(position) ?: return@forEach
-        if (!method.parameterTypes[position].isPrimitive) parameter.type.isNullable = isNullable
+        if (!method.parameterTypes[position].isPrimitive) parameter.type.markNullable(isNullable)
     }
+}
+
+// a nullable type is never definitely not nullable, like the V & Any of the Map methods, see enhanceDefinitelyNotNull
+private fun KmType.markNullable(isNullable: Boolean) {
+    this.isNullable = isNullable
+    if (isNullable) isDefinitelyNonNull = false
 }
 
 /**
@@ -1313,15 +1320,26 @@ private fun readJavaNullabilities(type: Class<*>): Map<String, JavaNullability> 
                     in NOT_NULL_ANNOTATIONS -> false
                     else -> return null
                 }
-                fun put() {
+                // the one recorded before, restored when javax.annotation.Nonnull tells nothing, of an UNKNOWN `when`
+                val previousType = nullabilities?.get(position)
+                val previousDeclared = declared[position]
+                fun put(isNullable: Boolean) {
                     if (nullabilities != null) nullabilities[position] = isNullable else declared[position] = annotation to isNullable
                 }
-                put()
+                put(isNullable)
                 if (annotation != JSR305_NONNULL) return null
                 return object : AnnotationVisitor(Opcodes.ASM9) {
                     override fun visitEnum(name: String?, descriptor: String?, value: String?) {
-                        if (name == "when" && value != "ALWAYS") {
-                            if (nullabilities != null) nullabilities.remove(position) else declared.remove(position)
+                        if (name != "when") return
+                        when (value) {
+                            "ALWAYS" -> {}
+                            // nullable, like the compiler reads it
+                            "MAYBE", "NEVER" -> put(isNullable = true)
+                            else -> if (nullabilities != null) {
+                                if (previousType != null) nullabilities[position] = previousType else nullabilities.remove(position)
+                            } else {
+                                if (previousDeclared != null) declared[position] = previousDeclared else declared.remove(position)
+                            }
                         }
                     }
                 }

@@ -4768,6 +4768,50 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve member of Java superclass annotated JSR-305 Nonnull of a MAYBE when`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaUndescribable.maybe"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaUndescribable.maybe [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaUndescribableBase
+            abstract fun maybe(): String?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of Java superclass annotated JSR-305 Nonnull of a NEVER when`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaUndescribable.never"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaUndescribable.never [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaUndescribableBase
+            abstract fun never(): String?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of Java superclass annotated JSR-305 Nonnull of an UNKNOWN when`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaUndescribable.unknown"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaUndescribable.unknown [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaUndescribableBase
+            abstract fun unknown(): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of Java superclass annotated JSR-305 CheckForNull next to Nonnull of an UNKNOWN when`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaUndescribable.checkedUnknown"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaUndescribable.checkedUnknown [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaUndescribableBase
+            abstract fun checkedUnknown(): String?
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve override of method whose return type the compiler enhances as nullable annotated not nullable as not nullable`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.InheritedNotNullWeakReference.get"
