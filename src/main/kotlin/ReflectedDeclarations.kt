@@ -233,7 +233,7 @@ internal fun KClass<*>.toKmBuiltinClass(name: String): KmClass {
             KmConstructor().also { kmConstructor ->
                 kmConstructor.visibility = Visibility.PUBLIC
                 // a constructor infers the type arguments of the class at the call, like a function its own ones,
-                // so that whether it is of a JDK class does not matter
+                // which are never taken as not nullable, so that isJdkMember is never asked for
                 constructor.parameters.withIndex().mapTo(kmConstructor.valueParameters) { (position, parameter) ->
                     parameter.toKmValueParameter(
                         position, typeParameters, ownTypeParameters = this.typeParameters, isJdkMember = lazyOf(true)

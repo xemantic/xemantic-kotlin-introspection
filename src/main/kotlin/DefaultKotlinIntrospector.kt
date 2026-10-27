@@ -2430,11 +2430,15 @@ internal class DefaultKotlinIntrospector(
                 if (isUntoldOverride) untoldOverrideSignatures += signature
             }
         }
-        // a JVM-only member is overridden by a method of a Java class of the same JVM signature, overriding it on the JVM,
+        // a JVM-only member is overridden by a method of a Java class overriding it on the JVM, of the same JVM signature,
+        // or of narrower parameter types, through the bridge javac generates, see bridgeSignatures,
         // though the override resolver does not tell, like `addFirst` of a Java subclass of `java.util.ArrayList`
         // the one of `java.util.List` since JDK 21, which K2 sees as the one member, taking the platform type `E!`
-        val javaMethodSignatures = candidates.mapNotNullTo(HashSet()) { candidate ->
-            candidate.jvmMethod?.signature?.takeIf { candidate.declarations is JavaClass && !candidate.isHidden && candidate.isApi }
+        val javaMethodSignatures = candidates.flatMapTo(HashSet()) { candidate ->
+            val javaClass = candidate.declarations as? JavaClass
+            val function = (candidate.member as? Member.Function)?.declaration
+            if (javaClass == null || function == null || candidate.isHidden || !candidate.isApi) return@flatMapTo emptyList()
+            listOfNotNull(candidate.jvmMethod?.signature) + javaClass.javaMethodOf(function)?.let(::bridgeSignatures).orEmpty()
         }
         // the declared signatures, of a Java candidate not hidden, include the ones of the untold overrides
         val notOverridden = candidates.filter {
@@ -2505,6 +2509,19 @@ internal class DefaultKotlinIntrospector(
             }
         }
         return listed(survivors).filter { candidate -> contribution(kmClass.name, candidate).singleOrNull()?.isHidden != true }
+    }
+
+    /**
+     * The JVM signatures of the bridge methods which javac generates for the Java [method] in its class,
+     * of the same name, and of the erased parameter types of a method it overrides, wider than its own ones,
+     * like `addFirst(Ljava/lang/Object;)V` for the `addFirst(String)` of a Java subclass of `java.util.ArrayList<String>`,
+     * or for the `addFirst(E)` of a Java class declaring `E extends Comparable<E>`, erased to `Comparable`.
+     */
+    private fun bridgeSignatures(method: Method): List<JvmMethodSignature> = reflectedValue(default = emptyList()) {
+        method.declaringClass.declaredMethods.filter { bridge ->
+            bridge.isBridge && bridge.name == method.name && bridge.parameterCount == method.parameterCount &&
+                bridge.parameterTypes.zip(method.parameterTypes).all { (bridgeType, type) -> bridgeType.isAssignableFrom(type) }
+        }.map { JvmMethodSignature(it.name, AsmType.getMethodDescriptor(it)) }
     }
 
     /**
@@ -4222,7 +4239,7 @@ internal class DefaultKotlinIntrospector(
             listedExtensions.functions.filter { extension -> signatures[extension]?.let { it !in ambiguousSignatures } == true },
             listedExtensions.properties.filter { extension ->
                 !extension.isObjectMember && extension.property.name !in memberPropertyNames &&
-                    bodyReceiverSubstitution(extension.property.receiverParameterType, extension.property.typeParameters, kmClass) != null
+                    bodyReceiverTypeParameters(extension.property.receiverParameterType, extension.property.typeParameters, kmClass) != null
             }
         )
     }
@@ -4324,15 +4341,16 @@ internal class DefaultKotlinIntrospector(
     }
 
     /**
-     * The type parameters of an extension [function] of a built-in type, the [kmClass], see [bodyReceiverSubstitution],
-     * telling the types of its context and value parameters.
+     * The type parameters of an extension [function] of a built-in type, the [kmClass], which stand for the ones of the class,
+     * see [bodyReceiverTypeParameters], mapped to the names of the type parameters of the class,
+     * like `T` of `fun <T> MutableList<T>.fill(value: T)` to `E` of `interface MutableList<E>`, or `null`.
      */
     private fun bodyReceiverSubstitution(function: KmFunction, kmClass: KmClass): Map<Int, String>? =
         bodyReceiverTypeParameters(function, kmClass)?.mapValues { (_, classTypeParameter) -> classTypeParameter.name }
 
     /**
-     * The type parameters of an extension [function] of a built-in type, the [kmClass], see [bodyReceiverTypeParameters],
-     * telling the types of its context and value parameters.
+     * The type parameters of an extension [function] of a built-in type, the [kmClass], which stand for the ones of the class,
+     * told by its receiver, and by the types of its context and value parameters, see the overload taking them.
      */
     @OptIn(ExperimentalContextParameters::class)
     private fun bodyReceiverTypeParameters(function: KmFunction, kmClass: KmClass): Map<Int, KmTypeParameter>? =
@@ -4388,13 +4406,6 @@ internal class DefaultKotlinIntrospector(
         }
         return (builtinClasses[name] ?: loadKmClass(name))?.typeParameters?.map { it.variance }.orEmpty()
     }
-
-    /**
-     * The type parameters of an extension of a built-in type, like for [bodyReceiverTypeParameters],
-     * mapped to the names of the type parameters of the class they stand for.
-     */
-    private fun bodyReceiverSubstitution(receiver: KmType?, typeParameters: List<KmTypeParameter>, kmClass: KmClass): Map<Int, String>? =
-        bodyReceiverTypeParameters(receiver, typeParameters, kmClass)?.mapValues { (_, classTypeParameter) -> classTypeParameter.name }
 
     /**
      * The type parameters of an extension of a built-in type, the [kmClass], with the [receiver] type,

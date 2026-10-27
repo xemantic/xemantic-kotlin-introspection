@@ -4472,6 +4472,29 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve JVM-only member of mutable list of JDK 21 overridden by Java class of bounded type variable once`() {
+        // the override takes the erased Comparable on the JVM, overriding the addFirst(Object) of java.util.List by its bridge
+        assumeTrue(runCatching { List::class.java.getMethod("addFirst", Any::class.java) }.isSuccess, "JDK 21+")
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaComparableFirstList.addFirst") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaComparableFirstList.addFirst [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaComparableFirstList
+            override fun addFirst(arg0: E?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve JVM-only member of mutable list of JDK 21 overridden by Java class of type argument once`() {
+        // the override takes String on the JVM, overriding the addFirst(Object) of java.util.List by its bridge,
+        // l.addFirst(null) of a JavaStringFirstList compiles
+        assumeTrue(runCatching { List::class.java.getMethod("addFirst", Any::class.java) }.isSuccess, "JDK 21+")
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaStringFirstList.addFirst") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaStringFirstList.addFirst [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaStringFirstList
+            override fun addFirst(arg0: String?)
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve JVM-only member of mutable list of JDK 21 overridden by Java superclass as declared by built-in type`() {
         assumeTrue(runCatching { List::class.java.getMethod("addFirst", Any::class.java) }.isSuccess, "JDK 21+")
         resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaArrayList.addFirst") sameAsKotlin """

@@ -249,6 +249,10 @@ class InheritedJavaRawMap : com.xemantic.kotlin.introspection.test.other.JavaRaw
 
 class InheritedJavaFirstList<E> : com.xemantic.kotlin.introspection.test.other.JavaFirstList<E>()
 
+class InheritedJavaComparableFirstList<E : Comparable<E>> : com.xemantic.kotlin.introspection.test.other.JavaComparableFirstList<E>()
+
+class InheritedJavaStringFirstList : com.xemantic.kotlin.introspection.test.other.JavaStringFirstList()
+
 class InheritedFromJava : com.xemantic.kotlin.introspection.test.other.JavaInheritedMid<String>()
 
 open class OpenInheritedFromJava : com.xemantic.kotlin.introspection.test.other.JavaInheritedMid<String>()
