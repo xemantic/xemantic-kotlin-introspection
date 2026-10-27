@@ -39,6 +39,8 @@ import com.xemantic.kotlin.introspection.test.other.JavaProjectedStringArraySour
 import com.xemantic.kotlin.introspection.test.other.JavaProjectedStringListSource
 import com.xemantic.kotlin.introspection.test.other.JavaProjectedStringListRows
 import com.xemantic.kotlin.introspection.test.other.JavaProjectedWildcardSource
+import com.xemantic.kotlin.introspection.test.other.JavaRawComparableBoth
+import com.xemantic.kotlin.introspection.test.other.JavaRawMapBoth
 import com.xemantic.kotlin.introspection.test.other.JavaWildcardRows
 
 // Extensions on type parameter receivers, listed for the classes satisfying their bounds,
@@ -493,6 +495,47 @@ class BoundedReceiverCharSequenceListBoth : JavaListBoth<MutableList<CharSequenc
 
 class BoundedReceiverStarListBoth : JavaListBoth<List<*>>()
 
+// a type parameter inferred from a raw type of a Java supertype, any type between its erasure and its star projection
+class BoundedReceiverRawMapBoth : JavaRawMapBoth<MutableMap<String, Int>>()
+
+class BoundedReceiverRawStarMapBoth : JavaRawMapBoth<Map<*, *>>()
+
+class BoundedReceiverRawComparableBoth : JavaRawComparableBoth<Comparable<String>>()
+
+// a nullable type parameter inferred from a nullable type, which the type parameter itself is not, unlike a not nullable type
+interface BoundedReceiverNullablePair<A, B>
+
+fun <T> BoundedReceiverNullablePair<T?, T>.nullableFirst() {}
+
+fun <T> BoundedReceiverNullablePair<T, T?>.nullableSecond() {}
+
+fun <T> BoundedReceiverNullablePair<out T?, T>.nullableOutFirst() {}
+
+class BoundedReceiverNullableFirstPair : BoundedReceiverNullablePair<String?, String>
+
+class BoundedReceiverNullableSecondPair : BoundedReceiverNullablePair<String, String?>
+
+// a JDK class implementing a Kotlin collection purely, of its own type argument, not a platform type,
+// see FakePureImplementationsProvider of kotlinc, unlike a JDK class implementing it through a Java supertype
+interface BoundedReceiverJdkSink<in T>
+
+fun BoundedReceiverJdkSink<java.util.ArrayList<String>>.sinkArrayList() {}
+
+fun BoundedReceiverJdkSink<java.util.HashSet<String>>.sinkHashSet() {}
+
+// also through a Java supertype, HashSet<E!>, not implementing MutableSet<E> directly
+fun BoundedReceiverJdkSink<java.util.LinkedHashSet<String>>.sinkLinkedHashSet() {}
+
+fun BoundedReceiverJdkSink<java.util.HashMap<String, Int>>.sinkHashMap() {}
+
+fun BoundedReceiverJdkSink<java.util.AbstractList<String>>.sinkAbstractList() {}
+
+fun BoundedReceiverJdkSink<java.util.Vector<String>>.sinkVector() {}
+
+class BoundedReceiverNullableListJdkSink : BoundedReceiverJdkSink<MutableCollection<String?>>
+
+class BoundedReceiverNullableMapJdkSink : BoundedReceiverJdkSink<MutableMap<String, Int?>>
+
 // a type parameter pinned to the class by the invariant type argument of a Java interface,
 // so that the member is called instead of the extension
 fun <N : JavaFace<N>> N.faceLink(next: N): N = next
@@ -629,3 +672,13 @@ fun <T> BoundedReceiverNestedSource<List<Array<out T>>>.nestedOutArrays() {}
 class BoundedReceiverOutNestSource : BoundedReceiverNestedSource<BoundedReceiverNest<out String>>
 
 class BoundedReceiverInArraysSource : BoundedReceiverNestedSource<List<Array<in String>>>
+
+// a class comparable to another type, listing the extensions on Comparable of its package, like next to it,
+// but not the ones of the other packages
+class BoundedReceiverMoney
+
+class BoundedReceiverPrice : Comparable<BoundedReceiverMoney> {
+    override fun compareTo(other: BoundedReceiverMoney): Int = 0
+}
+
+fun Comparable<BoundedReceiverMoney>.atLeastMoney() {}
