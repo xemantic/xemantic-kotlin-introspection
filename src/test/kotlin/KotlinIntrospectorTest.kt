@@ -6112,7 +6112,8 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve class with extensions on read-only and mutable list of Java list type argument`() {
-        // a java.util.List<String> is the flexible (Mutable)List<String!>!, either a List<String>, or a MutableList<String>
+        // a java.util.List<String> is the flexible (Mutable)List<String!>!, either a List<String>, or a MutableList<String>,
+        // while readAnyRows is listed, as a star projection matches any type argument, like on main
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.BoundedReceiverStringRows"
         ) sameAsKotlin """
@@ -6120,8 +6121,39 @@ class KotlinIntrospectorTest {
             class BoundedReceiverStringRows : com.xemantic.kotlin.introspection.test.other.JavaListRows<String>
             // from com.xemantic.kotlin.introspection.test
             fun BoundedReceiverRows<MutableList<String>>.addStringRow()
+            fun BoundedReceiverRows<List<*>>.readAnyRows()
             fun BoundedReceiverRows<List<String>>.readStringRows()
         """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extension on mutable list of star projection of Java list type argument`() {
+        // a MutableList<*> is not a MutableList<String> in an invariant position
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverStringRows"
+        ) should {
+            have(lines().none { "addAnyRow" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve class without extensions on mutable list of Java list of wildcard type argument`() {
+        // a (Mutable)List<out String!>! is not a MutableList<String>, nor a MutableList<*>, in an invariant position
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverWildcardRows"
+        ) should {
+            have(lines().none { "addStringRow" in it || "addAnyRow" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve class without extensions on mutable list of nested Java list of unbounded wildcard`() {
+        // a (Mutable)List<*>! is not a MutableList<String>, nor is the outer list a MutableList<String>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverNestedRows"
+        ) should {
+            have(lines().none { "MutableList" in it })
+        }
     }
 
     @Test

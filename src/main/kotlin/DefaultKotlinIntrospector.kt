@@ -2860,6 +2860,12 @@ internal class DefaultKotlinIntrospector(
          */
         val supertypesOfSupertypes = HashMap<String, SupertypesOfSupertype>()
 
+        /**
+         * The supertypes of the types of the generic Java classes, with their type arguments, see [supertypeOf],
+         * by these very types, as each of them is matched against many extensions.
+         */
+        val supertypesOfJavaTypes = IdentityHashMap<KmType, Map<String, KmType>>()
+
     }
 
     /**
@@ -2963,9 +2969,11 @@ internal class DefaultKotlinIntrospector(
             // walked again from the type itself, when it takes type arguments, like Comparable<JavaBox<String!>> of JavaBox<String>
             val header = findClassByMetadataName(name)?.javaClassHeader ?: return null
             if (header.typeParameters.isEmpty()) return supertypeTypesOf(name)[key]
-            val types = HashMap<String, KmType>()
-            supertypeNames(name, kmClassOf = { builtinClasses[it] ?: loadKmClass(it) }, types, type = type)
-            return types[key]
+            return supertypesOfJavaTypes.getOrPut(type) {
+                HashMap<String, KmType>().also { types ->
+                    supertypeNames(name, kmClassOf = { builtinClasses[it] ?: loadKmClass(it) }, types, type = type)
+                }
+            }[key]
         }
         val supertype = supertypeTypesOf(name)[key] ?: return null
         if (declaration.typeParameters.isEmpty()) return supertype
@@ -3086,6 +3094,9 @@ internal class DefaultKotlinIntrospector(
         // the classes each type parameter is inferred from, by their metadata names, with the variances of their positions
         private val inferred = HashMap<Int, MutableList<Pair<String, KmVariance>>>()
 
+        // whether a star projection, or a projected supertype argument, no longer matches any type, see matchesMutable
+        private var isStrict = false
+
         /**
          * Whether the class of the type parameter receiver is a subtype of the [bound].
          */
@@ -3108,17 +3119,18 @@ internal class DefaultKotlinIntrospector(
             actual: List<KmTypeProjection>,
             variance: KmVariance
         ): Boolean {
-            if (expected.size != actual.size) return true
-            val declaredVariances = declaredVariances(metadataName)?.takeIf { it.size == expected.size } ?: return true
+            if (expected.size != actual.size) return !isStrict
+            val declaredVariances = declaredVariances(metadataName)?.takeIf { it.size == expected.size } ?: return !isStrict
             return expected.indices.all { index ->
                 val expectedType = expected[index].type
                 val actualType = actual[index].type
-                // a star projection, or a projected supertype argument, matches any type
+                // a star projection, or a projected supertype argument, matches any type, unless strict
                 if (expectedType == null || actualType == null || actual[index].variance != KmVariance.INVARIANT) {
-                    return@all true
+                    return@all !isStrict
                 }
                 val argumentVariance = projectedVariance(declaredVariances[index], expected[index].variance!!)
-                argumentVariance == null || matches(expectedType, actualType, variance.compose(argumentVariance))
+                    ?: return@all !isStrict
+                matches(expectedType, actualType, variance.compose(argumentVariance))
             }
         }
 
@@ -3147,35 +3159,64 @@ internal class DefaultKotlinIntrospector(
                     in typeParameterIds -> infer(classifier.id, actual, variance)
                     else -> true
                 }
-                is KmClassifier.Class -> {
-                    // a Java collection, like (Mutable)List<String!>! of java.util.List<String>, is a mutable one,
-                    // or the read-only one of its upper bound, in a contravariant position, or matched by name,
-                    // see javaSignatureType
-                    val readOnlyName = (actual.flexibleTypeUpperBound?.type?.classifier as? KmClassifier.Class)?.name
-                        ?.takeIf { it != actualClassifier.name }
-                    val actualName = if (readOnlyName != null && (variance == KmVariance.IN || classifier.name == readOnlyName)) {
-                        readOnlyName
+                is KmClassifier.Class -> isNullabilityMatched(expected, actual, variance) && run {
+                    // a Java collection, like (Mutable)List<String!>! of java.util.List<String>, is the read-only one
+                    // of its upper bound, or else the mutable one, see javaSignatureType, and matchesMutable
+                    val readOnly = actual.flexibleTypeUpperBound?.type
+                    val readOnlyName = (readOnly?.classifier as? KmClassifier.Class)?.name
+                    if (readOnly == null || readOnlyName == null || readOnlyName == actualClassifier.name) {
+                        classMatches(expected, classifier.name, actual, actualClassifier.name, variance)
                     } else {
-                        actualClassifier.name
-                    }
-                    isNullabilityMatched(expected, actual, variance) && if (classifier.name == actualName) {
-                        argumentsMatch(classifier.name, expected.arguments, actual.arguments, variance)
-                    } else {
-                        // the type arguments of the supertype matched, like the String of Comparable<String> of String
-                        when (variance) {
-                            KmVariance.INVARIANT -> false
-                            KmVariance.OUT -> supertypes.isSubclass(actualName, classifier.name) &&
-                                supertypes.supertypeOf(actual, classifier.name)?.let { supertype ->
-                                    argumentsMatch(classifier.name, expected.arguments, supertype.arguments, variance)
-                                } != false
-                            KmVariance.IN -> supertypes.isSubclass(classifier.name, actualName) &&
-                                supertypes.supertypeOf(expected, actualName)?.let { supertype ->
-                                    argumentsMatch(actualName, supertype.arguments, actual.arguments, variance)
-                                } != false
-                        }
+                        classMatches(expected, classifier.name, readOnly, readOnlyName, variance) ||
+                            matchesMutable(expected, classifier.name, actual, actualClassifier.name, variance)
                     }
                 }
                 is KmClassifier.TypeAlias -> true
+            }
+        }
+
+        /**
+         * Whether the [expected] type of the class of the given [name] matches the [actual] type of the class of the given
+         * [actualName] in a position of the given [variance], see [matches], ignoring their nullability.
+         */
+        private fun classMatches(expected: KmType, name: String, actual: KmType, actualName: String, variance: KmVariance): Boolean =
+            if (name == actualName) {
+                argumentsMatch(name, expected.arguments, actual.arguments, variance)
+            } else {
+                // the type arguments of the supertype matched, like the String of Comparable<String> of String
+                when (variance) {
+                    KmVariance.INVARIANT -> false
+                    KmVariance.OUT -> supertypes.isSubclass(actualName, name) &&
+                        supertypes.supertypeOf(actual, name)?.let { supertype ->
+                            argumentsMatch(name, expected.arguments, supertype.arguments, variance)
+                        } != false
+                    KmVariance.IN -> supertypes.isSubclass(name, actualName) &&
+                        supertypes.supertypeOf(expected, actualName)?.let { supertype ->
+                            argumentsMatch(actualName, supertype.arguments, actual.arguments, variance)
+                        } != false
+                }
+            }
+
+        /**
+         * Whether the [expected] type matches the mutable alternative of the [actual] Java collection, see [classMatches],
+         * strictly, without a star projection, or a projected supertype argument, matching any type, see [argumentsMatch],
+         * as it is not matched at all when the read-only one is not, so that it lists only the extensions
+         * which can be called, like on `MutableList<String>`, but not on `MutableList<*>` for `(Mutable)List<String!>!`,
+         * forgetting what is inferred from it when it does not match.
+         */
+        private fun matchesMutable(expected: KmType, name: String, actual: KmType, actualName: String, variance: KmVariance): Boolean {
+            val wasStrict = isStrict
+            val inferredBefore = inferred.mapValuesTo(HashMap()) { (_, types) -> types.toMutableList() }
+            isStrict = true
+            try {
+                return classMatches(expected, name, actual, actualName, variance).also { isMatched ->
+                    if (!isMatched) {
+                        inferred.clear()
+                        inferred.putAll(inferredBefore)
+                    }
+                }
+            } finally {
+                isStrict = wasStrict
             }
         }
 

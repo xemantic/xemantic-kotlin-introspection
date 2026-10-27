@@ -28,6 +28,8 @@ import com.xemantic.kotlin.introspection.test.other.JavaGenericComparable
 import com.xemantic.kotlin.introspection.test.other.JavaLinkBase
 import com.xemantic.kotlin.introspection.test.other.JavaListRows
 import com.xemantic.kotlin.introspection.test.other.JavaNamedLinkBase
+import com.xemantic.kotlin.introspection.test.other.JavaNestedRows
+import com.xemantic.kotlin.introspection.test.other.JavaWildcardRows
 
 // Extensions on type parameter receivers, listed for the classes satisfying their bounds,
 // names avoid the "TestClass" suffix to keep search result tests stable
@@ -417,3 +419,14 @@ fun BoundedReceiverRows<List<String>>.readStringRows() {}
 fun BoundedReceiverRows<List<Int>>.readIntRows() {}
 
 class BoundedReceiverStringRows : JavaListRows<String>()
+
+// a star projection, or a Java wildcard, matching any type argument, which is never told to be the mutable list then
+fun BoundedReceiverRows<MutableList<*>>.addAnyRow() {}
+
+fun BoundedReceiverRows<List<*>>.readAnyRows() {}
+
+fun BoundedReceiverRows<List<MutableList<String>>>.readMutableRows() {}
+
+class BoundedReceiverWildcardRows : JavaWildcardRows<String>()
+
+class BoundedReceiverNestedRows : JavaNestedRows()
