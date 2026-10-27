@@ -6710,6 +6710,34 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve class with extensions inferring type parameter from raw map bounding wildcard of Java supertype`() {
+        // the raw Map bounding ? extends Map can be the Map<*, *>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverRawWildcardMapBoth"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverRawWildcardMapBoth [page 1/1]
+            class BoundedReceiverRawWildcardMapBoth : com.xemantic.kotlin.introspection.test.other.JavaRawWildcardMapBoth<List<Map<*, *>>>
+            // from com.xemantic.kotlin.introspection.test
+            fun <T> BoundedReceiverTwoRows<T, T>.sameBoth()
+            fun <T> BoundedReceiverTwoRows<T, out T>.sameOrSubtypeBoth()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extensions inferring type parameter from Java array of raw maps of Java supertype`() {
+        // the Map[] is an Array<(out) Map!>, of the raw Map, which can be the Map<*, *>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverRawMapArrayBoth"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverRawMapArrayBoth [page 1/1]
+            class BoundedReceiverRawMapArrayBoth : com.xemantic.kotlin.introspection.test.other.JavaRawMapArrayBoth<Array<out Map<*, *>>>
+            // from com.xemantic.kotlin.introspection.test
+            fun <T> BoundedReceiverTwoRows<T, T>.sameBoth()
+            fun <T> BoundedReceiverTwoRows<T, out T>.sameOrSubtypeBoth()
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve class with extensions inferring nullable type parameter from nullable type argument`() {
         // T? is String? for T of String, but a String is no T?, unless in a covariant position
         resolver.resolve(
@@ -6740,7 +6768,8 @@ class KotlinIntrospectorTest {
     @Test
     fun `should resolve class without extensions on JDK classes purely implementing mutable collection of nullable type argument`() {
         // a java.util.ArrayList<String> is a MutableList<String>, as kotlinc sees it, not a MutableCollection<String?>,
-        // unlike a java.util.AbstractList<String>, a (Mutable)List<String!>, also a MutableCollection<String?>
+        // unlike a java.util.AbstractList<String>, a (Mutable)List<String!>, also a MutableCollection<String?>,
+        // nor is a class reaching MutableCollection<String> through Kotlin, and MutableCollection<String!> through Java
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.BoundedReceiverNullableListJdkSink"
         ) sameAsKotlin """

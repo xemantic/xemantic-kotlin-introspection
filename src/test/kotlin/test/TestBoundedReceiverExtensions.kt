@@ -40,7 +40,10 @@ import com.xemantic.kotlin.introspection.test.other.JavaProjectedStringListSourc
 import com.xemantic.kotlin.introspection.test.other.JavaProjectedStringListRows
 import com.xemantic.kotlin.introspection.test.other.JavaProjectedWildcardSource
 import com.xemantic.kotlin.introspection.test.other.JavaRawComparableBoth
+import com.xemantic.kotlin.introspection.test.other.JavaRawMapArrayBoth
 import com.xemantic.kotlin.introspection.test.other.JavaRawMapBoth
+import com.xemantic.kotlin.introspection.test.other.JavaRawWildcardMapBoth
+import com.xemantic.kotlin.introspection.test.other.JavaStringCollection
 import com.xemantic.kotlin.introspection.test.other.JavaWildcardRows
 
 // Extensions on type parameter receivers, listed for the classes satisfying their bounds,
@@ -502,6 +505,11 @@ class BoundedReceiverRawStarMapBoth : JavaRawMapBoth<Map<*, *>>()
 
 class BoundedReceiverRawComparableBoth : JavaRawComparableBoth<Comparable<String>>()
 
+// also as the bound of a wildcard, and as the component of an array
+class BoundedReceiverRawWildcardMapBoth : JavaRawWildcardMapBoth<List<Map<*, *>>>()
+
+class BoundedReceiverRawMapArrayBoth : JavaRawMapArrayBoth<Array<out Map<*, *>>>()
+
 // a nullable type parameter inferred from a nullable type, which the type parameter itself is not, unlike a not nullable type
 interface BoundedReceiverNullablePair<A, B>
 
@@ -682,3 +690,11 @@ class BoundedReceiverPrice : Comparable<BoundedReceiverMoney> {
 }
 
 fun Comparable<BoundedReceiverMoney>.atLeastMoney() {}
+
+// a supertype reached both through Kotlin and through Java, the one of Kotlin preferred by kotlinc,
+// MutableCollection<String>, not a MutableCollection<String?>, unlike MutableCollection<String!> of Java
+interface BoundedReceiverKotlinStringCollection : MutableCollection<String>
+
+abstract class BoundedReceiverJavaKotlinStrings : JavaStringCollection, BoundedReceiverKotlinStringCollection
+
+fun BoundedReceiverJdkSink<BoundedReceiverJavaKotlinStrings>.sinkJavaKotlinStrings() {}

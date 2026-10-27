@@ -299,18 +299,24 @@ internal fun KClass<*>.toKmJavaClassHeader(
     }
 
 /**
- * Marks the type arguments of this type, also the nested ones, which are raw types of the [javaType],
- * like `Map` of `Comparable<Map>`, as [JAVA_RAW_MARKER], which kotlin-reflect tells by the erasures of their bounds,
- * like `Map<Any?, Any?>`, see [isJavaRaw].
+ * Marks this type, of the [javaType], when it is a raw type, and its type arguments, also the nested ones,
+ * also the bounds of the wildcards, like `Map` of `List<? extends Map>`, and the components of the arrays,
+ * like `Map` of `Map[]`, or of `List<Map>[]`, as [JAVA_RAW_MARKER],
+ * which kotlin-reflect tells by the erasures of their bounds, like `Map<Any?, Any?>`, see [isJavaRaw].
  */
-private fun KmType.markRawTypeArguments(javaType: ParameterizedType) {
-    javaType.actualTypeArguments.forEachIndexed { index, argument ->
-        val type = arguments.getOrNull(index)?.type ?: return@forEachIndexed
-        when {
-            argument is Class<*> && argument.typeParameters.isNotEmpty() && type.arguments.isNotEmpty() ->
-                type.annotations += KmAnnotation(JAVA_RAW_MARKER, emptyMap())
-            argument is ParameterizedType -> type.markRawTypeArguments(argument)
+private fun KmType.markRawTypeArguments(javaType: Type) {
+    when (javaType) {
+        is Class<*> -> when {
+            javaType.isArray -> arguments.firstOrNull()?.type?.markRawTypeArguments(javaType.componentType)
+            javaType.typeParameters.isNotEmpty() && arguments.isNotEmpty() -> annotations += KmAnnotation(JAVA_RAW_MARKER, emptyMap())
         }
+        is ParameterizedType -> javaType.actualTypeArguments.forEachIndexed { index, argument ->
+            arguments.getOrNull(index)?.type?.markRawTypeArguments(argument)
+        }
+        is GenericArrayType -> arguments.firstOrNull()?.type?.markRawTypeArguments(javaType.genericComponentType)
+        // the type of the projection is the bound of the wildcard, the lower one of ? super, or else the upper one
+        is WildcardType -> (javaType.lowerBounds.firstOrNull() ?: javaType.upperBounds.firstOrNull())
+            ?.let { markRawTypeArguments(it) }
     }
 }
 
