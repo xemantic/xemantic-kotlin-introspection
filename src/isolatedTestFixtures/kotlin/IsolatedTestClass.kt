@@ -111,3 +111,23 @@ class RelocatedBoundListenerImpl : RelocatedBoundListener {
     override fun <E : RelocatedEvent> on(event: E) {}
     fun <E : RelocatedOther> on(event: E) {}
 }
+
+// tests relocate it, like shading, with or without its subclass, so that its members are inherited from its relocated name
+open class RelocatedInheritedBase {
+    fun inherited(event: RelocatedEvent) {}
+}
+
+class RelocatedInheritedImpl : RelocatedInheritedBase()
+
+// tests relocate it, like shading, together with the Java class implementing it, but not its subclass
+interface RelocatedDefaultInterface {
+    fun kf(event: RelocatedEvent) {}
+}
+
+class RelocatedJavaBaseImpl : RelocatedJavaBase(), RelocatedDefaultInterface
+
+// tests relocate its Java interface, and the classes it takes, but not itself, and remove the JVM method of its override
+class RelocatedShrunkEventListener : RelocatedEventListener {
+    override fun handle(event: RelocatedEvent) {}
+    fun handle(event: com.xemantic.kotlin.introspection.isolated.sub.RelocatedEvent) {}
+}
