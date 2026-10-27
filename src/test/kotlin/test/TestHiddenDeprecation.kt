@@ -513,6 +513,30 @@ interface HiddenMergedSupplier : java.util.function.Supplier<String> {
 
 abstract class HiddenMergedSupplierJoin : java.util.function.Supplier<String>, HiddenMergedSupplier
 
+// a Java method overriding the enhanced one does not inherit the enhancement, and neither does an overload,
+// so that it returns a platform type, losing to the hidden member, and join.get(), join.apply(""), nor reversed.apply("") compile
+abstract class HiddenMergedJavaSupplierJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaHiddenMergedSupplier, HiddenMergedSupplier
+
+interface HiddenMergedFunction : java.util.function.Function<String, String> {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    override fun apply(t: String): String
+}
+
+abstract class HiddenMergedJavaFunctionJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaHiddenMergedFunction, HiddenMergedFunction
+
+abstract class HiddenMergedJavaFunctionJoinReversed :
+    HiddenMergedFunction, com.xemantic.kotlin.introspection.test.other.JavaHiddenMergedFunction
+
+interface HiddenMergedFunctionOverload : com.xemantic.kotlin.introspection.test.other.JavaHiddenMergedFunctionOverload {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    override fun apply(s: CharSequence): String
+}
+
+abstract class HiddenMergedJavaFunctionOverloadJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaHiddenMergedFunctionOverload, HiddenMergedFunctionOverload
+
 // compiles, as the merged members picked are not hidden
 @Suppress("unused")
 private fun callMergedMembers(

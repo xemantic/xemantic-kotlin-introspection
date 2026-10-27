@@ -1901,10 +1901,15 @@ internal class DefaultKotlinIntrospector(
         /**
          * Whether the [member] overrides the one of the [other] candidate, telling it by its key,
          * or by the key of its JVM method, see [OverrideResolver.overriddenJavaMembers],
-         * like the `newThread(r: Runnable)` of a Kotlin interface the `newThread(r: Runnable?)` of `java.util.concurrent.ThreadFactory`.
+         * like the `newThread(r: Runnable)` of a Kotlin interface the `newThread(r: Runnable?)` of `java.util.concurrent.ThreadFactory`,
+         * or by its JVM signature, which overrides it on the JVM, like `apply(t: String)` the `apply(s: String?)` of a Java subtype
+         * of `java.util.function.Function<String, String>`.
          */
         fun overrides(other: InheritedCandidate): Boolean =
-            other.key in overridden || other.jvmMethod?.let { it.key in overriddenJavaMembers } == true
+            other.key in overridden || other.jvmMethod?.let { jvmMethod ->
+                jvmMethod.key in overriddenJavaMembers ||
+                    jvmMethod.signature == (member as? Member.Function)?.declaration?.signature
+            } == true
 
         // the keys of the JVM methods the member overrides, see overrides
         private val overriddenJavaMembers: Set<String> by lazy(LazyThreadSafetyMode.NONE) {
