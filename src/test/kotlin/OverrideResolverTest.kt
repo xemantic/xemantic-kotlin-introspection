@@ -252,6 +252,42 @@ class OverrideResolverTest {
     }
 
     @Test
+    fun `should not take overload for override of Java supertype of subpackage of owner relocated to the root package`() {
+        // given
+        // like relocated by shading from test/ to the root package, and test/sub/ to sub/
+        val owner = kmClass("test/Owner", supertype = "test/sub/Listener").apply {
+            functions += functionTaking("on", "test/sub/Event")
+            functions += functionTaking("on", "test/sub/Other")
+        }
+        val listener = ClassWriter(0).apply {
+            visit(
+                Opcodes.V1_8, Opcodes.ACC_PUBLIC or Opcodes.ACC_ABSTRACT or Opcodes.ACC_INTERFACE,
+                "sub/Listener", null, "java/lang/Object", null
+            )
+            visitMethod(Opcodes.ACC_PUBLIC or Opcodes.ACC_ABSTRACT, "on", "(Lsub/Event;)V", null, null)
+            visitEnd()
+        }.toByteArray()
+        val ownerClassFile = ClassWriter(0).apply {
+            visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC, "Owner", null, "java/lang/Object", arrayOf("sub/Listener"))
+            visitMethod(Opcodes.ACC_PUBLIC, "on", "(Lsub/Event;)V", null, null)
+            visitMethod(Opcodes.ACC_PUBLIC, "on", "(Lsub/Other;)V", null, null)
+            visitEnd()
+        }.toByteArray()
+        val resolver = overrideResolver(
+            classFiles = mapOf("Owner" to ownerClassFile),
+            unloadableClassFiles = mapOf("sub/Listener" to listener)
+        )
+
+        // when
+        val overrides = owner.functions.map { resolver.isOverride(OverrideResolver.Owner(owner, "Owner"), it) }
+
+        // then
+        // the class file tells test/sub/ relocated to sub/, translated back, so that the JVM method of the overload,
+        // taking sub/Other, is not taken for a shrunk one, as when the root package relocated its subpackages
+        assert(overrides == listOf(true, false))
+    }
+
+    @Test
     fun `should translate names of classes relocated to the root package both ways`() {
         // given
         val relocation = checkNotNull(Relocation.of("test/Owner", "Owner"))
@@ -262,8 +298,9 @@ class OverrideResolverTest {
         val descriptor = relocation.unlocatedDescriptor("on(LEvent;Lother/Event;)V")
 
         // then
-        // only the classes of the root package itself are relocated from test/, as no other package tells it apart
-        assert(located == listOf("Base", "sub/Base", null))
+        // only the classes of the package itself are relocated, to and from the root package,
+        // as the root package, containing every other one, tells no subpackage apart
+        assert(located == listOf("Base", null, null))
         assert(unlocated == listOf("test/Base", "sub/Base", "other/Base"))
         assert(descriptor == "on(Ltest/Event;Lother/Event;)V")
     }

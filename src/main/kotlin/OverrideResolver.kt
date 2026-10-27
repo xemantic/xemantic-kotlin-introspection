@@ -866,8 +866,8 @@ internal class OverrideResolver(
             }
         }
 
-        // only the name, the relocation, whether it might have DefaultImpls, and the class file, if already read,
-        // are captured, as the overridables are cached
+        // only the name, the relocation, whether it might have DefaultImpls, and the JVM methods of its class file,
+        // if already read, are captured, as the overridables are cached
         val ownerName = owner.name
         val hasDefaultImpls = ownerClass.mayHaveDefaultImpls
         val ownerClassFile = ownerRelocation.classFile
@@ -916,9 +916,7 @@ internal class OverrideResolver(
     private fun jvmMethods(className: String, hasDefaultImpls: Boolean, classFile: OwnerClassFile): Set<String>? {
         // the package is separated with '/', and nested classes with '.'
         val internalName = className.replace('.', '$')
-        val methods = classFile.methods
-            ?.mapTo(mutableSetOf()) { it.name + it.descriptor }
-            ?: return null
+        val methods = classFile.methods?.toMutableSet() ?: return null
         if (!hasDefaultImpls) return methods
         val defaultImplsName = "$className.DefaultImpls"
         val defaultImplsFile = readClassBytesByMetadataName(defaultImplsName)
@@ -938,8 +936,7 @@ internal class OverrideResolver(
     /**
      * A method of a class.
      *
-     * @param access the access flags, whose `ACC_STATIC` is the [Modifier.STATIC] of a reflected method,
-     *   and whose `ACC_SYNTHETIC` and `ACC_BRIDGE` a reflected method tells as well.
+     * @param access the access flags, whose `ACC_STATIC` is the [Modifier.STATIC] of a reflected method.
      * @param signature the generic signature, if read from a class file declaring it.
      */
     private class DeclaredMethod(
@@ -959,25 +956,22 @@ internal class OverrideResolver(
         classFile?.let { return it.methods }
         val clazz = loadClassByMetadataName(className) ?: return null
         return reflectOrNull {
-            clazz.declaredMethods.map {
-                val access = it.modifiers or
-                    (if (it.isSynthetic) Opcodes.ACC_SYNTHETIC else 0) or (if (it.isBridge) Opcodes.ACC_BRIDGE else 0)
-                DeclaredMethod(access, it.name, AsmType.getMethodDescriptor(it))
-            }
+            clazz.declaredMethods.map { DeclaredMethod(it.modifiers, it.name, AsmType.getMethodDescriptor(it)) }
         }
     }
 
     /**
      * The class file of a class whose members are checked, read once for all its uses, see [relocation]:
-     * whether it [isServed], and the [methods] the class declares, see [declaredMethods].
+     * whether it [isServed], and the [methods] the class declares, see [declaredMethods],
+     * as names followed by descriptors, or `null` if they can be neither read nor reflected.
      */
-    private class OwnerClassFile(val isServed: Boolean, val methods: List<DeclaredMethod>?)
+    private class OwnerClassFile(val isServed: Boolean, val methods: Set<String>?)
 
     private fun ownerClassFile(
         className: String,
         bytes: ByteArray? = readClassBytesByMetadataName(className),
-        parsed: ParsedClass? = bytes?.let { readClass(it) }
-    ): OwnerClassFile = OwnerClassFile(isServed = bytes != null, methods = declaredMethods(className, parsed))
+        declared: List<DeclaredMethod>? = declaredMethods(className, bytes?.let { readClass(it) })
+    ): OwnerClassFile = OwnerClassFile(isServed = bytes != null, methods = declared?.mapTo(HashSet()) { it.name + it.descriptor })
 
     /**
      * A parsed class file, telling the JVM internal names of the direct [supertypes], and the declared [methods].
@@ -1290,17 +1284,23 @@ internal class OverrideResolver(
     private fun relocation(owner: Owner): OwnerRelocation {
         val own = owner.relocation
         if (builtinClasses()[owner.kmClass.name] === owner.kmClass) return OwnerRelocation(own)
-        // the class file is read, and parsed, only once, also for the methods of the owner, see ownerClassFile
-        var classFile: OwnerClassFile? = null
+        // the class file is read, and parsed, only once, also for the JVM methods of the owner, see ownerClassFile
+        var bytes: ByteArray? = null
+        var parsed: ParsedClass? = null
+        var isRead = false
+        fun parsedClassFile(): ParsedClass? {
+            if (!isRead) {
+                bytes = readClassBytesByMetadataName(owner.name)
+                parsed = bytes?.let { readClass(it) }
+                isRead = true
+            }
+            return parsed
+        }
+        fun classFile(declared: List<DeclaredMethod>?) = if (isRead) ownerClassFile(owner.name, bytes, declared) else null
         val jvmSupertypes = loadClassByMetadataName(owner.name)
             ?.let { clazz -> reflectOrNull { (listOfNotNull(clazz.superclass) + clazz.interfaces).map { it.name.replace('.', '/') } } }
-            ?: run {
-                val bytes = readClassBytesByMetadataName(owner.name)
-                val parsed = bytes?.let { readClass(it) }
-                classFile = ownerClassFile(owner.name, bytes, parsed)
-                parsed?.supertypes
-            }
-            ?: return OwnerRelocation(own, classFile)
+            ?: parsedClassFile()?.supertypes
+            ?: return OwnerRelocation(own, classFile(declaredMethods(owner.name, parsed)))
         // by their JVM internal names, like com/example/Outer${'$'}Nested
         val metadataSupertypes = owner.kmClass.supertypes
             .mapNotNull { (it.classifier as? KmClassifier.Class)?.name?.takeIf { name -> name.isRelocatable } }
@@ -1311,10 +1311,15 @@ internal class OverrideResolver(
         val dependencies = relocatedNames(metadataSupertypes.keys, jvmSupertypeNames).filter { (metadataName, jvmName) ->
             own?.located(metadataName)?.let { packageOf(it) } != packageOf(jvmName)
         }
-        if (dependencies.isEmpty()) return OwnerRelocation(own?.withDependencies(emptyMap(), excluded), classFile)
-        val ownerClassFile = classFile ?: ownerClassFile(owner.name)
+        if (dependencies.isEmpty()) {
+            return OwnerRelocation(
+                own?.withDependencies(emptyMap(), excluded),
+                if (isRead) classFile(declaredMethods(owner.name, parsed)) else null
+            )
+        }
+        val declared = declaredMethods(owner.name, parsedClassFile())
         val metadataNames = owner.kmClass.jvmSignatures().flatMapTo(HashSet(metadataSupertypes.keys)) { descriptorClassNames(it) }
-        val jvmNames = ownerClassFile.methods.orEmpty()
+        val jvmNames = declared.orEmpty()
             // neither a synthetic method, like lambda${'$'}run${'$'}0 or access${'$'}getValue, nor a bridge, is in the metadata
             .filter { it.access and (Opcodes.ACC_SYNTHETIC or Opcodes.ACC_BRIDGE) == 0 }
             .flatMapTo(HashSet(jvmSupertypeNames)) { descriptorClassNames(it.descriptor) }
@@ -1329,7 +1334,7 @@ internal class OverrideResolver(
             }
             .toMap()
         val relocation = own?.withDependencies(packages, excluded) ?: Relocation.ofDependencies(packages, excluded)
-        return OwnerRelocation(relocation, ownerClassFile)
+        return OwnerRelocation(relocation, classFile(declared))
     }
 
     /**
@@ -2513,23 +2518,29 @@ internal class Relocation private constructor(
         }
 
         /**
-         * The relocation of only the [dependencies] of a class which is not relocated itself, see [withDependencies].
+         * The relocation of only the [dependencies] of a class which is not relocated itself, see [withDependencies],
+         * or `null` if there are none.
          */
-        fun ofDependencies(dependencies: Map<String, String>, excluded: Set<String>): Relocation =
-            Relocation(dependencies, prefix = null, excluded.mapTo(HashSet()) { internalNameOf(it) })
+        fun ofDependencies(dependencies: Map<String, String>, excluded: Set<String>): Relocation? =
+            if (dependencies.isEmpty()) null
+            else Relocation(dependencies, prefix = null, excluded.mapTo(HashSet()) { internalNameOf(it) })
 
         /**
          * The [name] with its package, or the closest enclosing package, replaced like by the [packages],
          * either of which might be the root package, or `null` if none of them contains it.
          * A class of the root package is relocated only by the root package itself, as the root package,
-         * containing every other one, would tell no relocated package apart.
+         * containing every other one, would tell no relocated package apart,
+         * and a package relocated to the root package relocates only its own classes, not the ones of its subpackages,
+         * whose relocated names, like `sub/Event` of `test/sub/Event`, could not be translated back.
          */
         private fun relocated(name: String, packages: Map<String, String>): String? {
             if (packages.isEmpty()) return null
             var packageName = packageOf(name)
             if (packageName.isEmpty()) return packages[""]?.let { inPackage(it, name) }
             while (packageName.isNotEmpty()) {
-                packages[packageName]?.let { return inPackage(it, name.substring(packageName.length + 1)) }
+                packages[packageName]
+                    ?.takeIf { it.isNotEmpty() || packageName == packageOf(name) }
+                    ?.let { return inPackage(it, name.substring(packageName.length + 1)) }
                 packageName = packageOf(packageName)
             }
             return null
