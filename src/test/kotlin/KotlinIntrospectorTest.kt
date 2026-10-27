@@ -4383,6 +4383,10 @@ class KotlinIntrospectorTest {
             // inherited from kotlin.Any
             abstract fun hashCode(): Int
         """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve concrete operator of Any declared abstract again by Java superclass as abstract`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.InheritedPermission.equals"
         ) sameAsKotlin """
@@ -4428,7 +4432,7 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should resolve members of Kotlin interface implemented by final methods of Java superclass as final`() {
+    fun `should resolve function of Kotlin interface implemented by final method of Java superclass as final`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.InheritedJavaFinalImplementation.f"
         ) sameAsKotlin """
@@ -4436,6 +4440,10 @@ class KotlinIntrospectorTest {
             // inherited from com.xemantic.kotlin.introspection.test.FinallyImplemented
             final fun f(): Int
         """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve property of Kotlin interface implemented by final getter of Java superclass as final`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.InheritedJavaFinalImplementation.name"
         ) sameAsKotlin """
@@ -4443,6 +4451,39 @@ class KotlinIntrospectorTest {
             // inherited from com.xemantic.kotlin.introspection.test.FinallyImplemented
             final val name: String
         """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of Kotlin interface implemented by Java superclass and declared abstract again by Java interface walked first as open`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ReabstractedBeforeJavaImplementation.foo"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ReabstractedBeforeJavaImplementation.foo [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.DefaultedMember
+            open fun foo(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of Kotlin interface implemented by Java grand-superclass and declared abstract again by Java interface as open`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ReabstractedBeforeJavaGrandImplementation.foo"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ReabstractedBeforeJavaGrandImplementation.foo [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.DefaultedMember
+            open fun foo(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve set of mapped Java interface named as supertype which kotlin-reflect describes as read-only built-in type`() {
+        // kotlinc sees set(p0: E!) of java.util.ListIterator, which kotlin-reflect describes as ListIterator
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.JavaListIteratorSubclass.set") == null)
+    }
+
+    @Test
+    fun `should not resolve add of mapped Java interface named as supertype which kotlin-reflect describes as read-only built-in type`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.JavaListIteratorSubclass.add") == null)
     }
 
     @Test
@@ -4482,12 +4523,16 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should resolve members of standard library class implemented by its Java grand-superclass as open`() {
+    fun `should resolve redeclared member of standard library class implemented by its Java grand-superclass as open`() {
         resolver.resolve("kotlin.collections.AbstractMutableSet.contains") sameAsKotlin """
             // kotlin.collections.AbstractMutableSet.contains [page 1/1]
             // inherited from kotlin.collections.Set
             open override operator fun contains(element: E): Boolean
         """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of standard library class implemented by its Java grand-superclass as open`() {
         resolver.resolve("kotlin.collections.AbstractMutableSet.clear") sameAsKotlin """
             // kotlin.collections.AbstractMutableSet.clear [page 1/1]
             // inherited from kotlin.collections.MutableSet
@@ -10405,6 +10450,12 @@ class KotlinIntrospectorTest {
     fun `should not resolve Java override of enhanced member of first supertype overridden by hidden one`() {
         // the get() of JavaHiddenMergedSupplier does not inherit the enhancement of the one of Supplier, returning String!
         assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenMergedJavaSupplierJoin.get") == null)
+    }
+
+    @Test
+    fun `should not resolve Java override of the same JVM descriptor of enhanced member of first supertype overridden by hidden one`() {
+        // the T get() of JavaRedeclaredSupplier does not inherit the enhancement either, as only the JDK overrides do
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenMergedJavaRedeclaredSupplierJoin.get") == null)
     }
 
     @Test

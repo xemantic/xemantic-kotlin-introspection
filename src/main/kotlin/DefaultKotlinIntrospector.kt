@@ -1260,13 +1260,13 @@ internal class DefaultKotlinIntrospector(
         // the overloads ordered by their numbers of parameters, and their JVM descriptors,
         // as kotlin-reflect tells them in no particular order
         reflectedValue(default = emptyList()) { kClass.declaredMemberFunctions }
-            .sortedWith(
-                compareBy(
-                    { function -> reflectedValue(default = 0) { function.parameters.size } },
-                    { function -> reflectedValue(default = "") { function.javaMethod?.let(AsmType::getMethodDescriptor).orEmpty() } }
-                )
-            )
-            .forEach { function ->
+            .map { function ->
+                val arity = reflectedValue(default = 0) { function.parameters.size }
+                val descriptor = reflectedValue(default = "") { function.javaMethod?.let(AsmType::getMethodDescriptor).orEmpty() }
+                Triple(function, arity, descriptor)
+            }
+            .sortedWith(compareBy({ it.second }, { it.third }))
+            .forEach { (function) ->
                 reflectedValue(default = null) {
                     function.takeIf { '$' !in it.name && !isUnsupportedByCompiler(it) }
                         ?.toKmFunction(typeParameters)
@@ -2009,6 +2009,12 @@ internal class DefaultKotlinIntrospector(
         var implementationModality: Modality? = null
 
         /**
+         * The modality of the method of the nearest Java interface declaring the [member] again, like abstract,
+         * which the [implementationModality] of a Java class wins over, wherever walked, see [inheritedCandidates], or `null`.
+         */
+        var interfaceModality: Modality? = null
+
+        /**
          * Whether the [member], of a Java class, returns a platform type of Java, see [JavaClass.returnsPlatformType].
          */
         val returnsPlatformType: Boolean by lazy(LazyThreadSafetyMode.NONE) {
@@ -2024,7 +2030,7 @@ internal class DefaultKotlinIntrospector(
          * only when [isInheritedByOpenClass], as otherwise no member is rendered open, nor final.
          */
         fun renderedMember(isInheritedByOpenClass: Boolean): Member {
-            val modality = implementationModality?.takeUnless { it == member.modality } ?: return member
+            val modality = (implementationModality ?: interfaceModality)?.takeUnless { it == member.modality } ?: return member
             val isRendered = modality == Modality.ABSTRACT || kmClass.kind != ClassKind.INTERFACE || isInheritedByOpenClass
             return if (isRendered) member.withModality(modality) else member
         }
@@ -2345,9 +2351,13 @@ internal class DefaultKotlinIntrospector(
                     overriddenClosure(redeclaring).any { it in candidate.overridden } &&
                     !candidate.refines(redeclaring, supertypeNamesOf)
             }
+            // the implementation of a Java class wins over the declaration of a Java interface, also walked before it
             (implemented + redeclared).forEach {
-                val isAnyReabstraction = isJavaInterface && modality == Modality.ABSTRACT && it.kmClass.name == ANY_CLASS_NAME
-                if (it.implementationModality == null && !isAnyReabstraction) it.implementationModality = modality
+                when {
+                    !isJavaInterface -> if (it.implementationModality == null) it.implementationModality = modality
+                    modality == Modality.ABSTRACT && it.kmClass.name == ANY_CLASS_NAME -> {}
+                    it.interfaceModality == null -> it.interfaceModality = modality
+                }
             }
             implemented.isNotEmpty() ||
                 (candidate.overridden.isEmpty() && candidate.overridesHiddenJdkMethod(exposedJdkMethods)) ||

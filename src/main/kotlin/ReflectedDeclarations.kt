@@ -569,17 +569,23 @@ internal val NULLABLE_RETURN_JDK_METHODS: Set<String> = setOf(
 private val enhancedReturnJdkMethodDescriptors: Set<String> =
     ENHANCED_RETURN_JDK_METHODS.mapTo(HashSet()) { it.substringAfter('.') }
 
+// telling most functions apart without resolving their JVM methods, see enhanceNullableReturn
+private val nullableReturnJdkMethodNames: Set<String> =
+    NULLABLE_RETURN_JDK_METHODS.mapTo(HashSet()) { it.substringAfter('.').substringBefore('(') }
+
 /**
  * Whether the [method] is one of the JDK methods of the [signatures], see [ENHANCED_RETURN_JDK_METHODS],
- * or overrides one of them by the same JVM descriptor, inheriting its enhancement,
+ * or overrides one of them by the same JVM descriptor, inheriting its enhancement, where [isOverrideEnhanced],
  * like `get()` of `java.lang.ref.SoftReference` the one of `java.lang.ref.Reference`,
  * unlike an override of another descriptor, like the `String get()` of a Java interface extending `Supplier<String>`,
  * or an overload of the same name.
  * The supertypes are walked only for a name and descriptor of the [signatures].
  */
-private fun isEnhancedJdkMethod(method: Method, signatures: Set<String>): Boolean {
+private fun isEnhancedJdkMethod(method: Method, signatures: Set<String>, isOverrideEnhanced: (Method) -> Boolean): Boolean {
     val nameAndDescriptor = method.name + AsmType.getMethodDescriptor(method)
     if (nameAndDescriptor !in enhancedReturnJdkMethodDescriptors) return false
+    if (jvmSignature(method) in signatures) return true
+    if (!isOverrideEnhanced(method)) return false
     val visited = HashSet<Class<*>>()
     val pending = ArrayDeque(listOf<Class<*>>(method.declaringClass))
     while (pending.isNotEmpty()) {
@@ -593,14 +599,21 @@ private fun isEnhancedJdkMethod(method: Method, signatures: Set<String>): Boolea
 }
 
 /**
+ * Whether this class is a class of the JDK, defined by the bootstrap, or the platform, class loader.
+ */
+private val Class<*>.isJdkClass: Boolean
+    get() = classLoader.let { it == null || it == ClassLoader.getPlatformClassLoader() }
+
+/**
  * Marks the return type of the [function], converted from this one, nullable, when K2 enhances it so,
  * see [NULLABLE_RETURN_JDK_METHODS], also of a method overriding the JDK one, see [isEnhancedJdkMethod],
  * unlike the platform type kotlin-reflect tells, rendered as not nullable,
  * like the `V` of `putFirst` of `java.util.LinkedHashMap`, which returns `V?` in Kotlin.
  */
 private fun KFunction<*>.enhanceNullableReturn(function: KmFunction) {
+    if (name !in nullableReturnJdkMethodNames) return
     val method = reflectedValue(default = null) { javaMethod } ?: return
-    if (reflectedValue(default = false) { isEnhancedJdkMethod(method, NULLABLE_RETURN_JDK_METHODS) }) {
+    if (reflectedValue(default = false) { isEnhancedJdkMethod(method, NULLABLE_RETURN_JDK_METHODS) { true } }) {
         function.returnType.isNullable = true
     }
 }
@@ -608,15 +621,19 @@ private fun KFunction<*>.enhanceNullableReturn(function: KmFunction) {
 /**
  * Whether this function, of a Java class, returns a platform type of Java, see [isPlatformNullable],
  * unless it is one of the JDK methods K2 enhances, see [ENHANCED_RETURN_JDK_METHODS],
- * or overrides one of them by the same JVM descriptor, inheriting the enhancement, see [isEnhancedJdkMethod],
- * unlike the `String get()` of a Java interface extending `java.util.function.Supplier<String>`, returning `String!`,
- * or an overload of the same name.
+ * or a JDK method overriding one of them by the same JVM descriptor, inheriting the enhancement, see [isEnhancedJdkMethod],
+ * like `computeIfAbsent` of `java.util.HashMap`, unlike the same override of a Java class of the user code,
+ * like `T get()` of a Java interface extending `java.util.function.Supplier<T>`, returning `T!`,
+ * or the `String get()` of one extending `Supplier<String>`, or an overload of the same name.
+ * The nullable return types are enhanced also of the overrides of the user code, see [enhanceNullableReturn].
  */
 internal val KFunction<*>.returnsPlatformType: Boolean
     get() {
         if (!returnType.isPlatformNullable) return false
         val method = reflectedValue(default = null) { javaMethod } ?: return true
-        return !reflectedValue(default = false) { isEnhancedJdkMethod(method, ENHANCED_RETURN_JDK_METHODS) }
+        return !reflectedValue(default = false) {
+            isEnhancedJdkMethod(method, ENHANCED_RETURN_JDK_METHODS) { it.declaringClass.isJdkClass }
+        }
     }
 
 /**

@@ -49,6 +49,15 @@ interface DefaultedMember {
 
 abstract class InheritedJavaReabstractedDefault : com.xemantic.kotlin.introspection.test.other.JavaReabstractedDefault
 
+// implemented by a Java superclass, also through another one, winning over the Java interface declaring it abstract again
+abstract class ReabstractedBeforeJavaImplementation :
+    com.xemantic.kotlin.introspection.test.other.JavaReabstractedDefault,
+    com.xemantic.kotlin.introspection.test.other.JavaDefaultImplementation()
+
+abstract class ReabstractedBeforeJavaGrandImplementation :
+    com.xemantic.kotlin.introspection.test.other.JavaReabstractedDefault,
+    com.xemantic.kotlin.introspection.test.other.JavaDefaultImplementationMid()
+
 // interface members implemented by final methods of a Java class
 interface FinallyImplemented {
     fun f(): Int

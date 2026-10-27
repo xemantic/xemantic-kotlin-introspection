@@ -322,3 +322,7 @@ class InheritedWeakReference(referent: String) : java.lang.ref.WeakReference<Str
 
 // A Java interface declaring equals abstract again, which the implementation of kotlin.Any still implements
 abstract class InheritedJavaComparator : java.util.Comparator<String>
+
+// A Java interface of a mapped type named as a supertype, whose own members kotlin-reflect cannot describe,
+// as it describes the read-only built-in type, ListIterator, instead
+abstract class JavaListIteratorSubclass : java.util.ListIterator<String>
