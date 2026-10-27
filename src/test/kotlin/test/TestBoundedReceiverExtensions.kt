@@ -18,8 +18,8 @@
 
 package com.xemantic.kotlin.introspection.test
 
-import com.xemantic.kotlin.introspection.test.other.JavaBoundedReceiverBase
 import com.xemantic.kotlin.introspection.test.other.JavaAnyRows
+import com.xemantic.kotlin.introspection.test.other.JavaBoundedReceiverBase
 import com.xemantic.kotlin.introspection.test.other.JavaBoxBase
 import com.xemantic.kotlin.introspection.test.other.JavaComparableBase
 import com.xemantic.kotlin.introspection.test.other.JavaFace
@@ -27,6 +27,7 @@ import com.xemantic.kotlin.introspection.test.other.JavaFaceBase
 import com.xemantic.kotlin.introspection.test.other.JavaFunctionBase
 import com.xemantic.kotlin.introspection.test.other.JavaGenericComparable
 import com.xemantic.kotlin.introspection.test.other.JavaLinkBase
+import com.xemantic.kotlin.introspection.test.other.JavaListBoth
 import com.xemantic.kotlin.introspection.test.other.JavaListRows
 import com.xemantic.kotlin.introspection.test.other.JavaNamedLinkBase
 import com.xemantic.kotlin.introspection.test.other.JavaNestedRows
@@ -441,3 +442,37 @@ fun BoundedReceiverRows<out MutableCollection<String>>.addStringRows() {}
 fun BoundedReceiverRows<out MutableIterable<Int>>.removeIntRows() {}
 
 class BoundedReceiverAnyRows : JavaAnyRows()
+
+// a use-site projection, another type in an invariant position, unlike MutableList<String>
+fun BoundedReceiverRows<MutableList<in String>>.addSuperStringRow() {}
+
+// the bounds of a type parameter inferred from the mutable alternative, not satisfied by String?, nor by Int
+fun <T : Any> BoundedReceiverRows<MutableList<T>>.addNotNullRow() {}
+
+fun <T : CharSequence> BoundedReceiverRows<MutableList<T>>.addCharSequenceRow() {}
+
+class BoundedReceiverNullableStringRows : JavaListRows<String?>()
+
+class BoundedReceiverIntRows : JavaListRows<Int>()
+
+// the Java list of a Java supertype of a Kotlin type argument, substituted, still a read-only List<String>
+open class BoundedReceiverKotlinRows<T> : JavaListRows<T>()
+
+fun BoundedReceiverComparables<BoundedReceiverRows<List<String>>>.firstStringRows() {}
+
+class BoundedReceiverKotlinRowsSource : BoundedReceiverComparables<BoundedReceiverKotlinRows<String>>
+
+// a type parameter inferred from the read-only List<String> of a Java list, and from the same type argument
+interface BoundedReceiverTwoRows<A, B>
+
+fun <T> BoundedReceiverTwoRows<T, T>.sameBoth() {}
+
+class BoundedReceiverListBoth : JavaListBoth<List<String>>()
+
+// a type parameter pinned to the class by the invariant type argument of a Java interface,
+// so that the member is called instead of the extension
+fun <N : JavaFace<N>> N.faceLink(next: N): N = next
+
+class BoundedReceiverJavaFaceLeaf : JavaFaceBase<BoundedReceiverJavaFaceLeaf>() {
+    fun faceLink(next: BoundedReceiverJavaFaceLeaf): BoundedReceiverJavaFaceLeaf = next
+}

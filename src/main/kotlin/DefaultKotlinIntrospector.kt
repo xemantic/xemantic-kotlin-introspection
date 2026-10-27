@@ -2862,9 +2862,9 @@ internal class DefaultKotlinIntrospector(
 
         /**
          * The supertypes of the types of the generic Java classes, with their type arguments, see [supertypeOf],
-         * by these very types, as each of them is matched against many extensions.
+         * by the structures of these types, see [structureKey], as each of them is matched against many extensions.
          */
-        val supertypesOfJavaTypes = IdentityHashMap<KmType, Map<String, KmType>>()
+        val supertypesOfJavaTypes = HashMap<String, Map<String, KmType>>()
 
     }
 
@@ -2969,7 +2969,7 @@ internal class DefaultKotlinIntrospector(
             // walked again from the type itself, when it takes type arguments, like Comparable<JavaBox<String!>> of JavaBox<String>
             val header = findClassByMetadataName(name)?.javaClassHeader ?: return null
             if (header.typeParameters.isEmpty()) return supertypeTypesOf(name)[key]
-            return supertypesOfJavaTypes.getOrPut(type) {
+            return supertypesOfJavaTypes.getOrPut(type.structureKey()) {
                 HashMap<String, KmType>().also { types ->
                     supertypeNames(name, kmClassOf = { builtinClasses[it] ?: loadKmClass(it) }, types, type = type)
                 }
@@ -3089,7 +3089,7 @@ internal class DefaultKotlinIntrospector(
         private val self: String
     ) {
 
-        private val typeParameterIds = typeParameters.mapTo(HashSet()) { it.id }
+        private val typeParameters = typeParameters.associateBy { it.id }
 
         // the classes each type parameter is inferred from, by their metadata names, with the variances of their positions
         private val inferred = HashMap<Int, MutableList<Pair<String, KmVariance>>>()
@@ -3129,8 +3129,15 @@ internal class DefaultKotlinIntrospector(
                 if (expectedType == null || actualType == null || actual[index].variance != KmVariance.INVARIANT) {
                     return@all !isStrict
                 }
-                val argumentVariance = projectedVariance(declaredVariances[index], expected[index].variance!!)
-                    ?: return@all !isStrict
+                val expectedVariance = expected[index].variance!!
+                // a use-site projection in an invariant position is another type, like MutableList<in String>,
+                // unless redundant, like List<out String>, told only when strict
+                if (isStrict && variance == KmVariance.INVARIANT && expectedVariance != KmVariance.INVARIANT &&
+                    expectedVariance != declaredVariances[index]
+                ) {
+                    return@all false
+                }
+                val argumentVariance = projectedVariance(declaredVariances[index], expectedVariance) ?: return@all !isStrict
                 matches(expectedType, actualType, variance.compose(argumentVariance), isStrict)
             }
         }
@@ -3157,23 +3164,32 @@ internal class DefaultKotlinIntrospector(
                             KmVariance.IN -> supertypes.isSubclass(self, actualClassifier.name)
                             KmVariance.OUT -> supertypes.isSubclass(actualClassifier.name, self)
                         }
-                    in typeParameterIds -> infer(classifier.id, actual, variance)
+                    in typeParameters -> infer(classifier.id, actual, variance, isStrict)
                     else -> true
                 }
                 is KmClassifier.Class -> isNullabilityMatched(expected, actual, variance) && run {
-                    // a Java collection, like (Mutable)List<String!>! of java.util.List<String>, is the read-only one
-                    // of its upper bound, or else the mutable one, see javaSignatureType, and matchesMutable
-                    val readOnly = actual.flexibleTypeUpperBound?.type
-                    val readOnlyName = (readOnly?.classifier as? KmClassifier.Class)?.name
-                    if (readOnly == null || readOnlyName == null || readOnlyName == actualClassifier.name) {
+                    // a Java collection, like (Mutable)List<String!>! of java.util.List<String>, is the read-only one,
+                    // or else the mutable one, see isJavaCollection, and matchesMutable
+                    val mutable = actual.mutableAlternative()
+                    if (mutable == null) {
                         classMatches(expected, classifier.name, actual, actualClassifier.name, variance, isStrict)
                     } else {
-                        classMatches(expected, classifier.name, readOnly, readOnlyName, variance, isStrict) ||
-                            matchesMutable(expected, classifier.name, actual, actualClassifier.name, variance)
+                        val inferredCounts = inferredCounts()
+                        classMatches(expected, classifier.name, actual, actualClassifier.name, variance, isStrict) ||
+                            matchesMutable(expected, classifier.name, mutable, variance, inferredCounts)
                     }
                 }
                 is KmClassifier.TypeAlias -> !isStrict
             }
+        }
+
+        // the number of the classes each type parameter is inferred from so far, see forgetInferredSince
+        private fun inferredCounts(): Map<Int, Int> = inferred.mapValues { (_, types) -> types.size }
+
+        // forgets what is inferred since the given counts, see inferredCounts
+        private fun forgetInferredSince(counts: Map<Int, Int>) {
+            inferred.keys.retainAll(counts.keys)
+            counts.forEach { (id, count) -> inferred.getValue(id).let { it.subList(count, it.size).clear() } }
         }
 
         /**
@@ -3210,20 +3226,26 @@ internal class DefaultKotlinIntrospector(
         }
 
         /**
-         * Whether the [expected] type matches the mutable alternative of the [actual] Java collection, see [classMatches],
+         * Whether the [expected] type of the class of the given [name] matches the [mutable] alternative of a Java collection,
+         * see [mutableAlternative], after its read-only one does not, see [classMatches],
          * strictly, without what is not told, like a star projection, or a projected supertype argument, matching any type,
-         * see [argumentsMatch], as it is matched only when the read-only one is not,
+         * see [argumentsMatch], nor inferring a bounded type parameter, whose bounds are not checked, see [infer],
          * so that it lists only the extensions which can be called, never more than the read-only one alone would,
          * like on `MutableList<String>`, but not on `MutableList<*>` for `(Mutable)List<String!>!`,
-         * forgetting what is inferred from it when it does not match.
+         * forgetting what the read-only one, and then the mutable one, inferred, when they do not match,
+         * since the [inferredCounts] taken before either of them.
          */
-        private fun matchesMutable(expected: KmType, name: String, actual: KmType, actualName: String, variance: KmVariance): Boolean {
-            val inferredCounts = inferred.mapValues { (_, types) -> types.size }
-            return classMatches(expected, name, actual, actualName, variance, isStrict = true).also { isMatched ->
-                if (!isMatched) {
-                    inferred.keys.retainAll(inferredCounts.keys)
-                    inferredCounts.forEach { (id, count) -> inferred.getValue(id).let { it.subList(count, it.size).clear() } }
-                }
+        private fun matchesMutable(
+            expected: KmType,
+            name: String,
+            mutable: KmType,
+            variance: KmVariance,
+            inferredCounts: Map<Int, Int>
+        ): Boolean {
+            forgetInferredSince(inferredCounts)
+            val mutableName = (mutable.classifier as KmClassifier.Class).name
+            return classMatches(expected, name, mutable, mutableName, variance, isStrict = true).also { isMatched ->
+                if (!isMatched) forgetInferredSince(inferredCounts)
             }
         }
 
@@ -3235,8 +3257,10 @@ internal class DefaultKotlinIntrospector(
          * like not `T` of `Pair<in A, out B>` for `Pair<String, Any>`, a subtype of `String`, and a supertype of `Any`,
          * while the types in the positions of the same variance can be the type parameter inferred
          * as their common supertype, or subtype.
+         * When [isStrict], see [argumentsMatch], a bounded type parameter is never inferred, as its bounds are not checked.
          */
-        private fun infer(id: Int, actual: KmType, variance: KmVariance): Boolean {
+        private fun infer(id: Int, actual: KmType, variance: KmVariance, isStrict: Boolean): Boolean {
+            if (isStrict && typeParameters[id]?.upperBounds?.isNotEmpty() == true) return false
             val name = (actual.classifier as? KmClassifier.Class)?.name ?: return true
             val others = inferred.getOrPut(id) { mutableListOf() }
             val isInferred = others.all { (other, otherVariance) ->
@@ -6406,9 +6430,10 @@ private fun isNullabilityMatched(expected: KmType, actual: KmType, variance: KmV
  * also a not nullable type argument substituted for a type parameter, like `Box<String!>` of `Box<T>` for `T` of `String`,
  * but not a nullable one, like `Box<String?>` for `T` of `String?`, nor the nested type arguments of either,
  * declared by Kotlin.
- * A Java collection of the signature is flexible from mutable to read-only as well,
- * like `(Mutable)List<String!>!` of `java.util.List<T>`, the mutable one with the read-only upper bound,
- * see [MUTABLE_COLLECTION_TYPES], like a flexible type of the Kotlin metadata.
+ * A Java collection of the signature, like `java.util.List<T>`, read-only as kotlin-reflect tells it,
+ * is marked as flexible from mutable to read-only as well, like `(Mutable)List<String!>!`,
+ * see [isJavaCollection], kept through substitution, unlike the upper bound of a flexible type,
+ * while the other users of the type see the read-only one.
  */
 private fun KmType.javaSignatureType(substitution: Map<Int, KmType>): KmType = copy(
     arguments = arguments.map { argument ->
@@ -6423,14 +6448,65 @@ private fun KmType.javaSignatureType(substitution: Map<Int, KmType>): KmType = c
         if (!argumentType.isNullable && argumentClassifier is KmClassifier.Class) {
             argumentType.flexibleTypeUpperBound =
                 KmFlexibleTypeUpperBound(argumentType.copy().also { it.isNullable = true }, typeFlexibilityId = null)
-            if (classifier is KmClassifier.Class) {
-                MUTABLE_COLLECTION_TYPES[argumentClassifier.name]?.let { argumentType.classifier = KmClassifier.Class(it) }
+            if (classifier is KmClassifier.Class && argumentClassifier.name in MUTABLE_COLLECTION_TYPES) {
+                argumentType.annotations += KmAnnotation(JAVA_COLLECTION_MARKER, emptyMap())
             }
         }
         KmTypeProjection(argument.variance, argumentType)
     },
     outerType = outerType?.javaSignatureType(substitution)
 )
+
+// the marker of a Java collection of the signature of a Java class, see javaSignatureType, never rendered
+private const val JAVA_COLLECTION_MARKER = "com/xemantic/kotlin/introspection/JavaCollection"
+
+/**
+ * Whether this type is a Java collection of the signature of a Java class, like `java.util.List<T>`,
+ * seen by Kotlin as flexible from mutable to read-only, like `(Mutable)List<T!>!`, see [javaSignatureType].
+ */
+private val KmType.isJavaCollection: Boolean get() = annotations.any { it.className == JAVA_COLLECTION_MARKER }
+
+/**
+ * The mutable alternative of this Java collection, see [isJavaCollection], like `MutableList<String!>` of `List<String!>`,
+ * or `null` if it is not one.
+ */
+private fun KmType.mutableAlternative(): KmType? {
+    if (!isJavaCollection) return null
+    val name = (classifier as? KmClassifier.Class)?.name ?: return null
+    val mutableName = MUTABLE_COLLECTION_TYPES[name] ?: return null
+    return copy().also { type ->
+        type.classifier = KmClassifier.Class(mutableName)
+        type.annotations.removeAll { it.className == JAVA_COLLECTION_MARKER }
+    }
+}
+
+/**
+ * The structure of this type, as a key, like `kotlin/Comparable<INVARIANT java/lang/Integer!>`,
+ * telling the classifiers, the type arguments with their projections, the nullability and the flexibility.
+ */
+private fun KmType.structureKey(): String = StringBuilder().also { appendStructure(it) }.toString()
+
+// appends the structure of this type to the key, see structureKey
+private fun KmType.appendStructure(key: StringBuilder) {
+    outerType?.let { it.appendStructure(key); key.append('.') }
+    when (val classifier = classifier) {
+        is KmClassifier.Class -> key.append(classifier.name)
+        is KmClassifier.TypeParameter -> key.append('#').append(classifier.id)
+        is KmClassifier.TypeAlias -> key.append('=').append(classifier.name)
+    }
+    if (arguments.isNotEmpty()) {
+        key.append('<')
+        arguments.forEachIndexed { index, argument ->
+            if (index > 0) key.append(',')
+            val type = argument.type
+            if (type == null) key.append('*') else { key.append(argument.variance).append(' '); type.appendStructure(key) }
+        }
+        key.append('>')
+    }
+    if (isNullable) key.append('?')
+    if (flexibleTypeUpperBound != null) key.append('!')
+    if (isJavaCollection) key.append('~')
+}
 
 /**
  * Whether the [shadowedType] of a parameter of an extension on the type parameter of the [receiverTypeParameterId]
