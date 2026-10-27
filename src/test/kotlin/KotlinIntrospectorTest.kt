@@ -9292,12 +9292,41 @@ class KotlinIntrospectorTest {
     @Test
     fun `should resolve function of JVM-only member signature with type argument substituted as not inheriting it`() {
         // compiled against JDK 17, the addFirst(String) takes String on the JVM, not the Object of the erased E of java.util.List,
-        // still called instead of the addFirst(E) of JDK 21 on the class
+        // and no bridge overrides the latter, see the test below, so a call through MutableList<String> runs the JDK default,
+        // still only the declared function is listed: per kotlinc 2.4.21, compiling against the class on JDK 21+,
+        // `addFirst("a")` called on the class resolves to it alone, and the addFirst(E) of JDK 21 cannot be called there,
+        // while listing both would render two functions of the same signature, which no Kotlin class can declare,
+        // and without `override`, which kotlinc rejects compiled against JDK 17 ("overrides nothing"),
+        // while compiled against JDK 21+, with or without `override`, it gets the bridge, overriding the JDK member anyway
         assumeTrue(runCatching { List::class.java.getMethod("addFirst", Any::class.java) }.isSuccess, "JDK 21+")
         resolver.resolve("com.xemantic.kotlin.introspection.test.SequencedStringList.addFirst") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.SequencedStringList.addFirst [page 1/1]
             fun addFirst(element: String)
         """.trimIndent()
+    }
+
+    @Test
+    fun `should not mark function of JVM-only member signature without bridge as override in class listing`() {
+        assumeTrue(runCatching { List::class.java.getMethod("addFirst", Any::class.java) }.isSuccess, "JDK 21+")
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SequencedStringList") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SequencedStringList [page 1/1]
+            abstract class SequencedStringList : AbstractMutableList<String> {
+                fun addFirst(element: String)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should compile function of JVM-only member signature against JDK 17 without bridge`() {
+        // given
+        val clazz = com.xemantic.kotlin.introspection.test.SequencedStringList::class.java
+
+        // when
+        val addFirstParameterTypes = clazz.declaredMethods.filter { it.name == "addFirst" }.map { it.parameterTypes.toList() }
+
+        // then
+        // the premise of the tests above: compiled against JDK 21+, the class would also declare the addFirst(Object) bridge
+        assert(addFirstParameterTypes == listOf(listOf(String::class.java)))
     }
 
     @Test
