@@ -464,6 +464,9 @@ class BoundedReceiverNullableStringRows : JavaListRows<String?>()
 
 class BoundedReceiverIntRows : JavaListRows<Int>()
 
+// a mutable list of a supertype known only by its name, java.io.Serializable of String and Int, but not of String?
+fun BoundedReceiverRows<out MutableList<out java.io.Serializable>>.addSerializableRows() {}
+
 // the Java list of a Java supertype of a Kotlin type argument, substituted, still a read-only List<String>
 open class BoundedReceiverKotlinRows<T> : JavaListRows<T>()
 
@@ -477,6 +480,18 @@ interface BoundedReceiverTwoRows<A, B>
 fun <T> BoundedReceiverTwoRows<T, T>.sameBoth() {}
 
 class BoundedReceiverListBoth : JavaListBoth<List<String>>()
+
+// the same type parameter inferred from the mutable alternative of a Java list, and from the same type argument,
+// but not from another one of the same class, like MutableList<CharSequence>, or List<*>
+fun <T> BoundedReceiverTwoRows<T, out T>.sameOrSubtypeBoth() {}
+
+class BoundedReceiverMutableListBoth : JavaListBoth<MutableList<String>>()
+
+class BoundedReceiverNullableListBoth : JavaListBoth<MutableList<String?>>()
+
+class BoundedReceiverCharSequenceListBoth : JavaListBoth<MutableList<CharSequence>>()
+
+class BoundedReceiverStarListBoth : JavaListBoth<List<*>>()
 
 // a type parameter pinned to the class by the invariant type argument of a Java interface,
 // so that the member is called instead of the extension
