@@ -37,3 +37,5 @@ data class CustomResult(
  * not listed for the class, like the generic extensions on the other types of the standard library.
  */
 fun <T : Comparable<T>> T.isAtLeast(other: T): Boolean = this >= other
+
+typealias OtherPackageAlias = com.xemantic.kotlin.introspection.test.TypeAliasTarget

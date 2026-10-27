@@ -4033,6 +4033,7 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve overloads of Java superclass ordered by their numbers of parameters`() {
+        // a guard, as kotlin-reflect tells them in the order of the JVM, which happens to be this one on some JVMs
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.InheritedFuture.thenRunAsync"
         ) sameAsKotlin """
@@ -4415,6 +4416,36 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve member with body of Kotlin interface declared abstract again by Java interface as abstract`() {
+        // rendered as within the interface, as an abstract member
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaReabstractedDefault.foo"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaReabstractedDefault.foo [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.DefaultedMember
+            fun foo(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve members of Kotlin interface implemented by final methods of Java superclass as final`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaFinalImplementation.f"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaFinalImplementation.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.FinallyImplemented
+            final fun f(): Int
+        """.trimIndent()
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaFinalImplementation.name"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaFinalImplementation.name [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.FinallyImplemented
+            final val name: String
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve concrete member of Kotlin superclass declared abstract again by Java subclass as abstract`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.InheritedReabstractedKotlinMember.value"
@@ -4435,6 +4466,32 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.test.AbstractInheritedJavaArrayList.get [page 1/1]
             // inherited from kotlin.collections.List
             open operator fun get(index: Int): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of Kotlin interface declared again by subinterface and implemented by Java superclass as open`() {
+        // contains of java.util.AbstractCollection implements the one of Collection, which List declares again
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaList.contains"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaList.contains [page 1/1]
+            // inherited from kotlin.collections.List
+            open override operator fun contains(element: String): Boolean
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve members of standard library class implemented by its Java grand-superclass as open`() {
+        resolver.resolve("kotlin.collections.AbstractMutableSet.contains") sameAsKotlin """
+            // kotlin.collections.AbstractMutableSet.contains [page 1/1]
+            // inherited from kotlin.collections.Set
+            open override operator fun contains(element: E): Boolean
+        """.trimIndent()
+        resolver.resolve("kotlin.collections.AbstractMutableSet.clear") sameAsKotlin """
+            // kotlin.collections.AbstractMutableSet.clear [page 1/1]
+            // inherited from kotlin.collections.MutableSet
+            open override fun clear()
         """.trimIndent()
     }
 
@@ -4481,18 +4538,6 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.test.InheritedWeakReference.get [page 1/1]
             // inherited from java.lang.ref.Reference
             fun get(): String?
-        """.trimIndent()
-    }
-
-    @Test
-    fun `should resolve member of mapped Java interface named as supertype as of its mutable built-in type`() {
-        // java.util.ListIterator is seen in Kotlin as MutableListIterator, declaring set and add
-        resolver.resolve(
-            "com.xemantic.kotlin.introspection.test.JavaListIteratorSubclass.set"
-        ) sameAsKotlin """
-            // com.xemantic.kotlin.introspection.test.JavaListIteratorSubclass.set [page 1/1]
-            // inherited from kotlin.collections.MutableListIterator
-            fun set(element: String)
         """.trimIndent()
     }
 
@@ -10581,7 +10626,6 @@ class KotlinIntrospectorTest {
         assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenDeprecationAnnotation.hidden") == null)
     }
 
-
     @Test
     fun `should resolve typealias of standard library as its declaration`() {
         resolver.resolve("kotlin.collections.ArrayList") sameAsKotlin """
@@ -10644,6 +10688,32 @@ class KotlinIntrospectorTest {
     fun `should resolve member of typealias of class without type arguments as member of the class`() {
         resolver.resolve("com.xemantic.kotlin.introspection.test.AliasOfClass.greet") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.AliasOfClass.greet [page 1/1]
+            fun greet(): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve typealias of class of the same simple name with qualified class`() {
+        // kotlin.Throws is a typealias of kotlin.jvm.Throws, which would read as itself
+        resolver.resolve("kotlin.Throws") sameAsKotlin """
+            // kotlin.Throws [page 1/1]
+            typealias Throws = kotlin.jvm.Throws
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve typealias of typealias of another package with qualified typealias`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.AliasOfOtherPackageAlias") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.AliasOfOtherPackageAlias [page 1/1]
+            typealias AliasOfOtherPackageAlias = com.xemantic.kotlin.introspection.test.other.OtherPackageAlias
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of deprecated typealias with deprecated typealias`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.ErrorDeprecatedAlias.greet") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ErrorDeprecatedAlias.greet [page 1/1]
+            // through @Deprecated("Use TypeAliasTarget", level = DeprecationLevel.ERROR) typealias ErrorDeprecatedAlias = TypeAliasTarget
             fun greet(): String
         """.trimIndent()
     }

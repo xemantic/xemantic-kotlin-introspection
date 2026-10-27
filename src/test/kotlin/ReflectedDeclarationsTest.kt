@@ -201,6 +201,18 @@ class ReflectedDeclarationsTest {
     }
 
     @Test
+    fun `should tell return type of override of JDK method enhanced by the compiler of the same JVM descriptor not platform type`() {
+        // given - get() of java.lang.ref.SoftReference overrides the one of java.lang.ref.Reference, inheriting its T?
+        val get = java.lang.ref.SoftReference::class.declaredMemberFunctions.single { it.name == "get" }
+
+        // when
+        val platform = get.returnsPlatformType
+
+        // then
+        assert(!platform)
+    }
+
+    @Test
     fun `should not convert return type of JDK method enhanced as not nullable to nullable`() {
         // given
         val typeParameters = ReflectedTypeParameters.classTypeParameters(listOf(KmTypeParameter("T", 0, KmVariance.INVARIANT)))

@@ -35,3 +35,24 @@ typealias DeprecatedAlias = TypeAliasTarget
 typealias HiddenAlias = TypeAliasTarget
 
 internal typealias InternalAlias = TypeAliasTarget
+
+// a typealias of a typealias of another package, qualified not to read as of the same package
+typealias AliasOfOtherPackageAlias = com.xemantic.kotlin.introspection.test.other.OtherPackageAlias
+
+@Deprecated("Use TypeAliasTarget", level = DeprecationLevel.ERROR)
+typealias ErrorDeprecatedAlias = TypeAliasTarget
+
+// an interface member with a body, declared abstract again by a Java interface
+interface DefaultedMember {
+    fun foo(): Int = 1
+}
+
+abstract class InheritedJavaReabstractedDefault : com.xemantic.kotlin.introspection.test.other.JavaReabstractedDefault
+
+// interface members implemented by final methods of a Java class
+interface FinallyImplemented {
+    fun f(): Int
+    val name: String
+}
+
+abstract class InheritedJavaFinalImplementation : com.xemantic.kotlin.introspection.test.other.JavaFinalImplementation()

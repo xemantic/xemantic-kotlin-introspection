@@ -320,8 +320,5 @@ class InheritedLinkedHashMap<K, V> : java.util.LinkedHashMap<K, V>()
 
 class InheritedWeakReference(referent: String) : java.lang.ref.WeakReference<String>(referent)
 
-// A mapped Java interface named directly as the supertype, seen in Kotlin as its mutable built-in type
-abstract class JavaListIteratorSubclass : java.util.ListIterator<String>
-
 // A Java interface declaring equals abstract again, which the implementation of kotlin.Any still implements
 abstract class InheritedJavaComparator : java.util.Comparator<String>

@@ -127,13 +127,19 @@ com.example.AnnotationTestClass
   as Kotlin calls the `MutableList<T>.sort(comparator)` extension instead.
   A member a Java supertype implements is rendered of the modality of the Java method,
   like `open` for an abstract class extending `java.util.ArrayList`,
+  or `final` when implemented by a final Java method,
   or `abstract` when the Java class declares it abstract again,
   like `abstract fun hashCode(): Int` for a class extending `java.security.Permission`.
 * A typealias is rendered as its declaration,
   like `typealias ArrayList<E> = java.util.ArrayList<E>` for `kotlin.collections.ArrayList`,
   as a Java class it might expand to is not rendered,
   while a member of a typealias of a class without type arguments, like `com.example.Alias.member`,
-  is resolved as the member of that class.
+  is resolved as the member of that class,
+  following the declaration of the typealias when it is deprecated.
+  A member of a typealias of a Java class, like `kotlin.collections.ArrayList.add`,
+  or of one with type arguments, like `typealias Names = List<String>`,
+  is not resolved, as a Java class is not rendered,
+  and the members of the class would not tell the type arguments.
   Typealiases are found by the classpath scan only.
 * The Kotlin built-in types, like `kotlin.String` or `kotlin.collections.List`,
   which are mapped to the JVM types and have no class files of their own,

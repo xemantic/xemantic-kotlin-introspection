@@ -527,7 +527,11 @@ internal class DefaultKotlinIntrospector(
         logger.info { "Classpath scan completed in $scanTime, found $extensionsFound extensions" }
     }
 
-    private fun resolve(name: String): Resolved<*>? {
+    /**
+     * The declaration of the [name], or `null` if not found,
+     * reached through the [typeAliases] already, see [resolveTypeAlias], not to follow them again.
+     */
+    private fun resolve(name: String, typeAliases: Set<String> = emptySet()): Resolved<*>? {
         val parts = unescapeQualifiedName(name).split(".")
 
         // Try to find where the class name ends and member name begins
@@ -560,7 +564,7 @@ internal class DefaultKotlinIntrospector(
 
             val foundClass = findClassByName(className)
             if (foundClass == null) {
-                val typeAlias = resolveTypeAlias(className, memberName)
+                val typeAlias = resolveTypeAlias(className, memberName, typeAliases)
                 if (typeAlias != null) return typeAlias
                 continue
             }
@@ -616,11 +620,13 @@ internal class DefaultKotlinIntrospector(
      * The typealias of the API named [name], see [typeAliasIndex], rendered as its declaration,
      * like `typealias ArrayList<E> = java.util.ArrayList<E>`, as a Java class it might expand to is not rendered,
      * or, for a [memberName], the member of the class it expands to, as resolved by the name of that class,
+     * following the declaration of the typealias, when deprecated, telling that it cannot be used as is,
      * unless with type arguments, like `typealias Names = List<String>`, not substituted in the members of the class,
-     * or `null` if there is no such typealias, like one deprecated as hidden.
+     * or `null` if there is no such typealias, like one deprecated as hidden, or one of the [typeAliases] already followed.
      * Only found when the classpath is scanned, as nothing else tells the file facade class declaring it.
      */
-    private fun resolveTypeAlias(name: String, memberName: String?): Resolved<*>? {
+    private fun resolveTypeAlias(name: String, memberName: String?, typeAliases: Set<String>): Resolved<*>? {
+        if (name in typeAliases) return null
         val binaryName = typeAliasIndex[name] ?: return null
         val foundClass = findClassByName(binaryName) ?: return null
         val kmPackage = when (val metadata = foundClass.metadata) {
@@ -633,18 +639,55 @@ internal class DefaultKotlinIntrospector(
             ?: return null
         val deprecation = typeAliasDeprecation(typeAlias)
         if (deprecation?.isHidden == true) return null
-        if (memberName != null) {
-            val expanded = typeAlias.expandedType
-            if (expanded.arguments.isNotEmpty() || expanded.isNullable) return null
-            val className = (expanded.classifier as? KmClassifier.Class)?.name ?: return null
-            return resolve("${escapeQualifiedName(className.replace('/', '.'))}.${escapeQualifiedName(memberName)}")
-        }
         val contextPackage = kotlinPackageOf(binaryName, foundClass.kotlinPackageName)
         val typeParameters = typeAlias.typeParameters.namesById()
         val declaration = formatDeprecation(deprecation) + "typealias " + escapeIdentifier(typeAlias.name) +
             formatTypeParameters(typeAlias.typeParameters, typeParameters, contextPackage) + " = " +
-            formatType(typeAlias.underlyingType, contextPackage, typeParameters)
+            formatTypeAliasTarget(typeAlias, name, contextPackage, typeParameters)
+        if (memberName != null) {
+            val expanded = typeAlias.expandedType
+            if (expanded.arguments.isNotEmpty() || expanded.isNullable) return null
+            val className = (expanded.classifier as? KmClassifier.Class)?.name ?: return null
+            val member = resolve(
+                "${escapeQualifiedName(className.replace('/', '.'))}.${escapeQualifiedName(memberName)}", typeAliases + name
+            ) ?: return null
+            return if (deprecation == null) member else member.withContext("// through $declaration")
+        }
         return MemberListing.of(listOf(ListingItem.Declaration(listOf(declaration))))
+    }
+
+    /**
+     * The type the [typeAlias] named [name] stands for, as declared, see [formatType],
+     * but the class, or the typealias, it names qualified, when its simple name would read as another one,
+     * like `kotlin.jvm.Throws` of `typealias Throws` in `kotlin`, which would read as itself,
+     * or a typealias of another package, which is always written by its simple name.
+     */
+    private fun formatTypeAliasTarget(
+        typeAlias: KmTypeAlias,
+        name: String,
+        contextPackage: String,
+        typeParameters: Map<Int, String>
+    ): String {
+        val type = typeAlias.underlyingType
+        val formatted = formatType(type, contextPackage, typeParameters)
+        val (targetName, isTypeAlias) = when (val classifier = type.classifier) {
+            is KmClassifier.Class -> classifier.name to false
+            is KmClassifier.TypeAlias -> classifier.name to true
+            is KmClassifier.TypeParameter -> return formatted
+        }
+        if (type.outerType != null) return formatted
+        val qualifiedName = targetName.replace('/', '.')
+        val simpleName = targetName.substringAfterLast('/')
+        val targetPackage = targetName.substringBeforeLast('/', "").replace('/', '.')
+        val isAmbiguous = (simpleName.substringBefore('.') == typeAlias.name && qualifiedName != name) ||
+            (isTypeAlias && targetPackage != contextPackage)
+        val written = escapeQualifiedName(simpleName)
+        val rest = formatted.removePrefix(written)
+        return if (isAmbiguous && rest.length < formatted.length && (rest.isEmpty() || rest[0] == '<' || rest[0] == '?')) {
+            escapeQualifiedName(qualifiedName) + rest
+        } else {
+            formatted
+        }
     }
 
     /**
@@ -1214,9 +1257,15 @@ internal class DefaultKotlinIntrospector(
         // kotlin-reflect might fail on all the members at once, still telling the supertypes, like of java.util.LinkedHashSet
         // since JDK 21, on its inherited clone(), so that the class is kept without its members, substituting the type arguments
         // of its supertypes, whose own declarations of these members stand for them;
-        // the overloads ordered by their numbers of parameters, as kotlin-reflect tells them in no particular order
+        // the overloads ordered by their numbers of parameters, and their JVM descriptors,
+        // as kotlin-reflect tells them in no particular order
         reflectedValue(default = emptyList()) { kClass.declaredMemberFunctions }
-            .sortedBy { function -> reflectedValue(default = 0) { function.parameters.size } }
+            .sortedWith(
+                compareBy(
+                    { function -> reflectedValue(default = 0) { function.parameters.size } },
+                    { function -> reflectedValue(default = "") { function.javaMethod?.let(AsmType::getMethodDescriptor).orEmpty() } }
+                )
+            )
             .forEach { function ->
                 reflectedValue(default = null) {
                     function.takeIf { '$' !in it.name && !isUnsupportedByCompiler(it) }
@@ -1971,13 +2020,12 @@ internal class DefaultKotlinIntrospector(
          * The [member] as rendered, of the modality of the Java method implementing it, see [implementationModality],
          * like abstract when a Java class declares it abstract again, or open when a Java class implements an abstract one.
          * A member of an interface is rendered as within it, so that an abstract one implemented by a Java class
-         * is rendered as a member with a body, `open`, only when [isInheritedByOpenClass], as otherwise no member is rendered open,
-         * while a final implementation is not told there.
+         * is rendered as a member with a body, `open`, or else as `final`, see [formatModalityModifiers],
+         * only when [isInheritedByOpenClass], as otherwise no member is rendered open, nor final.
          */
         fun renderedMember(isInheritedByOpenClass: Boolean): Member {
             val modality = implementationModality?.takeUnless { it == member.modality } ?: return member
-            val isRendered = modality == Modality.ABSTRACT || kmClass.kind != ClassKind.INTERFACE ||
-                (modality == Modality.OPEN && isInheritedByOpenClass)
+            val isRendered = modality == Modality.ABSTRACT || kmClass.kind != ClassKind.INTERFACE || isInheritedByOpenClass
             return if (isRendered) member.withModality(modality) else member
         }
 
@@ -2245,7 +2293,7 @@ internal class DefaultKotlinIntrospector(
         }
         while (pending.isNotEmpty()) {
             val supertype = pending.removeFirst()
-            val name = supertypeClassName(supertype) ?: continue
+            val name = (supertype.classifier as? KmClassifier.Class)?.name ?: continue
             if (visited.add(name)) collect(name, supertype)
         }
         if (kmClass.name != ANY_CLASS_NAME) collect(ANY_CLASS_NAME, classType(ANY_CLASS_NAME))
@@ -2267,6 +2315,17 @@ internal class DefaultKotlinIntrospector(
         val jvmOnlyCandidates = kotlinCandidates.filter { it.declarations is BuiltinClass && it.jvmMethod != null }
         val exposedJdkMethods = jvmOnlyCandidates.mapNotNullTo(HashSet()) { it.jvmMethod?.key }
         val hiddenKotlinCandidates = candidates.filter { it.isHidden && it.declarations !is JavaClass }
+        // the keys of the members the Kotlin candidate overrides, also through the other Kotlin candidates
+        val overriddenByKey = kotlinCandidates.associate { it.key to it.overridden }
+        fun overriddenClosure(candidate: InheritedCandidate): Set<String> {
+            val closure = HashSet<String>()
+            val pending = ArrayDeque(candidate.overridden)
+            while (pending.isNotEmpty()) {
+                val key = pending.removeFirst()
+                if (closure.add(key)) overriddenByKey[key]?.let { pending += it }
+            }
+            return closure
+        }
         candidates.removeAll { candidate ->
             val javaClass = candidate.declarations as? JavaClass ?: return@removeAll false
             val implemented = kotlinCandidates.filter { overridden ->
@@ -2276,10 +2335,19 @@ internal class DefaultKotlinIntrospector(
             // for intValue() of java.util.concurrent.atomic.AtomicInteger, the nearest one, walked first,
             // which might declare it abstract again, like an abstract Java subclass of the implementing one,
             // or java.security.Permission the equals of kotlin.Any, unlike a Java interface, like java.util.Comparator,
-            // whose implementing class still inherits it from its superclass
+            // whose implementing class still inherits the one of kotlin.Any from its superclass,
+            // and so does a member of a Kotlin interface declaring again the one the method of a Java class implements,
+            // like contains of List the one of Collection, which java.util.AbstractCollection implements
             val modality = candidate.member.modality
-            if (modality != Modality.ABSTRACT || javaClass.kmClass.kind != ClassKind.INTERFACE) {
-                implemented.forEach { if (it.implementationModality == null) it.implementationModality = modality }
+            val isJavaInterface = javaClass.kmClass.kind == ClassKind.INTERFACE
+            val redeclared = if (isJavaInterface || implemented.isEmpty()) emptyList() else kotlinCandidates.filter { redeclaring ->
+                redeclaring.kmClass.kind == ClassKind.INTERFACE && redeclaring !in implemented &&
+                    overriddenClosure(redeclaring).any { it in candidate.overridden } &&
+                    !candidate.refines(redeclaring, supertypeNamesOf)
+            }
+            (implemented + redeclared).forEach {
+                val isAnyReabstraction = isJavaInterface && modality == Modality.ABSTRACT && it.kmClass.name == ANY_CLASS_NAME
+                if (it.implementationModality == null && !isAnyReabstraction) it.implementationModality = modality
             }
             implemented.isNotEmpty() ||
                 (candidate.overridden.isEmpty() && candidate.overridesHiddenJdkMethod(exposedJdkMethods)) ||
@@ -2449,19 +2517,9 @@ internal class DefaultKotlinIntrospector(
     }
 
     /**
-     * The names of the classes of these types, like the supertypes of a class, see [supertypeClassName].
+     * The names of the classes of these types, like the supertypes of a class.
      */
-    private fun List<KmType>.classNames(): List<String> = mapNotNull { supertypeClassName(it) }
-
-    /**
-     * The name of the class of this supertype [type], or `null` if it is not a class:
-     * of the built-in type a mapped Java class named as a supertype in the source stands for,
-     * like `java.util.ListIterator<String>`, seen in Kotlin as its mutable built-in type, `MutableListIterator<String>`.
-     */
-    private fun supertypeClassName(type: KmType): String? {
-        val name = (type.classifier as? KmClassifier.Class)?.name ?: return null
-        return overrideResolver.builtinNameOfJavaClass(name.replace('/', '.')) ?: name
-    }
+    private fun List<KmType>.classNames(): List<String> = mapNotNull { (it.classifier as? KmClassifier.Class)?.name }
 
     /**
      * The id standing for the type parameter of the [id] of a class inheriting the members of its supertypes,
@@ -5253,7 +5311,8 @@ internal class DefaultKotlinIntrospector(
      * like the ones of a sealed class without an open subclass, or of an enum class, even when its entries override them.
      * The members of an interface are implicitly abstract, so the ones with a default body are rendered as open,
      * also when overriding, like `open override fun f()`, telling it apart from an abstract `override fun f()`,
-     * which might make abstract again the `f()` with a default body of a superinterface.
+     * which might make abstract again the `f()` with a default body of a superinterface,
+     * and the ones a final method of a Java class implements as `final`, like `final fun f()`, see `InheritedCandidate.renderedMember`.
      * A member inherited by a class which cannot be subclassed, when [isInheritedByFinalClass], see `inheritedMembers`,
      * is not rendered as open, as it cannot be overridden there.
      */
@@ -5267,7 +5326,8 @@ internal class DefaultKotlinIntrospector(
         when (modality) {
             Modality.ABSTRACT -> if (!inInterface) +"abstract "
             Modality.OPEN -> if (((!isOverride && isOwnerOpenForOverrides) || inInterface) && !isInheritedByFinalClass) +"open "
-            Modality.FINAL -> if (isOverride && isOwnerOpenForOverrides) +"final "
+            // a member of an interface is final only when inherited from a Java class implementing it, see InheritedCandidate
+            Modality.FINAL -> if ((isOverride || inInterface) && isOwnerOpenForOverrides) +"final "
             Modality.SEALED -> {}
         }
         if (isOverride) +"override "
@@ -6302,6 +6362,23 @@ private sealed interface Resolved<T : ListingItem> {
         return (listOf("// $name [page ${resolvedPage.number}/${resolvedPage.count}]") + renderPage(resolvedPage))
             .joinToString("\n")
     }
+
+}
+
+/**
+ * This resolved declaration, its every page following the [context] comment, see [ContextualResolved].
+ */
+private fun <T : ListingItem> Resolved<T>.withContext(context: String): Resolved<T> = ContextualResolved(this, context)
+
+/**
+ * The [resolved] declaration, its every page following the [context] comment,
+ * like the deprecated typealias a member is resolved through, see `DefaultKotlinIntrospector.resolveTypeAlias`.
+ */
+private class ContextualResolved<T : ListingItem>(private val resolved: Resolved<T>, private val context: String) : Resolved<T> {
+
+    override val items: List<T> get() = resolved.items
+
+    override fun renderPage(page: Page<T>): List<String> = listOf(context) + resolved.renderPage(page)
 
 }
 

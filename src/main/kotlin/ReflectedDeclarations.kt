@@ -565,39 +565,58 @@ internal val NULLABLE_RETURN_JDK_METHODS: Set<String> = setOf(
     "java/util/Map.replace(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;"
 )
 
-// telling most functions apart without resolving their JVM methods
-private val nullableReturnJdkMethodNames: Set<String> =
-    NULLABLE_RETURN_JDK_METHODS.mapTo(HashSet()) { it.substringAfter('.').substringBefore('(') }
+// the names and JVM descriptors of the methods, like `get()Ljava/lang/Object;`, see isEnhancedJdkMethod
+private val enhancedReturnJdkMethodDescriptors: Set<String> =
+    ENHANCED_RETURN_JDK_METHODS.mapTo(HashSet()) { it.substringAfter('.') }
+
+/**
+ * Whether the [method] is one of the JDK methods of the [signatures], see [ENHANCED_RETURN_JDK_METHODS],
+ * or overrides one of them by the same JVM descriptor, inheriting its enhancement,
+ * like `get()` of `java.lang.ref.SoftReference` the one of `java.lang.ref.Reference`,
+ * unlike an override of another descriptor, like the `String get()` of a Java interface extending `Supplier<String>`,
+ * or an overload of the same name.
+ * The supertypes are walked only for a name and descriptor of the [signatures].
+ */
+private fun isEnhancedJdkMethod(method: Method, signatures: Set<String>): Boolean {
+    val nameAndDescriptor = method.name + AsmType.getMethodDescriptor(method)
+    if (nameAndDescriptor !in enhancedReturnJdkMethodDescriptors) return false
+    val visited = HashSet<Class<*>>()
+    val pending = ArrayDeque(listOf<Class<*>>(method.declaringClass))
+    while (pending.isNotEmpty()) {
+        val clazz = pending.removeFirst()
+        if (!visited.add(clazz)) continue
+        if (AsmType.getInternalName(clazz) + "." + nameAndDescriptor in signatures) return true
+        clazz.superclass?.let { pending += it }
+        pending += clazz.interfaces
+    }
+    return false
+}
 
 /**
  * Marks the return type of the [function], converted from this one, nullable, when K2 enhances it so,
- * see [NULLABLE_RETURN_JDK_METHODS], also of a method overriding the JDK one by the same JVM descriptor,
- * like `get()` of `java.lang.ref.SoftReference`, which inherits the enhancement, unlike the platform type kotlin-reflect tells,
- * rendered as not nullable, like the `V` of `putFirst` of `java.util.LinkedHashMap`, which returns `V?` in Kotlin.
+ * see [NULLABLE_RETURN_JDK_METHODS], also of a method overriding the JDK one, see [isEnhancedJdkMethod],
+ * unlike the platform type kotlin-reflect tells, rendered as not nullable,
+ * like the `V` of `putFirst` of `java.util.LinkedHashMap`, which returns `V?` in Kotlin.
  */
 private fun KFunction<*>.enhanceNullableReturn(function: KmFunction) {
-    if (name !in nullableReturnJdkMethodNames) return
     val method = reflectedValue(default = null) { javaMethod } ?: return
-    val nameAndDescriptor = method.name + AsmType.getMethodDescriptor(method)
-    val supertypes = generateSequence(listOf<Class<*>>(method.declaringClass)) { classes ->
-        classes.flatMap { listOfNotNull(it.superclass) + it.interfaces }.ifEmpty { null }
-    }.flatten()
-    if (supertypes.any { AsmType.getInternalName(it) + "." + nameAndDescriptor in NULLABLE_RETURN_JDK_METHODS }) {
+    if (reflectedValue(default = false) { isEnhancedJdkMethod(method, NULLABLE_RETURN_JDK_METHODS) }) {
         function.returnType.isNullable = true
     }
 }
 
 /**
  * Whether this function, of a Java class, returns a platform type of Java, see [isPlatformNullable],
- * unless it is one of the JDK methods K2 enhances, see [ENHANCED_RETURN_JDK_METHODS], by its declaring class and JVM descriptor,
- * as a Java method overriding it does not inherit the enhancement, like the `String get()` of a Java interface
- * extending `java.util.function.Supplier<String>`, returning `String!`, and neither does an overload of the same name.
+ * unless it is one of the JDK methods K2 enhances, see [ENHANCED_RETURN_JDK_METHODS],
+ * or overrides one of them by the same JVM descriptor, inheriting the enhancement, see [isEnhancedJdkMethod],
+ * unlike the `String get()` of a Java interface extending `java.util.function.Supplier<String>`, returning `String!`,
+ * or an overload of the same name.
  */
 internal val KFunction<*>.returnsPlatformType: Boolean
     get() {
         if (!returnType.isPlatformNullable) return false
         val method = reflectedValue(default = null) { javaMethod } ?: return true
-        return jvmSignature(method) !in ENHANCED_RETURN_JDK_METHODS
+        return !reflectedValue(default = false) { isEnhancedJdkMethod(method, ENHANCED_RETURN_JDK_METHODS) }
     }
 
 /**
