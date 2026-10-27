@@ -1343,7 +1343,8 @@ internal class DefaultKotlinIntrospector(
         val javaTypeParameters by lazy(LazyThreadSafetyMode.NONE) {
             ReflectedTypeParameters(clazz.typeParameters.map { it.name }.zip(kmClass.typeParameters.map { it.id }).toMap())
         }
-        val javaMembers by lazy(LazyThreadSafetyMode.NONE) { javaMembersOf(clazz) }
+        // the ones Kotlin hides of the built-in type are seen of the Java interface, like isEmpty() of java.lang.CharSequence
+        val javaMembers by lazy(LazyThreadSafetyMode.NONE) { javaMembersOf(clazz, isKeepingHidden = isJavaViewed) }
         if (reflectedFunctions == null || isBuiltin) {
             // the names of the members the built-in type tells, like the hasNext() of ListIterator, or the size of java.util.List,
             // which Kotlin sees instead of its size() then, while the getters of the properties are seen too, like getKey() of key
@@ -1395,16 +1396,17 @@ internal class DefaultKotlinIntrospector(
     /**
      * The members of the Java [clazz] which kotlin-reflect would describe, see [JavaMembers], each read on its own:
      * its instance methods, but the synthetic ones, like the bridges, and the ones which Kotlin hides, see [HIDDEN_JDK_METHODS],
+     * unless [isKeepingHidden],
      * and the ones overriding a method of a Java class described as a built-in type, see [overridesBuiltinJavaMethod],
      * like the `contains(Object)` of `java.util.Set`, whose own declarations in the built-in types stand for them,
      * like `contains(element: E)` of `MutableSet`, which Kotlin calls instead, ordered like the ones of kotlin-reflect,
      * by their numbers of parameters, and their JVM descriptors, and its instance fields, but the synthetic ones.
      */
-    private fun javaMembersOf(clazz: Class<*>): JavaMembers {
+    private fun javaMembersOf(clazz: Class<*>, isKeepingHidden: Boolean = false): JavaMembers {
         val methods = reflectedValue(default = emptyList()) { clazz.declaredMethods.toList() }.filter { method ->
             reflectedValue(default = false) {
                 !method.isSynthetic && !Modifier.isStatic(method.modifiers) && '$' !in method.name &&
-                    jvmSignature(method) !in HIDDEN_JDK_METHODS && !overridesBuiltinJavaMethod(method)
+                    (isKeepingHidden || jvmSignature(method) !in HIDDEN_JDK_METHODS) && !overridesBuiltinJavaMethod(method)
             }
         }.sortedWith(compareBy({ it.parameterCount }, { AsmType.getMethodDescriptor(it) }))
         val fields = reflectedValue(default = emptyList()) { clazz.declaredFields.toList() }.filter { field ->
@@ -2147,34 +2149,30 @@ internal class DefaultKotlinIntrospector(
          */
         var standsForPlatformType: Boolean = false
 
+        // the function returning a type which is not nullable, which might be a platform type, see returnsPlatformType
+        private val platformCandidate: KmFunction? by lazy(LazyThreadSafetyMode.NONE) {
+            (member as? Member.Function)?.declaration?.takeUnless { member.returnType.isNullable }
+        }
+
+        // whether the member, of a Java class, returns a platform type, as kotlin-reflect tells, see returnsPlatformType
+        private val returnsJavaPlatformType: Boolean by lazy(LazyThreadSafetyMode.NONE) {
+            platformCandidate?.let { (declarations as? JavaClass)?.returnsPlatformType(it) } == true
+        }
+
+        // whether the member, of a Java class, returns a platform type without the JDK enhancement, see isEnhancementLost
+        private val returnsPlatformTypeWithoutEnhancement: Boolean by lazy(LazyThreadSafetyMode.NONE) {
+            platformCandidate?.let { (declarations as? JavaClass)?.returnsPlatformType(it, isEnhancementLost = true) } == true
+        }
+
         /**
          * Whether the [member], of a Java class, returns a platform type of Java, see [JavaClass.returnsPlatformType],
-         * as substituted, unlike the `V!` of `call()` of `java.util.concurrent.Callable<String?>`, which is `String?`.
+         * as substituted, unlike the `V!` of `call()` of `java.util.concurrent.Callable<String?>`, which is `String?`,
+         * also when the JDK enhancement of its return type is lost, see [isEnhancementLost],
+         * or of a JVM-only member, which [standsForPlatformType], told once the inherited candidates are walked.
          */
-        val returnsPlatformType: Boolean by lazy(LazyThreadSafetyMode.NONE) {
-            val function = (member as? Member.Function)?.declaration
-            function != null && !member.returnType.isNullable && (declarations as? JavaClass)?.returnsPlatformType(function) == true
-        }
-
-        /**
-         * Whether the [member] returns a platform type, see [returnsPlatformType], against a hidden member merged with it,
-         * also when the JDK enhancement of its return type is lost, see [isEnhancementLost], or [standsForPlatformType],
-         * which decides only whether the compiler picks the hidden member, see [compareReturnType],
-         * not to change which one of the visible members is listed.
-         */
-        val returnsPlatformTypeAgainstHidden: Boolean by lazy(LazyThreadSafetyMode.NONE) {
-            val function = (member as? Member.Function)?.declaration
-            returnsPlatformType || (
-                function != null && !member.returnType.isNullable && (
-                    standsForPlatformType ||
-                        (isEnhancementLost && (declarations as? JavaClass)?.returnsPlatformType(function, isEnhancementLost = true) == true)
-                    )
-                )
-        }
-
-        // the platform type rivalry with the other candidate, see compareReturnType
-        private fun returnsPlatformTypeAgainst(other: InheritedCandidate): Boolean =
-            if (other.isHidden) returnsPlatformTypeAgainstHidden else returnsPlatformType
+        val returnsPlatformType: Boolean
+            get() = returnsJavaPlatformType || (platformCandidate != null && standsForPlatformType) ||
+                (isEnhancementLost && returnsPlatformTypeWithoutEnhancement)
 
         /**
          * Whether the return type of the [member] is more specific than the one of the [other] candidate, a positive number,
@@ -2188,8 +2186,7 @@ internal class DefaultKotlinIntrospector(
          * while for an override, see [refines], the overridden member is always a Kotlin one.
          */
         fun compareReturnType(other: InheritedCandidate, supertypeNamesOf: (String) -> Set<String>): Int? {
-            val returnsPlatformType = returnsPlatformTypeAgainst(other)
-            val isPlatformRivalry = returnsPlatformType != other.returnsPlatformTypeAgainst(this)
+            val isPlatformRivalry = returnsPlatformType != other.returnsPlatformType
             val specificity = compareSpecificity(
                 member.returnType, other.member.returnType, supertypeNamesOf, ignoreNullability = isPlatformRivalry
             )
@@ -2570,15 +2567,17 @@ internal class DefaultKotlinIntrospector(
             val unlisted = lazy(LazyThreadSafetyMode.NONE) {
                 overriding.value?.let { unlistedOverride(it, unlistedKotlinCandidates) }
             }
-            // the JVM-only member standing for the Java method, which does not inherit the enhancement of its return type,
-            // if a Java method of the user code, like the computeIfAbsent of a Java subclass of java.util.HashMap
-            val standingJvmOnly = jvmOnlyCandidates.firstOrNull { jvmOnly ->
+            // the JVM-only members standing for the Java method, which does not inherit the enhancement of its return type,
+            // if a Java method of the user code, like the computeIfAbsent of a Java subclass of java.util.HashMap,
+            // all of them alike, like the spliterator() of Iterable, Collection, and Set, of a Java subclass of java.util.HashSet,
+            // not to change which one of them is listed
+            val standingJvmOnly = jvmOnlyCandidates.filter { jvmOnly ->
                 jvmOnly.signature == candidate.signature && !candidate.raisesVisibility(jvmOnly)
             }
-            if (standingJvmOnly != null && candidate.returnsPlatformTypeAgainstHidden) standingJvmOnly.standsForPlatformType = true
+            if (candidate.returnsPlatformType) standingJvmOnly.forEach { it.standsForPlatformType = true }
             val isRemoved = implemented.isNotEmpty() ||
                 (candidate.overridden.isEmpty() && candidate.overridesHiddenJdkMethod(exposedJdkMethods)) ||
-                standingJvmOnly != null ||
+                standingJvmOnly.isNotEmpty() ||
                 method.value?.let { overridesHiddenJdkMethod(it) || (overriding.value != null && unlisted.value == null) } == true
             // the Java method kept, standing for the visible override of a supertype which is not part of the API,
             // is of its modality, like final, or open of an abstract method

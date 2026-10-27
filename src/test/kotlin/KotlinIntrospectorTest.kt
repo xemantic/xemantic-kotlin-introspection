@@ -4756,6 +4756,74 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve nullable annotated array of Java superclass whose members kotlin-reflect cannot describe as of nullable elements`() {
+        // the annotation of both the declaration, and the type use, applies to the elements of the array, which K2 reads first
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaUndescribable.nullableElements"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaUndescribable.nullableElements [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaUndescribableBase
+            abstract fun nullableElements(): Array<String>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve override of method whose return type the compiler enhances as nullable annotated not nullable as not nullable`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedNotNullWeakReference.get"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedNotNullWeakReference.get [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNotNullWeakReference
+            override fun get(): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve nullable member of Kotlin interface merged with enhanced member inherited through Java class`() {
+        // the get() of Supplier, inherited through JavaInheritingSupplier, returns String!, less specific than String?
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaSupplierNullableGetter.get"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaSupplierNullableGetter.get [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.NullableGetter
+            fun get(): String?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve nullable member of first Kotlin interface merged with enhanced member inherited through Java class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedNullableGetterJavaSupplier.get"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedNullableGetterJavaSupplier.get [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.NullableGetter
+            fun get(): String?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve nullable member of Kotlin interface merged with enhanced JVM-only member inherited through Java class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaMapNullableComputeIfAbsent.computeIfAbsent"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaMapNullableComputeIfAbsent.computeIfAbsent [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.NullableComputeIfAbsent
+            fun computeIfAbsent(key: String, mappingFunction: java.util.function.Function<in String, out String>): String?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve isEmpty of java lang CharSequence named as supertype which the compiler hides of CharSequence`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaCharSequenceSubclass.isEmpty"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaCharSequenceSubclass.isEmpty [page 1/1]
+            // inherited from java.lang.CharSequence
+            open fun isEmpty(): Boolean
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve clone of Java superclass whose members kotlin-reflect cannot describe`() {
         // the clone() of java.lang.Object is no member of kotlin.Any, which the one of JavaUndescribableBase would override
         resolver.resolve(

@@ -373,3 +373,27 @@ abstract class InheritedSuspendFunctionType : suspend (Int) -> String
 
 // JDK members inherited through a Java subclass of java.util.ArrayDeque, merged as through the JDK class itself
 abstract class InheritedJavaInheritingDeque : com.xemantic.kotlin.introspection.test.other.JavaInheritingDeque()
+
+// A Java override of a JDK method whose return type the compiler enhances as nullable, annotated not nullable, which wins
+abstract class InheritedNotNullWeakReference : com.xemantic.kotlin.introspection.test.other.JavaNotNullWeakReference("")
+
+// A JDK member inherited through a Java class, returning a platform type there, merged with a nullable member of a Kotlin interface,
+// more specific, whatever the order of the supertypes
+interface NullableGetter {
+    fun get(): String?
+}
+
+abstract class InheritedJavaSupplierNullableGetter :
+    com.xemantic.kotlin.introspection.test.other.JavaInheritingSupplier<String>(), NullableGetter
+
+abstract class InheritedNullableGetterJavaSupplier :
+    NullableGetter, com.xemantic.kotlin.introspection.test.other.JavaInheritingSupplier<String>()
+
+interface NullableComputeIfAbsent {
+    fun computeIfAbsent(key: String, mappingFunction: java.util.function.Function<in String, out String>): String?
+}
+
+abstract class InheritedJavaMapNullableComputeIfAbsent :
+    com.xemantic.kotlin.introspection.test.other.JavaInheritingMap<String, String>(), NullableComputeIfAbsent
+
+abstract class JavaCharSequenceSubclass : java.lang.CharSequence
