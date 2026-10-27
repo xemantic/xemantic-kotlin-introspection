@@ -394,9 +394,166 @@ class HiddenMergedPinned : HiddenOverride(), HiddenMergedMember, HiddenMergedSel
 
 fun <T : HiddenMergedSelf<T>> T.member(): String = ""
 
+// the visible member of the first direct supertype, which the hidden one of the second overrides, is still picked,
+// so that join.f() compiles, while reversed.f() does not
+interface HiddenMergedOverriddenJoin : HiddenMergedRoot, HiddenMergedLeft
+
+interface HiddenMergedOverriddenJoinReversed : HiddenMergedLeft, HiddenMergedRoot
+
+// the same with the hidden one contributed through an intermediate supertype, also on a subtype, and through a superclass
+interface HiddenMergedOverriddenVia : HiddenMergedRoot, HiddenMergedVia
+
+interface HiddenMergedOverriddenViaSub : HiddenMergedOverriddenVia
+
+abstract class HiddenMergedOverriddenClassJoin : HiddenMergedRoot, HiddenMergedLeftClass()
+
+abstract class HiddenMergedOverriddenClassJoinReversed : HiddenMergedLeftClass(), HiddenMergedRoot
+
+// the hidden override declared by a supertype which is not part of the API still hides the member it overrides,
+// so that neither hiddenClass.f(), nor internal.f() compiles
+@Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+interface HiddenMergedHiddenClassLeft : HiddenMergedRoot {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    override fun f(): Int
+}
+
+@Suppress("DEPRECATION_ERROR")
+interface HiddenMergedHiddenClassSub : HiddenMergedHiddenClassLeft
+
+internal interface HiddenMergedInternalLeft : HiddenMergedRoot {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    override fun f(): Int
+}
+
+@Suppress("EXPOSED_SUPER_INTERFACE")
+interface HiddenMergedInternalSub : HiddenMergedInternalLeft
+
+// while a visible override declared by a supertype which is not part of the API stops the hidden one it overrides,
+// the member it overrides standing for it, so that restored.f(), restoredClass.f() and restoredLeft.f() compile
+internal interface HiddenMergedInternalRestored : HiddenMergedInternalLeft {
+    override fun f(): Int
+}
+
+@Suppress("EXPOSED_SUPER_INTERFACE")
+interface HiddenMergedInternalRestoredSub : HiddenMergedInternalRestored
+
+@Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+abstract class HiddenMergedHiddenLeftClass : HiddenMergedRoot {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    abstract override fun f(): Int
+}
+
+@Suppress("DEPRECATION_ERROR")
+@Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+abstract class HiddenMergedHiddenRestoredClass : HiddenMergedHiddenLeftClass() {
+    override fun f(): Int = 1
+}
+
+@Suppress("DEPRECATION_ERROR")
+abstract class HiddenMergedHiddenRestoredClassSub : HiddenMergedHiddenRestoredClass()
+
+internal interface HiddenMergedInternalRestoredLeft : HiddenMergedLeft {
+    override fun f(): Int
+}
+
+@Suppress("EXPOSED_SUPER_INTERFACE")
+interface HiddenMergedInternalRestoredLeftSub : HiddenMergedInternalRestoredLeft
+
+// the hidden member of the same JVM signature as the Java method of the first direct supertype does not hide it,
+// so that join.run() compiles, while reversed.run() calls the run scope function instead
+interface HiddenMergedRun {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    fun run()
+}
+
+abstract class HiddenMergedRunJoin : Runnable, HiddenMergedRun
+
+abstract class HiddenMergedRunJoinReversed : HiddenMergedRun, Runnable
+
+abstract class HiddenMergedRunThread : Thread(), HiddenMergedRun
+
+// the same when the hidden member overrides the Java method, which is still picked of the first direct supertype
+interface HiddenMergedRunOverride : Runnable {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    override fun run()
+}
+
+abstract class HiddenMergedRunOverrideJoin : Runnable, HiddenMergedRunOverride
+
+abstract class HiddenMergedRunOverrideJoinReversed : HiddenMergedRunOverride, Runnable
+
+// of a platform return type, like the V! of call(), or the Thread! of newThread(r), the Java member loses to the hidden one,
+// equally specific, though declared first, so that neither join.call(), nor join.newThread(r) compiles
+interface HiddenMergedCall : java.util.concurrent.Callable<String> {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    override fun call(): String
+}
+
+abstract class HiddenMergedCallJoin : java.util.concurrent.Callable<String>, HiddenMergedCall
+
+interface HiddenMergedNullableCall : java.util.concurrent.Callable<String> {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    override fun call(): String?
+}
+
+abstract class HiddenMergedNullableCallJoin : java.util.concurrent.Callable<String>, HiddenMergedNullableCall
+
+interface HiddenMergedThreadFactory : java.util.concurrent.ThreadFactory {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    override fun newThread(r: Runnable): Thread
+}
+
+abstract class HiddenMergedThreadFactoryJoin : java.util.concurrent.ThreadFactory, HiddenMergedThreadFactory
+
+// while the get() of Supplier, which Kotlin enhances not to return a platform type, is still picked, so that join.get() compiles
+interface HiddenMergedSupplier : java.util.function.Supplier<String> {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    override fun get(): String
+}
+
+abstract class HiddenMergedSupplierJoin : java.util.function.Supplier<String>, HiddenMergedSupplier
+
+// a Java method overriding the enhanced one does not inherit the enhancement, and neither does an overload,
+// so that it returns a platform type, losing to the hidden member, and join.get(), join.apply(""), nor reversed.apply("") compile
+abstract class HiddenMergedJavaSupplierJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaHiddenMergedSupplier, HiddenMergedSupplier
+
+// also a Java method overriding the enhanced one by the same JVM descriptor, so that join.get() does not compile
+abstract class HiddenMergedJavaRedeclaredSupplierJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaRedeclaredSupplier<String>, HiddenMergedSupplier
+
+interface HiddenMergedFunction : java.util.function.Function<String, String> {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    override fun apply(t: String): String
+}
+
+abstract class HiddenMergedJavaFunctionJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaHiddenMergedFunction, HiddenMergedFunction
+
+abstract class HiddenMergedJavaFunctionJoinReversed :
+    HiddenMergedFunction, com.xemantic.kotlin.introspection.test.other.JavaHiddenMergedFunction
+
+interface HiddenMergedFunctionOverload : com.xemantic.kotlin.introspection.test.other.JavaHiddenMergedFunctionOverload {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    override fun apply(s: CharSequence): String
+}
+
+abstract class HiddenMergedJavaFunctionOverloadJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaHiddenMergedFunctionOverload, HiddenMergedFunctionOverload
+
 // compiles, as the merged members picked are not hidden
 @Suppress("unused")
 private fun callMergedMembers(
+    overriddenJoin: HiddenMergedOverriddenJoin,
+    overriddenViaSub: HiddenMergedOverriddenViaSub,
+    overriddenClassJoin: HiddenMergedOverriddenClassJoin,
+    restored: HiddenMergedInternalRestoredSub,
+    @Suppress("DEPRECATION_ERROR") restoredClass: HiddenMergedHiddenRestoredClassSub,
+    restoredLeft: HiddenMergedInternalRestoredLeftSub,
+    runOverrideJoin: HiddenMergedRunOverrideJoin,
+    supplierJoin: HiddenMergedSupplierJoin,
+    runJoin: HiddenMergedRunJoin,
+    runThread: HiddenMergedRunThread,
     joinReversed: HiddenMergedJoinReversed,
     restoredSubReversed: HiddenMergedJoinRestoredSubReversed,
     specific: HiddenMergedSpecificJoin,
@@ -406,6 +563,16 @@ private fun callMergedMembers(
     extended: HiddenMergedExtended,
     pinned: HiddenMergedPinned
 ) {
+    overriddenJoin.f()
+    overriddenViaSub.f()
+    overriddenClassJoin.f()
+    restored.f()
+    restoredClass.f()
+    restoredLeft.f()
+    runOverrideJoin.run()
+    supplierJoin.get()
+    runJoin.run()
+    runThread.run()
     joinReversed.f()
     restoredSubReversed.f()
     specific.h()

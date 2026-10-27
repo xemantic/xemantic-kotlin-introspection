@@ -37,6 +37,7 @@ import kotlin.metadata.isNullable
 import kotlin.reflect.KFunction
 import kotlin.reflect.KProperty
 import kotlin.reflect.full.declaredMemberExtensionFunctions
+import kotlin.reflect.full.declaredMemberFunctions
 import kotlin.reflect.full.memberFunctions
 import kotlin.reflect.full.memberProperties
 import kotlin.reflect.typeOf
@@ -144,6 +145,98 @@ class ReflectedDeclarationsTest {
 
         // then
         assert(enhanced == DEFINITELY_NOT_NULL_JDK_TYPES)
+    }
+
+    @Test
+    fun `should tell the JDK methods whose return types the compiler enhances`() {
+        // given - the enhanced JDK signatures of kotlin-reflect, the same as of the compiler, of the classes which are not final
+        val info = Class.forName("kotlin.reflect.jvm.internal.impl.load.java.typeEnhancement.PredefinedEnhancementInfoKt")
+        val bySignature = info.getDeclaredField("PREDEFINED_FUNCTION_ENHANCEMENT_INFO_BY_SIGNATURE")
+            .apply { isAccessible = true }.get(null) as Map<*, *>
+        fun Any.property(name: String): Any? = javaClass.getMethod(name).invoke(this)
+
+        // when - the nullability of the return type itself, at 0, enhanced either way
+        val enhanced = bySignature.filter { (signature, functionInfo) ->
+            val className = (signature as String).substringBefore('.').replace('/', '.')
+            val returnTypeInfo = functionInfo!!.property("getReturnTypeInfo")
+            !java.lang.reflect.Modifier.isFinal(Class.forName(className).modifiers) &&
+                (returnTypeInfo?.property("getMap") as Map<*, *>?).orEmpty()[0]?.property("getNullability") != null
+        }.keys.mapTo(HashSet()) { it as String }
+
+        // then
+        assert(enhanced == ENHANCED_RETURN_JDK_METHODS)
+    }
+
+    @Test
+    fun `should tell the JDK methods whose return types the compiler enhances as nullable`() {
+        // given - the enhanced JDK signatures of kotlin-reflect, the same as of the compiler, of the classes which are not final
+        val info = Class.forName("kotlin.reflect.jvm.internal.impl.load.java.typeEnhancement.PredefinedEnhancementInfoKt")
+        val bySignature = info.getDeclaredField("PREDEFINED_FUNCTION_ENHANCEMENT_INFO_BY_SIGNATURE")
+            .apply { isAccessible = true }.get(null) as Map<*, *>
+        fun Any.property(name: String): Any? = javaClass.getMethod(name).invoke(this)
+
+        // when - the return type itself, at 0, enhanced as nullable
+        val nullable = bySignature.filter { (signature, functionInfo) ->
+            val returnTypeInfo = functionInfo!!.property("getReturnTypeInfo")
+            signature in ENHANCED_RETURN_JDK_METHODS &&
+                (returnTypeInfo?.property("getMap") as Map<*, *>?).orEmpty()[0]?.property("getNullability")?.toString() == "NULLABLE"
+        }.keys.mapTo(HashSet()) { it as String }
+
+        // then
+        assert(nullable == NULLABLE_RETURN_JDK_METHODS)
+    }
+
+    @Test
+    fun `should convert return type of JDK method enhanced as nullable to nullable, also of its override`() {
+        // given - K2 enhances get() of java.lang.ref.Reference to return T?, also of its override in java.lang.ref.SoftReference
+        val typeParameters = ReflectedTypeParameters.classTypeParameters(listOf(KmTypeParameter("T", 0, KmVariance.INVARIANT)))
+        val functions = listOf(java.lang.ref.Reference::class, java.lang.ref.SoftReference::class).map { kClass ->
+            kClass.declaredMemberFunctions.single { it.name == "get" }
+        }
+
+        // when
+        val nullable = functions.map { it.toKmFunction(typeParameters).returnType.isNullable }
+
+        // then
+        assert(nullable == listOf(true, true))
+    }
+
+    @Test
+    fun `should tell return type of override of JDK method enhanced by the compiler of the same JVM descriptor not platform type`() {
+        // given - get() of java.lang.ref.SoftReference overrides the one of java.lang.ref.Reference, inheriting its T?
+        val get = java.lang.ref.SoftReference::class.declaredMemberFunctions.single { it.name == "get" }
+
+        // when
+        val platform = get.returnsPlatformType
+
+        // then
+        assert(!platform)
+    }
+
+    @Test
+    fun `should not convert return type of JDK method enhanced as not nullable to nullable`() {
+        // given
+        val typeParameters = ReflectedTypeParameters.classTypeParameters(listOf(KmTypeParameter("T", 0, KmVariance.INVARIANT)))
+        val get = java.util.function.Supplier::class.memberFunctions.single { it.name == "get" }
+
+        // when
+        val nullable = get.toKmFunction(typeParameters).returnType.isNullable
+
+        // then
+        assert(!nullable)
+    }
+
+    @Test
+    fun `should tell platform return type of JDK method not enhanced by the compiler`() {
+        // given - kotlin-reflect tells both as T!, while the compiler enhances the one of Supplier as T
+        val call = java.util.concurrent.Callable::class.memberFunctions.single { it.name == "call" }
+        val get = java.util.function.Supplier::class.memberFunctions.single { it.name == "get" }
+
+        // when
+        val platform = listOf(call, get).map { it.returnsPlatformType }
+
+        // then
+        assert(platform == listOf(true, false))
     }
 
     @Test
