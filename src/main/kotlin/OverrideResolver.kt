@@ -54,6 +54,7 @@ import kotlin.metadata.jvm.JvmMethodSignature
 import kotlin.metadata.jvm.getterSignature
 import kotlin.metadata.jvm.hasMethodBodiesInInterface
 import kotlin.metadata.jvm.moduleName
+import kotlin.metadata.jvm.setterSignature
 import kotlin.metadata.jvm.signature
 import kotlin.metadata.visibility
 import java.lang.reflect.Type as JavaType
@@ -82,7 +83,8 @@ import org.objectweb.asm.Type as AsmType
  * as long as the classes are looked up through a bounded cache as well.
  * What is computed while a class lookup fails maybe only for now, see [transientFailures], is not cached.
  * The classes are looked up by their Kotlin class names, the located ones, see [Owner],
- * when they are relocated with the checked class, like by shading.
+ * when they are relocated with the checked class, like by shading,
+ * or as its dependencies, which its class file refers to by the relocated names, see [relocation].
  * This class is thread-safe.
  *
  * @param classLoader the class loader of the introspected classes, telling which classes have their own class files.
@@ -139,6 +141,9 @@ internal class OverrideResolver(
      *   looks raw as well, so that a type variable of its generic supertype is erased to its bound too,
      *   and a real override of `Base<String>.process(x: String)` through such a shrunk `Mid` is not told,
      *   while matching it through an unknown type would mark any overload of `process` as an override.
+     * @param unlocatedName the name the Kotlin metadata would refer to this type by, see [Relocation.unlocated],
+     *   if it might be relocated, like a Java type argument of a relocated Java supertype, named by its JVM name,
+     *   matched by either name, as a type of a package starting like the relocation prefix might not be relocated.
      */
     private data class ClassType(
         val name: String,
@@ -146,7 +151,8 @@ internal class OverrideResolver(
         val nullable: Boolean? = false,
         val outer: ClassType? = null,
         val isJavaPrimitive: Boolean = false,
-        val isRaw: Boolean = false
+        val isRaw: Boolean = false,
+        val unlocatedName: String? = null
     ) : MemberType {
         val isFlexible: Boolean get() = nullable == null
     }
@@ -738,10 +744,12 @@ internal class OverrideResolver(
         val ownerClass = owner.kmClass
         // the Java types, named by their JVM names, might be relocated, unlike the types of the Kotlin metadata,
         // so they are looked up, and matched, also by the names the metadata would refer to them by, see unlocated
-        val relocation = owner.relocation
-        val ownerSubstitution = ownerSubstitution(owner)
-        // the JVM package, telling which package-private Java methods are visible, of the located name
-        val ownerPackage = owner.name.substringBeforeLast('/', "").replace('/', '.')
+        val ownerRelocation = relocation(owner)
+        val relocation = ownerRelocation.relocation
+        val ownerSubstitution = ownerSubstitution(owner, relocation)
+        // the JVM package, telling which package-private Java methods are visible, of the located name,
+        // without the leading '.' of a local class
+        val ownerPackage = owner.name.removePrefix(".").substringBeforeLast('/', "").replace('/', '.')
         val functions = mutableMapOf<String, MutableList<Overridable>>()
         val properties = mutableMapOf<String, MutableList<Overridable>>()
         // the methods of Object, as Any, a supertype of every class, has no Java class, see findDeclaration
@@ -771,10 +779,10 @@ internal class OverrideResolver(
                 continue
             }
 
-            val declaration = declaration(owner, supertype.name)
+            val declaration = declaration(relocation, supertype.name)
 
             declaration.kotlin?.let { kmClass ->
-                val substitution = supertypeSubstitution(owner, kmClass, supertype)
+                val substitution = supertypeSubstitution(relocation, kmClass, supertype)
                 val isSameModuleName = kmClass.moduleName == ownerClass.moduleName
                 // the JVM name of an internal member is mangled with the module name, sanitized like by the compiler,
                 // unless it is a @PublishedApi one; the module name is absent only from the built-in declarations,
@@ -858,15 +866,18 @@ internal class OverrideResolver(
             }
         }
 
-        // only the name, the relocation, and whether it might have DefaultImpls are captured, as the overridables are cached
+        // only the name, the relocation, whether it might have DefaultImpls, and the JVM methods of its class file,
+        // if already read, are captured, as the overridables are cached
         val ownerName = owner.name
         val hasDefaultImpls = ownerClass.mayHaveDefaultImpls
+        val ownerClassFile = ownerRelocation.classFile
         return Overridables(ownerSubstitution, functions, properties, hiddenPlatformFunctions, FinalOnce {
             // a transient failure is marked on this thread by the lookup failing, telling the caller not to cache
             val failureCount = transientFailures.count()
             // the descriptors of a relocated class file, compared with the JVM signatures of its metadata, which are not,
             // also as they are, as a type of a package starting like the relocation prefix might not be relocated
-            val jvmMethods = jvmMethods(ownerName, hasDefaultImpls)?.let { methods ->
+            val classFile = ownerClassFile ?: ownerClassFile(ownerName)
+            val jvmMethods = jvmMethods(ownerName, hasDefaultImpls, classFile)?.let { methods ->
                 if (relocation == null) methods else methods.flatMapTo(HashSet()) { listOf(it, relocation.unlocatedDescriptor(it)) }
             }
             TransientFailures.Outcome(jvmMethods, isFinal = transientFailures.count() == failureCount)
@@ -899,22 +910,21 @@ internal class OverrideResolver(
      * which is then the same evidence, as the class is already loaded, being the owner of the resolved members,
      * and so is its `DefaultImpls` class, loaded by its name, unless the class file of the interface is served,
      * when the absence of the class file of `DefaultImpls` tells that there is none.
+     *
+     * @param classFile the class file of the class, see [ownerClassFile].
      */
-    private fun jvmMethods(className: String, hasDefaultImpls: Boolean): Set<String>? {
+    private fun jvmMethods(className: String, hasDefaultImpls: Boolean, classFile: OwnerClassFile): Set<String>? {
         // the package is separated with '/', and nested classes with '.'
         val internalName = className.replace('.', '$')
-        val classFile = readClassBytesByMetadataName(className)
-        val methods = declaredMethods(className, classFile)
-            ?.mapTo(mutableSetOf()) { it.name + it.descriptor }
-            ?: return null
+        val methods = classFile.methods?.toMutableSet() ?: return null
         if (!hasDefaultImpls) return methods
         val defaultImplsName = "$className.DefaultImpls"
         val defaultImplsFile = readClassBytesByMetadataName(defaultImplsName)
-        if (defaultImplsFile != null || classFile == null) {
+        if (defaultImplsFile != null || !classFile.isServed) {
             // the static method of DefaultImpls takes the interface instance as the first parameter
             val instanceParameter = "(L$internalName;"
             // the methods of the interface itself are still known when the ones of DefaultImpls are not
-            declaredMethods(defaultImplsName, defaultImplsFile)?.forEach { method ->
+            declaredMethods(defaultImplsName, defaultImplsFile?.let { readClass(it) })?.forEach { method ->
                 if (method.access and Opcodes.ACC_STATIC != 0 && method.descriptor.startsWith(instanceParameter)) {
                     methods += method.name + "(" + method.descriptor.removePrefix(instanceParameter)
                 }
@@ -937,13 +947,13 @@ internal class OverrideResolver(
     )
 
     /**
-     * The methods declared by a class, read from its [classFile], whether the class can be loaded or not,
+     * The methods declared by a class, read from its parsed [classFile], whether the class can be loaded or not,
      * or reflected, when there is no class file, like when the class loader does not serve it as a resource,
      * or it cannot be parsed, like when it is too new for ASM, but the class can be loaded,
      * or `null` if they can be neither read nor reflected.
      */
-    private fun declaredMethods(className: String, classFile: ByteArray?): List<DeclaredMethod>? {
-        classFile?.let { readMethods(it) }?.let { return it }
+    private fun declaredMethods(className: String, classFile: ParsedClass?): List<DeclaredMethod>? {
+        classFile?.let { return it.methods }
         val clazz = loadClassByMetadataName(className) ?: return null
         return reflectOrNull {
             clazz.declaredMethods.map { DeclaredMethod(it.modifiers, it.name, AsmType.getMethodDescriptor(it)) }
@@ -951,14 +961,46 @@ internal class OverrideResolver(
     }
 
     /**
-     * Reads the methods of a class file, with their generic signatures,
+     * The class file of a class whose members are checked, read once for all its uses, see [relocation]:
+     * whether it [isServed], and the [methods] the class declares, see [declaredMethods],
+     * as names followed by descriptors, or `null` if they can be neither read nor reflected.
+     */
+    private class OwnerClassFile(val isServed: Boolean, val methods: Set<String>?)
+
+    private fun ownerClassFile(
+        className: String,
+        bytes: ByteArray? = readClassBytesByMetadataName(className),
+        declared: List<DeclaredMethod>? = declaredMethods(className, bytes?.let { readClass(it) })
+    ): OwnerClassFile = OwnerClassFile(isServed = bytes != null, methods = declared?.mapTo(HashSet()) { it.name + it.descriptor })
+
+    /**
+     * A parsed class file, telling the JVM internal names of the direct [supertypes], and the declared [methods].
+     */
+    private class ParsedClass(val supertypes: List<String>, val methods: List<DeclaredMethod>)
+
+    private fun readMethods(bytes: ByteArray): List<DeclaredMethod>? = readClass(bytes)?.methods
+
+    /**
+     * Reads the direct supertypes and the methods of a class file, with their generic signatures,
      * or `null` if it cannot be parsed, like when it is malformed, or too new for ASM.
      * Only the parsing is guarded, so that a failure of the code processing the methods is not mistaken for it.
      */
-    private fun readMethods(bytes: ByteArray): List<DeclaredMethod>? {
+    private fun readClass(bytes: ByteArray): ParsedClass? {
+        val supertypes = mutableListOf<String>()
         val methods = mutableListOf<DeclaredMethod>()
         try {
             ClassReader(bytes).accept(object : ClassVisitor(Opcodes.ASM9) {
+                override fun visit(
+                    version: Int,
+                    access: Int,
+                    name: String,
+                    signature: String?,
+                    superName: String?,
+                    interfaces: Array<out String>?
+                ) {
+                    supertypes += listOfNotNull(superName) + interfaces.orEmpty()
+                }
+
                 override fun visitMethod(
                     access: Int,
                     name: String,
@@ -973,7 +1015,7 @@ internal class OverrideResolver(
         } catch (_: Exception) {
             return null
         }
-        return methods
+        return ParsedClass(supertypes, methods)
     }
 
     private val Visibility.isOverridable: Boolean
@@ -981,11 +1023,12 @@ internal class OverrideResolver(
 
     /**
      * The type parameters of the [owner], and of its outer classes if it is an inner class,
-     * which stay type parameters, as the members are checked in the context of the [owner].
+     * which stay type parameters, as the members are checked in the context of the [owner],
+     * the outer classes found by their located names, see [declaration], by the [relocation] of the [owner].
      */
-    private fun ownerSubstitution(owner: Owner): Map<Int, MemberType> = buildMap {
+    private fun ownerSubstitution(owner: Owner, relocation: Relocation?): Map<Int, MemberType> = buildMap {
         val typeParameters = generateSequence(owner.kmClass) { kmClass ->
-            if (kmClass.isInner) declaration(owner, outerClassName(kmClass.name)).kotlin else null
+            if (kmClass.isInner) declaration(relocation, outerClassName(kmClass.name)).kotlin else null
         }.flatMap { it.typeParameters }.toList()
         val byId = typeParameters.associateBy { it.id }
         typeParameters.forEach { typeParameter ->
@@ -999,9 +1042,13 @@ internal class OverrideResolver(
      * or to the erasures of their bounds if the [supertype] is a raw supertype of a Java class,
      * like `Comparable` in `class C implements Comparable`, as [javaSubstitution] does for a Java class.
      */
-    private fun supertypeSubstitution(owner: Owner, kmClass: KmClass, supertype: ClassType): Map<Int, MemberType> = buildMap {
+    private fun supertypeSubstitution(
+        relocation: Relocation?,
+        kmClass: KmClass,
+        supertype: ClassType
+    ): Map<Int, MemberType> = buildMap {
         val declarations = generateSequence(kmClass) { declaration ->
-            if (declaration.isInner) declaration(owner, outerClassName(declaration.name)).kotlin else null
+            if (declaration.isInner) declaration(relocation, outerClassName(declaration.name)).kotlin else null
         }.toList()
         // the outer type of a raw inner type is raw as well
         if (supertype.isRaw) {
@@ -1135,7 +1182,10 @@ internal class OverrideResolver(
         a == UnknownType || b == UnknownType -> !onlyKnownTypes
         a is ClassType && b is ClassType -> {
             val flexible = a.isFlexible || b.isFlexible
-            val namesMatch = if (flexible) normalizedName(a.name) == normalizedName(b.name) else a.name == b.name
+            fun name(name: String) = if (flexible) normalizedName(name) else name
+            fun namesMatch(a: String?, b: String?) = a != null && b != null && name(a) == name(b)
+            val namesMatch = namesMatch(a.name, b.name) || namesMatch(a.unlocatedName, b.name) ||
+                namesMatch(a.name, b.unlocatedName)
             namesMatch &&
                 (flexible || a.nullable == b.nullable) &&
                 a.arguments.size == b.arguments.size &&
@@ -1220,13 +1270,123 @@ internal class OverrideResolver(
         declarationCache.getOrPutUnlessTransient(name) { findDeclaration(name) }
 
     /**
-     * The declaration of the class of the [metadataName], which the [owner], or one of its supertypes, refers to,
-     * found by its located name, see [Relocation.located], like an outer class, or a supertype, relocated with the [owner],
+     * The relocation of the classes the [owner] refers to, like by shading, or `null` if none is known to be relocated:
+     * of the [owner] itself, with the classes of its package, see [Owner.relocation],
+     * and of its dependencies, which a shading tool relocates also when the [owner] is not, like the libraries of an app,
+     * see [Relocation.withDependencies], rewriting the class file of the [owner], but not its metadata.
+     * They are told by the names the class file refers to the direct supertypes by, compared with the metadata names,
+     * a relocated class keeping its simple name, like `shaded/com/example/Base` of `com/example/Base`,
+     * and only then, as they might be of other packages, by the class names of the JVM methods of the [owner],
+     * compared with the JVM signatures of its metadata, so that the class file is not read otherwise.
+     * The direct supertypes the class file refers to by their metadata names are excluded from the relocation,
+     * so that they are not looked up by a guessed relocated name first, like the one of the prefix of the [owner].
+     */
+    private fun relocation(owner: Owner): OwnerRelocation {
+        val own = owner.relocation
+        if (builtinClasses()[owner.kmClass.name] === owner.kmClass) return OwnerRelocation(own)
+        // the class file is read, and parsed, only once, also for the JVM methods of the owner, see ownerClassFile
+        var bytes: ByteArray? = null
+        var parsed: ParsedClass? = null
+        var isRead = false
+        fun parsedClassFile(): ParsedClass? {
+            if (!isRead) {
+                bytes = readClassBytesByMetadataName(owner.name)
+                parsed = bytes?.let { readClass(it) }
+                isRead = true
+            }
+            return parsed
+        }
+        fun classFile(declared: List<DeclaredMethod>?) = if (isRead) ownerClassFile(owner.name, bytes, declared) else null
+        val jvmSupertypes = loadClassByMetadataName(owner.name)
+            ?.let { clazz -> reflectOrNull { (listOfNotNull(clazz.superclass) + clazz.interfaces).map { it.name.replace('.', '/') } } }
+            ?: parsedClassFile()?.supertypes
+            ?: return OwnerRelocation(own, classFile(declaredMethods(owner.name, parsed)))
+        // by their JVM internal names, like com/example/Outer${'$'}Nested
+        val metadataSupertypes = owner.kmClass.supertypes
+            .mapNotNull { (it.classifier as? KmClassifier.Class)?.name?.takeIf { name -> name.isRelocatable } }
+            .associateBy { internalNameOf(it) }
+        val jvmSupertypeNames = jvmSupertypes.toHashSet()
+        val excluded = metadataSupertypes.filterKeys { it in jvmSupertypeNames }.values.toSet()
+        // the relocation of the owner might already tell the supertypes relocated with it
+        val dependencies = relocatedNames(metadataSupertypes.keys, jvmSupertypeNames).filter { (metadataName, jvmName) ->
+            own?.located(metadataName)?.let { packageOf(it) } != packageOf(jvmName)
+        }
+        if (dependencies.isEmpty()) {
+            return OwnerRelocation(
+                own?.withDependencies(emptyMap(), excluded),
+                if (isRead) classFile(declaredMethods(owner.name, parsed)) else null
+            )
+        }
+        val declared = declaredMethods(owner.name, parsedClassFile())
+        val metadataNames = owner.kmClass.jvmSignatures().flatMapTo(HashSet(metadataSupertypes.keys)) { descriptorClassNames(it) }
+        val jvmNames = declared.orEmpty()
+            // neither a synthetic method, like lambda${'$'}run${'$'}0 or access${'$'}getValue, nor a bridge, is in the metadata
+            .filter { it.access and (Opcodes.ACC_SYNTHETIC or Opcodes.ACC_BRIDGE) == 0 }
+            .flatMapTo(HashSet(jvmSupertypeNames)) { descriptorClassNames(it.descriptor) }
+        val packages = (dependencies + relocatedNames(metadataNames, jvmNames)).entries
+            .groupBy({ (metadataName, _) -> packageOf(metadataName) }, { (_, jvmName) -> packageOf(jvmName) })
+            // a package relocated to more than one other package cannot be told,
+            // and neither can the root package, containing every other one, nor a dependency relocated there
+            .mapNotNull { (metadataPackage, jvmPackages) ->
+                jvmPackages.distinct().singleOrNull()
+                    ?.takeIf { metadataPackage.isNotEmpty() && it.isNotEmpty() }
+                    ?.let { metadataPackage to it }
+            }
+            .toMap()
+        val relocation = own?.withDependencies(packages, excluded) ?: Relocation.ofDependencies(packages, excluded)
+        return OwnerRelocation(relocation, classFile(declared))
+    }
+
+    /**
+     * The [relocation] of the classes a class whose members are checked refers to, see [relocation],
+     * and its [classFile], if read to tell it, so that it is not read again for its JVM methods, see [jvmMethods].
+     */
+    private class OwnerRelocation(val relocation: Relocation?, val classFile: OwnerClassFile? = null)
+
+    /**
+     * The [metadataNames], like `com/example/Event`, which the [jvmNames] do not have,
+     * mapped to the only one of the [jvmNames] of the same simple name, like `shaded/com/example/Event`,
+     * which the [metadataNames] do not have, both named by their JVM internal names,
+     * as a class relocated by shading keeps its simple name.
+     */
+    private fun relocatedNames(metadataNames: Set<String>, jvmNames: Set<String>): Map<String, String> {
+        val unknownJvmNames = jvmNames.filter { it !in metadataNames }.groupBy { it.substringAfterLast('/') }
+        if (unknownJvmNames.isEmpty()) return emptyMap()
+        return metadataNames.filter { it !in jvmNames && it.isRelocatable }.mapNotNull { metadataName ->
+            unknownJvmNames[metadataName.substringAfterLast('/')]?.singleOrNull()?.let { metadataName to it }
+        }.toMap()
+    }
+
+    /**
+     * Whether a class of this name might be relocated by shading, unlike the built-in types and the JDK classes,
+     * named alike by the metadata and by the class file, and unlike a local class, which is no supertype of a member.
+     */
+    private val String.isRelocatable: Boolean
+        get() = !startsWith("kotlin/") && !startsWith("java/") && !startsWith(".")
+
+    /**
+     * The JVM signatures of the members of this class, as its metadata tells, like `on(Lcom/example/Event;)V`.
+     */
+    private fun KmClass.jvmSignatures(): List<String> =
+        functions.mapNotNull { it.signature?.toString() } +
+            properties.flatMap { listOfNotNull(it.getterSignature?.toString(), it.setterSignature?.toString()) } +
+            constructors.mapNotNull { it.signature?.toString() }
+
+    /**
+     * The internal names of the classes of a method descriptor, like `com/example/Event` of `on(Lcom/example/Event;)V`.
+     */
+    private fun descriptorClassNames(descriptor: String): List<String> =
+        DESCRIPTOR_CLASS_NAME.findAll(descriptor).map { it.groupValues[1] }.toList()
+
+    /**
+     * The declaration of the class of the [metadataName], which a class, or one of its supertypes, refers to,
+     * found by its located name, see [Relocation.located], by the [relocation] of the class, see [relocation],
+     * like an outer class, or a supertype, relocated with the class, or a relocated dependency of the class,
      * or else by the [metadataName], like a class of another package, or one excluded from the relocation.
      */
-    private fun declaration(owner: Owner, metadataName: String): Declaration {
+    private fun declaration(relocation: Relocation?, metadataName: String): Declaration {
         // neither a built-in type, nor a JDK class, is relocated
-        val located = owner.relocation?.takeIf { metadataName !in builtinClasses() && !metadataName.startsWith("java/") }
+        val located = relocation?.takeIf { metadataName !in builtinClasses() && !metadataName.startsWith("java/") }
             ?.located(metadataName)
             ?: return declaration(metadataName)
         val failureCount = transientFailures.count()
@@ -1245,21 +1405,26 @@ internal class OverrideResolver(
      */
     private fun ClassType.unlocated(relocation: Relocation?): ClassType = if (relocation == null) this else copy(
         name = relocation.unlocated(name),
-        arguments = arguments.map { it.copy(type = it.type.metadataNamed()) },
-        outer = outer?.metadataNamed() as ClassType?
+        arguments = arguments.map { it.copy(type = it.type.metadataNamed(relocation)) },
+        outer = outer?.metadataNamed(relocation) as ClassType?
     )
 
     /**
      * This type, named by its JVM name, which might be relocated, named by the metadata name of the Kotlin class found there,
      * which the Kotlin metadata refers to it by, or else as it is, like a Java class, as no name is guessed,
-     * since a type of a package starting like the relocation prefix might not be relocated.
+     * since a type of a package starting like the relocation prefix might not be relocated,
+     * but matched also by the name the metadata would refer to it by, see [ClassType.unlocatedName].
      */
-    private fun MemberType.metadataNamed(): MemberType = when (this) {
-        is ClassType -> copy(
-            name = declaration(name).kotlin?.name ?: name,
-            arguments = arguments.map { it.copy(type = it.type.metadataNamed()) },
-            outer = outer?.metadataNamed() as ClassType?
-        )
+    private fun MemberType.metadataNamed(relocation: Relocation): MemberType = when (this) {
+        is ClassType -> {
+            val metadataName = declaration(name).kotlin?.name
+            copy(
+                name = metadataName ?: name,
+                arguments = arguments.map { it.copy(type = it.type.metadataNamed(relocation)) },
+                outer = outer?.metadataNamed(relocation) as ClassType?,
+                unlocatedName = if (metadataName != null) null else relocation.unlocated(name).takeIf { it != name }
+            )
+        }
         else -> this
     }
 
@@ -1269,7 +1434,9 @@ internal class OverrideResolver(
             arguments = arguments.map { it.copy(type = it.type.unlocatedType(relocation)) },
             outer = outer?.unlocatedType(relocation) as ClassType?
         )
-        else -> this
+        // a type variable of a Java method is erased to its bound, which might be relocated
+        is TypeParameterType -> copy(erasure = erasure?.let { relocation.unlocated(it) })
+        UnknownType -> this
     }
 
     /**
@@ -2238,39 +2405,61 @@ private fun KmType.memberKeyType(typeParameters: Map<Int, String>): String = bui
     if (isNullable) append('?')
 }
 
+// a class type of a method descriptor, like `Lcom/example/Event;`
+private val DESCRIPTOR_CLASS_NAME = Regex("L([^;]+);")
+
 /**
- * The relocation of a class, like by shading, which rewrites the binary names of the class, and of the ones it refers to,
- * like `shaded.com.example.Foo`, but not its Kotlin metadata, still referring to them like `com/example/Foo`,
- * from the [metadataPackage] to the [locatedPackage], by their Kotlin names, like `com/example`.
- * The classes of the same package are relocated with it, see [locatedNameOf], and so are the ones of the other packages,
- * when the relocation prepends a [prefix] to the package, like `shaded/`, prepended to the other packages too,
- * while a class excluded from the relocation is still found by its metadata name, see `OverrideResolver`.
+ * The package of a class named by its Kotlin or JVM internal name, like `com/example` of `com/example/Foo`,
+ * empty for the root package.
+ */
+private fun packageOf(name: String): String = name.substringBeforeLast('/', "")
+
+/**
+ * The class named by the internal [relativeName], like `Foo` or `sub/Foo`, in the package of the [packageName],
+ * which might be the root package.
+ */
+private fun inPackage(packageName: String, relativeName: String): String =
+    if (packageName.isEmpty()) relativeName else "$packageName/$relativeName"
+
+/**
+ * The name of a class, like `com/example/Outer.Nested` of the metadata, or `com/example/Outer${'$'}Nested` of the JVM,
+ * named alike by both, as its JVM internal name, without the leading '.' of a local class.
+ */
+private fun internalNameOf(name: String): String = name.removePrefix(".").replace('.', '$')
+
+/**
+ * The relocation of the classes a class refers to, like by shading, which rewrites their binary names in its class file,
+ * like `shaded.com.example.Foo`, but not its Kotlin metadata, still referring to them like `com/example/Foo`:
+ * of the class itself, with the classes of its package, see [of],
+ * and of its dependencies, as its class file tells, see [withDependencies],
+ * by the [packages] they are relocated from and to, by their Kotlin names, like `com/example` to `shaded/com/example`,
+ * also of their subpackages, as a shading tool relocates a package with its subpackages.
+ * When the relocation of the class itself prepends a [prefix] to its package, like `shaded/`,
+ * it is prepended to the other packages too,
+ * while a class excluded from the relocation is still found by its metadata name, see `OverrideResolver`,
+ * and so are the [excluded] ones, which the class file refers to by their metadata names,
+ * kept by their JVM internal names, see [internalNameOf], as they are checked also for the names of the descriptors.
  */
 internal class Relocation private constructor(
-    private val metadataPackage: String,
-    private val locatedPackage: String,
-    private val locatedBinaryName: String
+    private val packages: Map<String, String>,
+    private val prefix: String?,
+    private val excluded: Set<String> = emptySet()
 ) {
 
-    /**
-     * The prefix prepended to the package, like `shaded/` of `shaded/com/example`, or `null` if the package is renamed.
-     */
-    private val prefix: String? = when {
-        metadataPackage.isEmpty() -> "$locatedPackage/"
-        locatedPackage.endsWith("/$metadataPackage") -> locatedPackage.removeSuffix(metadataPackage)
-        else -> null
-    }
+    private val unlocatedPackages: Map<String, String> = packages.entries.associate { (from, to) -> to to from }
 
     /**
-     * The name the class of the [metadataName] is found by, when relocated with this one, see [locatedNameOf],
+     * The name the class of the [metadataName] is found by, when relocated with this one, like by [locatedNameOf],
      * or `null` if it is not known to be relocated.
      */
     fun located(metadataName: String): String? {
+        if (excluded.isNotEmpty() && internalNameOf(metadataName) in excluded) return null
         // the leading '.' of a local class, see locatedNameOf, is not part of its package
         val localPrefix = if (metadataName.startsWith('.')) "." else ""
         val name = metadataName.removePrefix(".")
+        val relocated = relocated(name, packages)
         return when {
-            packageOf(name) == metadataPackage -> locatedNameOf(locatedBinaryName, metadataName)
+            relocated != null -> localPrefix + relocated
             prefix != null && !name.startsWith(prefix) -> localPrefix + prefix + name
             else -> null
         }
@@ -2281,16 +2470,13 @@ internal class Relocation private constructor(
      * like to a type of a Java member, named by its relocated JVM name.
      */
     fun unlocated(locatedName: String): String {
+        if (excluded.isNotEmpty() && internalNameOf(locatedName) in excluded) return locatedName
         val localPrefix = if (locatedName.startsWith('.')) "." else ""
         val name = locatedName.removePrefix(".")
-        return localPrefix + when {
-            packageOf(name) == locatedPackage -> {
-                val simpleName = name.substringAfterLast('/')
-                if (metadataPackage.isEmpty()) simpleName else "$metadataPackage/$simpleName"
-            }
-            prefix != null && name.startsWith(prefix) -> name.removePrefix(prefix)
-            else -> name
-        }
+        return localPrefix + (
+            relocated(name, unlocatedPackages)
+                ?: if (prefix != null && name.startsWith(prefix)) name.removePrefix(prefix) else name
+            )
     }
 
     /**
@@ -2299,10 +2485,17 @@ internal class Relocation private constructor(
      */
     fun unlocatedDescriptor(method: String): String {
         val descriptor = method.indexOf('(').takeIf { it >= 0 } ?: return method
-        return method.substring(0, descriptor) + CLASS_TYPE_OF_DESCRIPTOR.replace(method.substring(descriptor)) {
+        return method.substring(0, descriptor) + DESCRIPTOR_CLASS_NAME.replace(method.substring(descriptor)) {
             "L" + unlocated(it.groupValues[1]) + ";"
         }
     }
+
+    /**
+     * This relocation, also of the [dependencies], the packages relocated from and to, as the class file tells,
+     * unless relocated by this one, and of the [excluded] classes, which the class file refers to by their metadata names.
+     */
+    fun withDependencies(dependencies: Map<String, String>, excluded: Set<String>): Relocation =
+        Relocation(dependencies + packages, prefix, this.excluded + excluded.map { internalNameOf(it) })
 
     companion object {
 
@@ -2312,13 +2505,46 @@ internal class Relocation private constructor(
         fun of(metadataName: String, locatedName: String): Relocation? {
             val metadataPackage = packageOf(metadataName.removePrefix("."))
             val locatedPackage = packageOf(locatedName.removePrefix("."))
-            return if (metadataPackage == locatedPackage) null
-            else Relocation(metadataPackage, locatedPackage, binaryNameOf(locatedName.removePrefix(".")))
+            if (metadataPackage == locatedPackage) return null
+            return Relocation(
+                // the root package, containing every other one, is relocated by the prefix
+                packages = if (metadataPackage.isEmpty()) emptyMap() else mapOf(metadataPackage to locatedPackage),
+                prefix = when {
+                    metadataPackage.isEmpty() -> "$locatedPackage/"
+                    locatedPackage.endsWith("/$metadataPackage") -> locatedPackage.removeSuffix(metadataPackage)
+                    else -> null
+                }
+            )
         }
 
-        private fun packageOf(name: String): String = name.substringBeforeLast('/', "")
+        /**
+         * The relocation of only the [dependencies] of a class which is not relocated itself, see [withDependencies],
+         * or `null` if there are none.
+         */
+        fun ofDependencies(dependencies: Map<String, String>, excluded: Set<String>): Relocation? =
+            if (dependencies.isEmpty()) null
+            else Relocation(dependencies, prefix = null, excluded.mapTo(HashSet()) { internalNameOf(it) })
 
-        private val CLASS_TYPE_OF_DESCRIPTOR = Regex("L([^;]+);")
+        /**
+         * The [name] with its package, or the closest enclosing package, replaced like by the [packages],
+         * either of which might be the root package, or `null` if none of them contains it.
+         * A class of the root package is relocated only by the root package itself, as the root package,
+         * containing every other one, would tell no relocated package apart,
+         * and a package relocated to the root package relocates only its own classes, not the ones of its subpackages,
+         * whose relocated names, like `sub/Event` of `test/sub/Event`, could not be translated back.
+         */
+        private fun relocated(name: String, packages: Map<String, String>): String? {
+            if (packages.isEmpty()) return null
+            var packageName = packageOf(name)
+            if (packageName.isEmpty()) return packages[""]?.let { inPackage(it, name) }
+            while (packageName.isNotEmpty()) {
+                packages[packageName]
+                    ?.takeIf { it.isNotEmpty() || packageName == packageOf(name) }
+                    ?.let { return inPackage(it, name.substring(packageName.length + 1)) }
+                packageName = packageOf(packageName)
+            }
+            return null
+        }
 
     }
 
