@@ -32,6 +32,10 @@ import com.xemantic.kotlin.introspection.test.other.JavaListRows
 import com.xemantic.kotlin.introspection.test.other.JavaNamedLinkBase
 import com.xemantic.kotlin.introspection.test.other.JavaNestedRows
 import com.xemantic.kotlin.introspection.test.other.JavaProjectedAnyRows
+import com.xemantic.kotlin.introspection.test.other.JavaProjectedObjectArrayRows
+import com.xemantic.kotlin.introspection.test.other.JavaProjectedStringArrayRows
+import com.xemantic.kotlin.introspection.test.other.JavaProjectedStringListRows
+import com.xemantic.kotlin.introspection.test.other.JavaProjectedWildcardSource
 import com.xemantic.kotlin.introspection.test.other.JavaWildcardRows
 
 // Extensions on type parameter receivers, listed for the classes satisfying their bounds,
@@ -524,6 +528,21 @@ class BoundedReceiverProjectedMapRows : BoundedReceiverProjectedRows<Map<String,
 
 class BoundedReceiverProjectedJavaAnyRows : JavaProjectedAnyRows()
 
+class BoundedReceiverProjectedJavaStringRows : JavaProjectedStringListRows()
+
+// a Java array, seen by Kotlin as the flexible Array<(out) String!>!, either an Array<String>, or an Array<out String>
+fun BoundedReceiverProjectedRows<Array<String>>.projectedStringArray() {}
+
+fun BoundedReceiverProjectedRows<Array<out String>>.projectedOutStringArray() {}
+
+fun <T : CharSequence> BoundedReceiverProjectedRows<Array<out T>>.projectedOutCharSequenceArray() {}
+
+fun BoundedReceiverProjectedRows<Array<*>>.projectedAnyArray() {}
+
+class BoundedReceiverProjectedStringArrayRows : JavaProjectedStringArrayRows()
+
+class BoundedReceiverProjectedObjectArrayRows : JavaProjectedObjectArrayRows()
+
 // a use-site projection of a type argument in a covariant position, a subtype only of the same projection of a supertype
 interface BoundedReceiverProjectedSource<out T>
 
@@ -533,4 +552,26 @@ fun BoundedReceiverProjectedSource<MutableList<String>>.sourceStrings() {}
 
 fun BoundedReceiverProjectedSource<MutableList<*>>.sourceAny() {}
 
+// the supertypes of a type argument of projected type arguments, keeping their projections
+fun BoundedReceiverProjectedSource<List<String>>.sourceStringList() {}
+
+fun <T : Number> BoundedReceiverProjectedSource<List<T>>.sourceNumbers() {}
+
+fun <T : MutableCollection<out CharSequence>> BoundedReceiverProjectedSource<T>.sourceMutableCharSequences() {}
+
 class BoundedReceiverProjectedOutSource : BoundedReceiverProjectedSource<MutableList<out String>>
+
+class BoundedReceiverProjectedStarSource : BoundedReceiverProjectedSource<MutableList<*>>
+
+class BoundedReceiverProjectedWildcardSource : JavaProjectedWildcardSource()
+
+// the subtypes of a type argument in a contravariant position, the supertypes of its projected type arguments
+interface BoundedReceiverProjectedSink<in T>
+
+fun BoundedReceiverProjectedSink<MutableList<*>>.sinkAnyList() {}
+
+fun BoundedReceiverProjectedSink<MutableList<out String>>.sinkOutStrings() {}
+
+class BoundedReceiverProjectedStringListSink : BoundedReceiverProjectedSink<List<String>>
+
+class BoundedReceiverProjectedCollectionSink : BoundedReceiverProjectedSink<MutableCollection<String>>
