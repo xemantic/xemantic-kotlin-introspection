@@ -23,6 +23,7 @@ import com.xemantic.kotlin.introspection.othermodule.InternalBase
 import com.xemantic.kotlin.introspection.test.TestClass
 import com.xemantic.kotlin.test.assert
 import com.xemantic.kotlin.test.sameAs
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.io.TempDir
 import org.objectweb.asm.ClassReader
 import org.objectweb.asm.ClassVisitor
@@ -703,6 +704,26 @@ class ClassLoaderIntrospectionTest {
                 fun <S : Number> bounded(x: S)
                 override fun take(nested: DollarHolder.`Dollar${'$'}Nested`)
             }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should list Java override of JVM-only member through its bridge once when another method refers to class missing from the classpath`() {
+        // given
+        assumeTrue(runCatching { List::class.java.getMethod("addFirst", Any::class.java) }.isSuccess, "JDK 21+")
+        val introspector = introspectorWithoutAbsentClass()
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.AbsentFirstListSubclass.addFirst"
+        )
+
+        // then - the addFirst(Comparable), overriding the addFirst(Object) of java.util.List by its bridge, is not listed next to it,
+        // as kotlin-reflect cannot describe the members of the Java class without Absent, so that the JVM-only member stands for it
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.AbsentFirstListSubclass.addFirst [page 1/1]
+            // inherited from kotlin.collections.MutableList
+            open fun addFirst(arg0: E)
         """.trimIndent()
     }
 

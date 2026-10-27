@@ -272,3 +272,5 @@ abstract class AbsentRawGenericJavaLeaf : AbsentRawGenericJavaMid() {
     fun process(item: String) {}
     override fun compareTo(other: Any?): Int = 0
 }
+
+class AbsentFirstListSubclass<E : Comparable<E>> : AbsentFirstJavaList<E>()

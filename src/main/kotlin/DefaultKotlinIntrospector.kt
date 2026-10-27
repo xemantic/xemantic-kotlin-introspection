@@ -2430,11 +2430,25 @@ internal class DefaultKotlinIntrospector(
                 if (isUntoldOverride) untoldOverrideSignatures += signature
             }
         }
+        // a JVM-only member is overridden by a method of a Java class overriding it on the JVM, of the same JVM signature,
+        // or of narrower parameter types, through the bridge javac generates, see bridgeSignatures,
+        // though the override resolver does not tell, like `addFirst` of a Java subclass of `java.util.ArrayList`
+        // the one of `java.util.List` since JDK 21, which K2 sees as the one member, taking the platform type `E!`
+        // told only when a JVM-only member competes, not to read the bridges of every Java candidate
+        val javaMethodSignatures by lazy(LazyThreadSafetyMode.NONE) {
+            candidates.flatMapTo(HashSet()) { candidate ->
+                val javaClass = candidate.declarations as? JavaClass
+                val function = (candidate.member as? Member.Function)?.declaration
+                if (javaClass == null || function == null || candidate.isHidden || !candidate.isApi) return@flatMapTo emptyList()
+                listOfNotNull(candidate.jvmMethod?.signature) + javaClass.javaMethodOf(function)?.let(::bridgeSignatures).orEmpty()
+            }
+        }
         // the declared signatures, of a Java candidate not hidden, include the ones of the untold overrides
         val notOverridden = candidates.filter {
             !it.isHidden && it.isApi && it.key !in overridden && when (it.jvmMethod) {
                 null -> it.signature !in untoldOverrideSignatures
-                else -> !javaOverrides.overrides(it.jvmMethod) && it.signature !in declaredSignatures
+                else -> !javaOverrides.overrides(it.jvmMethod) && it.signature !in declaredSignatures &&
+                    (it.declarations !is BuiltinClass || it.jvmMethod.signature !in javaMethodSignatures)
             }
         }
         // whether the member a wins over the merged member b, of a less specific return type,
@@ -2498,6 +2512,45 @@ internal class DefaultKotlinIntrospector(
             }
         }
         return listed(survivors).filter { candidate -> contribution(kmClass.name, candidate).singleOrNull()?.isHidden != true }
+    }
+
+    /**
+     * The JVM signatures of the bridge methods which javac generates for the Java [method] in its class,
+     * of the same name and number of parameters, but of the erased parameter types of a method it overrides,
+     * like `addFirst(Ljava/lang/Object;)V` for the `addFirst(String)` of a Java subclass of `java.util.ArrayList<String>`,
+     * or for the `addFirst(E)` of a Java class declaring `E extends Comparable<E>`, erased to `Comparable`,
+     * read from its class file, also when another method refers to a class missing from the classpath,
+     * which fails reflecting the declared methods, or else reflected, or none.
+     */
+    private fun bridgeSignatures(method: Method): List<JvmMethodSignature> {
+        val declaringClass = method.declaringClass
+        val bridges = readClassBytes(declaringClass.name)?.let { bytes ->
+            try {
+                buildList<JvmMethodSignature> {
+                    ClassReader(bytes).accept(object : ClassVisitor(Opcodes.ASM9) {
+                        override fun visitMethod(
+                            access: Int,
+                            name: String,
+                            descriptor: String,
+                            signature: String?,
+                            exceptions: Array<out String>?
+                        ): MethodVisitor? {
+                            if (access and Opcodes.ACC_BRIDGE != 0) add(JvmMethodSignature(name, descriptor))
+                            return null
+                        }
+                    }, ClassReader.SKIP_CODE or ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES)
+                }
+            } catch (_: Exception) {
+                null
+            }
+        } ?: reflectedValue(default = emptyList()) {
+            declaringClass.declaredMethods.filter { it.isBridge }.map { JvmMethodSignature(it.name, AsmType.getMethodDescriptor(it)) }
+        }
+        val descriptor = AsmType.getMethodDescriptor(method)
+        return bridges.filter {
+            it.name == method.name && it.descriptor != descriptor &&
+                AsmType.getArgumentCount(it.descriptor) == method.parameterCount
+        }
     }
 
     /**
@@ -4215,7 +4268,7 @@ internal class DefaultKotlinIntrospector(
             listedExtensions.functions.filter { extension -> signatures[extension]?.let { it !in ambiguousSignatures } == true },
             listedExtensions.properties.filter { extension ->
                 !extension.isObjectMember && extension.property.name !in memberPropertyNames &&
-                    bodyReceiverSubstitution(extension.property.receiverParameterType, extension.property.typeParameters, kmClass) != null
+                    bodyReceiverTypeParameters(extension.property.receiverParameterType, extension.property.typeParameters, kmClass) != null
             }
         )
     }
@@ -4255,6 +4308,14 @@ internal class DefaultKotlinIntrospector(
     }
 
     /**
+     * The receiver class of an extension listed in its body, see [bodyReceiverTypeParameters]:
+     * the [typeParameters] of the class which the ones of the extension stand for, by their ids,
+     * and the type parameters in scope of the class, the [classScope], telling the not nullable ones,
+     * kept together, so that no rendering renames them without telling the not nullable ones, see [TypeParameterScope.withStandingFor].
+     */
+    private class BodyReceiver(val typeParameters: Map<Int, KmTypeParameter>, val classScope: TypeParameterScope)
+
+    /**
      * The declarations a built-in type lists in its body, besides its own properties and functions, each with its name:
      * its JVM-only members, see [BuiltinClass], but the ones hidden by its [listedExtensions],
      * like in its lookup, see [jvmOnlyFunctionsNotHidden], and the [bodyExtensions], see [bodyExtensionsOf].
@@ -4290,9 +4351,9 @@ internal class DefaultKotlinIntrospector(
         val bodyExtensionProperties = bodyExtensions.properties.map { extension ->
             extension.property.name to formatProperty(
                 extension.property, extension.setterVisibility, contextPackage = contextPackage,
-                bodyReceiverSubstitution = bodyReceiverSubstitution(
+                bodyReceiver = bodyReceiverTypeParameters(
                     extension.property.receiverParameterType, extension.property.typeParameters, kmClass
-                ),
+                )?.let { BodyReceiver(it, typeParameters) },
                 deprecation = extension.deprecation
             )
         }
@@ -4300,7 +4361,7 @@ internal class DefaultKotlinIntrospector(
             extension.function.name to listOf(
                 formatFunction(
                     extension.function, contextPackage = contextPackage,
-                    bodyReceiverSubstitution = bodyReceiverSubstitution(extension.function, kmClass),
+                    bodyReceiver = bodyReceiverTypeParameters(extension.function, kmClass)?.let { BodyReceiver(it, typeParameters) },
                     deprecation = extension.deprecation
                 )
             )
@@ -4309,12 +4370,20 @@ internal class DefaultKotlinIntrospector(
     }
 
     /**
-     * The type parameters of an extension [function] of a built-in type, the [kmClass], see [bodyReceiverSubstitution],
-     * telling the types of its context and value parameters.
+     * The type parameters of an extension [function] of a built-in type, the [kmClass], which stand for the ones of the class,
+     * see [bodyReceiverTypeParameters], mapped to the names of the type parameters of the class,
+     * like `T` of `fun <T> MutableList<T>.fill(value: T)` to `E` of `interface MutableList<E>`, or `null`.
+     */
+    private fun bodyReceiverSubstitution(function: KmFunction, kmClass: KmClass): Map<Int, String>? =
+        bodyReceiverTypeParameters(function, kmClass)?.mapValues { (_, classTypeParameter) -> classTypeParameter.name }
+
+    /**
+     * The type parameters of an extension [function] of a built-in type, the [kmClass], which stand for the ones of the class,
+     * told by its receiver, and by the types of its context and value parameters, see the overload taking them.
      */
     @OptIn(ExperimentalContextParameters::class)
-    private fun bodyReceiverSubstitution(function: KmFunction, kmClass: KmClass): Map<Int, String>? =
-        bodyReceiverSubstitution(
+    private fun bodyReceiverTypeParameters(function: KmFunction, kmClass: KmClass): Map<Int, KmTypeParameter>? =
+        bodyReceiverTypeParameters(
             function.receiverParameterType, function.typeParameters, kmClass,
             signatureTypes = function.contextParameters.map { it.type } + function.valueParameters.map { it.type }
         )
@@ -4371,7 +4440,7 @@ internal class DefaultKotlinIntrospector(
      * The type parameters of an extension of a built-in type, the [kmClass], with the [receiver] type,
      * declaring the [typeParameters], which stand for the type parameters of the class,
      * when the extension is listed in the class body without its receiver, like a member,
-     * by their ids, mapped to the names of the type parameters of the class,
+     * by their ids, mapped to the type parameters of the class,
      * like `T` of `fun <T> MutableList<T>.fill(value: T)`, listed as `fun fill(value: E)` in `interface MutableList<E>`,
      * or `null` if the extension does not read like a member, callable on every instance of the class,
      * as its receiver is not the type of the class itself, and it is then listed outside the class body, with its receiver:
@@ -4390,12 +4459,12 @@ internal class DefaultKotlinIntrospector(
      *   of the class in place of the projected ones, see [acceptsAsClassTypeParameter],
      *   and the bounds of its other type parameters.
      */
-    private fun bodyReceiverSubstitution(
+    private fun bodyReceiverTypeParameters(
         receiver: KmType?,
         typeParameters: List<KmTypeParameter>,
         kmClass: KmClass,
         signatureTypes: List<KmType> = emptyList()
-    ): Map<Int, String>? {
+    ): Map<Int, KmTypeParameter>? {
         if (receiver == null || receiver.isNullable || (receiver.classifier as? KmClassifier.Class)?.name != kmClass.name) return null
         if (receiver.arguments.size != kmClass.typeParameters.size) return null
         // the type parameters of the extension standing for the ones of the class
@@ -4428,7 +4497,7 @@ internal class DefaultKotlinIntrospector(
         ) return null
         val classTypeParameterNames = classTypeParameters.values.toSet()
         if (typeParameters.any { it.id !in substitution && it.name in classTypeParameterNames }) return null
-        return substitution
+        return substituted.entries.associate { (typeParameter, classTypeParameter) -> typeParameter.id to classTypeParameter }
     }
 
     /**
@@ -4977,8 +5046,8 @@ internal class DefaultKotlinIntrospector(
      * @param owner the class declaring the [function], to tell whether it is an override.
      * @param classTypeParameters the type parameters in scope of the class, see [TypeParameterScope],
      *   like the ones of a class inheriting the [function], given for the ones of its class.
-     * @param bodyReceiverSubstitution the substitution of an extension listed in the body of its receiver class,
-     *   rendered without its receiver, see [bodyReceiverSubstitution], or `null` to render the receiver.
+     * @param bodyReceiver the receiver class of an extension listed in its body, see [BodyReceiver],
+     *   rendered without its receiver, or `null` to render the receiver.
      * @param deprecation the deprecation of the [function], see [formatDeprecation].
      * @param companionDeprecation the deprecation of the companion object the [function] extends,
      *   see [formatCompanionDeprecation].
@@ -4994,16 +5063,17 @@ internal class DefaultKotlinIntrospector(
         owner: OverrideResolver.Owner? = null,
         contextPackage: String? = null,
         classTypeParameters: TypeParameterScope = TypeParameterScope.EMPTY,
-        bodyReceiverSubstitution: Map<Int, String>? = null,
+        bodyReceiver: BodyReceiver? = null,
         deprecation: Deprecation? = null,
         companionDeprecation: Deprecation? = null,
         isOwnerOpenForOverrides: Boolean = isOpenForOverridesByDefault(owner?.kmClass),
         isInheritedByFinalClass: Boolean = false,
         declaration: KmFunction = function
     ): String = buildString {
-        val typeParameters = classTypeParameters.withDeclared(function.typeParameters).withNames(bodyReceiverSubstitution.orEmpty())
+        val typeParameters = classTypeParameters.withDeclared(function.typeParameters)
+            .withStandingFor(bodyReceiver?.typeParameters.orEmpty(), bodyReceiver?.classScope ?: TypeParameterScope.EMPTY)
         // the type parameters standing for the ones of the class are not declared
-        val declaredTypeParameters = function.typeParameters.filter { it.id !in bodyReceiverSubstitution.orEmpty() }
+        val declaredTypeParameters = function.typeParameters.filter { it.id !in bodyReceiver?.typeParameters.orEmpty() }
 
         +formatDeprecation(deprecation)
         +formatCompanionDeprecation(companionDeprecation)
@@ -5026,7 +5096,7 @@ internal class DefaultKotlinIntrospector(
         }
 
         // the receiver of an extension function, unless listed in the body of its receiver class
-        function.receiverParameterType?.takeIf { bodyReceiverSubstitution == null }?.let { receiverType ->
+        function.receiverParameterType?.takeIf { bodyReceiver == null }?.let { receiverType ->
             +formatReceiverType(receiverType, contextPackage, typeParameters)
             +"."
         }
@@ -5131,8 +5201,7 @@ internal class DefaultKotlinIntrospector(
      *   unless it overrides a `var`, see [propertyDeclaration].
      * @param owner the class declaring the [property], to tell whether it is an override.
      * @param classTypeParameters the type parameters in scope of the class, like for [formatFunction].
-     * @param bodyReceiverSubstitution the substitution of an extension listed in the body of its receiver class,
-     *   like for [formatFunction].
+     * @param bodyReceiver the receiver class of an extension listed in its body, like for [formatFunction].
      * @param deprecation the deprecation of the [property], see [formatDeprecation].
      * @param companionDeprecation the deprecation of the companion object the [property] extends, like for [formatFunction].
      * @param isOwnerOpenForOverrides whether the user code might override the members of the [owner], like for [formatFunction].
@@ -5146,16 +5215,17 @@ internal class DefaultKotlinIntrospector(
         owner: OverrideResolver.Owner? = null,
         contextPackage: String? = null,
         classTypeParameters: TypeParameterScope = TypeParameterScope.EMPTY,
-        bodyReceiverSubstitution: Map<Int, String>? = null,
+        bodyReceiver: BodyReceiver? = null,
         deprecation: Deprecation? = null,
         companionDeprecation: Deprecation? = null,
         isOwnerOpenForOverrides: Boolean = isOpenForOverridesByDefault(owner?.kmClass),
         isInheritedByFinalClass: Boolean = false,
         declaration: KmProperty = property
     ): List<String> = buildList {
-        val typeParameters = classTypeParameters.withDeclared(property.typeParameters).withNames(bodyReceiverSubstitution.orEmpty())
+        val typeParameters = classTypeParameters.withDeclared(property.typeParameters)
+            .withStandingFor(bodyReceiver?.typeParameters.orEmpty(), bodyReceiver?.classScope ?: TypeParameterScope.EMPTY)
         // the type parameters standing for the ones of the class are not declared
-        val declaredTypeParameters = property.typeParameters.filter { it.id !in bodyReceiverSubstitution.orEmpty() }
+        val declaredTypeParameters = property.typeParameters.filter { it.id !in bodyReceiver?.typeParameters.orEmpty() }
         val isOverride = isOverride(owner, declaration)
         val propertyDeclaration = propertyDeclaration(property, setterVisibility, isOverride, deprecation)
         val renderedSetterVisibility = propertyDeclaration.setterVisibility
@@ -5174,7 +5244,7 @@ internal class DefaultKotlinIntrospector(
             }
 
             // the receiver of an extension property, unless listed in the body of its receiver class
-            property.receiverParameterType?.takeIf { bodyReceiverSubstitution == null }?.let { receiverType ->
+            property.receiverParameterType?.takeIf { bodyReceiver == null }?.let { receiverType ->
                 +formatReceiverType(receiverType, contextPackage, typeParameters)
                 +"."
             }

@@ -217,6 +217,20 @@ class TypeSubstitutionTest {
     }
 
     @Test
+    fun `should tell type parameters standing for not nullable ones of class not nullable`() {
+        // given - the <T, U> of an extension listed in the body of its receiver class <A : Any, B>, standing for A and B,
+        // T of a nullable bound, which only suppressing the bound violation of the receiver lets it declare
+        val classScope = TypeParameterScope(mapOf(0 to "A", 1 to "B"), notNullable = setOf(0))
+        val extensionScope = TypeParameterScope.EMPTY.withDeclared(listOf(typeParameter("T", 0), typeParameter("U", 1)))
+
+        // when
+        val scope = extensionScope.withStandingFor(mapOf(0 to typeParameter("A", 0), 1 to typeParameter("B", 1)), classScope)
+
+        // then - T & Any, rendered as A & Any, would not compile
+        assert(scope.names == mapOf(0 to "A", 1 to "B") && scope.notNullable == setOf(0))
+    }
+
+    @Test
     fun `should renumber type parameters of scope with the not nullable ones`() {
         // given - the scope of <T : Any, X> of an inheriting class
         val scope = TypeParameterScope(mapOf(0 to "T", 1 to "X"), notNullable = setOf(0))

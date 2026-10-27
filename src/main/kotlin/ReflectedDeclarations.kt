@@ -44,6 +44,7 @@ import kotlin.reflect.full.declaredMemberFunctions
 import kotlin.reflect.full.declaredMemberProperties
 import kotlin.reflect.full.isSubtypeOf
 import kotlin.reflect.jvm.javaMethod
+import kotlin.reflect.jvm.javaType
 import kotlin.reflect.typeOf
 
 /*
@@ -231,9 +232,12 @@ internal fun KClass<*>.toKmBuiltinClass(name: String): KmClass {
         .mapTo(kmClass.constructors) { constructor ->
             KmConstructor().also { kmConstructor ->
                 kmConstructor.visibility = Visibility.PUBLIC
-                // a constructor infers the type arguments of the class at the call, like a function its own ones
+                // a constructor infers the type arguments of the class at the call, like a function its own ones,
+                // which are never taken as not nullable, so that isJdkMember is never asked for
                 constructor.parameters.withIndex().mapTo(kmConstructor.valueParameters) { (position, parameter) ->
-                    parameter.toKmValueParameter(position, typeParameters, ownTypeParameters = this.typeParameters)
+                    parameter.toKmValueParameter(
+                        position, typeParameters, ownTypeParameters = this.typeParameters, isJdkMember = lazyOf(true)
+                    )
                 }
             }
         }
@@ -329,8 +333,13 @@ internal fun KFunction<*>.toKmFunction(typeParameters: ReflectedTypeParameters):
     function.typeParameters += this.typeParameters.map { it.toKmTypeParameter(scope) }
     parameters.contextParametersTo(function.contextParameters, scope)
     function.receiverParameterType = parameters.extensionReceiverType(scope)
+    // a member of a JDK class, like `merge` of `java.util.HashMap`, takes the type parameters of its class as in Kotlin,
+    // while a member of another Java class, like the override of `merge` of a `MyMap<K, V> extends HashMap<K, V>`, takes them as `K!`
+    val isJdkMember = lazy(LazyThreadSafetyMode.NONE) {
+        reflectedValue(default = true) { javaMethod?.declaringClass?.isJdkClass ?: true }
+    }
     parameters.filter { it.kind == KParameter.Kind.VALUE }.withIndex().mapTo(function.valueParameters) { (position, parameter) ->
-        parameter.toKmValueParameter(position, scope, ownTypeParameters = this.typeParameters)
+        parameter.toKmValueParameter(position, scope, ownTypeParameters = this.typeParameters, isJdkMember = isJdkMember)
     }
     function.returnType = returnType.toKmType(scope)
     enhanceDefinitelyNotNull(function)
@@ -586,21 +595,29 @@ internal fun varargElementType(arrayType: KmType): KmType =
 /**
  * The declaration of this parameter in the Kotlin metadata, at the [position] among the value parameters,
  * of a callable declaring the [ownTypeParameters], whose type arguments are inferred at the call,
- * unlike the ones of the class, given by the receiver.
+ * unlike the ones of the class, given by the receiver, and whether it is a member of a JDK class, the [isJdkMember],
+ * told only when needed.
  */
 private fun KParameter.toKmValueParameter(
     position: Int,
     scope: ReflectedTypeParameters,
-    ownTypeParameters: List<KTypeParameter> = emptyList()
+    ownTypeParameters: List<KTypeParameter>,
+    isJdkMember: Lazy<Boolean>
 ): KmValueParameter =
     KmValueParameter(name ?: "arg$position").also { parameter ->
         // a Java parameter of a platform type, like Any! of Object, accepts null,
         // but a vararg one, whose array is never null, and which tells the nullability of its elements below,
-        // and one of a type parameter of the class, like E! of `addFirst` of `java.util.List`, which accepts null
-        // only when the type argument of the receiver does, unlike for `addFirst(null)` of a `MutableList<String>`
+        // and one of a type parameter of the class of a JDK member, like E! of `addFirst` of `java.util.List`, which accepts null
+        // only when the type argument of the receiver does, unlike for `addFirst(null)` of a `MutableList<String>`,
+        // while K2 takes the one of a member of another Java class as a platform type, like `addFirst(null)` of a Java subclass
+        // of `java.util.ArrayList<String>` overriding it, which compiles
         val classifier = type.classifier
-        val isClassTypeParameter = classifier is KTypeParameter && classifier !in ownTypeParameters
+        val isClassTypeParameter = classifier is KTypeParameter && classifier !in ownTypeParameters && isJdkMember.value
         val type = type.toKmType(scope, platformAsNullable = !isVararg && !isClassTypeParameter)
+        // a raw type of Java, like the BiFunction of `merge` of a Java subclass of a raw `java.util.HashMap`,
+        // which kotlin-reflect tells by the type arguments of its lower bound, like `BiFunction<Any!, Any!, Any!>`,
+        // is `(BiFunction<Any!, Any!, Any?>..BiFunction<*, *, *>)` in K2, overridden by its upper bound, and not by `BiFunction<Any, Any, Any>`
+        if (this.type.isRawJavaType) type.arguments.replaceAll { KmTypeProjection.STAR }
         parameter.type = type
         // a vararg parameter is typed as an array, like Array<out T> or IntArray, of its element type
         if (isVararg) {
@@ -624,6 +641,16 @@ private val KType.isPlatformNullable: Boolean
     get() = !isMarkedNullable && nullableNothing.isSubtypeOf(this)
 
 private val nullableNothing: KType = typeOf<Nothing?>()
+
+/**
+ * Whether this type is a raw type of Java, like `BiFunction` of a raw `java.util.HashMap`,
+ * which kotlin-reflect tells only by its Java type, a [Class] of type parameters, rather than a [ParameterizedType].
+ */
+private val KType.isRawJavaType: Boolean
+    get() = arguments.isNotEmpty() && reflectedValue(default = false) {
+        val javaType = javaType
+        javaType is Class<*> && javaType.typeParameters.isNotEmpty() && (classifier as? KClass<*>)?.java == javaType
+    }
 
 /**
  * The JDK methods whose return types K2 enhances, as not nullable, or nullable, so that they are not platform types,

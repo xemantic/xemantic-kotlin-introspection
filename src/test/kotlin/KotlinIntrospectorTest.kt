@@ -4409,12 +4409,88 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve member of Java map overriding JVM-only member with type variable key taking key nullable`() {
+        // the override is a member of its own, whose key is K! in K2, unlike the K of the merge of MutableMap,
+        // in fun <V> f(m: InheritedJavaTypeVariableKeyMap<String, V>, v: V & Any) m.merge(null, v) { … } compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariableKeyMap.merge") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariableKeyMap.merge [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypeVariableKeyMap
+            override fun merge(arg0: K?, arg1: V & Any, arg2: java.util.function.BiFunction<in V & Any, in V & Any, out V?>): V?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of Java map overriding JVM-only member with type variable key passing value definitely not nullable to function`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariableKeyMap.computeIfPresent") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariableKeyMap.computeIfPresent [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypeVariableKeyMap
+            override fun computeIfPresent(arg0: K?, arg1: java.util.function.BiFunction<in K, in V & Any, out V?>): V?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of Java map overriding JVM-only member with key and value of same type variable`() {
+        // only the value is enhanced, the key stays V! in K2, while V & Any of the V : Comparable<V> does not compile
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaSelfKeyMap.merge") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaSelfKeyMap.merge [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaSelfKeyMap
+            override fun merge(arg0: V?, arg1: V, arg2: java.util.function.BiFunction<in V, in V, out V?>): V?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of Java map of raw supertype overriding JVM-only member taking raw type as star projected`() {
+        // K2 sees the raw BiFunction as (BiFunction<Any!, Any!, Any?>..BiFunction<*, *, *>), overridden by BiFunction<*, *, *>,
+        // but not by BiFunction<Any, Any, Any>, while the value, the erased V & Any, is Any
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaRawMap.merge") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaRawMap.merge [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaRawMap
+            override fun merge(arg0: Any?, arg1: Any, arg2: java.util.function.BiFunction<*, *, *>): Any?
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve inherited JVM-only member of mutable map of inner class taking value of outer type parameter bounded not nullable`() {
         assumeNoParameterNames(MERGE_METHOD)
         resolver.resolve("com.xemantic.kotlin.introspection.test.OuterNotNull.InnerMap.merge") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.OuterNotNull.InnerMap.merge [page 1/1]
             // inherited from kotlin.collections.MutableMap
             open fun merge(arg0: String, arg1: T, arg2: java.util.function.BiFunction<in T, in T, out T?>): T?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve JVM-only member of mutable list of JDK 21 overridden by Java class outside of JDK once`() {
+        // the override is the one member addFirst in K2, taking E!, like for l.addFirst(null) of a JavaFirstList<String>,
+        // as it overrides on the JVM the addFirst of java.util.List, which the Kotlin members do not tell
+        assumeTrue(runCatching { List::class.java.getMethod("addFirst", Any::class.java) }.isSuccess, "JDK 21+")
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaFirstList.addFirst") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaFirstList.addFirst [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaFirstList
+            override fun addFirst(arg0: E?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve JVM-only member of mutable list of JDK 21 overridden by Java class of bounded type variable once`() {
+        // the override takes the erased Comparable on the JVM, overriding the addFirst(Object) of java.util.List by its bridge
+        assumeTrue(runCatching { List::class.java.getMethod("addFirst", Any::class.java) }.isSuccess, "JDK 21+")
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaComparableFirstList.addFirst") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaComparableFirstList.addFirst [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaComparableFirstList
+            override fun addFirst(arg0: E?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve JVM-only member of mutable list of JDK 21 overridden by Java class of type argument once`() {
+        // the override takes String on the JVM, overriding the addFirst(Object) of java.util.List by its bridge,
+        // l.addFirst(null) of a JavaStringFirstList compiles
+        assumeTrue(runCatching { List::class.java.getMethod("addFirst", Any::class.java) }.isSuccess, "JDK 21+")
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaStringFirstList.addFirst") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaStringFirstList.addFirst [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaStringFirstList
+            override fun addFirst(arg0: String?)
         """.trimIndent()
     }
 
@@ -4821,12 +4897,13 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve method of Java superclass overriding method of its own Java superclass`() {
+        // the T of a Java class, not of the JDK, is T! in K2, accept(null) compiles
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.InheritedFromJava.accept"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.InheritedFromJava.accept [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.other.JavaInheritedMid
-            override fun accept(arg0: String)
+            override fun accept(arg0: String?)
         """.trimIndent()
     }
 
