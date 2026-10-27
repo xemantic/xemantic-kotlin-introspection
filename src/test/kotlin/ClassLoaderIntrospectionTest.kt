@@ -2067,6 +2067,25 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should resolve member of package-private Java class inherited by class which cannot be loaded from its public Java subclass`() {
+        // given
+        val introspector = introspectorWithoutAbsentClass("AbsentGreetingMarker.class")
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.UnloadableGreeterLeaf.hello"
+        )
+
+        // then
+        // the package-private class cannot be named, its public Java subclass is told by the superclass of the metadata
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.UnloadableGreeterLeaf.hello [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.isolated.PublicGreeterJavaMid
+            fun hello(): String
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve member inherited through cyclic supertypes once`() {
         // given
         fun type(name: String) = KmType().apply { classifier = KmClassifier.Class("com/xemantic/kotlin/introspection/isolated/$name") }

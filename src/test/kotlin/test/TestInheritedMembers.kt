@@ -294,3 +294,34 @@ abstract class InheritedReabstractedNumber : com.xemantic.kotlin.introspection.t
 
 // A public method of a public Java class nested in a package-private one, inherited through its public Java subclass
 class InheritedThroughPublicNestedJavaMid : com.xemantic.kotlin.introspection.test.other.JavaPublicNestedGreeterMid()
+
+// Concrete members of kotlin.Any declared abstract again by a Java superclass, java.security.Permission
+abstract class InheritedPermission : java.security.Permission("permission")
+
+// A concrete member of a Kotlin class declared abstract again by its Java subclass
+open class ConcreteKotlinBase {
+    open fun value(): Int = 1
+}
+
+abstract class InheritedReabstractedKotlinMember : com.xemantic.kotlin.introspection.test.other.JavaReabstractedKotlinMember()
+
+// Members of Kotlin interfaces implemented by a Java superclass, java.util.ArrayList, inherited by an abstract class
+abstract class AbstractInheritedJavaArrayList : java.util.ArrayList<String>()
+
+// An abstract property of a Kotlin class implemented by the getter of its Java subclass
+abstract class AbstractNamed {
+    abstract val name: String
+}
+
+abstract class InheritedJavaNamed : com.xemantic.kotlin.introspection.test.other.JavaNamed()
+
+// Members of Java superclasses whose return types the compiler enhances as nullable
+class InheritedLinkedHashMap<K, V> : java.util.LinkedHashMap<K, V>()
+
+class InheritedWeakReference(referent: String) : java.lang.ref.WeakReference<String>(referent)
+
+// A mapped Java interface named directly as the supertype, seen in Kotlin as its mutable built-in type
+abstract class JavaListIteratorSubclass : java.util.ListIterator<String>
+
+// A Java interface declaring equals abstract again, which the implementation of kotlin.Any still implements
+abstract class InheritedJavaComparator : java.util.Comparator<String>

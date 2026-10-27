@@ -26,3 +26,9 @@ interface AbsentReachedGreeter {
 
 // the Java superclass cannot be loaded, so that the interface it implements is told only by its class file
 abstract class AbsentKotlinInterfaceJavaLeaf : AbsentKotlinInterfaceJavaMid()
+
+// A marker interface whose class file tests leave out, so that the class implementing it cannot be loaded
+interface AbsentGreetingMarker
+
+// cannot be loaded, while its public Java superclass, inheriting the members of a package-private one, can
+class UnloadableGreeterLeaf : PublicGreeterJavaMid(), AbsentGreetingMarker

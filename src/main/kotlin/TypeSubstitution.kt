@@ -243,6 +243,23 @@ private fun KmFunction.copy(
 @OptIn(ExperimentalContextParameters::class)
 internal fun KmProperty.substituted(substitution: Map<Int, KmType>, names: Map<Int, String>): KmProperty {
     if (substitution.isEmpty()) return this
+    return copy { it.substituted(substitution) }.also { property ->
+        val types = property.contextParameters.map { it.type } + listOfNotNull(property.receiverParameterType) +
+            property.returnType
+        property.typeParameters.renameApartFrom(types, names)
+    }
+}
+
+/**
+ * This property of the [modality], like an abstract member implemented by a Java class.
+ */
+internal fun KmProperty.withModality(modality: Modality): KmProperty = copy { it }.also { it.modality = modality }
+
+/**
+ * This property, its types given by the [type].
+ */
+@OptIn(ExperimentalContextParameters::class)
+private fun KmProperty.copy(type: (KmType) -> KmType): KmProperty {
     val original = this
     return KmProperty(name).also { property ->
         property.visibility = visibility
@@ -257,16 +274,13 @@ internal fun KmProperty.substituted(substitution: Map<Int, KmType>, names: Map<I
         property.isExpect = isExpect
         getter.copyTo(property.getter)
         property.setter = setter?.let { setter -> KmPropertyAccessorAttributes().also { setter.copyTo(it) } }
-        property.setterParameter = setterParameter?.copy { it.substituted(substitution) }
-        typeParameters.mapTo(property.typeParameters) { typeParameter -> typeParameter.copy { it.substituted(substitution) } }
-        contextParameters.mapTo(property.contextParameters) { parameter -> parameter.copy { it.substituted(substitution) } }
-        property.receiverParameterType = receiverParameterType?.substituted(substitution)
-        property.returnType = original.returnType.substituted(substitution)
+        property.setterParameter = setterParameter?.copy(type)
+        typeParameters.mapTo(property.typeParameters) { it.copy(type) }
+        contextParameters.mapTo(property.contextParameters) { it.copy(type) }
+        property.receiverParameterType = receiverParameterType?.let(type)
+        property.returnType = type(original.returnType)
         property.getterSignature = getterSignature
         property.setterSignature = setterSignature
-        val types = property.contextParameters.map { it.type } + listOfNotNull(property.receiverParameterType) +
-            property.returnType
-        property.typeParameters.renameApartFrom(types, names)
     }
 }
 

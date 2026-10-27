@@ -326,6 +326,7 @@ internal fun KFunction<*>.toKmFunction(typeParameters: ReflectedTypeParameters):
     }
     function.returnType = returnType.toKmType(scope)
     enhanceDefinitelyNotNull(function)
+    enhanceNullableReturn(function)
     return function
 }
 
@@ -547,6 +548,44 @@ internal val ENHANCED_RETURN_JDK_METHODS: Set<String> = setOf(
     "java/util/function/Function.apply(Ljava/lang/Object;)Ljava/lang/Object;",
     "java/util/function/Supplier.get()Ljava/lang/Object;"
 )
+
+/**
+ * The JDK methods whose return types K2 enhances as nullable, of the [ENHANCED_RETURN_JDK_METHODS],
+ * like the `T?` of `get()` of `java.lang.ref.Reference`, see [enhanceNullableReturn],
+ * compared with the copy of kotlin-reflect by `ReflectedDeclarationsTest`.
+ */
+internal val NULLABLE_RETURN_JDK_METHODS: Set<String> = setOf(
+    "java/lang/ref/Reference.get()Ljava/lang/Object;",
+    "java/util/LinkedHashMap.putFirst(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;",
+    "java/util/LinkedHashMap.putLast(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;",
+    "java/util/Map.compute(Ljava/lang/Object;Ljava/util/function/BiFunction;)Ljava/lang/Object;",
+    "java/util/Map.computeIfPresent(Ljava/lang/Object;Ljava/util/function/BiFunction;)Ljava/lang/Object;",
+    "java/util/Map.merge(Ljava/lang/Object;Ljava/lang/Object;Ljava/util/function/BiFunction;)Ljava/lang/Object;",
+    "java/util/Map.putIfAbsent(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;",
+    "java/util/Map.replace(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;"
+)
+
+// telling most functions apart without resolving their JVM methods
+private val nullableReturnJdkMethodNames: Set<String> =
+    NULLABLE_RETURN_JDK_METHODS.mapTo(HashSet()) { it.substringAfter('.').substringBefore('(') }
+
+/**
+ * Marks the return type of the [function], converted from this one, nullable, when K2 enhances it so,
+ * see [NULLABLE_RETURN_JDK_METHODS], also of a method overriding the JDK one by the same JVM descriptor,
+ * like `get()` of `java.lang.ref.SoftReference`, which inherits the enhancement, unlike the platform type kotlin-reflect tells,
+ * rendered as not nullable, like the `V` of `putFirst` of `java.util.LinkedHashMap`, which returns `V?` in Kotlin.
+ */
+private fun KFunction<*>.enhanceNullableReturn(function: KmFunction) {
+    if (name !in nullableReturnJdkMethodNames) return
+    val method = reflectedValue(default = null) { javaMethod } ?: return
+    val nameAndDescriptor = method.name + AsmType.getMethodDescriptor(method)
+    val supertypes = generateSequence(listOf<Class<*>>(method.declaringClass)) { classes ->
+        classes.flatMap { listOfNotNull(it.superclass) + it.interfaces }.ifEmpty { null }
+    }.flatten()
+    if (supertypes.any { AsmType.getInternalName(it) + "." + nameAndDescriptor in NULLABLE_RETURN_JDK_METHODS }) {
+        function.returnType.isNullable = true
+    }
+}
 
 /**
  * Whether this function, of a Java class, returns a platform type of Java, see [isPlatformNullable],
