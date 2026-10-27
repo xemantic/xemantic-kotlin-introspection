@@ -1722,8 +1722,10 @@ internal class DefaultKotlinIntrospector(
         )
 
         // an extension of an object is called on its name, like Obj.ext(), as is one on the companion object of a class,
-        // like Foo.of(), unlike one on the class, called on its instance, like foo.ext()
-        val isObject = kmClass.kind == ClassKind.OBJECT || kmClass.kind == ClassKind.COMPANION_OBJECT
+        // like Foo.of(), or one of an enum class, usually called on its entry, like Color.RED.ext(),
+        // unlike one on the class, called on its instance, like foo.ext()
+        val isObject = kmClass.kind == ClassKind.OBJECT || kmClass.kind == ClassKind.COMPANION_OBJECT ||
+            kmClass.kind == ClassKind.ENUM_CLASS
         val companionName = kmClass.companionObject?.let { "${kmClass.name}.$it" }
         val extensions = extensionSignatures(
             (listedExtensions.functions + hidingExtensions).distinct(),
@@ -1734,7 +1736,7 @@ internal class DefaultKotlinIntrospector(
         }
         return MemberListing.of(
             members.map { ListingItem.Declaration(it) } + inherited + companionMembers + extensions,
-            context = enclosingContext(kmClass, apiClass, declarations, includingClass = true)
+            context = enclosingContext(kmClass, apiClass, declarations, includingClass = true, isBuiltin)
         )
     }
 
@@ -2887,19 +2889,24 @@ internal class DefaultKotlinIntrospector(
      * @param declarations the declarations of the [kmClass], telling the located names of the classes enclosing it.
      * @param includingClass whether the class itself counts, as for its members,
      *   unlike for the class resolved directly, whose header tells its own visibility and deprecation.
+     * @param isBuiltin whether the class is a built-in type, or its companion object, never deprecated, nor looked up.
      */
     private fun enclosingContext(
         kmClass: KmClass,
         apiClass: ApiClass,
         declarations: ClassDeclarations,
-        includingClass: Boolean
+        includingClass: Boolean,
+        isBuiltin: Boolean
     ): List<EnclosingClass> {
         val names = enclosingClassNames(kmClass.name) + kmClass.name
         val outermostProtected = names.indices.firstOrNull { apiClass.scopes[it].visibility == Visibility.PROTECTED }
         return names.indices.take(if (includingClass) names.size else names.size - 1).mapNotNull { index ->
             val name = names[index]
-            val classDeclarations = if (name == kmClass.name) declarations else classDeclarations(declarations.located(name))
-            val deprecation = classDeclarations?.classDeprecation?.takeUnless { it.isHidden }
+            val deprecation = when {
+                isBuiltin -> null
+                name == kmClass.name -> declarations.classDeprecation
+                else -> classDeclarations(declarations.located(name))?.classDeprecation
+            }?.takeUnless { it.isHidden }
             val isProtected = apiClass.scopes[index].visibility == Visibility.PROTECTED
             if (deprecation == null && index != outermostProtected) return@mapNotNull null
             EnclosingClass(
@@ -3979,7 +3986,7 @@ internal class DefaultKotlinIntrospector(
 
         // the parameters are the only members of an annotation class, listed without its extensions
         if (annotationParameters != null) {
-            return ClassListing.of(header, context = enclosingContext(kmClass, apiClass, foundClass, includingClass = false))
+            return ClassListing.of(header, context = enclosingContext(kmClass, apiClass, foundClass, includingClass = false, isBuiltin))
         }
 
         // The companion object, unless it is not part of the API, with its members which are
@@ -4087,7 +4094,7 @@ internal class DefaultKotlinIntrospector(
 
         return ClassListing.of(
             header = header,
-            context = enclosingContext(kmClass, apiClass, foundClass, includingClass = false),
+            context = enclosingContext(kmClass, apiClass, foundClass, includingClass = false, isBuiltin),
             isEnum = isEnum,
             enumEntryNames = if (isEnum) kmClass.kmEnumEntries.map { escapeIdentifier(it.name) } else emptyList(),
             members = members,
@@ -6514,7 +6521,6 @@ private fun <T : ListingItem> Resolved<T>.withContext(context: String): Resolved
 /**
  * The [resolved] declaration, its every page following the [context] comment,
  * like the deprecated typealias a member is resolved through, see `DefaultKotlinIntrospector.resolveTypeAlias`.
-
  */
 private class ContextualResolved<T : ListingItem>(private val resolved: Resolved<T>, private val context: String) : Resolved<T> {
 
@@ -6612,7 +6618,15 @@ private fun List<ListingItem.Extension>.renderLines(): List<String> = buildList 
  *   also when calling an extension on it, see [ListingItem.Extension.isCalledOnClassName],
  *   unlike a class told only as protected, which does not matter to an extension.
  */
-private class EnclosingClass(val line: String, val isDeprecated: Boolean)
+private class EnclosingClass(val line: String, val isDeprecated: Boolean) {
+
+    /**
+     * Whether the [line] is rendered on a page of a [MemberListing], which [hasMembers], not only extensions,
+     * or [isOnClassName], also with an extension called on the name of the class, see [ListingItem.Extension.isCalledOnClassName].
+     */
+    fun isRendered(hasMembers: Boolean, isOnClassName: Boolean): Boolean = if (isDeprecated) isOnClassName else hasMembers
+
+}
 
 /**
  * A class listed with its [header], the declaration line without the body, followed by the [items]:
@@ -6714,7 +6728,7 @@ private class MemberListing(
     override fun renderPage(page: Page<ListingItem.MemberItem>): List<String> = buildList {
         val hasMembers = page.items.any { it !is ListingItem.Extension }
         val isOnClassName = hasMembers || page.items.any { it is ListingItem.Extension && it.isCalledOnClassName }
-        context.forEach { if (if (it.isDeprecated) isOnClassName else hasMembers) add(it.line) }
+        context.forEach { if (it.isRendered(hasMembers, isOnClassName)) add(it.line) }
         page.items.filterIsInstance<ListingItem.Declaration>().forEach { addAll(it.lines) }
         page.items.filterIsInstance<ListingItem.InheritedMember>().groupBy { it.source }.forEach { (source, members) ->
             add("// inherited from ${escapeQualifiedName(source)}")

@@ -151,6 +151,12 @@ fun DeprecatedClass.instanceExtension(): Int = 0
 // called on the name of the object, like DeprecatedObject.objectExtension(), for which Kotlin reports its deprecation
 fun DeprecatedObject.objectExtension(): Int = 0
 
+// usually called on an entry, like DeprecatedEnum.A.enumExtension(), for which Kotlin reports the deprecation of the enum class
+@Deprecated("Use DeprecationTarget")
+enum class DeprecatedEnum { A }
+
+fun DeprecatedEnum.enumExtension(): Int = 0
+
 // a deprecated class which is protected, and a deprecated class within a protected one
 open class DeprecatedProtectedHolder {
     @Deprecated("Use DeprecationTarget")

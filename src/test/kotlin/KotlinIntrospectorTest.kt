@@ -9868,6 +9868,19 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve extension of deprecated enum class with its deprecation`() {
+        // usually called on an entry, DeprecatedEnum.A.enumExtension(), writing the name of the enum class
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.DeprecatedEnum.enumExtension"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DeprecatedEnum.enumExtension [page 1/1]
+            // in @Deprecated("Use DeprecationTarget") enum class DeprecatedEnum
+            // from com.xemantic.kotlin.introspection.test
+            fun DeprecatedEnum.enumExtension(): Int
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve extension of deprecated class called on its instance without the deprecation of the class`() {
         // called on an instance, deprecatedClass.instanceExtension(), for which Kotlin reports no deprecation
         resolver.resolve(
