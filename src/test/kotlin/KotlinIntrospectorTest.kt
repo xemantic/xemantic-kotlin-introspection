@@ -10586,6 +10586,33 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should not resolve Java member of platform return type of first supertype overridden by hidden one`() {
+        // the compiler prefers the String of the hidden call() over the platform String! of the one of Callable
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenMergedCallJoin.call") == null)
+    }
+
+    @Test
+    fun `should not resolve Java member of platform return type of first supertype overridden by hidden nullable one`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenMergedNullableCallJoin.call") == null)
+    }
+
+    @Test
+    fun `should not resolve Java member of platform class return type of first supertype overridden by hidden one`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenMergedThreadFactoryJoin.newThread") == null)
+    }
+
+    @Test
+    fun `should resolve Java member of enhanced return type of first supertype overridden by hidden one`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedSupplierJoin.get"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedSupplierJoin.get [page 1/1]
+            // inherited from java.util.function.Supplier
+            fun get(): String
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve Java member of first supertype of same JVM signature as hidden one of second supertype`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.HiddenMergedRunJoin.run"

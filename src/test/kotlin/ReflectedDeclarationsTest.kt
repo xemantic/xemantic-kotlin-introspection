@@ -147,6 +147,39 @@ class ReflectedDeclarationsTest {
     }
 
     @Test
+    fun `should tell the JDK methods whose return types the compiler enhances`() {
+        // given - the enhanced JDK signatures of kotlin-reflect, the same as of the compiler, of the classes which are not final
+        val info = Class.forName("kotlin.reflect.jvm.internal.impl.load.java.typeEnhancement.PredefinedEnhancementInfoKt")
+        val bySignature = info.getDeclaredField("PREDEFINED_FUNCTION_ENHANCEMENT_INFO_BY_SIGNATURE")
+            .apply { isAccessible = true }.get(null) as Map<*, *>
+        fun Any.property(name: String): Any? = javaClass.getMethod(name).invoke(this)
+
+        // when - the nullability of the return type itself, at 0, enhanced either way
+        val enhanced = bySignature.filter { (signature, functionInfo) ->
+            val className = (signature as String).substringBefore('.').replace('/', '.')
+            val returnTypeInfo = functionInfo!!.property("getReturnTypeInfo")
+            !java.lang.reflect.Modifier.isFinal(Class.forName(className).modifiers) &&
+                (returnTypeInfo?.property("getMap") as Map<*, *>?).orEmpty()[0]?.property("getNullability") != null
+        }.keys.mapTo(HashSet()) { it as String }
+
+        // then
+        assert(enhanced == ENHANCED_RETURN_JDK_METHODS)
+    }
+
+    @Test
+    fun `should tell platform return type of JDK method not enhanced by the compiler`() {
+        // given - kotlin-reflect tells both as T!, while the compiler enhances the one of Supplier as T
+        val call = java.util.concurrent.Callable::class.memberFunctions.single { it.name == "call" }
+        val get = java.util.function.Supplier::class.memberFunctions.single { it.name == "get" }
+
+        // when
+        val platform = listOf(call, get).map { it.returnsPlatformType }
+
+        // then
+        assert(platform == listOf(true, false))
+    }
+
+    @Test
     fun `should enhance only value parameters of methods of java util Map as definitely not nullable`() {
         // given - the enhancement is applied to the value parameters of the methods of java.util.Map, and of their overrides,
         // so that an entry of another class, or of a return type, at -1, would be dropped, and needs to be implemented first
