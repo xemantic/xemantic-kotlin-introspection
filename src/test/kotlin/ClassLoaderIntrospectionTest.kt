@@ -2808,7 +2808,7 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
-    fun `should tell overrides of internal members by modality in final classes which can be neither read nor reflected`() {
+    fun `should tell overrides of internal members in final classes which can be neither read nor reflected`() {
         // given
         val introspector = unreflectableIntrospector()
 
@@ -2821,20 +2821,24 @@ class ClassLoaderIntrospectionTest {
         )
 
         // then
-        // the JVM methods telling a mangled override cannot be read, so in a final class the modality is the evidence,
-        // as only an override is open there
+        // the JVM methods telling a mangled override can be neither read nor reflected all at once,
+        // but the one of state is still resolved on its own, declared by the class itself,
+        // while the one of mark cannot be resolved without the marker class,
+        // so in a final class the modality is the evidence for mark, as only an override is open there
         sameModule sameAsKotlin """
             // com.xemantic.kotlin.introspection.othermodule.UnreflectableSameModuleSubclass [page 1/1]
             class UnreflectableSameModuleSubclass : InternalBase {
                 override val state: Int
+                override fun mark(marker: OtherModuleMarker)
                 fun take(marker: OtherModuleMarker)
             }
         """.trimIndent()
-        // also of a friend module, otherwise told only by the bridge, which cannot be seen
+        // also of a friend module, whose bridge is resolved for state, but cannot be seen for mark
         friendModule sameAsKotlin """
             // com.xemantic.kotlin.introspection.friendmodule.UnreflectableFriendModuleSubclass [page 1/1]
             class UnreflectableFriendModuleSubclass : com.xemantic.kotlin.introspection.othermodule.InternalBase {
                 override val state: Int
+                override fun mark(marker: com.xemantic.kotlin.introspection.othermodule.OtherModuleMarker)
                 fun take(marker: com.xemantic.kotlin.introspection.othermodule.OtherModuleMarker)
             }
         """.trimIndent()
@@ -2844,20 +2848,29 @@ class ClassLoaderIntrospectionTest {
      * An introspector of the fixtures of the other module and the friend module, without the marker class,
      * which the methods of the `Unreflectable` classes refer to, so that they cannot be reflected,
      * while their class files cannot be read either, being of an unsupported class file version.
+     *
+     * @param shrunkBridges the bridges removed from the classes, by their class file resources,
+     *   the JVM names mangled with a module name, like R8 might remove them.
      */
-    private fun unreflectableIntrospector(): KotlinIntrospector {
-        val root = tempDir.resolve("unreflectable")
+    private fun unreflectableIntrospector(shrunkBridges: Map<String, String> = emptyMap()): KotlinIntrospector {
+        val root = tempDir.resolve(if (shrunkBridges.isEmpty()) "unreflectable" else "unreflectable-shrunk")
         listOf(InternalBase::class.java, FriendModuleSubclass::class.java).forEach { fixture ->
             val dir = File(fixture.protectionDomain.codeSource.location.toURI())
             dir.walkTopDown()
                 .filter { it.isFile && it.name != "OtherModuleMarker.class" }
                 .forEach { it.copyTo(root.resolve(it.relativeTo(dir).path).toFile(), overwrite = true) }
         }
+        // and the single fixture of this module, of another name, not a friend of the other module
+        val otherModuleFixture = "com/xemantic/kotlin/introspection/test/UnreflectableOpenOtherModuleSubclass.class"
+        javaClass.classLoader.getResourceAsStream(otherModuleFixture)!!.use { stream ->
+            root.resolve(otherModuleFixture).also { it.parent.createDirectories() }.writeBytes(stream.readBytes())
+        }
         val unreadableResources = setOf(
             "com/xemantic/kotlin/introspection/othermodule/UnreflectableSameModuleSubclass.class",
             "com/xemantic/kotlin/introspection/othermodule/UnreflectableOpenSameModuleSubclass.class",
             "com/xemantic/kotlin/introspection/friendmodule/UnreflectableFriendModuleSubclass.class",
-            "com/xemantic/kotlin/introspection/friendmodule/UnreflectableOpenFriendModuleSubclass.class"
+            "com/xemantic/kotlin/introspection/friendmodule/UnreflectableOpenFriendModuleSubclass.class",
+            otherModuleFixture
         )
         // a new Unreflectable fixture must be listed above, or it would stay readable
         val unreflectableFixtures = root.toFile().walkTopDown()
@@ -2865,11 +2878,16 @@ class ClassLoaderIntrospectionTest {
             .map { it.relativeTo(root.toFile()).invariantSeparatorsPath }
             .toSet()
         assert(unreflectableFixtures == unreadableResources)
+        shrunkBridges.forEach { (resource, bridge) ->
+            val file = root.resolve(resource)
+            file.writeBytes(withoutMethods(file.toFile().readBytes()) { name, _ -> name == bridge })
+        }
         // loading the fixtures of both modules itself, without the marker class, which their methods refer to
         val classLoader = object : URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader) {
             override fun loadClass(name: String, resolve: Boolean): Class<*> =
                 if (name.startsWith("com.xemantic.kotlin.introspection.othermodule.") ||
-                    name.startsWith("com.xemantic.kotlin.introspection.friendmodule.")
+                    name.startsWith("com.xemantic.kotlin.introspection.friendmodule.") ||
+                    name == "com.xemantic.kotlin.introspection.test.UnreflectableOpenOtherModuleSubclass"
                 ) {
                     synchronized(getClassLoadingLock(name)) { findLoadedClass(name) ?: findClass(name) }
                 } else {
@@ -2891,7 +2909,34 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
-    fun `should tell overrides of internal members by module name in open classes which can be neither read nor reflected`() {
+    fun `should tell overrides of internal members by modality in final classes which can be neither read nor reflected whose bridges are shrunk`() {
+        // given
+        val introspector = unreflectableIntrospector(
+            shrunkBridges = mapOf(
+                "com/xemantic/kotlin/introspection/friendmodule/UnreflectableFriendModuleSubclass.class" to
+                    "getState${'$'}com_xemantic_kotlin_xemantic_kotlin_introspection_otherModuleTestFixtures"
+            )
+        )
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.friendmodule.UnreflectableFriendModuleSubclass"
+        )
+
+        // then
+        // the bridge resolved alone is not declared, as a shrinker removed it, which the modality still tells
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.friendmodule.UnreflectableFriendModuleSubclass [page 1/1]
+            class UnreflectableFriendModuleSubclass : com.xemantic.kotlin.introspection.othermodule.InternalBase {
+                override val state: Int
+                override fun mark(marker: com.xemantic.kotlin.introspection.othermodule.OtherModuleMarker)
+                fun take(marker: com.xemantic.kotlin.introspection.othermodule.OtherModuleMarker)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should tell overrides of internal members in open classes which can be neither read nor reflected`() {
         // given
         val introspector = unreflectableIntrospector()
 
@@ -2902,21 +2947,37 @@ class ClassLoaderIntrospectionTest {
         val friendModule = introspector.resolve(
             "com.xemantic.kotlin.introspection.friendmodule.UnreflectableOpenFriendModuleSubclass"
         )
+        val otherModule = introspector.resolve(
+            "com.xemantic.kotlin.introspection.test.UnreflectableOpenOtherModuleSubclass"
+        )
 
         // then
-        // the JVM methods telling a mangled override cannot be read, and the modality tells nothing in an open class,
+        // the JVM methods telling a mangled override can be neither read nor reflected all at once,
+        // but the one of state is still resolved on its own, declared by the class itself,
+        // while the one of mark cannot be resolved without the marker class, and the modality tells nothing in an open class,
         // so a module of the same name is assumed to be the same module
         sameModule sameAsKotlin """
             // com.xemantic.kotlin.introspection.othermodule.UnreflectableOpenSameModuleSubclass [page 1/1]
             open class UnreflectableOpenSameModuleSubclass : InternalBase {
                 override val state: Int
+                override fun mark(marker: OtherModuleMarker)
                 fun take(marker: OtherModuleMarker)
             }
         """.trimIndent()
-        // while an override from a friend module, of another name, is told only by the bridge, which cannot be seen
+        // so the override of state from a friend module, of another name, is told by its bridge,
+        // while the one of mark, whose bridge cannot be resolved, is not told
         friendModule sameAsKotlin """
             // com.xemantic.kotlin.introspection.friendmodule.UnreflectableOpenFriendModuleSubclass [page 1/1]
             open class UnreflectableOpenFriendModuleSubclass : com.xemantic.kotlin.introspection.othermodule.InternalBase {
+                override val state: Int
+                open fun mark(marker: com.xemantic.kotlin.introspection.othermodule.OtherModuleMarker)
+                fun take(marker: com.xemantic.kotlin.introspection.othermodule.OtherModuleMarker)
+            }
+        """.trimIndent()
+        // and the inherited bridge of the overridden member, declared by the supertype, is no evidence
+        otherModule sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.UnreflectableOpenOtherModuleSubclass [page 1/1]
+            open class UnreflectableOpenOtherModuleSubclass : com.xemantic.kotlin.introspection.othermodule.InternalBase {
                 open val state: Int
                 fun take(marker: com.xemantic.kotlin.introspection.othermodule.OtherModuleMarker)
             }

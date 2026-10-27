@@ -23,6 +23,8 @@ open class InternalBase {
     internal open fun reset() {}
     internal open val state: Int get() = 0
     open fun keep() {}
+    // its JVM method cannot be resolved without the marker class, left out by a test
+    internal open fun mark(marker: OtherModuleMarker) {}
 }
 
 class SameModuleSubclass : InternalBase() {
@@ -52,10 +54,12 @@ class OtherModuleMarker
 
 class UnreflectableSameModuleSubclass : InternalBase() {
     public override val state: Int get() = 1
+    public override fun mark(marker: OtherModuleMarker) {}
     fun take(marker: OtherModuleMarker) {}
 }
 
 open class UnreflectableOpenSameModuleSubclass : InternalBase() {
     public override val state: Int get() = 1
+    public override fun mark(marker: OtherModuleMarker) {}
     fun take(marker: OtherModuleMarker) {}
 }

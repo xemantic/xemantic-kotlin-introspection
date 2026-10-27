@@ -25,6 +25,8 @@ import org.objectweb.asm.MethodVisitor
 import org.objectweb.asm.Opcodes
 import org.objectweb.asm.signature.SignatureReader
 import org.objectweb.asm.signature.SignatureVisitor
+import java.lang.invoke.MethodHandles
+import java.lang.invoke.MethodType
 import java.lang.reflect.GenericArrayType
 import java.lang.reflect.MalformedParameterizedTypeException
 import java.lang.reflect.Method
@@ -217,15 +219,18 @@ internal class OverrideResolver(
          * An internal member with a mangled [jvmMethod], visible if the overriding class declares the [jvmMethod]:
          * as its own override in the same module, or as the bridge to its own override in a friend module,
          * which is the only trace of a friend module.
+         * When the JVM methods of the overriding class can be neither read nor reflected, the [jvmMethod] alone
+         * is still resolved, see [Overridables.resolvedOwnerDeclares], unless a type of its descriptor cannot be loaded either,
+         * or the class is relocated; in a final class only a declared one counts, as the bridge might be shrunk.
          * When a shrinker, like R8, removed the JVM method of the overriding member, the bridge might be removed too,
-         * and when the JVM methods of the overriding class can be neither read nor reflected, the bridge cannot be seen,
+         * and when the [jvmMethod] cannot be resolved, the bridge cannot be seen,
          * so that the modality of the member is the evidence in a final class instead, like for an [Unmangled] one,
          * while a friend-module override in a class which is not final is not told.
          *
          * @param jvmMethod the JVM name followed by the descriptor of the member.
          * @param isSameModuleName whether the module of the member has the same name as the one of the overriding class,
          *   the evidence when the JVM methods of the overriding class do not tell otherwise in a class which is not final:
-         *   when they can be neither read nor reflected, or when the overriding member is shrunk;
+         *   when the [jvmMethod] can be neither read, nor reflected, nor resolved, or when the overriding member is shrunk;
          *   a module of the same name is likely the same module,
          *   while for a module of another name an override is claimed only on evidence.
          */
@@ -266,6 +271,9 @@ internal class OverrideResolver(
      *   like `toArray` of the collection types, or `clone()` and `finalize()` of `Object`, by their names,
      *   only telling the overrides of platform methods by the Java methods of an application, see [shrinkableJava].
      * @param relocation the relocation of the classes the owner class refers to, see [relocation].
+     * @param resolveOwnerJvmMethod tells whether the owner class declares a JVM method, as a name followed by a descriptor,
+     *   when its JVM methods can be neither read nor reflected, see [declaresResolvedJvmMethod],
+     *   the outcome not final after a transient failure.
      */
     private class Overridables(
         val relocation: Relocation?,
@@ -273,9 +281,27 @@ internal class OverrideResolver(
         val functions: Map<String, List<Overridable>>,
         val properties: Map<String, List<Overridable>>,
         val hiddenPlatformFunctions: Map<String, List<Overridable>>,
-        private val readOwnerJvmMethods: FinalOnce<OwnerJvmMethods?>
+        private val readOwnerJvmMethods: FinalOnce<OwnerJvmMethods?>,
+        private val resolveOwnerJvmMethod: (String) -> TransientFailures.Outcome<Boolean?>
     ) {
         val ownerJvmMethods: Set<String>? get() = readOwnerJvmMethods.value?.methods
+
+        /**
+         * The final outcomes of [resolvedOwnerDeclares], computed once, as the overridables are cached.
+         */
+        private val resolvedOwnerJvmMethods = ConcurrentHashMap<String, TransientFailures.Outcome<Boolean?>>()
+
+        /**
+         * Whether the owner class declares the [jvmMethod], as a name followed by a descriptor,
+         * told by resolving the [jvmMethod] alone, when the [ownerJvmMethods] can be neither read nor reflected,
+         * or `null` if it cannot be told.
+         */
+        fun resolvedOwnerDeclares(jvmMethod: String): Boolean? {
+            resolvedOwnerJvmMethods[jvmMethod]?.let { return it.value }
+            val outcome = resolveOwnerJvmMethod(jvmMethod)
+            if (outcome.isFinal) resolvedOwnerJvmMethods[jvmMethod] = outcome
+            return outcome.value
+        }
 
         /**
          * The [ownerJvmMethods] by their shapes, see [methodShape], only needed for a relocated class file, see [isShrunk].
@@ -672,7 +698,11 @@ internal class OverrideResolver(
                     visibility.isSameModuleName
                 }
             is MemberVisibility.Mangled -> {
-                val declaresJvmMethod = ownerJvmMethods?.contains(visibility.jvmMethod)
+                // the JVM method resolved alone is not needed for a shrunk member, told only by the JVM methods read,
+                // and in a final class it only confirms an override, as the bridge might be shrunk, the modality telling then
+                val declaresJvmMethod = ownerJvmMethods?.contains(visibility.jvmMethod) ?: if (isShrunk) null else {
+                    resolvedOwnerDeclares(visibility.jvmMethod)?.takeIf { it || owner.modality != Modality.FINAL }
+                }
                 when {
                     declaresJvmMethod == true -> true
                     (isShrunk || declaresJvmMethod == null) && owner.modality == Modality.FINAL -> modality != Modality.FINAL
@@ -1016,7 +1046,12 @@ internal class OverrideResolver(
                 )
             }
             TransientFailures.Outcome(jvmMethods, isFinal = transientFailures.count() == failureCount)
-        })
+        }) { jvmMethod ->
+            val failureCount = transientFailures.count()
+            // the descriptors of the metadata are not relocated, unlike the ones of a relocated class
+            val declares = if (relocation == null) declaresResolvedJvmMethod(ownerName, jvmMethod) else null
+            TransientFailures.Outcome(declares, isFinal = transientFailures.count() == failureCount)
+        }
         return CollectedOverridables(overridables, isMissing)
     }
 
@@ -1094,6 +1129,60 @@ internal class OverrideResolver(
         return reflectOrNull {
             clazz.declaredMethods.map { DeclaredMethod(it.modifiers, it.name, AsmType.getMethodDescriptor(it)) }
         }
+    }
+
+    /**
+     * Whether the class declares the [jvmMethod], as a name followed by a descriptor, like `getState${'$'}core()I`,
+     * told by resolving the JVM method alone, like the JVM links a call, through a method handle,
+     * also when the methods of the class can be neither read nor reflected,
+     * like when its class file cannot be parsed, and another method refers to a class missing from the classpath,
+     * which fails reflecting all the methods of the class at once, see [declaredMethods];
+     * the JVM method resolved might be inherited, so it is declared only if the class itself is the declaring one.
+     * It is `null` if the method cannot be resolved, like when a type of its descriptor cannot be loaded,
+     * the types loaded like any other class, so that a transient failure is marked,
+     * or the class is not accessible, like in a package not opened by its JVM module.
+     */
+    private fun declaresResolvedJvmMethod(className: String, jvmMethod: String): Boolean? {
+        val clazz = loadClassByMetadataName(className) ?: return null
+        val name = jvmMethod.substringBefore('(')
+        val descriptor = AsmType.getMethodType(jvmMethod.removePrefix(name))
+        val returnType = jvmClass(descriptor.returnType) ?: return null
+        val parameterTypes = descriptor.argumentTypes.map { jvmClass(it) ?: return null }
+        return try {
+            reflectOrNull {
+                val lookup = MethodHandles.privateLookupIn(clazz, MethodHandles.lookup())
+                val handle = lookup.findVirtual(clazz, name, MethodType.methodType(returnType, parameterTypes))
+                lookup.revealDirect(handle).declaringClass == clazz
+            }
+        } catch (_: ReflectiveOperationException) {
+            // not found, or not accessible
+            null
+        } catch (_: IllegalArgumentException) {
+            null
+        } catch (_: SecurityException) {
+            null
+        }
+    }
+
+    /**
+     * The JVM class of the [type] of a descriptor, loaded like any other class, see [loadClassByMetadataName],
+     * or `null` if it cannot be loaded.
+     */
+    private fun jvmClass(type: AsmType): Class<*>? = when (type.sort) {
+        AsmType.VOID -> Void.TYPE
+        AsmType.BOOLEAN -> Boolean::class.javaPrimitiveType
+        AsmType.CHAR -> Char::class.javaPrimitiveType
+        AsmType.BYTE -> Byte::class.javaPrimitiveType
+        AsmType.SHORT -> Short::class.javaPrimitiveType
+        AsmType.INT -> Int::class.javaPrimitiveType
+        AsmType.FLOAT -> Float::class.javaPrimitiveType
+        AsmType.LONG -> Long::class.javaPrimitiveType
+        AsmType.DOUBLE -> Double::class.javaPrimitiveType
+        AsmType.ARRAY -> jvmClass(type.elementType)?.let { element ->
+            (1..type.dimensions).fold(element) { array, _ -> java.lang.reflect.Array.newInstance(array, 0).javaClass }
+        }
+        // the binary name keeps the '$' of a nested class, like the metadata name of the class would tell it
+        else -> loadClassByMetadataName(type.internalName)
     }
 
     /**
