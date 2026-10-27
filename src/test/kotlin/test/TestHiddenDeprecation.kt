@@ -394,9 +394,61 @@ class HiddenMergedPinned : HiddenOverride(), HiddenMergedMember, HiddenMergedSel
 
 fun <T : HiddenMergedSelf<T>> T.member(): String = ""
 
+// the visible member of the first direct supertype, which the hidden one of the second overrides, is still picked,
+// so that join.f() compiles, while reversed.f() does not
+interface HiddenMergedOverriddenJoin : HiddenMergedRoot, HiddenMergedLeft
+
+interface HiddenMergedOverriddenJoinReversed : HiddenMergedLeft, HiddenMergedRoot
+
+// the same with the hidden one contributed through an intermediate supertype, also on a subtype, and through a superclass
+interface HiddenMergedOverriddenVia : HiddenMergedRoot, HiddenMergedVia
+
+interface HiddenMergedOverriddenViaSub : HiddenMergedOverriddenVia
+
+abstract class HiddenMergedOverriddenClassJoin : HiddenMergedRoot, HiddenMergedLeftClass()
+
+abstract class HiddenMergedOverriddenClassJoinReversed : HiddenMergedLeftClass(), HiddenMergedRoot
+
+// the hidden override declared by a supertype which is not part of the API still hides the member it overrides,
+// so that neither hiddenClass.f(), nor internal.f() compiles
+@Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+interface HiddenMergedHiddenClassLeft : HiddenMergedRoot {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    override fun f(): Int
+}
+
+@Suppress("DEPRECATION_ERROR")
+interface HiddenMergedHiddenClassSub : HiddenMergedHiddenClassLeft
+
+internal interface HiddenMergedInternalLeft : HiddenMergedRoot {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    override fun f(): Int
+}
+
+@Suppress("EXPOSED_SUPER_INTERFACE")
+interface HiddenMergedInternalSub : HiddenMergedInternalLeft
+
+// the hidden member of the same JVM signature as the Java method of the first direct supertype does not hide it,
+// so that join.run() compiles, while reversed.run() calls the run scope function instead
+interface HiddenMergedRun {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    fun run()
+}
+
+abstract class HiddenMergedRunJoin : Runnable, HiddenMergedRun
+
+abstract class HiddenMergedRunJoinReversed : HiddenMergedRun, Runnable
+
+abstract class HiddenMergedRunThread : Thread(), HiddenMergedRun
+
 // compiles, as the merged members picked are not hidden
 @Suppress("unused")
 private fun callMergedMembers(
+    overriddenJoin: HiddenMergedOverriddenJoin,
+    overriddenViaSub: HiddenMergedOverriddenViaSub,
+    overriddenClassJoin: HiddenMergedOverriddenClassJoin,
+    runJoin: HiddenMergedRunJoin,
+    runThread: HiddenMergedRunThread,
     joinReversed: HiddenMergedJoinReversed,
     restoredSubReversed: HiddenMergedJoinRestoredSubReversed,
     specific: HiddenMergedSpecificJoin,
@@ -406,6 +458,11 @@ private fun callMergedMembers(
     extended: HiddenMergedExtended,
     pinned: HiddenMergedPinned
 ) {
+    overriddenJoin.f()
+    overriddenViaSub.f()
+    overriddenClassJoin.f()
+    runJoin.run()
+    runThread.run()
     joinReversed.f()
     restoredSubReversed.f()
     specific.h()
