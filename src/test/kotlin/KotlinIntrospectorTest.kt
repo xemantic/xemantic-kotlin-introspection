@@ -1111,6 +1111,120 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should list extensions of companion object of deprecated class under the deprecation of the class`() {
+        // Kotlin reports the deprecation of the class for DeprecatedOuterCompanionExtensionHolder.of() on the name of the class,
+        // which the caller writes, like for any other use of it, so it is told by the header only,
+        // unlike the one of the companion object, which the caller does not name
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.DeprecatedOuterCompanionExtensionHolder"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DeprecatedOuterCompanionExtensionHolder [page 1/1]
+            @Deprecated("Use CompanionExtensionHolder") class DeprecatedOuterCompanionExtensionHolder {
+                companion object {
+                    fun create(): Int
+                }
+            }
+            // from com.xemantic.kotlin.introspection.test
+            val DeprecatedOuterCompanionExtensionHolder.Companion.default: Int
+            fun DeprecatedOuterCompanionExtensionHolder.Companion.of(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should list extensions of companion object of class deprecated as error under the deprecation of the class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ErrorOuterCompanionExtensionHolder"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ErrorOuterCompanionExtensionHolder [page 1/1]
+            @Deprecated("Removed", level = DeprecationLevel.ERROR) class ErrorOuterCompanionExtensionHolder {
+                companion object
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun ErrorOuterCompanionExtensionHolder.Companion.of(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension property of companion object of deprecated class without the deprecation of the class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.DeprecatedOuterCompanionExtensionHolder.default"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DeprecatedOuterCompanionExtensionHolder.default [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            val DeprecatedOuterCompanionExtensionHolder.Companion.default: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `search should not find class deprecated with hidden level nor its companion object extended`() {
+        // the search finds classes by name, the extension of the companion object is reached only through the class
+        assert(resolver.search("HiddenOuterCompanionExtensionHolder") == null)
+    }
+
+    @Test
+    fun `should resolve extension of companion object of deprecated class without the deprecation of the class`() {
+        // like a member of the companion object, resolved as DeprecatedOuterCompanionExtensionHolder.create,
+        // or a nested class, the deprecation of the class is told only when resolving the class itself
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ErrorOuterCompanionExtensionHolder.of"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ErrorOuterCompanionExtensionHolder.of [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            fun ErrorOuterCompanionExtensionHolder.Companion.of(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of companion object of deprecated class without the deprecation of the class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.DeprecatedOuterCompanionExtensionHolder.create"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DeprecatedOuterCompanionExtensionHolder.create [page 1/1]
+            companion object {
+                fun create(): Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension of companion object of nested class without the deprecation of the outer class`() {
+        // Kotlin reports the deprecation of the outer class on its name, DeprecatedOuterOfNestedCompanionExtensionHolder.Nested.of()
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.DeprecatedOuterOfNestedCompanionExtensionHolder.Nested.of"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DeprecatedOuterOfNestedCompanionExtensionHolder.Nested.of [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            fun DeprecatedOuterOfNestedCompanionExtensionHolder.Nested.Companion.of(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should list extensions of deprecated companion object of deprecated class with the deprecation of the companion object only`() {
+        // Kotlin reports both deprecations for DeprecatedOuterAndCompanionExtensionHolder.of(), the one of the class on its name
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.DeprecatedOuterAndCompanionExtensionHolder"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DeprecatedOuterAndCompanionExtensionHolder [page 1/1]
+            @Deprecated("Use CompanionExtensionHolder") class DeprecatedOuterAndCompanionExtensionHolder {
+                @Deprecated("Use the constructor") companion object
+            }
+            // from com.xemantic.kotlin.introspection.test
+            /* companion object deprecated: "Use the constructor" */ fun DeprecatedOuterAndCompanionExtensionHolder.Companion.of(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve extension of companion object of class deprecated with hidden level`() {
+        // Kotlin reports HiddenOuterCompanionExtensionHolder.of() as an error, like any use of the hidden class
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenOuterCompanionExtensionHolder.of") == null)
+    }
+
+    @Test
+    fun `should not resolve extension of companion object of class deprecated with hidden level by its name`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenOuterCompanionExtensionHolder.Companion.of") == null)
+    }
+
+    @Test
     fun `should resolve extension of companion object of built-in type as its member`() {
         // String.format("%d", 42), next to the extensions on the instances, like "%d".format(42)
         resolver.resolve("kotlin.String.format") sameAsKotlin """

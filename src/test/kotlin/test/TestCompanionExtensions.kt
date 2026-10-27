@@ -84,3 +84,53 @@ class CommentEndingCompanionExtensionHolder {
 @Suppress("DEPRECATION")
 fun CommentEndingCompanionExtensionHolder.Companion.of(): CommentEndingCompanionExtensionHolder =
     CommentEndingCompanionExtensionHolder()
+
+// Extensions on the companion object of a deprecated class, called as DeprecatedOuterCompanionExtensionHolder.of(),
+// for which Kotlin reports the deprecation of the class on its name, written by the caller, unlike the one of the companion object
+@Deprecated("Use CompanionExtensionHolder")
+class DeprecatedOuterCompanionExtensionHolder {
+    companion object {
+        fun create(): Int = 0
+    }
+}
+
+@Suppress("DEPRECATION")
+fun DeprecatedOuterCompanionExtensionHolder.Companion.of(): Int = 0
+
+@Suppress("DEPRECATION")
+val DeprecatedOuterCompanionExtensionHolder.Companion.default: Int get() = 0
+
+@Deprecated("Removed", level = DeprecationLevel.ERROR)
+class ErrorOuterCompanionExtensionHolder {
+    companion object
+}
+
+@Suppress("DEPRECATION_ERROR")
+fun ErrorOuterCompanionExtensionHolder.Companion.of(): Int = 0
+
+@Deprecated("Removed", level = DeprecationLevel.HIDDEN)
+class HiddenOuterCompanionExtensionHolder {
+    companion object
+}
+
+@Suppress("DEPRECATION_ERROR")
+fun HiddenOuterCompanionExtensionHolder.Companion.of(): Int = 0
+
+@Deprecated("Use CompanionExtensionHolder")
+class DeprecatedOuterOfNestedCompanionExtensionHolder {
+    class Nested {
+        companion object
+    }
+}
+
+@Suppress("DEPRECATION")
+fun DeprecatedOuterOfNestedCompanionExtensionHolder.Nested.Companion.of(): Int = 0
+
+@Deprecated("Use CompanionExtensionHolder")
+class DeprecatedOuterAndCompanionExtensionHolder {
+    @Deprecated("Use the constructor")
+    companion object
+}
+
+@Suppress("DEPRECATION")
+fun DeprecatedOuterAndCompanionExtensionHolder.Companion.of(): Int = 0

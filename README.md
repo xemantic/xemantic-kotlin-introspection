@@ -103,6 +103,10 @@ com.example.AnnotationTestClass
   is told on its extensions listed with the class, or resolved by its name, in a comment, as no annotation compiles there,
   after the deprecation of the extension itself, if any,
   like `/* companion object deprecated: "Use the constructor", level = DeprecationLevel.ERROR */ fun Foo.Companion.parse(): Foo`.
+  The deprecation of the class itself, which Kotlin reports for `Foo.parse()` too,
+  is not told there, but only by the header of the class when the class itself is resolved,
+  like for the members of its companion object, or its nested classes,
+  as Kotlin reports it on the name of the class, which the caller writes, like for any other use of the class.
   The members a class inherits from its supertypes, without redeclaring them, are not listed, not to bloat the listing,
   but they are resolved by its name, after the members it declares, which override them, and before the extensions,
   each as declared by the nearest supertype declaring it, under its `// inherited from` header,
