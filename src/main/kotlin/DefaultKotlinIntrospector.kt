@@ -3169,14 +3169,17 @@ internal class DefaultKotlinIntrospector(
                 }
                 is KmClassifier.Class -> isNullabilityMatched(expected, actual, variance) && run {
                     // a Java collection, like (Mutable)List<String!>! of java.util.List<String>, is the read-only one,
-                    // or else the mutable one, see isJavaCollection, and matchesMutable
+                    // or else the mutable one, see isJavaCollection, and matchesMutable, either the actual one,
+                    // or the expected one, of a supertype of the type argument of the extension, see classMatches
                     val mutable = actual.mutableAlternative()
-                    if (mutable == null) {
+                    val expectedMutable = expected.mutableAlternative()
+                    if (mutable == null && expectedMutable == null) {
                         classMatches(expected, classifier.name, actual, actualClassifier.name, variance, isStrict)
                     } else {
                         val inferredCounts = inferredCounts()
                         classMatches(expected, classifier.name, actual, actualClassifier.name, variance, isStrict) ||
-                            matchesMutable(expected, classifier.name, mutable, variance, inferredCounts)
+                            (mutable != null && matchesMutable(expected, mutable, variance, inferredCounts)) ||
+                            (expectedMutable != null && matchesMutable(expectedMutable, actual, variance, inferredCounts))
                     }
                 }
                 is KmClassifier.TypeAlias -> !isStrict
@@ -3226,25 +3229,21 @@ internal class DefaultKotlinIntrospector(
         }
 
         /**
-         * Whether the [expected] type of the class of the given [name] matches the [mutable] alternative of a Java collection,
+         * Whether the [expected] type matches the [actual] one, either of them the mutable alternative of a Java collection,
          * see [mutableAlternative], after its read-only one does not, see [classMatches],
          * strictly, without what is not told, like a star projection, or a projected supertype argument, matching any type,
          * see [argumentsMatch], nor inferring a bounded type parameter, whose bounds are not checked, see [infer],
-         * so that it lists only the extensions which can be called, never more than the read-only one alone would,
+         * so that the mutable alternative adds only the extensions which can be called, as far as they are told,
          * like on `MutableList<String>`, but not on `MutableList<*>` for `(Mutable)List<String!>!`,
+         * while a type parameter of the class still stands for any type, see [matches],
          * forgetting what the read-only one, and then the mutable one, inferred, when they do not match,
          * since the [inferredCounts] taken before either of them.
          */
-        private fun matchesMutable(
-            expected: KmType,
-            name: String,
-            mutable: KmType,
-            variance: KmVariance,
-            inferredCounts: Map<Int, Int>
-        ): Boolean {
+        private fun matchesMutable(expected: KmType, actual: KmType, variance: KmVariance, inferredCounts: Map<Int, Int>): Boolean {
             forgetInferredSince(inferredCounts)
-            val mutableName = (mutable.classifier as KmClassifier.Class).name
-            return classMatches(expected, name, mutable, mutableName, variance, isStrict = true).also { isMatched ->
+            val name = (expected.classifier as KmClassifier.Class).name
+            val actualName = (actual.classifier as KmClassifier.Class).name
+            return classMatches(expected, name, actual, actualName, variance, isStrict = true).also { isMatched ->
                 if (!isMatched) forgetInferredSince(inferredCounts)
             }
         }
@@ -6482,7 +6481,8 @@ private fun KmType.mutableAlternative(): KmType? {
 
 /**
  * The structure of this type, as a key, like `kotlin/Comparable<INVARIANT java/lang/Integer!>`,
- * telling the classifiers, the type arguments with their projections, the nullability and the flexibility.
+ * telling the classifiers, the type arguments with their projections, whether suspend, the nullability, also definitely
+ * not nullable, and the flexibility, but not the annotations of a function type, which do not tell its supertypes.
  */
 private fun KmType.structureKey(): String = StringBuilder().also { appendStructure(it) }.toString()
 
@@ -6503,7 +6503,9 @@ private fun KmType.appendStructure(key: StringBuilder) {
         }
         key.append('>')
     }
+    if (isSuspend) key.append('^')
     if (isNullable) key.append('?')
+    if (isDefinitelyNonNull) key.append('&')
     if (flexibleTypeUpperBound != null) key.append('!')
     if (isJavaCollection) key.append('~')
 }

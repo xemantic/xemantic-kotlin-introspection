@@ -476,3 +476,15 @@ fun <N : JavaFace<N>> N.faceLink(next: N): N = next
 class BoundedReceiverJavaFaceLeaf : JavaFaceBase<BoundedReceiverJavaFaceLeaf>() {
     fun faceLink(next: BoundedReceiverJavaFaceLeaf): BoundedReceiverJavaFaceLeaf = next
 }
+
+// the read-only List<String> of the Java supertype of the receiver type argument, also a mutable one,
+// taking a MutableList<String> in a contravariant position
+class BoundedReceiverMutableRowsSink : BoundedReceiverSink<BoundedReceiverRows<MutableList<String>>>
+
+class BoundedReceiverKotlinStringRows : BoundedReceiverKotlinRows<String>()
+
+fun BoundedReceiverSink<JavaListRows<String>>.sinkJavaRows() {}
+
+fun BoundedReceiverSink<BoundedReceiverKotlinRows<String>>.sinkKotlinRows() {}
+
+fun BoundedReceiverSink<BoundedReceiverKotlinStringRows>.sinkKotlinStringRows() {}

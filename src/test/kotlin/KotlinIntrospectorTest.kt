@@ -6248,6 +6248,22 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve class with extensions on contravariant subtypes of Java list of its mutable list type argument`() {
+        // the (Mutable)List<String!>! of JavaListRows<String> is a MutableList<String>, also through its Kotlin subclasses
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverMutableRowsSink"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverMutableRowsSink [page 1/1]
+            class BoundedReceiverMutableRowsSink : BoundedReceiverSink<BoundedReceiverRows<MutableList<String>>>
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverSink<com.xemantic.kotlin.introspection.test.other.JavaListRows<String>>.sinkJavaRows()
+            fun BoundedReceiverSink<BoundedReceiverKotlinRows<String>>.sinkKotlinRows()
+            fun BoundedReceiverSink<BoundedReceiverKotlinStringRows>.sinkKotlinStringRows()
+            fun BoundedReceiverSink<Nothing>.sinkNothing()
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve subclass of Throwable with extension on type parameter bounded by its JVM supertype`() {
         // kotlin.Throwable is a java.io.Serializable on the JVM
         resolver.resolve(
