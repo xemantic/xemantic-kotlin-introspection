@@ -592,7 +592,7 @@ internal fun KType.toKmType(scope: ReflectedTypeParameters, platformAsNullable: 
  * The mutable counterparts of the read-only collection types, by their class names,
  * like `kotlin/collections/MutableCollection` of `kotlin/collections/Collection`.
  */
-private val MUTABLE_COLLECTION_TYPES: Map<String, String> = listOf(
+internal val MUTABLE_COLLECTION_TYPES: Map<String, String> = listOf(
     "Iterable", "Collection", "List", "Set", "Map", "Iterator", "ListIterator"
 ).associate { "kotlin/collections/$it" to "kotlin/collections/Mutable$it" } +
     ("kotlin/collections/Map.Entry" to "kotlin/collections/MutableMap.MutableEntry")

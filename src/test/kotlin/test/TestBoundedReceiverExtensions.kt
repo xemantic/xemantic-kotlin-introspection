@@ -21,8 +21,12 @@ package com.xemantic.kotlin.introspection.test
 import com.xemantic.kotlin.introspection.test.other.JavaBoundedReceiverBase
 import com.xemantic.kotlin.introspection.test.other.JavaBoxBase
 import com.xemantic.kotlin.introspection.test.other.JavaComparableBase
+import com.xemantic.kotlin.introspection.test.other.JavaFace
+import com.xemantic.kotlin.introspection.test.other.JavaFaceBase
 import com.xemantic.kotlin.introspection.test.other.JavaFunctionBase
+import com.xemantic.kotlin.introspection.test.other.JavaGenericComparable
 import com.xemantic.kotlin.introspection.test.other.JavaLinkBase
+import com.xemantic.kotlin.introspection.test.other.JavaListRows
 import com.xemantic.kotlin.introspection.test.other.JavaNamedLinkBase
 
 // Extensions on type parameter receivers, listed for the classes satisfying their bounds,
@@ -377,3 +381,39 @@ fun BoundedReceiverBox<String?>.joinNullableStrings(): String = ""
 class BoundedReceiverStringBox : JavaBoxBase<String>()
 
 class BoundedReceiverNullableStringBox : JavaBoxBase<String?>()
+
+// the type arguments of a Java supertype of a type argument, told only by its generic signature,
+// like Comparable<JavaComparableBase> of JavaComparableBase, or Comparable<StringBuilder> of java.lang.StringBuilder
+fun BoundedReceiverComparables<Comparable<JavaComparableBase>>.firstComparableJava() {}
+
+fun BoundedReceiverComparables<Comparable<JavaGenericComparable<String>>>.firstComparableGenericString() {}
+
+fun BoundedReceiverComparables<Comparable<JavaGenericComparable<Int>>>.firstComparableGenericInt() {}
+
+class BoundedReceiverJavaComparables : BoundedReceiverComparables<JavaComparableBase>
+
+class BoundedReceiverStringBuilders : BoundedReceiverComparables<StringBuilder>
+
+class BoundedReceiverJavaGenericComparables : BoundedReceiverComparables<JavaGenericComparable<String>>
+
+// the type arguments of a Java interface receiver, invariant, reached through a Java supertype
+fun JavaFace<Int>.faceOfInt() {}
+
+fun JavaFace<String>.faceOfString() {}
+
+fun JavaFace<String?>.faceOfNullableString() {}
+
+class BoundedReceiverStringFace : JavaFaceBase<String>()
+
+class BoundedReceiverNullableStringFace : JavaFaceBase<String?>()
+
+// a Java list given as a type argument by a Java supertype, either a read-only list, or a mutable one
+interface BoundedReceiverRows<T>
+
+fun BoundedReceiverRows<MutableList<String>>.addStringRow() {}
+
+fun BoundedReceiverRows<List<String>>.readStringRows() {}
+
+fun BoundedReceiverRows<List<Int>>.readIntRows() {}
+
+class BoundedReceiverStringRows : JavaListRows<String>()
