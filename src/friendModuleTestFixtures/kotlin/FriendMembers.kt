@@ -43,3 +43,8 @@ class FriendModulePublishedApiSubclass : com.xemantic.kotlin.introspection.other
 open class FriendModuleOpenPublishedApiSubclass : com.xemantic.kotlin.introspection.othermodule.PublishedApiBase() {
     public override fun publish() {}
 }
+
+open class UnreflectableOpenFriendModuleSubclass : InternalBase() {
+    public override val state: Int get() = 1
+    fun take(marker: com.xemantic.kotlin.introspection.othermodule.OtherModuleMarker) {}
+}

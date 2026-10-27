@@ -227,7 +227,9 @@ internal class OverrideResolver(
      * @param isJava whether the member is a Java method, matched by the erasure of its parameter types.
      * @param isPlatform whether the member is a Java method of a platform class, like `Throwable.toString()`,
      *   also of the JVM type of a built-in type, like `java.util.List.sort`, which a shrinker never removes,
-     *   so that it is no evidence for a shrunk override, see [shrunkOverridden].
+     *   so that it is no evidence for a shrunk override, see [shrunkOverridden],
+     *   or a Kotlin member of a built-in type of a platform class, like `Any.toString()`,
+     *   telling the overrides of platform methods by the Java methods of an application, see [shrinkableJava].
      * @param declaresDefaultValues the indices of the value parameters declaring a default value,
      *   which only a Kotlin function can.
      * @param key the key of a member of a Kotlin supertype, see [memberKey], telling which one is overridden.
@@ -395,7 +397,7 @@ internal class OverrideResolver(
         val matching = candidates.filter { it.matches(signature) }
         val overridden = matching.asSequence().filter { overridables.isVisible(it, owner.kmClass, function.modality) }
             .ifEmpty {
-                val evidence = matching.ifEmpty { candidates.filter { it.isJava && !it.isPlatform } }
+                val evidence = matching.ifEmpty { candidates.shrinkableJava() }
                 overridables.shrunkOverridden(evidence, owner.kmClass, function.modality, function.signature)
             }
         return when {
@@ -556,11 +558,12 @@ internal class OverrideResolver(
         // a property of a Kotlin supertype without metadata is known only by its JVM getter,
         // which a private or a @JvmField property does not have, and which might be renamed or mangled
         val getter = property.getterSignature?.takeIf { property.visibility.isOverridable }
-        val javaGetters = getter?.let { overridables.functions[it.name] }.orEmpty().filter { it.isJava }
+        val getterCandidates = getter?.let { overridables.functions[it.name] }.orEmpty()
+        val javaGetters = getterCandidates.filter { it.isJava }
         // a Java method taking other parameters than the receiver is not a getter
         val evidence = matching.ifEmpty {
-            javaGetters.filter {
-                !it.isPlatform && it.parameters.size == (if (property.receiverParameterType != null) 1 else 0)
+            getterCandidates.shrinkableJava().filter {
+                it.parameters.size == (if (property.receiverParameterType != null) 1 else 0)
             }
         }
         return javaGetters.any { it.matches(signature) } ||
@@ -607,7 +610,7 @@ internal class OverrideResolver(
      * otherwise the Java ones of the same name, including the ones of a Kotlin supertype without metadata,
      * as the overridden JVM method might be removed by a shrinker as well,
      * while the members of a Kotlin supertype are known by its metadata, whether shrunk or not,
-     * and the ones of a platform class are never shrunk, see [Overridable.isPlatform].
+     * and the ones of a platform class, or overriding one, are never shrunk, see [shrinkableJava].
      * A member is the evidence only if it is visible to the [owner], see [isVisible],
      * so that an internal member of another module does not make a member of the same signature an override.
      * The JVM methods of the [owner] are read only when an evidence member is visible, or is a mangled internal one.
@@ -621,6 +624,27 @@ internal class OverrideResolver(
         val visible = evidence.asSequence().filter { isVisible(it, owner, modality, isShrunk = true) }
         return if (visible.any() && isShrunk(signature)) visible else emptySequence()
     }
+
+    /**
+     * The Java members of these supertype members of the same name which a shrinker might remove,
+     * the evidence for a shrunk override when no member of the same signature is known, see [shrunkOverridden]:
+     * neither the ones of a platform class, see [Overridable.isPlatform],
+     * nor the ones of an application class overriding a platform member, like `toString()` of a Java exception,
+     * which are kept as long as the platform member is, so that they prove no override of a same-name overload either.
+     */
+    private fun List<Overridable>.shrinkableJava(): List<Overridable> {
+        val platform = filter { it.isPlatform }
+        return filter { member ->
+            member.isJava && !member.isPlatform && platform.none { it.isOverriddenByJava(member) }
+        }
+    }
+
+    /**
+     * Whether this platform member is overridden by the Java [method], matched by the erasures of its parameter types.
+     */
+    private fun Overridable.isOverriddenByJava(method: Overridable): Boolean =
+        contexts.isEmpty() && receiver == null && parameters.size == method.parameters.size &&
+            parameters.zip(method.parameters).all { (overridden, overriding) -> erasuresMatch(overridden, overriding) }
 
     /**
      * Whether the JVM method of a member, declared in the metadata, has been removed from the class file of its owner,
@@ -719,6 +743,9 @@ internal class OverrideResolver(
 
             declaration.kotlin?.let { kmClass ->
                 val substitution = supertypeSubstitution(owner, kmClass, supertype)
+                // the members of a built-in type of a platform class, also of Any, the one of Object,
+                // whose overrides by the Java methods of an application are no evidence for a shrunk override
+                val isPlatform = kmClass.name == "kotlin/Any" || declaration.java?.isPlatformClass == true
                 val isSameModuleName = kmClass.moduleName == ownerClass.moduleName
                 // the JVM name of an internal member is mangled with the module name, sanitized like by the compiler,
                 // unless it is a @PublishedApi one; the module name is absent only from the built-in declarations,
@@ -748,6 +775,7 @@ internal class OverrideResolver(
                         },
                         typeParameterCount = function.typeParameters.size,
                         isJava = false,
+                        isPlatform = isPlatform,
                         visibility = memberVisibility,
                         declaresDefaultValues = function.valueParameters.indices.filter {
                             function.valueParameters[it].declaresDefaultValue

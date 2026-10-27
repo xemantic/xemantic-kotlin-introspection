@@ -844,3 +844,16 @@ abstract class DepthScanner : com.sun.source.util.TreeScanner<Unit, Unit>() {
 class IndexedProperties : java.util.Properties() {
     val Int.property: String get() = ""
 }
+
+// Overloads of members of JDK classes overridden by application Java classes, which prove no shrunk override either
+class IndentedJavaException : com.xemantic.kotlin.introspection.test.other.JavaDescribedException() {
+    fun toString(indent: Int): String = ""
+}
+
+class IndentedJavaDescribed : com.xemantic.kotlin.introspection.test.other.JavaDescribed() {
+    fun toString(indent: Int): String = ""
+}
+
+class IndexedJavaProperties : com.xemantic.kotlin.introspection.test.other.JavaDefaultedProperties() {
+    val Int.property: String get() = ""
+}
