@@ -3171,6 +3171,8 @@ internal class DefaultKotlinIntrospector(
      * All the supertypes of a class, excluding the ones from `kotlin.*` and `java.*` packages,
      * which are not traversed further, so that a class implementing, e.g., `CharSequence`
      * is not flooded with the generic extensions of the standard library,
+     * nor with the ones of any other library on these types, like on `java.lang.AutoCloseable`,
+     * or `java.util.function.Function`, which can still be called on the class,
      * except the function types, like `(String) -> Unit`, and their supertype `kotlin.Function`,
      * whose extensions are listed for a class implementing them, like for a function type class,
      * see [functionTypeReceiverNames].
@@ -3437,6 +3439,9 @@ internal class DefaultKotlinIntrospector(
         // the classes each type parameter is inferred from, by their metadata names, with the variances of their positions
         private val inferred = HashMap<Int, MutableList<Pair<String, KmVariance>>>()
 
+        // the type parameters whose bounds are being checked, see satisfiesBounds
+        private val boundsChecked = HashSet<Int>()
+
         /**
          * Whether the class of the type parameter receiver is a subtype of the [bound].
          */
@@ -3451,10 +3456,10 @@ internal class DefaultKotlinIntrospector(
 
         /**
          * Whether the [expected] type arguments of the class of the given [metadataName] match the [actual] ones,
-         * in a position of the given [variance], see [matches].
+         * in a position of the given [variance], see [matches], each of them, see [argumentMatches].
          *
-         * @param isStrict whether what is not told, like a star projection, or a projected supertype argument,
-         *   no longer matches any type, see [matchesMutable].
+         * @param isStrict whether what is not told, like the type arguments of a class which cannot be loaded,
+         *   or a supertype reached through a raw Java type, no longer matches any type, see [matchesMutable].
          */
         fun argumentsMatch(
             metadataName: String,
@@ -3466,23 +3471,58 @@ internal class DefaultKotlinIntrospector(
             if (expected.size != actual.size) return !isStrict
             val declaredVariances = declaredVariances(metadataName)?.takeIf { it.size == expected.size } ?: return !isStrict
             return expected.indices.all { index ->
-                val expectedType = expected[index].type
-                val actualType = actual[index].type
-                // a star projection, or a projected supertype argument, matches any type, unless strict
-                if (expectedType == null || actualType == null || actual[index].variance != KmVariance.INVARIANT) {
-                    return@all !isStrict
-                }
-                val expectedVariance = expected[index].variance!!
-                // a use-site projection in an invariant position is another type, like MutableList<in String>,
-                // unless redundant, like List<out String>, told only when strict
-                if (isStrict && variance == KmVariance.INVARIANT && expectedVariance != KmVariance.INVARIANT &&
-                    expectedVariance != declaredVariances[index]
-                ) {
-                    return@all false
-                }
-                val argumentVariance = projectedVariance(declaredVariances[index], expectedVariance) ?: return@all !isStrict
-                matches(expectedType, actualType, variance.compose(argumentVariance), isStrict)
+                argumentMatches(expected[index], actual[index], declaredVariances[index], variance, isStrict)
             }
+        }
+
+        /**
+         * Whether the [expected] type argument, of a type parameter of the [declaredVariance], matches the [actual] one
+         * in a position of the given [variance], see [matches]:
+         * in a covariant position, the expected one contains the actual one, like `out CharSequence` contains `String`,
+         * or `out String`, in a contravariant one, the actual one contains the expected one,
+         * and in an invariant one, they are the same, like a redundant `out String` of `List`, and `String`,
+         * but not `MutableList<out String>`, and `MutableList<String>`.
+         * A star projection contains any type argument, and is contained like `out Any?`,
+         * or like `in Nothing` of a contravariant type parameter, so that `List<*>` is the same type as `List<Any?>`.
+         * A Java wildcard is a projection, like `out String!` of `? extends String`, or a star projection of `?`.
+         */
+        private fun argumentMatches(
+            expected: KmTypeProjection,
+            actual: KmTypeProjection,
+            declaredVariance: KmVariance,
+            variance: KmVariance,
+            isStrict: Boolean
+        ): Boolean {
+            if (expected.type == null && (actual.type == null || variance == KmVariance.OUT)) return true
+            if (actual.type == null && variance == KmVariance.IN) return true
+            val (expectedVariance, expectedType) = expected.projected(declaredVariance) ?: return !isStrict
+            val (actualVariance, actualType) = actual.projected(declaredVariance) ?: return !isStrict
+            // the variance of the containing type argument, and of the contained one, in a covariant position
+            val (containing, contained) = if (variance == KmVariance.IN) {
+                actualVariance to expectedVariance
+            } else {
+                expectedVariance to actualVariance
+            }
+            // only an invariant type argument is contained in a projected one of another variance,
+            // like String in out String, but not in String, nor in in String, and not in an invariant position
+            if (expectedVariance != actualVariance && (variance == KmVariance.INVARIANT || contained != KmVariance.INVARIANT)) {
+                return false
+            }
+            return matches(expectedType, actualType, variance.compose(containing), isStrict)
+        }
+
+        /**
+         * The variance and the type of this type argument of a type parameter of the [declaredVariance],
+         * see [projectedVariance], `out Any?` of a star projection, or `in Nothing` of a contravariant type parameter,
+         * or `null` if its projection contradicts the type parameter.
+         */
+        private fun KmTypeProjection.projected(declaredVariance: KmVariance): Pair<KmVariance, KmType>? {
+            val type = type ?: return if (declaredVariance == KmVariance.IN) {
+                KmVariance.IN to classType(NOTHING_CLASS_NAME)
+            } else {
+                KmVariance.OUT to classType(ANY_CLASS_NAME, nullable = true)
+            }
+            return projectedVariance(declaredVariance, variance!!)?.let { it to type }
         }
 
         /**
@@ -3574,10 +3614,10 @@ internal class DefaultKotlinIntrospector(
         /**
          * Whether the [expected] type matches the [actual] one, either of them the mutable alternative of a Java collection,
          * see [mutableAlternative], after its read-only one does not, see [classMatches],
-         * strictly, without what is not told, like a star projection, or a projected supertype argument, matching any type,
-         * see [argumentsMatch], nor inferring a bounded type parameter, whose bounds are not checked, see [infer],
+         * strictly, without what is not told matching any type, see [argumentsMatch],
+         * nor a supertype of projected type arguments, see [classMatches],
          * so that the mutable alternative adds only the extensions which can be called, as far as they are told,
-         * like on `MutableList<String>`, but not on `MutableList<*>` for `(Mutable)List<String!>!`,
+         * like on `MutableList<String>`, but not on `MutableList<in String>` for `(Mutable)List<String!>!`,
          * while a type parameter of the class still stands for any type, see [matches],
          * forgetting what the read-only one, and then the mutable one, inferred, when they do not match,
          * since the [inferredCounts] taken before either of them.
@@ -3598,11 +3638,10 @@ internal class DefaultKotlinIntrospector(
          * and a supertype of each type in a covariant position, or an invariant one,
          * like not `T` of `Pair<in A, out B>` for `Pair<String, Any>`, a subtype of `String`, and a supertype of `Any`,
          * while the types in the positions of the same variance can be the type parameter inferred
-         * as their common supertype, or subtype.
-         * When [isStrict], see [argumentsMatch], a bounded type parameter is never inferred, as its bounds are not checked.
+         * as their common supertype, or subtype,
+         * and satisfying its bounds, see [satisfiesBounds].
          */
         private fun infer(id: Int, actual: KmType, variance: KmVariance, isStrict: Boolean): Boolean {
-            if (isStrict && typeParameters[id]?.upperBounds?.isNotEmpty() == true) return false
             val name = (actual.classifier as? KmClassifier.Class)?.name ?: return true
             val others = inferred.getOrPut(id) { mutableListOf() }
             val isInferred = others.all { (other, otherVariance) ->
@@ -3615,7 +3654,26 @@ internal class DefaultKotlinIntrospector(
                 }
             }
             others += name to variance
-            return isInferred
+            return isInferred && satisfiesBounds(id, actual, variance, isStrict)
+        }
+
+        /**
+         * Whether the type parameter of the given [id], inferred from the [actual] type in a position of the given [variance],
+         * can satisfy its bounds, like not `T : Number` of `List<T>` for `List<String>`:
+         * the [actual] type is a subtype of each of them, when the type parameter is its supertype,
+         * in a covariant position, or an invariant one, while in a contravariant one, it can be `Nothing`.
+         * The bounds of a type parameter already being checked are not checked again,
+         * like `T` of `T : Comparable<T>`, inferred from the type argument of `Comparable`.
+         */
+        private fun satisfiesBounds(id: Int, actual: KmType, variance: KmVariance, isStrict: Boolean): Boolean {
+            if (variance == KmVariance.IN) return true
+            val bounds = typeParameters[id]?.upperBounds.orEmpty()
+            if (bounds.isEmpty() || !boundsChecked.add(id)) return true
+            return try {
+                bounds.all { matches(it, actual, KmVariance.OUT, isStrict) }
+            } finally {
+                boundsChecked.remove(id)
+            }
         }
 
     }

@@ -31,6 +31,7 @@ import com.xemantic.kotlin.introspection.test.other.JavaListBoth
 import com.xemantic.kotlin.introspection.test.other.JavaListRows
 import com.xemantic.kotlin.introspection.test.other.JavaNamedLinkBase
 import com.xemantic.kotlin.introspection.test.other.JavaNestedRows
+import com.xemantic.kotlin.introspection.test.other.JavaProjectedAnyRows
 import com.xemantic.kotlin.introspection.test.other.JavaWildcardRows
 
 // Extensions on type parameter receivers, listed for the classes satisfying their bounds,
@@ -422,7 +423,7 @@ fun BoundedReceiverRows<List<Int>>.readIntRows() {}
 
 class BoundedReceiverStringRows : JavaListRows<String>()
 
-// a star projection, or a Java wildcard, matching any type argument, which is never told to be the mutable list then
+// a star projection, or a Java wildcard, the same type argument only as another one of the same projection
 fun BoundedReceiverRows<MutableList<*>>.addAnyRow() {}
 
 fun BoundedReceiverRows<List<*>>.readAnyRows() {}
@@ -446,7 +447,8 @@ class BoundedReceiverAnyRows : JavaAnyRows()
 // a use-site projection, another type in an invariant position, unlike MutableList<String>
 fun BoundedReceiverRows<MutableList<in String>>.addSuperStringRow() {}
 
-// the bounds of a type parameter inferred from the mutable alternative, not satisfied by String?, nor by Int
+// the bounds of a type parameter inferred from the mutable alternative, satisfied by String, but not by String?,
+// and only T : Any by Int
 fun <T : Any> BoundedReceiverRows<MutableList<T>>.addNotNullRow() {}
 
 fun <T : CharSequence> BoundedReceiverRows<MutableList<T>>.addCharSequenceRow() {}
@@ -488,3 +490,47 @@ fun BoundedReceiverSink<JavaListRows<String>>.sinkJavaRows() {}
 fun BoundedReceiverSink<BoundedReceiverKotlinRows<String>>.sinkKotlinRows() {}
 
 fun BoundedReceiverSink<BoundedReceiverKotlinStringRows>.sinkKotlinStringRows() {}
+
+// the projections of the type arguments of an invariant type argument, matched exactly,
+// where List<*> is still the same type as List<Any?>, as List is covariant,
+// and the bounds of a type parameter other than the receiver
+interface BoundedReceiverProjectedRows<T>
+
+fun BoundedReceiverProjectedRows<List<*>>.projectedAnyRows() {}
+
+fun BoundedReceiverProjectedRows<List<Any?>>.projectedNullableAnyRows() {}
+
+fun BoundedReceiverProjectedRows<List<Int>>.projectedIntRows() {}
+
+fun BoundedReceiverProjectedRows<MutableList<out String>>.projectedOutStringRows() {}
+
+fun <T : List<String>> BoundedReceiverProjectedRows<T>.projectedStringListRows() {}
+
+fun <T : MutableList<String>> BoundedReceiverProjectedRows<T>.projectedMutableStringListRows() {}
+
+fun <T : Comparable<T>> BoundedReceiverProjectedRows<List<T>>.projectedComparableRows() {}
+
+fun <T : Number> BoundedReceiverProjectedRows<List<T>>.projectedNumberRows() {}
+
+class BoundedReceiverProjectedStringRows : BoundedReceiverProjectedRows<List<String>>
+
+class BoundedReceiverProjectedStarRows : BoundedReceiverProjectedRows<List<*>>
+
+class BoundedReceiverProjectedMutableRows : BoundedReceiverProjectedRows<MutableList<String>>
+
+class BoundedReceiverProjectedOutRows : BoundedReceiverProjectedRows<MutableList<out String>>
+
+class BoundedReceiverProjectedMapRows : BoundedReceiverProjectedRows<Map<String, Int>>
+
+class BoundedReceiverProjectedJavaAnyRows : JavaProjectedAnyRows()
+
+// a use-site projection of a type argument in a covariant position, a subtype only of the same projection of a supertype
+interface BoundedReceiverProjectedSource<out T>
+
+fun BoundedReceiverProjectedSource<MutableList<out CharSequence>>.sourceOutCharSequences() {}
+
+fun BoundedReceiverProjectedSource<MutableList<String>>.sourceStrings() {}
+
+fun BoundedReceiverProjectedSource<MutableList<*>>.sourceAny() {}
+
+class BoundedReceiverProjectedOutSource : BoundedReceiverProjectedSource<MutableList<out String>>
