@@ -3194,6 +3194,8 @@ internal class DefaultKotlinIntrospector(
      * is not flooded with the generic extensions of the standard library,
      * nor with the ones of any other library on these types, like on `java.lang.AutoCloseable`,
      * or `java.util.function.Function`, which can still be called on the class,
+     * also on `kotlin.Comparable` of a type argument of the user, like `fun Comparable<Money>.atLeast()`
+     * for `class Price : Comparable<Money>`, but the ones listed for a class comparable to itself, see [isComparableToItself],
      * except the function types, like `(String) -> Unit`, and their supertype `kotlin.Function`,
      * whose extensions are listed for a class implementing them, like for a function type class,
      * see [functionTypeReceiverNames].
@@ -3231,6 +3233,12 @@ internal class DefaultKotlinIntrospector(
          * by the structures of these types, see [structureKey], as each of them is matched against many extensions.
          */
         val supertypesOfJavaTypes = HashMap<String, Map<String, KmType>>()
+
+        /**
+         * The [supertypesOfJavaTypes] by the instances of these types, mostly the same ones, told by the [types],
+         * or by the receivers of the extensions, without building their structures again.
+         */
+        val supertypesOfJavaTypeInstances = IdentityHashMap<KmType, Map<String, KmType>>()
 
     }
 
@@ -3337,9 +3345,11 @@ internal class DefaultKotlinIntrospector(
             // walked again from the type itself, when it takes type arguments, like Comparable<JavaBox<String!>> of JavaBox<String>
             val header = findClassByMetadataName(name)?.javaClassHeader ?: return null
             if (header.typeParameters.isEmpty()) return supertypeTypesOf(name)[key]
-            return supertypesOfJavaTypes.getOrPut(type.structureKey()) {
-                HashMap<String, KmType>().also { types ->
-                    supertypeNames(name, kmClassOf = { builtinClasses[it] ?: loadKmClass(it) }, types, type = type)
+            return supertypesOfJavaTypeInstances.getOrPut(type) {
+                supertypesOfJavaTypes.getOrPut(type.structureKey()) {
+                    HashMap<String, KmType>().also { types ->
+                        supertypeNames(name, kmClassOf = { builtinClasses[it] ?: loadKmClass(it) }, types, type = type)
+                    }
                 }
             }[key]
         }
@@ -3521,8 +3531,17 @@ internal class DefaultKotlinIntrospector(
 
         private val typeParameters = typeParameters.associateBy { it.id }
 
-        // the classes each type parameter is inferred from, by their metadata names, with the variances of their positions
-        private val inferred = HashMap<Int, MutableList<Pair<String, KmVariance>>>()
+        // the types each type parameter is inferred from, with the variances of their positions
+        private val inferred = HashMap<Int, MutableList<Pair<KmType, KmVariance>>>()
+
+        // the type parameters, in the order of what is inferred, see forgetInferredSince
+        private val inferredIds = ArrayList<Int>()
+
+        // telling whether a type the type parameter is inferred from is a subtype of another one, or the same type, see infer,
+        // without inferring the type parameters of the extension, whose ids the type parameters of the class can take
+        private val typeMatcher by lazy(LazyThreadSafetyMode.NONE) {
+            ReceiverMatcher(supertypes, emptyList(), receiverTypeParameterId = null, self)
+        }
 
         // the type parameters whose bounds are being checked, see satisfiesBounds
         private val boundsChecked = HashSet<Int>()
@@ -3648,41 +3667,37 @@ internal class DefaultKotlinIntrospector(
                     // or else the mutable one, see isJavaCollection, either the actual one,
                     // or the expected one, of a supertype of the type argument of the extension, see classMatches,
                     // or in an invariant position, any type between them, see matchesMutable
-                    val mutable = actual.mutableAlternative()
-                    val expectedMutable = expected.mutableAlternative()
-                    if (mutable == null && expectedMutable == null) {
-                        classMatches(expected, classifier.name, actual, actualClassifier.name, variance, isStrict)
-                    } else {
-                        val inferredCounts = inferredCounts()
-                        val isInvariant = variance == KmVariance.INVARIANT
-                        classMatches(expected, classifier.name, actual, actualClassifier.name, variance, isStrict) ||
-                            (mutable != null && retrying(inferredCounts) { matchesMutable(expected, mutable, variance) }) ||
-                            (expectedMutable != null && retrying(inferredCounts) { matchesMutable(expectedMutable, actual, variance) }) ||
-                            (mutable != null && isInvariant && retrying(inferredCounts) {
-                                matchesMutable(expected, mutable, KmVariance.OUT) && matchesMutable(expected, actual, KmVariance.IN)
-                            }) ||
-                            (expectedMutable != null && isInvariant && retrying(inferredCounts) {
-                                matchesMutable(expectedMutable, actual, KmVariance.IN) && matchesMutable(expected, actual, KmVariance.OUT)
-                            })
-                    }
+                    val inferredCount = inferredIds.size
+                    classMatches(expected, classifier.name, actual, actualClassifier.name, variance, isStrict) ||
+                        ((actual.isJavaCollection || expected.isJavaCollection) && run {
+                            val mutable = actual.mutableAlternative()
+                            val expectedMutable = expected.mutableAlternative()
+                            val isInvariant = variance == KmVariance.INVARIANT
+                            (mutable != null && retrying(inferredCount) { matchesMutable(expected, mutable, variance) }) ||
+                                (expectedMutable != null && retrying(inferredCount) { matchesMutable(expectedMutable, actual, variance) }) ||
+                                (mutable != null && isInvariant && retrying(inferredCount) {
+                                    matchesMutable(expected, mutable, KmVariance.OUT) && matchesMutable(expected, actual, KmVariance.IN)
+                                }) ||
+                                (expectedMutable != null && isInvariant && retrying(inferredCount) {
+                                    matchesMutable(expectedMutable, actual, KmVariance.IN) && matchesMutable(expected, actual, KmVariance.OUT)
+                                })
+                        })
                 }
                 is KmClassifier.TypeAlias -> !isStrict
             }
         }
 
-        // the number of the classes each type parameter is inferred from so far, see forgetInferredSince
-        private fun inferredCounts(): Map<Int, Int> = inferred.mapValues { (_, types) -> types.size }
-
-        // forgets what is inferred since the given counts, see inferredCounts
-        private fun forgetInferredSince(counts: Map<Int, Int>) {
-            inferred.keys.retainAll(counts.keys)
-            counts.forEach { (id, count) -> inferred.getValue(id).let { it.subList(count, it.size).clear() } }
+        // forgets what is inferred since the given count of the inferredIds
+        private fun forgetInferredSince(count: Int) {
+            while (inferredIds.size > count) {
+                inferred.getValue(inferredIds.removeAt(inferredIds.lastIndex)).let { it.removeAt(it.lastIndex) }
+            }
         }
 
-        // whether the alternative matches, forgetting what is inferred since the given counts before, and when it does not
-        private inline fun retrying(inferredCounts: Map<Int, Int>, alternative: () -> Boolean): Boolean {
-            forgetInferredSince(inferredCounts)
-            return alternative().also { isMatched -> if (!isMatched) forgetInferredSince(inferredCounts) }
+        // whether the alternative matches, forgetting what is inferred since the given count before, and when it does not
+        private inline fun retrying(inferredCount: Int, alternative: () -> Boolean): Boolean {
+            forgetInferredSince(inferredCount)
+            return alternative().also { isMatched -> if (!isMatched) forgetInferredSince(inferredCount) }
         }
 
         /**
@@ -3705,9 +3720,9 @@ internal class DefaultKotlinIntrospector(
                 }
                 // a Java array, like Array<(out) String!>!, either the actual one, or the expected one,
                 // is the invariant one, or else the covariant one
-                val inferredCounts = inferredCounts()
+                val inferredCount = inferredIds.size
                 return argumentsMatch(name, expected.arguments, actual.arguments, variance, isStrict) ||
-                    retrying(inferredCounts) {
+                    retrying(inferredCount) {
                         argumentsMatch(name, expected.javaArrayArguments(), actual.javaArrayArguments(), variance, isStrict)
                     }
             }
@@ -3719,14 +3734,20 @@ internal class DefaultKotlinIntrospector(
                 val supertype = supertypes.supertypeOf(subtype, supertypeName) ?: return !isStrict
                 return match(supertype)
             }
+            // a supertype without type arguments is matched by its name, also when it is not told,
+            // like java.io.Serializable of String, see jvmSupertypeNamesOfBuiltins
             return when (variance) {
                 KmVariance.INVARIANT -> false
-                KmVariance.OUT -> supertypes.isSubclass(actualName, name) && supertypeMatches(actual, name) { supertype ->
-                    argumentsMatch(name, expected.arguments, supertype.arguments, variance, isStrict)
-                }
-                KmVariance.IN -> supertypes.isSubclass(name, actualName) && supertypeMatches(expected, actualName) { supertype ->
-                    argumentsMatch(actualName, supertype.arguments, actual.arguments, variance, isStrict)
-                }
+                KmVariance.OUT -> supertypes.isSubclass(actualName, name) && (
+                    expected.arguments.isEmpty() || supertypeMatches(actual, name) { supertype ->
+                        argumentsMatch(name, expected.arguments, supertype.arguments, variance, isStrict)
+                    }
+                )
+                KmVariance.IN -> supertypes.isSubclass(name, actualName) && (
+                    actual.arguments.isEmpty() || supertypeMatches(expected, actualName) { supertype ->
+                        argumentsMatch(actualName, supertype.arguments, actual.arguments, variance, isStrict)
+                    }
+                )
             }
         }
 
@@ -3754,24 +3775,32 @@ internal class DefaultKotlinIntrospector(
          * a subtype of each type in a contravariant position, or an invariant one,
          * and a supertype of each type in a covariant position, or an invariant one,
          * like not `T` of `Pair<in A, out B>` for `Pair<String, Any>`, a subtype of `String`, and a supertype of `Any`,
+         * matched with their type arguments, see [typeMatcher], like not `T` of `Pair<T, T>` for `Pair<List<String>, List<Int>>`,
+         * a Java collection anything between its mutable and read-only bounds, like `MutableList<String>`
+         * for `(Mutable)List<String!>!`, and a platform type either nullable, or not,
          * while the types in the positions of the same variance can be the type parameter inferred
          * as their common supertype, or subtype,
          * and satisfying its bounds, see [satisfiesBounds].
          */
         private fun infer(id: Int, actual: KmType, variance: KmVariance, isStrict: Boolean): Boolean {
-            val name = (actual.classifier as? KmClassifier.Class)?.name ?: return true
+            if (actual.classifier !is KmClassifier.Class) return true
             val others = inferred.getOrPut(id) { mutableListOf() }
             val isInferred = others.all { (other, otherVariance) ->
                 if (variance == KmVariance.INVARIANT && otherVariance == KmVariance.INVARIANT) {
-                    name == other
+                    typeMatcher.matches(other, actual, KmVariance.INVARIANT, isStrict = false)
                 } else {
                     // a subtype of the other one, unless either of them is contravariant, or covariant, respectively
-                    (variance == KmVariance.IN || otherVariance == KmVariance.OUT || supertypes.isSubclass(name, other)) &&
-                        (variance == KmVariance.OUT || otherVariance == KmVariance.IN || supertypes.isSubclass(other, name))
+                    (variance == KmVariance.IN || otherVariance == KmVariance.OUT ||
+                        typeMatcher.matches(other, actual, KmVariance.OUT, isStrict = false)) &&
+                        (variance == KmVariance.OUT || otherVariance == KmVariance.IN ||
+                            typeMatcher.matches(actual, other, KmVariance.OUT, isStrict = false))
                 }
             }
-            // the same class in a position of the same variance tells nothing more
-            if ((name to variance) !in others) others += name to variance
+            // the same type in a position of the same variance tells nothing more
+            if (others.none { (other, otherVariance) -> other === actual && otherVariance == variance }) {
+                others += actual to variance
+                inferredIds += id
+            }
             return isInferred && satisfiesBounds(id, actual, variance, isStrict)
         }
 
@@ -7019,11 +7048,13 @@ private fun KmVariance.compose(inner: KmVariance): KmVariance = when {
 
 /**
  * Whether the nullability of the [expected] type matches the one of the [actual] type in a position of the [variance],
- * like a nullable one in a covariant position, which is a supertype of the not nullable one.
+ * like a nullable one in a covariant position, which is a supertype of the not nullable one,
+ * while a platform type of Java matches either, also an expected one, like a type a type parameter is inferred from,
+ * see `ReceiverMatcher.infer`.
  */
 private fun isNullabilityMatched(expected: KmType, actual: KmType, variance: KmVariance): Boolean = when {
     // a platform type of Java, see javaSignatureType
-    actual.flexibleTypeUpperBound != null -> true
+    actual.flexibleTypeUpperBound != null || expected.flexibleTypeUpperBound != null -> true
     variance == KmVariance.INVARIANT -> expected.isNullable == actual.isNullable
     variance == KmVariance.OUT -> expected.isNullable || !actual.isNullable
     else -> actual.isNullable || !expected.isNullable
