@@ -518,6 +518,10 @@ abstract class HiddenMergedSupplierJoin : java.util.function.Supplier<String>, H
 abstract class HiddenMergedJavaSupplierJoin :
     com.xemantic.kotlin.introspection.test.other.JavaHiddenMergedSupplier, HiddenMergedSupplier
 
+// also a Java method overriding the enhanced one by the same JVM descriptor, so that join.get() does not compile
+abstract class HiddenMergedJavaRedeclaredSupplierJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaRedeclaredSupplier<String>, HiddenMergedSupplier
+
 interface HiddenMergedFunction : java.util.function.Function<String, String> {
     @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
     override fun apply(t: String): String
