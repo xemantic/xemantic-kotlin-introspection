@@ -577,6 +577,39 @@ abstract class HiddenMergedJavaSupplierJoin :
 abstract class HiddenMergedJavaRedeclaredSupplierJoin :
     com.xemantic.kotlin.introspection.test.other.JavaRedeclaredSupplier<String>, HiddenMergedSupplier
 
+// also a JDK method inherited through a Java class not declaring it again, so that join.get() does not compile
+abstract class HiddenMergedJavaInheritedSupplierJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaInheritingSupplier<String>(), HiddenMergedSupplier
+
+// unless the JDK method is inherited directly too, whatever the order of the supertypes, so that join.get() compiles
+abstract class HiddenMergedJavaInheritedDirectSupplierJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaInheritingSupplier<String>(), java.util.function.Supplier<String>,
+    HiddenMergedSupplier
+
+// a suspend function type merged with a hidden invoke of another supertype, picked as the first one, so that join(1) compiles
+interface HiddenMergedSuspendInvoke : suspend (Int) -> String {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    override suspend fun invoke(p1: Int): String
+}
+
+abstract class HiddenMergedSuspendInvokeJoin : suspend (Int) -> String, HiddenMergedSuspendInvoke
+
+// the computeIfAbsent of java.util.HashMap keeps the enhancement of the one of java.util.Map, so that join.computeIfAbsent(…) compiles,
+// while the one of a Java override does not, losing to the hidden member, so that javaJoin.computeIfAbsent(…) does not,
+// nor the one of java.util.HashMap inherited through a Java class not declaring it again
+interface HiddenMergedComputeIfAbsent : MutableMap<String, String> {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    override fun computeIfAbsent(key: String, mappingFunction: java.util.function.Function<in String, out String>): String
+}
+
+abstract class HiddenMergedComputeIfAbsentJoin : java.util.HashMap<String, String>(), HiddenMergedComputeIfAbsent
+
+abstract class HiddenMergedJavaComputeIfAbsentJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaComputingMap<String, String>(), HiddenMergedComputeIfAbsent
+
+abstract class HiddenMergedJavaInheritedComputeIfAbsentJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaInheritingMap<String, String>(), HiddenMergedComputeIfAbsent
+
 interface HiddenMergedFunction : java.util.function.Function<String, String> {
     @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
     override fun apply(t: String): String
@@ -658,7 +691,9 @@ private fun callMergedMembers(
     internalThread: HiddenMergedInternalThreadSub,
     nullableArgumentCallJoin: HiddenMergedNullableArgumentCallJoin,
     anyOverride: HiddenAnyOverride,
-    anyOverrideSub: HiddenAnyOverrideSub
+    anyOverrideSub: HiddenAnyOverrideSub,
+    computeIfAbsentJoin: HiddenMergedComputeIfAbsentJoin,
+    inheritedDirectSupplierJoin: HiddenMergedJavaInheritedDirectSupplierJoin
 ) {
     overriddenJoin.f()
     overriddenViaSub.f()
@@ -685,4 +720,12 @@ private fun callMergedMembers(
     nullableArgumentCallJoin.call()
     anyOverride.toString()
     anyOverrideSub.toString()
+    computeIfAbsentJoin.computeIfAbsent("") { it }
+    inheritedDirectSupplierJoin.get()
+}
+
+// compiles, as the suspend invoke picked is not hidden
+@Suppress("unused")
+private suspend fun callMergedSuspendInvoke(join: HiddenMergedSuspendInvokeJoin) {
+    join(1)
 }

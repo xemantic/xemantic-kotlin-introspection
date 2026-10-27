@@ -4630,14 +4630,337 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should not resolve set of mapped Java interface named as supertype which kotlin-reflect describes as read-only built-in type`() {
-        // kotlinc sees set(p0: E!) of java.util.ListIterator, which kotlin-reflect describes as ListIterator
-        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.JavaListIteratorSubclass.set") == null)
+    fun `should resolve set of mapped Java interface named as supertype which kotlin-reflect describes as read-only built-in type`() {
+        // kotlinc sees set(p0: E!) of java.util.ListIterator, which kotlin-reflect describes as ListIterator, not telling it
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaListIteratorSubclass.set"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaListIteratorSubclass.set [page 1/1]
+            // inherited from java.util.ListIterator
+            fun set(arg0: String)
+        """.trimIndent()
     }
 
     @Test
-    fun `should not resolve add of mapped Java interface named as supertype which kotlin-reflect describes as read-only built-in type`() {
-        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.JavaListIteratorSubclass.add") == null)
+    fun `should resolve add of mapped Java interface named as supertype which kotlin-reflect describes as read-only built-in type`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaListIteratorSubclass.add"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaListIteratorSubclass.add [page 1/1]
+            // inherited from java.util.ListIterator
+            fun add(arg0: String)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve setValue of mapped Java interface named as supertype which kotlin-reflect describes as read-only built-in type`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaMapEntrySubclass.setValue"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaMapEntrySubclass.setValue [page 1/1]
+            // inherited from java.util.Map.Entry
+            fun setValue(arg0: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve invoke of function type supertype`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedFunctionType.invoke"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedFunctionType.invoke [page 1/1]
+            // inherited from kotlin.Function1
+            operator fun invoke(p1: Int): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve invoke of suspend function type supertype`() {
+        // stored in the metadata as Function2<Int, Continuation<String>, Any?>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedSuspendFunctionType.invoke"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedSuspendFunctionType.invoke [page 1/1]
+            // inherited from kotlin.coroutines.SuspendFunction1
+            suspend operator fun invoke(p1: Int): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of Java superclass whose members kotlin-reflect cannot describe`() {
+        // kotlin-reflect fails on all the members of JavaUndescribableBase, on the raw Enum of enumType(),
+        // so that they are converted from the Java reflection
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaUndescribable.describe"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaUndescribable.describe [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaUndescribableBase
+            open fun describe(arg0: List<out String>?, vararg arg1: Int): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of raw type of Java superclass whose members kotlin-reflect cannot describe`() {
+        // kotlinc sees the raw Enum as (Enum<Enum<*>>..Enum<*>?)
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaUndescribable.enumType"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaUndescribable.enumType [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaUndescribableBase
+            abstract fun enumType(): java.lang.Class<out Enum<*>>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve protected member of Java superclass whose members kotlin-reflect cannot describe`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaUndescribable.first"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaUndescribable.first [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaUndescribableBase
+            protected abstract fun first(): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve final member of Java superclass whose members kotlin-reflect cannot describe`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaUndescribable.index"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaUndescribable.index [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaUndescribableBase
+            fun index(): Map<String, String>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve not null annotated member of Java superclass whose members kotlin-reflect cannot describe`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaUndescribable.notNull"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaUndescribable.notNull [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaUndescribableBase
+            abstract fun notNull(arg0: String): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve nullable annotated member of Java superclass whose members kotlin-reflect cannot describe`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaUndescribable.nullable"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaUndescribable.nullable [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaUndescribableBase
+            abstract fun nullable(arg0: String?): String?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve nullable annotated array of Java superclass whose members kotlin-reflect cannot describe as of nullable elements`() {
+        // the annotation of both the declaration, and the type use, applies to the elements of the array, which K2 reads first
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaUndescribable.nullableElements"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaUndescribable.nullableElements [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaUndescribableBase
+            abstract fun nullableElements(): Array<String>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of Java superclass annotated JSR-305 Nonnull of a MAYBE when`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaUndescribable.maybe"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaUndescribable.maybe [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaUndescribableBase
+            abstract fun maybe(): String?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of Java superclass annotated JSR-305 Nonnull of a NEVER when`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaUndescribable.never"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaUndescribable.never [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaUndescribableBase
+            abstract fun never(): String?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of Java superclass annotated JSR-305 Nonnull of an UNKNOWN when`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaUndescribable.unknown"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaUndescribable.unknown [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaUndescribableBase
+            abstract fun unknown(): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of Java superclass annotated JSR-305 CheckForNull next to Nonnull of an UNKNOWN when`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaUndescribable.checkedUnknown"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaUndescribable.checkedUnknown [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaUndescribableBase
+            abstract fun checkedUnknown(): String?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve override of method whose return type the compiler enhances as nullable annotated not nullable as not nullable`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedNotNullWeakReference.get"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedNotNullWeakReference.get [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNotNullWeakReference
+            override fun get(): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve nullable member of Kotlin interface merged with enhanced member inherited through Java class`() {
+        // the get() of Supplier, inherited through JavaInheritingSupplier, returns String!, less specific than String?
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaSupplierNullableGetter.get"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaSupplierNullableGetter.get [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.NullableGetter
+            fun get(): String?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve nullable member of first Kotlin interface merged with enhanced member inherited through Java class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedNullableGetterJavaSupplier.get"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedNullableGetterJavaSupplier.get [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.NullableGetter
+            fun get(): String?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve nullable member of Kotlin interface merged with enhanced JVM-only member inherited through Java class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaMapNullableComputeIfAbsent.computeIfAbsent"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaMapNullableComputeIfAbsent.computeIfAbsent [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.NullableComputeIfAbsent
+            fun computeIfAbsent(key: String, mappingFunction: java.util.function.Function<in String, out String>): String?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve isEmpty of java lang CharSequence named as supertype which the compiler hides of CharSequence`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaCharSequenceSubclass.isEmpty"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaCharSequenceSubclass.isEmpty [page 1/1]
+            // inherited from java.lang.CharSequence
+            open fun isEmpty(): Boolean
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve clone of Java superclass whose members kotlin-reflect cannot describe`() {
+        // the clone() of java.lang.Object is no member of kotlin.Any, which the one of JavaUndescribableBase would override
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaUndescribable.clone"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaUndescribable.clone [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaUndescribableBase
+            open fun clone(): Any
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve overload of equals of Java superclass whose members kotlin-reflect cannot describe`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaUndescribable.equals"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaUndescribable.equals [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaUndescribableBase
+            open fun equals(arg0: com.xemantic.kotlin.introspection.test.other.JavaUndescribableBase<*>?): Boolean
+            // inherited from kotlin.Any
+            open operator fun equals(other: Any?): Boolean
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve JDK member inherited through Java subclass of JDK class like through JDK class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaInheritingDeque.spliterator"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaInheritingDeque.spliterator [page 1/1]
+            // inherited from kotlin.collections.Collection
+            open override fun spliterator(): java.util.Spliterator<String>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve size function of java util Collection named as supertype which Kotlin sees as Java interface`() {
+        // kotlinc sees size() of java.util.Collection, not the size of Collection
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaCollectionSubclass.size"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaCollectionSubclass.size [page 1/1]
+            // inherited from java.util.Collection
+            fun size(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve size property of java util List named as supertype which Kotlin sees as built-in type`() {
+        // kotlinc sees the size of List, not size() of java.util.List
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaListSubclass.size"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaListSubclass.size [page 1/1]
+            // inherited from kotlin.collections.Collection
+            val size: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve getter of property of mapped Java interface named as supertype`() {
+        // kotlinc sees both the key, and getKey(), of java.util.Map.Entry
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaMapEntrySubclass.getKey"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaMapEntrySubclass.getKey [page 1/1]
+            // inherited from java.util.Map.Entry
+            fun getKey(): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve own member of Java superclass whose members kotlin-reflect cannot describe since JDK 21`() {
+        assumeTrue(Runtime.version().feature() >= 21, "kotlin-reflect fails on the members of java.util.LinkedHashSet since JDK 21")
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedLinkedHashSet.getFirst"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedLinkedHashSet.getFirst [page 1/1]
+            // inherited from java.util.LinkedHashSet
+            override fun getFirst(): E
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of Java superclass whose members kotlin-reflect cannot describe merged with hidden one`() {
+        assumeTrue(Runtime.version().feature() >= 21, "kotlin-reflect fails on the members of java.util.LinkedHashSet since JDK 21")
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedLinkedHashSetHidingFirst.getFirst"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedLinkedHashSetHidingFirst.getFirst [page 1/1]
+            // inherited from java.util.LinkedHashSet
+            override fun getFirst(): String
+        """.trimIndent()
     }
 
     @Test
@@ -4749,6 +5072,18 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.test.InheritedWeakReference.get [page 1/1]
             // inherited from java.lang.ref.Reference
             fun get(): String?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve covariant override of method of Java superclass whose return type the compiler enhances as nullable as nullable`() {
+        // String get() of JavaStringWeakReference, of another JVM descriptor, still inherits the T? of java.lang.ref.Reference
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedCovariantWeakReference.get"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedCovariantWeakReference.get [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaStringWeakReference
+            override fun get(): String?
         """.trimIndent()
     }
 
@@ -10985,6 +11320,60 @@ class KotlinIntrospectorTest {
     fun `should not resolve Java override of the same JVM descriptor of enhanced member of first supertype overridden by hidden one`() {
         // the T get() of JavaRedeclaredSupplier does not inherit the enhancement either, as only the JDK overrides do
         assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenMergedJavaRedeclaredSupplierJoin.get") == null)
+    }
+
+    @Test
+    fun `should not resolve enhanced member inherited through Java class of first supertype overridden by hidden one`() {
+        // the get() of Supplier, inherited through JavaInheritingSupplier, loses the enhancement there, returning String!
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenMergedJavaInheritedSupplierJoin.get") == null)
+    }
+
+    @Test
+    fun `should resolve enhanced member inherited also directly next to Java class of first supertype overridden by hidden one`() {
+        // the get() of Supplier, a direct supertype too, keeps the enhancement, which JavaInheritingSupplier, walked first, loses
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedJavaInheritedDirectSupplierJoin.get"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedJavaInheritedDirectSupplierJoin.get [page 1/1]
+            // inherited from java.util.function.Supplier
+            fun get(): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve suspend invoke of function type of first supertype overridden by hidden one`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedSuspendInvokeJoin.invoke"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedSuspendInvokeJoin.invoke [page 1/1]
+            // inherited from kotlin.coroutines.SuspendFunction1
+            suspend operator fun invoke(p1: Int): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve JDK override of enhanced member of first supertype overridden by hidden one`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedComputeIfAbsentJoin.computeIfAbsent"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedComputeIfAbsentJoin.computeIfAbsent [page 1/1]
+            // inherited from kotlin.collections.MutableMap
+            open fun computeIfAbsent(arg0: String, arg1: java.util.function.Function<in String, out String>): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve Java override of enhanced JVM-only member of first supertype overridden by hidden one`() {
+        // the computeIfAbsent of JavaComputingMap, which MutableMap stands for, returns String!, losing to the hidden member
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenMergedJavaComputeIfAbsentJoin.computeIfAbsent") == null)
+    }
+
+    @Test
+    fun `should not resolve enhanced JVM-only member inherited through Java class of first supertype overridden by hidden one`() {
+        // the computeIfAbsent of java.util.HashMap, inherited through JavaInheritingMap, loses the enhancement there, returning String!
+        assert(
+            resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenMergedJavaInheritedComputeIfAbsentJoin.computeIfAbsent") == null
+        )
     }
 
     @Test

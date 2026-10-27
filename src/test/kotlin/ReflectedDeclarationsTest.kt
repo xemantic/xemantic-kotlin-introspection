@@ -23,7 +23,9 @@ import com.xemantic.kotlin.introspection.test.GenericInnerTypes
 import com.xemantic.kotlin.introspection.test.KeywordMembersSample
 import com.xemantic.kotlin.introspection.test.NonGenericInnerTypes
 import com.xemantic.kotlin.introspection.test.ReflectedValueParametersSample
+import com.xemantic.kotlin.introspection.test.other.JavaConvertedShapes
 import com.xemantic.kotlin.introspection.test.other.JavaLabelBase
+import com.xemantic.kotlin.introspection.test.other.JavaNullableMergeMap
 import com.xemantic.kotlin.introspection.test.other.JavaUnnamedParameters
 import com.xemantic.kotlin.introspection.test.other.Upper.JavaUpperCasePackage
 import com.xemantic.kotlin.test.assert
@@ -40,6 +42,7 @@ import kotlin.reflect.full.declaredMemberExtensionFunctions
 import kotlin.reflect.full.declaredMemberFunctions
 import kotlin.reflect.full.memberFunctions
 import kotlin.reflect.full.memberProperties
+import kotlin.reflect.jvm.javaMethod
 import kotlin.reflect.typeOf
 import kotlin.test.Test
 
@@ -647,6 +650,56 @@ class ReflectedDeclarationsTest {
                 "com/xemantic/kotlin/introspection/test/other/Upper/JavaUpperCasePackage.Nested"
             )
         )
+    }
+
+    @Test
+    fun `should convert Java methods of JDK classes like kotlin-reflect describes them`() {
+        // given - the JDK classes whose members kotlin-reflect describes, of the shapes toKmJavaFunction converts
+        val classes = listOf(
+            java.util.ArrayList::class, java.util.LinkedList::class, java.util.ArrayDeque::class, java.util.HashMap::class,
+            java.util.TreeMap::class, java.util.TreeSet::class, java.util.Hashtable::class, java.util.Properties::class,
+            java.util.PriorityQueue::class, java.util.Vector::class, java.util.EnumMap::class, java.util.BitSet::class,
+            java.util.Optional::class, java.util.Collections::class, java.util.Arrays::class, java.util.Spliterators::class,
+            java.util.concurrent.ConcurrentHashMap::class, java.util.concurrent.CompletableFuture::class,
+            java.util.concurrent.ThreadPoolExecutor::class, java.util.concurrent.ConcurrentSkipListMap::class,
+            java.util.concurrent.CopyOnWriteArrayList::class, java.util.stream.Stream::class, java.util.stream.Collectors::class,
+            java.util.function.Function::class, java.util.function.BiFunction::class, java.util.Comparator::class,
+            java.lang.Thread::class, java.lang.ThreadLocal::class, java.lang.ClassLoader::class, java.lang.StringBuilder::class,
+            java.lang.ref.WeakReference::class, java.lang.reflect.Method::class, java.lang.invoke.MethodHandles::class,
+            java.io.File::class, java.io.PrintStream::class, java.io.InputStream::class, java.io.Writer::class,
+            java.nio.file.Files::class, java.nio.ByteBuffer::class, java.text.Collator::class, java.text.SimpleDateFormat::class,
+            java.time.LocalDate::class, java.time.Duration::class, java.math.BigInteger::class, java.math.BigDecimal::class,
+            java.util.concurrent.atomic.AtomicReference::class, java.util.concurrent.atomic.AtomicInteger::class,
+            java.security.Permission::class, java.net.URI::class, java.util.regex.Matcher::class,
+            JavaConvertedShapes::class, JavaConvertedShapes.Inner::class
+        )
+
+        // when
+        val mismatches = classes.flatMap { kClass ->
+            kClass.declaredMemberFunctions.mapNotNull { function ->
+                // the members overriding the ones of the built-in types are never converted, see javaMembersOf
+                val method = function.javaMethod?.takeUnless { overridesBuiltinJavaMethod(it) } ?: return@mapNotNull null
+                // kotlin-reflect fails on some, like the raw Enum of Class<? extends Enum>, see toKmJavaType
+                val reflected = runCatching { introspector.formatReflectedFunction(function) }.getOrElse { return@mapNotNull null }
+                val converted = introspector.formatJavaFunction(method)
+                if (reflected == converted) null else "${kClass.qualifiedName}: $reflected <> $converted"
+            }
+        }
+
+        // then
+        assert(mismatches.isEmpty())
+    }
+
+    @Test
+    fun `should convert value of Java override of enhanced Map method annotated nullable as not definitely not nullable`() {
+        // given - the value of merge, which the compiler enhances as V & Any, annotated nullable
+        val merge = JavaNullableMergeMap::class.declaredMemberFunctions.single { it.name == "merge" }
+
+        // when
+        val value = merge.toKmFunction(ReflectedTypeParameters.classTypeParameters(emptyList())).valueParameters[1].type
+
+        // then
+        assert(value.isNullable && !value.isDefinitelyNonNull)
     }
 
 }

@@ -71,6 +71,15 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 
 - Reflecting the members of a class one by one does not get around a missing parameter type, see `reflectedMembersFile`.
 
+- A mapped Java interface named directly as a supertype, like `abstract class X : java.util.Collection<String>`, keeps its Java members in K2, but inconsistently:
+  `java.util.Collection`, `java.util.Map` and `java.lang.CharSequence` have only the Java functions (`size()`, `keySet()`, `length()`, no `size`, `keys`, `length`),
+  `java.util.List` and `java.util.Set` have the `size` property and no `size()`, and `java.util.Map.Entry` has both `key` and `getKey()` —
+  so `reflectedJavaClass` keeps a table of the Java-viewed ones (`JAVA_VIEWED_BUILTIN_INTERFACES`), verified with kotlinc 2.4.21.
+
+- When probing kotlinc, a probe file with many errors can leave out some of them, like an `unresolved reference` of a later call,
+  so a call reported as compiling there may not compile — confirm such a shape in a file of its own,
+  assigning the call to a mistyped `val x: Int = …`, whose error names the type it resolves to.
+
 - Kotlin never passes named arguments to a Java method, even one compiled with `-parameters`, so a Java method taking parameters never shadows an extension — see `isShadowingJavaMethod`.
 
 ## Anti-patterns to avoid
