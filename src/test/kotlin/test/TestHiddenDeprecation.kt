@@ -234,6 +234,23 @@ open class HiddenOverride : HiddenOverrideBase() {
 // inheriting the hidden overrides, so that neither can be called on it either
 class HiddenOverrideSub : HiddenOverride()
 
+// while the compiler reports no hidden deprecation of an override of a member of kotlin.Any,
+// so that anyOverride.toString() and anyOverrideSub.toString() compile
+interface HiddenAnyOverride {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    override fun toString(): String
+}
+
+abstract class HiddenAnyOverrideSub : HiddenAnyOverride
+
+// but it does of an override of equals, which kotlinc 2.4 rejects equalsOverride.equals(null) of, unchecked by the build
+interface HiddenAnyEqualsOverride {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    override fun equals(other: Any?): Boolean
+}
+
+abstract class HiddenAnyEqualsOverrideSub : HiddenAnyEqualsOverride
+
 // the members of the same signature merged from several supertypes, one of them hidden:
 // the compiler picks the one of the most specific return type, or else the one of the first direct supertype,
 // in the order of declaration, and none can be called when the picked one is hidden
@@ -459,6 +476,34 @@ internal interface HiddenMergedInternalRestoredLeft : HiddenMergedLeft {
 @Suppress("EXPOSED_SUPER_INTERFACE")
 interface HiddenMergedInternalRestoredLeftSub : HiddenMergedInternalRestoredLeft
 
+// the same for the override of a Java method, standing for it, so that internalThread.run() compiles
+internal abstract class HiddenMergedInternalThread : Thread() {
+    override fun run() {}
+}
+
+@Suppress("EXPOSED_SUPER_CLASS")
+abstract class HiddenMergedInternalThreadSub : HiddenMergedInternalThread()
+
+// of the modality of the override, the final one of HiddenMergedInternalFinalThread, which kotlinc 2.4 does not let
+// a subclass override, unchecked by the build, or the open one of HiddenMergedInternalCallable, overridden below
+internal open class HiddenMergedInternalFinalThread : Thread() {
+    final override fun run() {}
+}
+
+@Suppress("EXPOSED_SUPER_CLASS")
+open class HiddenMergedInternalFinalThreadSub : HiddenMergedInternalFinalThread()
+
+internal abstract class HiddenMergedInternalCallable : java.util.concurrent.Callable<String> {
+    override fun call(): String = ""
+}
+
+@Suppress("EXPOSED_SUPER_CLASS")
+abstract class HiddenMergedInternalCallableSub : HiddenMergedInternalCallable()
+
+abstract class HiddenMergedInternalCallableOverride : HiddenMergedInternalCallableSub() {
+    override fun call(): String = "overridden"
+}
+
 // the hidden member of the same JVM signature as the Java method of the first direct supertype does not hide it,
 // so that join.run() compiles, while reversed.run() calls the run scope function instead
 interface HiddenMergedRun {
@@ -505,6 +550,16 @@ interface HiddenMergedThreadFactory : java.util.concurrent.ThreadFactory {
 
 abstract class HiddenMergedThreadFactoryJoin : java.util.concurrent.ThreadFactory, HiddenMergedThreadFactory
 
+// while the V! of call() of Callable<String?> is String?, no platform type, as of a nullable type argument,
+// so that the Java member, declared first, is picked, and join.call() compiles
+interface HiddenMergedNullableArgumentCall : java.util.concurrent.Callable<String?> {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    override fun call(): String?
+}
+
+abstract class HiddenMergedNullableArgumentCallJoin :
+    java.util.concurrent.Callable<String?>, HiddenMergedNullableArgumentCall
+
 // while the get() of Supplier, which Kotlin enhances not to return a platform type, is still picked, so that join.get() compiles
 interface HiddenMergedSupplier : java.util.function.Supplier<String> {
     @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
@@ -541,6 +596,41 @@ interface HiddenMergedFunctionOverload : com.xemantic.kotlin.introspection.test.
 abstract class HiddenMergedJavaFunctionOverloadJoin :
     com.xemantic.kotlin.introspection.test.other.JavaHiddenMergedFunctionOverload, HiddenMergedFunctionOverload
 
+// the visible member of the first direct supertype is still picked when the hidden one of the second overrides
+// a visible override of it in turn, which stands for it only on the second supertype, so that join.f() compiles,
+// also through a superclass, and the run() of Runnable next to a superclass of java.lang.Thread,
+// while kotlinc 2.4 rejects reversed.f(), unchecked by the build
+interface HiddenMergedMid : HiddenMergedRoot {
+    override fun f(): Int
+}
+
+interface HiddenMergedMidLeft : HiddenMergedMid {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    override fun f(): Int
+}
+
+interface HiddenMergedMidJoin : HiddenMergedRoot, HiddenMergedMidLeft
+
+interface HiddenMergedMidJoinReversed : HiddenMergedMidLeft, HiddenMergedRoot
+
+abstract class HiddenMergedMidClass : HiddenMergedRoot {
+    override fun f(): Int = 1
+}
+
+abstract class HiddenMergedMidLeftClass : HiddenMergedMidClass() {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    override fun f(): Int = 2
+}
+
+abstract class HiddenMergedMidClassJoin : HiddenMergedRoot, HiddenMergedMidLeftClass()
+
+abstract class HiddenMergedHiddenRunThread : Thread() {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    override fun run() {}
+}
+
+abstract class HiddenMergedHiddenRunThreadJoin : Runnable, HiddenMergedHiddenRunThread()
+
 // compiles, as the merged members picked are not hidden
 @Suppress("unused")
 private fun callMergedMembers(
@@ -561,7 +651,14 @@ private fun callMergedMembers(
     genericClassReversed: HiddenMergedGenericClassJoinReversed,
     arguments: HiddenMergedArguments,
     extended: HiddenMergedExtended,
-    pinned: HiddenMergedPinned
+    pinned: HiddenMergedPinned,
+    midJoin: HiddenMergedMidJoin,
+    midClassJoin: HiddenMergedMidClassJoin,
+    hiddenRunThreadJoin: HiddenMergedHiddenRunThreadJoin,
+    internalThread: HiddenMergedInternalThreadSub,
+    nullableArgumentCallJoin: HiddenMergedNullableArgumentCallJoin,
+    anyOverride: HiddenAnyOverride,
+    anyOverrideSub: HiddenAnyOverrideSub
 ) {
     overriddenJoin.f()
     overriddenViaSub.f()
@@ -581,4 +678,11 @@ private fun callMergedMembers(
     arguments.f(1)
     extended.f().length
     pinned.member().length
+    midJoin.f()
+    midClassJoin.f()
+    hiddenRunThreadJoin.run()
+    internalThread.run()
+    nullableArgumentCallJoin.call()
+    anyOverride.toString()
+    anyOverrideSub.toString()
 }
