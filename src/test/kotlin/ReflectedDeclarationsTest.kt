@@ -323,7 +323,9 @@ class ReflectedDeclarationsTest {
             val name = when (val classifier = classifier) {
                 is KmClassifier.Class -> classifier.name
                 is KmClassifier.TypeAlias -> classifier.name
-                is KmClassifier.TypeParameter -> typeParameters.single { it.id == classifier.id }.name
+                // an id out of scope, or shared, is told by its id, showing up in the difference rather than failing
+                is KmClassifier.TypeParameter ->
+                    typeParameters.filter { it.id == classifier.id }.singleOrNull()?.name ?: "?${classifier.id}"
             }
             val arguments = arguments.joinToString(", ") { it.type.signature(typeParameters) }
             return if (arguments.isEmpty()) name else "$name<$arguments>"
