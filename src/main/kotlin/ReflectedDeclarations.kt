@@ -21,7 +21,6 @@ package com.xemantic.kotlin.introspection
 import org.objectweb.asm.Type as AsmType
 import java.lang.reflect.GenericArrayType
 import java.lang.reflect.Method
-import java.lang.reflect.Modifier
 import java.lang.reflect.ParameterizedType
 import java.lang.reflect.Type
 import java.lang.reflect.TypeVariable
@@ -363,20 +362,36 @@ private val definitelyNotNullJdkMethodNames: Set<String> =
     DEFINITELY_NOT_NULL_JDK_TYPES.keys.mapTo(HashSet()) { it.substringAfter('.').substringBefore('(') }
 
 /**
+ * The methods of `java.util.Map` of the [DEFINITELY_NOT_NULL_JDK_TYPES], with their enhanced types.
+ */
+private val definitelyNotNullMapMethods: Map<Method, Map<Int, Set<Int>>> by lazy {
+    val mapClass = Map::class.java
+    mapClass.methods.mapNotNull { method ->
+        val signature = AsmType.getInternalName(mapClass) + "." + method.name + AsmType.getMethodDescriptor(method)
+        DEFINITELY_NOT_NULL_JDK_TYPES[signature]?.let { method to it }
+    }.toMap()
+}
+
+/**
  * Marks the types of the value parameters of the [function], converted from this one,
  * which K2 enhances as definitely not nullable, see [DEFINITELY_NOT_NULL_JDK_TYPES],
  * also of a method overriding the JDK one, like `merge` of `java.util.HashMap`, which inherits the enhancement,
- * even with narrower parameter types, see [overriddenMapMethodSignature],
- * when they are type parameters, like the `V` of the value of `merge`, unlike a type argument given by a subclass.
+ * even with narrower parameter types, see [overriddenMapMethod],
+ * when they are type parameters, like the `V` of the value of `merge`, unlike a type argument given by a subclass,
+ * like the `List<T>` of a Java `ListValueMap<T> extends HashMap<String, List<T>>`, whose `T` is not enhanced,
+ * the types of the override told by the ones of the `java.util.Map` method they stand for, see [alignedTypes].
  * Whether such a type is rendered as definitely not nullable, like `V & Any`, is decided by the bounds of its type parameter,
  * see [notNullableTypeParameters], as the one substituted for it might be not nullable, like the `V` of a `V : Any`.
  */
 private fun KFunction<*>.enhanceDefinitelyNotNull(function: KmFunction) {
     if (name !in definitelyNotNullJdkMethodNames) return
     val method = reflectedValue(default = null) { javaMethod } ?: return
-    val signature = reflectedValue(default = null) { overriddenMapMethodSignature(method) } ?: return
-    DEFINITELY_NOT_NULL_JDK_TYPES[signature]?.forEach { (position, indices) ->
-        val types = function.valueParameters.getOrNull(position)?.type?.depthFirst().orEmpty()
+    val overridden = reflectedValue(default = null) { overriddenMapMethod(method) } ?: return
+    val enhanced = definitelyNotNullMapMethods[overridden] ?: return
+    val mapParameterTypes = reflectedValue(default = null) { overridden.genericParameterTypes } ?: return
+    enhanced.forEach { (position, indices) ->
+        val mapType = mapParameterTypes.getOrNull(position) ?: return@forEach
+        val types = alignedTypes(mapType, function.valueParameters.getOrNull(position)?.type)
         indices.mapNotNull { types.getOrNull(it) }.filter { it.classifier is KmClassifier.TypeParameter }.forEach { type ->
             type.isNullable = false
             type.isDefinitelyNonNull = true
@@ -385,23 +400,49 @@ private fun KFunction<*>.enhanceDefinitelyNotNull(function: KmFunction) {
 }
 
 /**
- * The JVM signature of the method of `java.util.Map`, like `java/util/Map.merge(…)`, which the [method] declares or overrides,
+ * The method of `java.util.Map` of the [DEFINITELY_NOT_NULL_JDK_TYPES], which the [method] declares or overrides,
  * or `null` if none.
  * An override might take narrower parameter types, like `merge(String, V, BiFunction)`
  * of a Java `StringKeyMap<V> extends HashMap<String, V>`, of a JVM signature of its own,
  * which overrides by the Java rule: its parameter types are the erasures of the ones of the `java.util.Map` method,
  * of the type arguments of `java.util.Map` given by the class declaring the [method], see [supertypeErasures].
  */
-private fun overriddenMapMethodSignature(method: Method): String? {
-    val mapClass = Map::class.java
-    val erasures = supertypeErasures(method.declaringClass, mapClass) ?: return null
+private fun overriddenMapMethod(method: Method): Method? {
+    val candidates = definitelyNotNullMapMethods.keys.filter { it.name == method.name && it.parameterCount == method.parameterCount }
+    if (candidates.isEmpty()) return null
+    val erasures = mapErasures.get(method.declaringClass) ?: return null
     val parameterTypes = method.parameterTypes.toList()
-    val overridden = mapClass.methods.firstOrNull { candidate ->
-        candidate.name == method.name && !Modifier.isStatic(candidate.modifiers) &&
-            candidate.parameterCount == parameterTypes.size &&
-            candidate.genericParameterTypes.map { erasure(it, erasures) } == parameterTypes
-    } ?: return null
-    return AsmType.getInternalName(mapClass) + "." + overridden.name + AsmType.getMethodDescriptor(overridden)
+    return candidates.firstOrNull { candidate -> candidate.genericParameterTypes.map { erasure(it, erasures) } == parameterTypes }
+}
+
+/**
+ * The erasures of the type arguments of `java.util.Map`, see [supertypeErasures], by the classes implementing it,
+ * computed once per class, like for each of its methods enhanced.
+ */
+private val mapErasures = object : ClassValue<Map<TypeVariable<*>, Class<*>>?>() {
+    override fun computeValue(type: Class<*>): Map<TypeVariable<*>, Class<*>>? =
+        reflectedValue(default = null) { supertypeErasures(type, Map::class.java) }
+}
+
+/**
+ * The types of the value parameter of a method overriding a method of `java.util.Map`, the [type],
+ * standing for the ones of the parameter of the `java.util.Map` method, the [mapType], in depth-first order,
+ * the type itself first, then its type arguments, see [DEFINITELY_NOT_NULL_JDK_TYPES],
+ * where a type variable of `java.util.Map`, like `V`, stands for the whole type given for it,
+ * like `List<T>`, of whose type arguments none stands for a type of the [mapType],
+ * and `null` stands for a type the [type] does not tell, like the type argument of a raw type, or a star projection.
+ */
+private fun alignedTypes(mapType: Type, type: KmType?): List<KmType?> = buildList {
+    fun visit(mapType: Type, type: KmType?) {
+        add(type)
+        if (mapType !is ParameterizedType) return
+        mapType.actualTypeArguments.forEachIndexed { index, argument ->
+            // a wildcard, like `? super V`, is a projection of its bound, like `in V`
+            val bound = (argument as? WildcardType)?.let { it.lowerBounds.firstOrNull() ?: it.upperBounds.firstOrNull() } ?: argument
+            visit(bound, type?.arguments?.getOrNull(index)?.type)
+        }
+    }
+    visit(mapType, type)
 }
 
 /**
@@ -446,18 +487,6 @@ private fun erasure(type: Type, erasures: Map<TypeVariable<*>, Class<*>>): Class
         is WildcardType -> erasure(erased.upperBounds.firstOrNull() ?: Any::class.java, erasures)
         else -> Any::class.java
     }
-}
-
-/**
- * This type and its type arguments, in depth-first order, a star projection standing for `null`,
- * see [DEFINITELY_NOT_NULL_JDK_TYPES].
- */
-private fun KmType.depthFirst(): List<KmType?> = buildList {
-    fun visit(type: KmType?) {
-        add(type)
-        type?.arguments?.forEach { visit(it.type) }
-    }
-    visit(this@depthFirst)
 }
 
 /**

@@ -217,6 +217,43 @@ class TypeSubstitutionTest {
     }
 
     @Test
+    fun `should renumber type parameters of scope with the not nullable ones`() {
+        // given - the scope of <T : Any, X> of an inheriting class
+        val scope = TypeParameterScope(mapOf(0 to "T", 1 to "X"), notNullable = setOf(0))
+
+        // when
+        val renumbered = scope.mapIds { it + 100 }
+
+        // then
+        assert(renumbered.names == mapOf(100 to "T", 101 to "X") && renumbered.notNullable == setOf(100))
+    }
+
+    @Test
+    fun `should join scopes with their not nullable type parameters`() {
+        // given - the scope of a supertype <A : Any, B>, and the one of an inheriting class <U : Any>, renumbered apart
+        val supertypeScope = TypeParameterScope(mapOf(0 to "A", 1 to "B"), notNullable = setOf(0))
+        val inheritingScope = TypeParameterScope(mapOf(100 to "U"), notNullable = setOf(100))
+
+        // when
+        val scope = supertypeScope + inheritingScope
+
+        // then
+        assert(scope.names == mapOf(0 to "A", 1 to "B", 100 to "U") && scope.notNullable == setOf(0, 100))
+    }
+
+    @Test
+    fun `should tell no type parameter not nullable when marking definitely not nullable`() {
+        // given
+        val names = mapOf(0 to "T", 1 to "R")
+
+        // when
+        val scope = TypeParameterScope.markingDefinitelyNotNull(names)
+
+        // then
+        assert(scope.names == names && scope.notNullable.isEmpty())
+    }
+
+    @Test
     fun `should tell all type parameters not nullable when ignoring definitely not nullable`() {
         // given
         val names = mapOf(0 to "T", 1 to "R")

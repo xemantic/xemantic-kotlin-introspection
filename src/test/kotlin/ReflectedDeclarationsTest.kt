@@ -247,6 +247,20 @@ class ReflectedDeclarationsTest {
     }
 
     @Test
+    fun `should read Java class type parameter bound of parameterized platform type as nullable`() {
+        // given - the bound of K extends Enum<K> of java.util.EnumMap is seen in Kotlin as Enum<K!>!, admitting null
+        val kClass = java.util.EnumMap::class
+
+        // when
+        val kmClass = kClass.toKmJavaClassHeader("java/util/EnumMap") { kotlinClassName(it) }
+
+        // then
+        val bound = kmClass.typeParameters.first().upperBounds.single()
+        assert((bound.classifier as? KmClassifier.Class)?.name == "kotlin/Enum" && bound.isNullable)
+        assert(notNullableTypeParameters(kmClass.typeParameters).isEmpty())
+    }
+
+    @Test
     fun `should render Java parameter of class type parameter as not nullable`() {
         // given - T! of a JavaLabelBase<String> accepts no null, unlike Any! of Object, as the receiver fixes T
         val getLabel = JavaLabelBase::class.memberFunctions.single { it.name == "getLabel" }

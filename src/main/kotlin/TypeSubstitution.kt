@@ -151,6 +151,19 @@ internal class TypeParameterScope(val names: Map<Int, String>, val notNullable: 
     fun withNames(names: Map<Int, String>): TypeParameterScope =
         if (names.isEmpty()) this else TypeParameterScope(this.names + names, notNullable)
 
+    /**
+     * This scope with the ids of its type parameters renumbered by the [transform], like the ones of an inheriting class,
+     * renumbered apart from the ones of its supertypes.
+     */
+    fun mapIds(transform: (id: Int) -> Int): TypeParameterScope =
+        TypeParameterScope(names.mapKeys { (id, _) -> transform(id) }, notNullable.mapTo(HashSet(), transform))
+
+    /**
+     * This scope with the type parameters of the [other] one, of distinct ids, like the ones of an inheriting class.
+     */
+    operator fun plus(other: TypeParameterScope): TypeParameterScope =
+        TypeParameterScope(names + other.names, notNullable + other.notNullable)
+
     companion object {
 
         val EMPTY: TypeParameterScope = TypeParameterScope(emptyMap(), emptySet())
@@ -161,6 +174,13 @@ internal class TypeParameterScope(val names: Map<Int, String>, val notNullable: 
          * which never differ only by it, as `T & Any` and `T` have the same JVM erasure.
          */
         fun ignoringDefinitelyNotNull(names: Map<Int, String>): TypeParameterScope = TypeParameterScope(names, names.keys)
+
+        /**
+         * The scope of the type parameters of the [names], whose uses as definitely not nullable, like `T & Any`,
+         * are all rendered so, regardless of their bounds, for the signatures compared with one another,
+         * like the ones of the members and the extensions, which a `T & Any` tells apart, see [ignoringDefinitelyNotNull].
+         */
+        fun markingDefinitelyNotNull(names: Map<Int, String>): TypeParameterScope = TypeParameterScope(names, emptySet())
 
     }
 

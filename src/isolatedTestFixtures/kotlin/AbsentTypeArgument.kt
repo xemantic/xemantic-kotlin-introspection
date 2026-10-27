@@ -216,6 +216,12 @@ class MissingNotNullOuter<T : Any> {
     inner class Inner : DefinitelyNonNullHolder<T>()
 }
 
+// tests leave the class file of the generic outer class out, whose type parameter, of nullable bounds,
+// is then not known to be
+class MissingNullableOuter<T> {
+    inner class Inner : DefinitelyNonNullHolder<T>()
+}
+
 open class DefinitelyNonNullHolder<T> {
     fun orDefault(value: T, default: T & Any): T & Any = value ?: default
 }
