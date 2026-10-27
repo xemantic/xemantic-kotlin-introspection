@@ -844,3 +844,34 @@ abstract class DepthScanner : com.sun.source.util.TreeScanner<Unit, Unit>() {
 class IndexedProperties : java.util.Properties() {
     val Int.property: String get() = ""
 }
+
+// Overloads of members of JDK classes overridden by application Java classes, which prove no shrunk override either
+class IndentedJavaException : com.xemantic.kotlin.introspection.test.other.JavaDescribedException() {
+    fun toString(indent: Int): String = ""
+}
+
+class IndentedJavaDescribed : com.xemantic.kotlin.introspection.test.other.JavaDescribed() {
+    fun toString(indent: Int): String = ""
+}
+
+abstract class SizedJavaProbeList : com.xemantic.kotlin.introspection.test.other.JavaProbeList() {
+    fun toArray(size: Int): Array<Any?> = arrayOfNulls(size)
+}
+
+abstract class TaggedJavaProbeExecutor : com.xemantic.kotlin.introspection.test.other.JavaProbeExecutor() {
+    fun submit(tag: String) {}
+}
+
+class DeepJavaCopyable : com.xemantic.kotlin.introspection.test.other.JavaCopyable() {
+    fun clone(deep: Boolean): Any = this
+    fun finalize(timeout: Int) {}
+}
+
+// An overload of a Java method named like a member of a built-in type, but not overriding its JVM method
+abstract class RadixCountingNumber : com.xemantic.kotlin.introspection.test.other.JavaCountingNumber() {
+    fun toInt(radix: Int): Int = radix
+}
+
+class IndexedJavaProperties : com.xemantic.kotlin.introspection.test.other.JavaDefaultedProperties() {
+    val Int.property: String get() = ""
+}

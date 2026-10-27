@@ -365,7 +365,8 @@ com.example.AnnotationTestClass
   - a member whose JVM method a shrinker removed, overloading a Java member of the same name,
     or one of a Kotlin supertype without the metadata, is marked `override`,
     as the shrinker might have removed the overridden JVM method as well,
-    unless it is a member of a JDK class, like `Throwable.toString()`, which is never shrunk.
+    unless it is a member of a JDK class, like `Throwable.toString()`, which is never shrunk,
+    or an override of one, like `toString()` of an application Java exception.
 * The whole classpath visible to the given class loader is scanned on creation, which takes a while,
   so the instance should be created once and reused.
   The scan can be disabled with `KotlinIntrospector(scanEntireClasspath = false)`,

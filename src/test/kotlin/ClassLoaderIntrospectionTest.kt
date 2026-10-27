@@ -2556,40 +2556,7 @@ class ClassLoaderIntrospectionTest {
     @Test
     fun `should tell overrides of internal members by modality in final classes which can be neither read nor reflected`() {
         // given
-        val root = tempDir.resolve("unreflectable")
-        listOf(InternalBase::class.java, FriendModuleSubclass::class.java).forEach { fixture ->
-            val dir = File(fixture.protectionDomain.codeSource.location.toURI())
-            dir.walkTopDown()
-                .filter { it.isFile && it.name != "OtherModuleMarker.class" }
-                .forEach { it.copyTo(root.resolve(it.relativeTo(dir).path).toFile(), overwrite = true) }
-        }
-        val unreadableResources = setOf(
-            "com/xemantic/kotlin/introspection/othermodule/UnreflectableSameModuleSubclass.class",
-            "com/xemantic/kotlin/introspection/friendmodule/UnreflectableFriendModuleSubclass.class"
-        )
-        // loading the fixtures of both modules itself, without the marker class, which their methods refer to
-        val classLoader = object : URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader) {
-            override fun loadClass(name: String, resolve: Boolean): Class<*> =
-                if (name.startsWith("com.xemantic.kotlin.introspection.othermodule.") ||
-                    name.startsWith("com.xemantic.kotlin.introspection.friendmodule.")
-                ) {
-                    synchronized(getClassLoadingLock(name)) { findLoadedClass(name) ?: findClass(name) }
-                } else {
-                    super.loadClass(name, resolve)
-                }
-
-            override fun getResourceAsStream(name: String): InputStream? {
-                val stream = super.getResourceAsStream(name)
-                return if (stream != null && name in unreadableResources) {
-                    val bytes = stream.use { it.readBytes() }
-                    // the major version, following the magic number and the minor version
-                    bytes[6] = 0x7F
-                    bytes[7] = 0x7F
-                    bytes.inputStream()
-                } else stream
-            }
-        }
-        val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
+        val introspector = unreflectableIntrospector()
 
         // when
         val sameModule = introspector.resolve(
@@ -2614,6 +2581,89 @@ class ClassLoaderIntrospectionTest {
             // com.xemantic.kotlin.introspection.friendmodule.UnreflectableFriendModuleSubclass [page 1/1]
             class UnreflectableFriendModuleSubclass : com.xemantic.kotlin.introspection.othermodule.InternalBase {
                 override val state: Int
+                fun take(marker: com.xemantic.kotlin.introspection.othermodule.OtherModuleMarker)
+            }
+        """.trimIndent()
+    }
+
+    /**
+     * An introspector of the fixtures of the other module and the friend module, without the marker class,
+     * which the methods of the `Unreflectable` classes refer to, so that they cannot be reflected,
+     * while their class files cannot be read either, being of an unsupported class file version.
+     */
+    private fun unreflectableIntrospector(): KotlinIntrospector {
+        val root = tempDir.resolve("unreflectable")
+        listOf(InternalBase::class.java, FriendModuleSubclass::class.java).forEach { fixture ->
+            val dir = File(fixture.protectionDomain.codeSource.location.toURI())
+            dir.walkTopDown()
+                .filter { it.isFile && it.name != "OtherModuleMarker.class" }
+                .forEach { it.copyTo(root.resolve(it.relativeTo(dir).path).toFile(), overwrite = true) }
+        }
+        val unreadableResources = setOf(
+            "com/xemantic/kotlin/introspection/othermodule/UnreflectableSameModuleSubclass.class",
+            "com/xemantic/kotlin/introspection/othermodule/UnreflectableOpenSameModuleSubclass.class",
+            "com/xemantic/kotlin/introspection/friendmodule/UnreflectableFriendModuleSubclass.class",
+            "com/xemantic/kotlin/introspection/friendmodule/UnreflectableOpenFriendModuleSubclass.class"
+        )
+        // a new Unreflectable fixture must be listed above, or it would stay readable
+        val unreflectableFixtures = root.toFile().walkTopDown()
+            .filter { it.isFile && it.name.startsWith("Unreflectable") }
+            .map { it.relativeTo(root.toFile()).invariantSeparatorsPath }
+            .toSet()
+        assert(unreflectableFixtures == unreadableResources)
+        // loading the fixtures of both modules itself, without the marker class, which their methods refer to
+        val classLoader = object : URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader) {
+            override fun loadClass(name: String, resolve: Boolean): Class<*> =
+                if (name.startsWith("com.xemantic.kotlin.introspection.othermodule.") ||
+                    name.startsWith("com.xemantic.kotlin.introspection.friendmodule.")
+                ) {
+                    synchronized(getClassLoadingLock(name)) { findLoadedClass(name) ?: findClass(name) }
+                } else {
+                    super.loadClass(name, resolve)
+                }
+
+            override fun getResourceAsStream(name: String): InputStream? {
+                val stream = super.getResourceAsStream(name)
+                return if (stream != null && name in unreadableResources) {
+                    val bytes = stream.use { it.readBytes() }
+                    // the major version, following the magic number and the minor version
+                    bytes[6] = 0x7F
+                    bytes[7] = 0x7F
+                    bytes.inputStream()
+                } else stream
+            }
+        }
+        return KotlinIntrospector(classLoader, scanEntireClasspath = false)
+    }
+
+    @Test
+    fun `should tell overrides of internal members by module name in open classes which can be neither read nor reflected`() {
+        // given
+        val introspector = unreflectableIntrospector()
+
+        // when
+        val sameModule = introspector.resolve(
+            "com.xemantic.kotlin.introspection.othermodule.UnreflectableOpenSameModuleSubclass"
+        )
+        val friendModule = introspector.resolve(
+            "com.xemantic.kotlin.introspection.friendmodule.UnreflectableOpenFriendModuleSubclass"
+        )
+
+        // then
+        // the JVM methods telling a mangled override cannot be read, and the modality tells nothing in an open class,
+        // so a module of the same name is assumed to be the same module
+        sameModule sameAsKotlin """
+            // com.xemantic.kotlin.introspection.othermodule.UnreflectableOpenSameModuleSubclass [page 1/1]
+            open class UnreflectableOpenSameModuleSubclass : InternalBase {
+                override val state: Int
+                fun take(marker: OtherModuleMarker)
+            }
+        """.trimIndent()
+        // while an override from a friend module, of another name, is told only by the bridge, which cannot be seen
+        friendModule sameAsKotlin """
+            // com.xemantic.kotlin.introspection.friendmodule.UnreflectableOpenFriendModuleSubclass [page 1/1]
+            open class UnreflectableOpenFriendModuleSubclass : com.xemantic.kotlin.introspection.othermodule.InternalBase {
+                open val state: Int
                 fun take(marker: com.xemantic.kotlin.introspection.othermodule.OtherModuleMarker)
             }
         """.trimIndent()
@@ -2847,6 +2897,99 @@ class ClassLoaderIntrospectionTest {
             // com.xemantic.kotlin.introspection.test.IndentedException [page 1/1]
             class IndentedException : java.lang.Exception {
                 fun toString(indent: Int): String
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not mark shrunk overloads of members of JDK classes overridden by application Java classes as override`() {
+        // given
+        val exceptionName = "com.xemantic.kotlin.introspection.test.IndentedJavaException"
+        val describedName = "com.xemantic.kotlin.introspection.test.IndentedJavaDescribed"
+        val listName = "com.xemantic.kotlin.introspection.test.SizedJavaProbeList"
+        val propertiesName = "com.xemantic.kotlin.introspection.test.IndexedJavaProperties"
+
+        // when
+        val exception = shrunkIntrospector(exceptionName, "toString").resolve(exceptionName)
+        val described = shrunkIntrospector(describedName, "toString").resolve(describedName)
+        val list = shrunkIntrospector(listName, "toArray").resolve(listName)
+        val properties = shrunkIntrospector(propertiesName, "getProperty").resolve(propertiesName)
+
+        // then
+        // an override of a JDK method, like toString(), is kept as long as the JDK method is,
+        // so it proves no shrunk override of its overload either
+        exception sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.IndentedJavaException [page 1/1]
+            class IndentedJavaException : com.xemantic.kotlin.introspection.test.other.JavaDescribedException {
+                fun toString(indent: Int): String
+            }
+        """.trimIndent()
+        // also of a method of Object, known as a member of Any
+        described sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.IndentedJavaDescribed [page 1/1]
+            class IndentedJavaDescribed : com.xemantic.kotlin.introspection.test.other.JavaDescribed {
+                fun toString(indent: Int): String
+            }
+        """.trimIndent()
+        // and of a JDK collection method hidden from the members of the Kotlin collection types
+        list sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SizedJavaProbeList [page 1/1]
+            abstract class SizedJavaProbeList : com.xemantic.kotlin.introspection.test.other.JavaProbeList {
+                fun toArray(size: Int): Array<Any?>
+            }
+        """.trimIndent()
+        properties sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.IndexedJavaProperties [page 1/1]
+            class IndexedJavaProperties : com.xemantic.kotlin.introspection.test.other.JavaDefaultedProperties {
+                val Int.property: String
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not mark shrunk overloads of raw and Object methods overridden by application Java classes as override`() {
+        // given
+        val executorName = "com.xemantic.kotlin.introspection.test.TaggedJavaProbeExecutor"
+        val copyableName = "com.xemantic.kotlin.introspection.test.DeepJavaCopyable"
+
+        // when
+        val executor = shrunkIntrospector(executorName, "submit").resolve(executorName)
+        val copyable = shrunkIntrospector(copyableName, "clone", "finalize").resolve(copyableName)
+
+        // then
+        // a raw override of the generic <T> submit(Runnable, T) of a JDK class overrides it all the same
+        executor sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.TaggedJavaProbeExecutor [page 1/1]
+            abstract class TaggedJavaProbeExecutor : com.xemantic.kotlin.introspection.test.other.JavaProbeExecutor {
+                fun submit(tag: String)
+            }
+        """.trimIndent()
+        // the overrides of the methods of Object which are no members of Any, like clone() and finalize(), are no evidence either
+        copyable sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DeepJavaCopyable [page 1/1]
+            class DeepJavaCopyable : com.xemantic.kotlin.introspection.test.other.JavaCopyable {
+                fun clone(deep: Boolean): Any
+                fun finalize(timeout: Int)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark shrunk overloads of application Java methods named like Kotlin members of built-in types as override`() {
+        // given
+        val className = "com.xemantic.kotlin.introspection.test.RadixCountingNumber"
+        val introspector = shrunkIntrospector(className, "toInt")
+
+        // when
+        val signature = introspector.resolve(className)
+
+        // then
+        // Number.toInt() is intValue() on the JVM, so the Java toInt() overrides no JDK method, and stays the evidence,
+        // as it might be shrunk together with its override
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.RadixCountingNumber [page 1/1]
+            abstract class RadixCountingNumber : com.xemantic.kotlin.introspection.test.other.JavaCountingNumber {
+                final override fun toInt(radix: Int): Int
             }
         """.trimIndent()
     }

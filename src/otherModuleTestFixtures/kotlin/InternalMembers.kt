@@ -54,3 +54,8 @@ class UnreflectableSameModuleSubclass : InternalBase() {
     public override val state: Int get() = 1
     fun take(marker: OtherModuleMarker) {}
 }
+
+open class UnreflectableOpenSameModuleSubclass : InternalBase() {
+    public override val state: Int get() = 1
+    fun take(marker: OtherModuleMarker) {}
+}
