@@ -8398,6 +8398,27 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve function of JVM-only member signature with type argument substituted, but its nullability, as not inheriting it`() {
+        // the addFirst(E) of JDK 21 takes the platform type String! of the substituted E, overridden by addFirst(String?) too
+        assumeTrue(runCatching { List::class.java.getMethod("addFirst", Any::class.java) }.isSuccess, "JDK 21+")
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NullableSequencedStringList.addFirst") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NullableSequencedStringList.addFirst [page 1/1]
+            fun addFirst(element: String?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should list inherited Java member taking primitive next to function taking its nullable counterpart`() {
+        // the int of prim(int) is not a platform type, so prim(x: Int?) is an overload, not an override
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaPrimitiveSubclass.prim") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaPrimitiveSubclass.prim [page 1/1]
+            fun prim(x: Int?)
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaPrimitiveBase
+            fun prim(arg0: Int)
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve JVM-only member of mutable list`() {
         assumeNoParameterNames(List::class.java.getMethod("replaceAll", java.util.function.UnaryOperator::class.java))
         resolver.resolve("kotlin.collections.MutableList.replaceAll") sameAsKotlin """

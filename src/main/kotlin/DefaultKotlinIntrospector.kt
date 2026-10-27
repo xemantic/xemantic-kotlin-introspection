@@ -2109,6 +2109,8 @@ internal class DefaultKotlinIntrospector(
         // though neither the metadata, nor the JVM signature, of the declared function tells, like `addFirst(element: String)`
         // of a subclass of `AbstractMutableList<String>` compiled against JDK 17, taking `String` on the JVM,
         // not the `Object` of the erased `E` of `addFirst` of `java.util.List` since JDK 21,
+        // regardless of the nullability, as the types of a Java candidate are platform types, see [withoutNullability],
+        // like the `String!` of the substituted `E`, overridden by `addFirst(element: String?)` too,
         // and the signatures of the declared overrides whose overridden members are not told, overriding any candidate alike
         val declaredSignatures = HashSet<String>()
         val untoldOverrideSignatures = HashSet<String>()
@@ -2123,7 +2125,7 @@ internal class DefaultKotlinIntrospector(
             val isUntoldOverride = keys.isEmpty() && member.isOverride(overrideResolver, owner)
             if (hasJavaCandidates || isUntoldOverride) {
                 val signature = member.signature(inheritingTypeParameters.names)
-                if (hasJavaCandidates) declaredSignatures += signature
+                if (hasJavaCandidates) declaredSignatures += withoutNullability(signature)
                 if (isUntoldOverride) untoldOverrideSignatures += signature
             }
         }
@@ -2132,7 +2134,7 @@ internal class DefaultKotlinIntrospector(
             !it.isHidden && it.key !in overridden && when (it.jvmMethod) {
                 null -> it.signature !in untoldOverrideSignatures
                 else -> it.jvmMethod.key !in overriddenJavaMembers && it.jvmMethod.signature !in overridingJvmSignatures &&
-                    it.signature !in declaredSignatures
+                    withoutNullability(it.signature) !in declaredSignatures
             }
         }
         // whether the member a wins over the merged member b, of a less specific return type, or else declared later
@@ -6580,3 +6582,13 @@ internal fun receiverBoundsOf(receiverIndexKeys: List<String>): Set<String> =
 @Suppress("DEPRECATION")
 internal val KmClass.legacyContextReceiverTypes: MutableList<KmType>
     get() = contextReceiverTypes
+
+/**
+ * The [signature] of a member, see [memberSignature], without the nullability of its types, like `fun f(kotlin/String)`
+ * of `fun f(kotlin/String?)`, matching a Java member, of platform types, whatever nullability its override declares,
+ * but of the primitive types, as a Java `int` is not a platform type, so that `f(x: Int?)` does not override `f(int)`.
+ * The `?` preceding the id of a type parameter out of scope, like `?3`, is kept.
+ */
+private fun withoutNullability(signature: String): String = signature.replace(nullabilityMark, "")
+
+private val nullabilityMark = Regex("""(?<!kotlin/(?:Boolean|Char|Byte|Short|Int|Long|Float|Double))\?(?!\d)""")

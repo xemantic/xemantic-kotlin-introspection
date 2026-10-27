@@ -484,6 +484,12 @@ abstract class SequencedStringList : AbstractMutableList<String>() {
     fun addFirst(element: String) {}
 }
 
+// like SequencedStringList, taking String?, which still overrides the addFirst(E) of JDK 21 on the class,
+// whose parameter is of a platform type, String! of the substituted E
+abstract class NullableSequencedStringList : AbstractMutableList<String>() {
+    fun addFirst(element: String?) {}
+}
+
 abstract class JdkMap : MutableMap<String, Int> {
     override fun putIfAbsent(key: String, value: Int): Int? = null
 }

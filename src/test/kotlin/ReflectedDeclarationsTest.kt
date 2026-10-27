@@ -27,6 +27,7 @@ import com.xemantic.kotlin.introspection.test.other.JavaLabelBase
 import com.xemantic.kotlin.introspection.test.other.JavaUnnamedParameters
 import com.xemantic.kotlin.introspection.test.other.Upper.JavaUpperCasePackage
 import com.xemantic.kotlin.test.assert
+import kotlin.metadata.KmClass
 import kotlin.metadata.KmClassifier
 import kotlin.metadata.KmType
 import kotlin.metadata.KmTypeParameter
@@ -289,6 +290,54 @@ class ReflectedDeclarationsTest {
                 "fun <T> drainTo(arg0: MutableCollection<in T>?, arg1: MutableMap<String, in T>?): Int"
             )
         )
+    }
+
+    @Test
+    fun `should describe by kotlin-reflect every member the built-in declarations declare`() {
+        // given - the built-in types of the .kotlin_builtins resources, not the unsigned ones, which have class files
+        val declarations = readKotlinBuiltinClasses()
+        val builtinTypes = DefaultKotlinIntrospector.builtinTypes
+            .filterKeys { !it.substringAfterLast('.').startsWith("Mutable") }
+            .mapKeys { (qualifiedName, _) -> kotlinClassName(qualifiedName) }
+            .filterKeys { it in declarations }
+
+        // when
+        val missing = builtinTypes.mapValues { (name, kClass) ->
+            val reflected = kClass.toKmBuiltinClass(name)
+            declarations.getValue(name).memberSignatures() - reflected.memberSignatures()
+        }.filterValues { it.isNotEmpty() }
+
+        // then - like a future JDK overloading a mapped member, like a Java-only List.indexOf(Object, int),
+        // moving the built-in indexOf(element: E) to the JVM-only members by its name, see javaOnlyFunctions
+        assert(builtinTypes.size > 30)
+        assert(missing.isEmpty())
+    }
+
+    /**
+     * The signatures of the functions and properties of this class, like `indexOf(E)`,
+     * naming the type parameters, whose ids differ between the `.kotlin_builtins` resources and kotlin-reflect.
+     */
+    private fun KmClass.memberSignatures(): Set<String> {
+        fun KmType?.signature(typeParameters: List<KmTypeParameter>): String {
+            if (this == null) return "*"
+            val name = when (val classifier = classifier) {
+                is KmClassifier.Class -> classifier.name
+                is KmClassifier.TypeAlias -> classifier.name
+                is KmClassifier.TypeParameter -> typeParameters.single { it.id == classifier.id }.name
+            }
+            val arguments = arguments.joinToString(", ") { it.type.signature(typeParameters) }
+            return if (arguments.isEmpty()) name else "$name<$arguments>"
+        }
+        val functions = functions.map { function ->
+            val typeParameters = this.typeParameters + function.typeParameters
+            function.receiverParameterType?.let { "${it.signature(typeParameters)}." }.orEmpty() + function.name +
+                function.valueParameters.joinToString(", ", "(", ")") { it.type.signature(typeParameters) }
+        }
+        val properties = properties.map { property ->
+            val typeParameters = this.typeParameters + property.typeParameters
+            property.receiverParameterType?.let { "${it.signature(typeParameters)}." }.orEmpty() + property.name
+        }
+        return (functions + properties).toSet()
     }
 
     @Test
