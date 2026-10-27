@@ -335,9 +335,32 @@ class InheritedLinkedHashMap<K, V> : java.util.LinkedHashMap<K, V>()
 
 class InheritedWeakReference(referent: String) : java.lang.ref.WeakReference<String>(referent)
 
+class InheritedCovariantWeakReference(referent: String) :
+    com.xemantic.kotlin.introspection.test.other.JavaStringWeakReference(referent)
+
 // A Java interface declaring equals abstract again, which the implementation of kotlin.Any still implements
 abstract class InheritedJavaComparator : java.util.Comparator<String>
 
 // A Java interface of a mapped type named as a supertype, whose own members kotlin-reflect cannot describe,
-// as it describes the read-only built-in type, ListIterator, instead
+// as it describes the read-only built-in type, ListIterator, instead, so that they are converted from the Java reflection
 abstract class JavaListIteratorSubclass : java.util.ListIterator<String>
+
+abstract class JavaMapEntrySubclass : java.util.Map.Entry<String, Int>
+
+// A Java superclass whose members kotlin-reflect cannot describe, failing on all of them at once,
+// so that they are converted from the Java reflection
+abstract class InheritedJavaUndescribable : com.xemantic.kotlin.introspection.test.other.JavaUndescribableBase<String>()
+
+// A member of a Java superclass whose members kotlin-reflect cannot describe since JDK 21, hidden by another supertype,
+// which the compiler does not pick, as the getFirst() of java.util.LinkedHashSet, of the first supertype, returns String too
+interface HiddenFirst {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    fun getFirst(): String
+}
+
+abstract class InheritedLinkedHashSetHidingFirst : java.util.LinkedHashSet<String>(), HiddenFirst
+
+// The invoke operator of a function type, and of a suspend one, named as a supertype
+abstract class InheritedFunctionType : (Int) -> String
+
+abstract class InheritedSuspendFunctionType : suspend (Int) -> String

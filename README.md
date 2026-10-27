@@ -123,6 +123,9 @@ com.example.AnnotationTestClass
   telling it apart from an abstract one.
   The methods which a Java supertype declares are inherited too, as kotlin-reflect describes them,
   like `fun ensureCapacity(arg0: Int)` of `java.util.ArrayList`,
+  or converted from the Java reflection alike, when kotlin-reflect cannot describe them,
+  like the `addFirst` of `java.util.LinkedHashSet` since JDK 21,
+  or describes a built-in type instead, like `set(E)` of `java.util.ListIterator` named as a supertype,
   but the ones overriding a member of a Kotlin supertype, like the `get` of `java.util.ArrayList`,
   for which the Kotlin member is inherited instead, declared with the names of its parameters, which the JDK does not tell,
   unless the Java method makes it more visible, like the public `clone()` of the protected one of `kotlin.Cloneable`,
@@ -201,7 +204,8 @@ com.example.AnnotationTestClass
   A function type with a receiver, or with context parameters, is of the same class,
   like `String.() -> Unit` and `context(String) () -> Unit` are both `kotlin.Function1`.
   A class implementing a function type, like `class Handler : (Event) -> Unit`,
-  lists the extensions of its function type class as well, whatever their type arguments.
+  lists the extensions of its function type class as well, whatever their type arguments,
+  and inherits its `invoke` operator, like `operator fun invoke(p1: Event)`.
   The function reference types, like `kotlin.reflect.KFunction1`, are resolved the same way,
   like `interface KFunction1<in P1, out R> : KFunction<R>, Function1<P1, R>`,
   listing also the extensions on `KFunction`, like `KFunction<*>.javaMethod`.
