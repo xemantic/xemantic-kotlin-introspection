@@ -40,10 +40,12 @@ import com.xemantic.kotlin.introspection.test.other.JavaProjectedStringListSourc
 import com.xemantic.kotlin.introspection.test.other.JavaProjectedStringListRows
 import com.xemantic.kotlin.introspection.test.other.JavaProjectedWildcardSource
 import com.xemantic.kotlin.introspection.test.other.JavaRawComparableBoth
+import com.xemantic.kotlin.introspection.test.other.JavaRawGenericComparableMid
 import com.xemantic.kotlin.introspection.test.other.JavaRawMapArrayBoth
 import com.xemantic.kotlin.introspection.test.other.JavaRawMapBoth
 import com.xemantic.kotlin.introspection.test.other.JavaRawWildcardMapBoth
 import com.xemantic.kotlin.introspection.test.other.JavaStringCollection
+import com.xemantic.kotlin.introspection.test.other.JavaStringList
 import com.xemantic.kotlin.introspection.test.other.JavaWildcardRows
 
 // Extensions on type parameter receivers, listed for the classes satisfying their bounds,
@@ -698,3 +700,20 @@ interface BoundedReceiverKotlinStringCollection : MutableCollection<String>
 abstract class BoundedReceiverJavaKotlinStrings : JavaStringCollection, BoundedReceiverKotlinStringCollection
 
 fun BoundedReceiverJdkSink<BoundedReceiverJavaKotlinStrings>.sinkJavaKotlinStrings() {}
+
+// also when the supertype reached through Java is walked first, like MutableList<String!> of a Java list,
+// the one of Kotlin preferred, MutableList<String>, its own supertypes walked again from it,
+// MutableCollection<String>, not a MutableCollection<String?>, unlike MutableCollection<String!> of Java
+interface BoundedReceiverKotlinStringList : MutableList<String>
+
+interface BoundedReceiverDeepKotlinStringList : BoundedReceiverKotlinStringList
+
+abstract class BoundedReceiverJavaDeepKotlinStringList : JavaStringList, BoundedReceiverDeepKotlinStringList
+
+fun BoundedReceiverJdkSink<BoundedReceiverJavaDeepKotlinStringList>.sinkJavaDeepKotlinStringList() {}
+
+fun BoundedReceiverJdkSink<JavaStringList>.sinkJavaStringList() {}
+
+// a class comparable through a raw Java supertype, to the erasure of its type argument, the raw JavaGenericComparable,
+// told by its name only, not listing the extensions on Comparable of its package, which kotlinc does not accept
+class BoundedReceiverRawGenericComparable : JavaRawGenericComparableMid()

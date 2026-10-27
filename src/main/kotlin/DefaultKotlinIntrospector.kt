@@ -3107,14 +3107,16 @@ internal class DefaultKotlinIntrospector(
         fun visit(name: String, metadataName: String, type: KmType?) {
             if (type != null && types != null) {
                 val known = types[name]
-                if (known == null) {
+                // kotlinc prefers the supertype reached through Kotlin to the one reached through Java,
+                // like MutableList<String> of a Kotlin interface to MutableList<String!> of a Java one
+                if (known == null || (known.hasPlatformArguments && !type.hasPlatformArguments)) {
                     types[name] = type
-                } else if (known.hasPlatformArguments && !type.hasPlatformArguments) {
-                    // kotlinc prefers the supertype reached through Kotlin to the one reached through Java,
-                    // like MutableCollection<String> of a Kotlin interface to MutableCollection<String!> of a Java one,
-                    // walked again for the supertypes it gives
-                    types[name] = type
-                    if (name in supertypeNames) pending += metadataName to type
+                    // walked again for the supertypes it gives, like MutableCollection<String>, when already walked,
+                    // untyped, or through Java, or else walked with it, when still pending
+                    if (name in supertypeNames) {
+                        val index = pending.indexOfFirst { (pendingName, _) -> pendingName == metadataName }
+                        if (index >= 0) pending[index] = metadataName to type else pending += metadataName to type
+                    }
                 }
             }
             val functionTypeClass = FunctionTypeClass.of(name)
@@ -3316,11 +3318,13 @@ internal class DefaultKotlinIntrospector(
     /**
      * Whether the class is comparable, to whatever type, like `class Price : Comparable<Money>`,
      * so that the extensions on `Comparable` of the package of the class are listed for it, like next to it,
-     * see [listedExtensions], also through a raw Java supertype, which tells no type arguments,
-     * but not an enum class, see [isComparableToItself], which implies it.
+     * see [listedExtensions], but not an enum class, see [isComparableToItself], which implies it,
+     * nor a class comparable only through a raw Java supertype, like `class Mid extends Base`, where
+     * `class Base<T> implements Comparable<Base<T>>`, told by its name, but not by its type, see [ClassSupertypes.types],
+     * comparable to the raw `Base`, on which kotlinc does not accept the extensions of the package, like on `Comparable<Money>`.
      */
     private val ClassSupertypes.isComparable: Boolean
-        get() = kmClass.kind != ClassKind.ENUM_CLASS && COMPARABLE_CLASS_NAME in names
+        get() = kmClass.kind != ClassKind.ENUM_CLASS && COMPARABLE_CLASS_NAME in types
 
     /**
      * Whether the [type] is a type parameter of the class bounded by the class itself, of its own type parameters,
@@ -7184,8 +7188,8 @@ private const val JAVA_COLLECTION_MARKER = "com/xemantic/kotlin/introspection/Ja
  * with their own type arguments, not as platform types, see `FakePureImplementationsProvider` of kotlinc,
  * like `MutableList<E>` of `java.util.ArrayList<E>`, also when implemented through a Java supertype,
  * like `MutableSet<E>` of `java.util.LinkedHashSet<E>`, through `HashSet<E!>`, see `javaSupertypeTypes`,
- * and the supertypes of these, walked from them, like `MutableCollection<E>`, and `MutableIterable<E>`,
- * though kotlinc still sees a `MutableIterable<E!>`, which can only miss an extension on `MutableIterable<String?>`.
+ * walked before the Java supertypes, so that the supertypes of these are walked from them, like `MutableCollection<E>`,
+ * like kotlinc prefers a supertype reached through Kotlin to the one reached through Java, see `supertypeNames`.
  */
 private val PURE_IMPLEMENTATIONS: Map<String, String> =
     listOf("java/util/ArrayList", "java/util/LinkedList").associateWith { "kotlin/collections/MutableList" } +
@@ -7327,8 +7331,8 @@ private fun KmType.rawBounds(): Pair<KmType, KmType> {
 private val KmType.hasPlatformArguments: Boolean
     get() = arguments.any { argument ->
         val type = argument.type
-        type != null && (type.flexibleTypeUpperBound != null || type.isJavaCollection || type.isJavaArray ||
-            type.isJavaRaw || type.hasPlatformArguments)
+        // a Java collection, a Java array, or a raw type, is a platform type as well
+        type != null && (type.flexibleTypeUpperBound != null || type.hasPlatformArguments)
     }
 
 /**

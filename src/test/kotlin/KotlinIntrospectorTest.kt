@@ -6769,7 +6769,8 @@ class KotlinIntrospectorTest {
     fun `should resolve class without extensions on JDK classes purely implementing mutable collection of nullable type argument`() {
         // a java.util.ArrayList<String> is a MutableList<String>, as kotlinc sees it, not a MutableCollection<String?>,
         // unlike a java.util.AbstractList<String>, a (Mutable)List<String!>, also a MutableCollection<String?>,
-        // nor is a class reaching MutableCollection<String> through Kotlin, and MutableCollection<String!> through Java
+        // nor is a class reaching MutableCollection<String> through Kotlin, and MutableCollection<String!> through Java,
+        // also when reached through MutableList<String!> of Java first, unlike a Java list of strings alone
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.BoundedReceiverNullableListJdkSink"
         ) sameAsKotlin """
@@ -6777,7 +6778,33 @@ class KotlinIntrospectorTest {
             class BoundedReceiverNullableListJdkSink : BoundedReceiverJdkSink<MutableCollection<String?>>
             // from com.xemantic.kotlin.introspection.test
             fun BoundedReceiverJdkSink<java.util.AbstractList<String>>.sinkAbstractList()
+            fun BoundedReceiverJdkSink<com.xemantic.kotlin.introspection.test.other.JavaStringList>.sinkJavaStringList()
             fun BoundedReceiverJdkSink<java.util.Vector<String>>.sinkVector()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class comparable through raw Java supertype without extensions on comparable of its package`() {
+        // the Comparable of the raw JavaGenericComparable, told only by its name, is comparable to the raw type,
+        // so that kotlinc accepts none of the extensions on Comparable of the package, like Comparable<BoundedReceiverMoney>,
+        // but the ones on a type parameter bounded by Comparable, satisfied by its name
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverRawGenericComparable"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverRawGenericComparable [page 1/1]
+            class BoundedReceiverRawGenericComparable : com.xemantic.kotlin.introspection.test.other.JavaRawGenericComparableMid
+            // from com.xemantic.kotlin.introspection.test
+            fun <E : Comparable<in E>> E.isBetween(low: E, high: E): Boolean
+            // from kotlin
+            inline infix fun <T> Comparable<T>.compareTo(other: T): Int
+            // from kotlin.ranges
+            fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T): T
+            fun <T : Comparable<T>> T.coerceAtMost(maximumValue: T): T
+            fun <T : Comparable<T>> T.coerceIn(minimumValue: T?, maximumValue: T?): T
+            fun <T : Comparable<T>> T.coerceIn(range: ClosedFloatingPointRange<T>): T
+            fun <T : Comparable<T>> T.coerceIn(range: ClosedRange<T>): T
+            operator fun <T : Comparable<T>> T.rangeTo(that: T): ClosedRange<T>
+            operator fun <T : Comparable<T>> T.rangeUntil(that: T): OpenEndRange<T>
         """.trimIndent()
     }
 
