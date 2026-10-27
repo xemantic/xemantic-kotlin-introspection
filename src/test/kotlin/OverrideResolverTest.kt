@@ -18,6 +18,7 @@
 
 package com.xemantic.kotlin.introspection
 
+import com.xemantic.kotlin.introspection.test.other.PackagePrivateBase
 import com.xemantic.kotlin.test.assert
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicInteger
@@ -33,9 +34,13 @@ import kotlin.metadata.Modality
 import kotlin.metadata.Visibility
 import kotlin.metadata.isInner
 import kotlin.metadata.modality
+import kotlin.metadata.jvm.JvmMethodSignature
 import kotlin.metadata.jvm.KotlinClassMetadata
+import kotlin.metadata.jvm.signature
 import kotlin.metadata.visibility
 import kotlin.test.Test
+import org.objectweb.asm.ClassWriter
+import org.objectweb.asm.Opcodes
 
 class OverrideResolverTest {
 
@@ -190,6 +195,176 @@ class OverrideResolverTest {
 
         // then
         assert(overrides == listOf(true, true))
+    }
+
+    @Test
+    fun `should find supertypes of subpackage of renamed package of relocated owner by their located names`() {
+        // given
+        // like relocated by shading from test/ to renamed/, with the subpackages
+        val owner = kmClass("test/Owner", supertype = "test/sub/Base")
+        val resolver = overrideResolver(
+            classes = mapOf(
+                "test/sub/Base" to kmClass("test/sub/Base", null, "original"),
+                "renamed/sub/Base" to kmClass("test/sub/Base", null, "relocated")
+            )
+        )
+        val relocated = OverrideResolver.Owner(owner, "renamed/Owner")
+
+        // when
+        val overrides = listOf(
+            resolver.isOverride(relocated, function("original")),
+            resolver.isOverride(relocated, function("relocated"))
+        )
+
+        // then
+        assert(overrides == listOf(false, true))
+    }
+
+    /**
+     * The class file of a class of the [internalName], like `test/Owner`, implementing the [interfaces],
+     * telling the JVM names of its supertypes, which shading rewrites, unlike the Kotlin metadata.
+     */
+    private fun classFile(internalName: String, vararg interfaces: String): ByteArray {
+        val writer = ClassWriter(0)
+        writer.visit(
+            Opcodes.V1_8, Opcodes.ACC_PUBLIC or Opcodes.ACC_ABSTRACT, internalName, null, "java/lang/Object", arrayOf(*interfaces)
+        )
+        writer.visitEnd()
+        return writer.toByteArray()
+    }
+
+    private fun overrideResolver(classes: Map<String, KmClass>, classFiles: Map<String, ByteArray>) = OverrideResolver(
+        classLoader = javaClass.classLoader,
+        loadClassByMetadataName = { null },
+        loadKmClassByMetadataName = { classes[it] },
+        readClassBytesByMetadataName = { classFiles[it] },
+        unloadableClassBytesByMetadataName = { null },
+        transientFailures = TransientFailures(),
+        builtinClasses = { emptyMap() },
+        builtinTypes = emptyMap()
+    )
+
+    @Test
+    fun `should find relocated supertypes of owner which is not relocated by the names its class file refers to`() {
+        // given
+        // like an app shading its dependencies, rewriting its own class files, but not their Kotlin metadata
+        val owner = kmClass("app/Owner", supertype = "lib/Base")
+        val resolver = overrideResolver(
+            classes = mapOf(
+                "lib/Base" to kmClass("lib/Base", null, "original"),
+                "app/shaded/lib/Base" to kmClass("lib/Base", null, "relocated")
+            ),
+            classFiles = mapOf("app/Owner" to classFile("app/Owner", "app/shaded/lib/Base"))
+        )
+
+        // when
+        val overrides = listOf(
+            resolver.isOverride(OverrideResolver.Owner(owner), function("original")),
+            resolver.isOverride(OverrideResolver.Owner(owner), function("relocated"))
+        )
+
+        // then
+        assert(overrides == listOf(false, true))
+    }
+
+    /**
+     * A function taking a value of the class of the [typeName], like `on(event: lib/Event)`,
+     * with its JVM signature, which shading does not rewrite in the metadata.
+     */
+    private fun functionTaking(name: String, typeName: String) = function(name).apply {
+        valueParameters += KmValueParameter("value").apply { type = type(typeName) }
+        signature = JvmMethodSignature(name, "(L$typeName;)V")
+    }
+
+    @Test
+    fun `should match parameter types of other relocated package of owner which is not relocated by its JVM methods`() {
+        // given
+        // like an app shading its dependencies, the Java interface lib/Listener taking lib2/Event, and lib2 itself
+        val owner = kmClass("app/Owner", supertype = "lib/Listener").apply {
+            functions += functionTaking("on", "lib2/Event")
+            functions += functionTaking("on", "lib2/Other")
+        }
+        val listener = ClassWriter(0).apply {
+            visit(
+                Opcodes.V1_8, Opcodes.ACC_PUBLIC or Opcodes.ACC_ABSTRACT or Opcodes.ACC_INTERFACE,
+                "app/shaded/lib/Listener", null, "java/lang/Object", null
+            )
+            visitMethod(Opcodes.ACC_PUBLIC or Opcodes.ACC_ABSTRACT, "on", "(Lapp/shaded/lib2/Event;)V", null, null)
+            visitEnd()
+        }.toByteArray()
+        val ownerClassFile = ClassWriter(0).apply {
+            visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC, "app/Owner", null, "java/lang/Object", arrayOf("app/shaded/lib/Listener"))
+            visitMethod(Opcodes.ACC_PUBLIC, "on", "(Lapp/shaded/lib2/Event;)V", null, null)
+            visitMethod(Opcodes.ACC_PUBLIC, "on", "(Lapp/shaded/lib2/Other;)V", null, null)
+            visitEnd()
+        }.toByteArray()
+        val resolver = OverrideResolver(
+            classLoader = javaClass.classLoader,
+            loadClassByMetadataName = { null },
+            loadKmClassByMetadataName = { null },
+            readClassBytesByMetadataName = { name -> if (name == "app/Owner") ownerClassFile else null },
+            unloadableClassBytesByMetadataName = { name -> if (name == "app/shaded/lib/Listener") listener else null },
+            transientFailures = TransientFailures(),
+            builtinClasses = { emptyMap() },
+            builtinTypes = emptyMap()
+        )
+
+        // when
+        val overrides = owner.functions.map { resolver.isOverride(OverrideResolver.Owner(owner), it) }
+
+        // then
+        // the JVM method of the overload, taking the relocated type, is not taken for a shrunk one
+        assert(overrides == listOf(true, false))
+    }
+
+    @Test
+    fun `should find supertype of relocated owner which its class file tells is not relocated by its metadata name`() {
+        // given
+        // like a class excluded from the relocation, while another jar has a copy relocated with the same prefix
+        val owner = kmClass("test/Owner", supertype = "other/Base")
+        val resolver = overrideResolver(
+            classes = mapOf(
+                "other/Base" to kmClass("other/Base", null, "original"),
+                "shaded/other/Base" to kmClass("other/Base", null, "relocated")
+            ),
+            classFiles = mapOf("shaded/test/Owner" to classFile("shaded/test/Owner", "other/Base"))
+        )
+        val relocated = OverrideResolver.Owner(owner, "shaded/test/Owner")
+
+        // when
+        val overrides = listOf(
+            resolver.isOverride(relocated, function("original")),
+            resolver.isOverride(relocated, function("relocated"))
+        )
+
+        // then
+        assert(overrides == listOf(true, false))
+    }
+
+    @Test
+    fun `should tell override of package-private Java method by local class of the same package`() {
+        // given
+        val javaPackage = "com/xemantic/kotlin/introspection/test/other"
+        // the metadata name of a local class starts with '.'
+        val owner = kmClass(".$javaPackage/Local", supertype = "$javaPackage/PackagePrivateBase")
+        val resolver = OverrideResolver(
+            classLoader = javaClass.classLoader,
+            loadClassByMetadataName = { name ->
+                if (name == "$javaPackage/PackagePrivateBase") PackagePrivateBase::class.java else null
+            },
+            loadKmClassByMetadataName = { null },
+            readClassBytesByMetadataName = { null },
+            unloadableClassBytesByMetadataName = { null },
+            transientFailures = TransientFailures(),
+            builtinClasses = { emptyMap() },
+            builtinTypes = emptyMap()
+        )
+
+        // when
+        val isOverride = resolver.isOverride(OverrideResolver.Owner(owner), function("hidden"))
+
+        // then
+        assert(isOverride)
     }
 
     @Test

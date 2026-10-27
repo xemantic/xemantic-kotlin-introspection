@@ -99,3 +99,15 @@ class RelocatedPrefixListenerImpl : RelocatedPrefixListener {
     override fun on(value: IsolatedTestClass) {}
     fun on(value: RelocatedHolder) {}
 }
+
+// tests relocate it, like shading, together with its Java superclass, whose Kotlin supertype takes a Java type argument
+class RelocatedJavaArgImpl : RelocatedJavaArgMid() {
+    override fun accept(value: RelocatedJavaArg) {}
+    fun accept(value: RelocatedOther) {}
+}
+
+// tests relocate it, like shading, together with the Java interface, whose generic method is bounded by a relocated type
+class RelocatedBoundListenerImpl : RelocatedBoundListener {
+    override fun <E : RelocatedEvent> on(event: E) {}
+    fun <E : RelocatedOther> on(event: E) {}
+}
