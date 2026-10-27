@@ -2654,7 +2654,8 @@ internal class DefaultKotlinIntrospector(
      * of kotlinx.serialization, as there are few of them, each extending that very type.
      * For any other class, all of them, on the class and its [userSupertypes],
      * not to flood its listing with the generic extensions of the standard library,
-     * but the ones of the standard library on `Comparable` for a class comparable to itself, see [isComparableToItself].
+     * but the ones of the standard library on `Comparable` for a class comparable to itself, see [isComparableToItself],
+     * and the ones of its package on `Comparable` for a comparable class, see [isComparable].
      * Either way, the ones on a type parameter with multiple bounds only when the class satisfies all of them,
      * see [receiverBoundsOf], also when none of them is among the [userSupertypes], see [listedFor],
      * and only the ones which can be called on the class, as told by the type arguments, see [isCallableOn],
@@ -2698,15 +2699,17 @@ internal class DefaultKotlinIntrospector(
             val ownReceiverNames = ownExtensionReceiverNames(className)
             val satisfiedBounds = ownReceiverNames.toSet() + supertypes.names
             val listed = extensionsListedFor(ownReceiverNames + userSupertypes(kmClass) + companionReceiverNames, satisfiedBounds)
-            if (supertypes.isComparableToItself) {
+            if (supertypes.isComparable) {
+                val isComparableToItself = supertypes.isComparableToItself
                 // only the ones of the standard library, like on the other types of the standard library, see userSupertypes,
+                // for a class comparable to itself, satisfying their bounds,
                 // and of the package of the class, like next to it, but not the ones of the other libraries,
                 // while the ones with multiple bounds, satisfied by the class, are already listed
                 // also the ones of an object of the package, imported from it, told by the JVM package of their class,
                 // like the one of the class
                 val classPackage = contextPackageOf(declarations, kmClass)
                 fun ReceiverBounded.isListed() =
-                    (isBuiltinExtension || sourceClass.substringBeforeLast('.', "") == classPackage) &&
+                    ((isComparableToItself && isBuiltinExtension) || sourceClass.substringBeforeLast('.', "") == classPackage) &&
                         receiverBounds.all { it in satisfiedBounds }
                 ListedExtensions(
                     (listed.functions + extensionIndex[COMPARABLE_CLASS_NAME].orEmpty().filter { it.isListed() }).distinct(),
@@ -3102,7 +3105,20 @@ internal class DefaultKotlinIntrospector(
         // with the types they are reached by, unless through a Java class, telling the substitution of their type parameters
         val pending = ArrayDeque<Pair<String, KmType?>>(listOf(metadataName to type))
         fun visit(name: String, metadataName: String, type: KmType?) {
-            if (type != null) types?.putIfAbsent(name, type)
+            if (type != null && types != null) {
+                val known = types[name]
+                // kotlinc prefers the supertype reached through Kotlin to the one reached through Java,
+                // like MutableList<String> of a Kotlin interface to MutableList<String!> of a Java one
+                if (known == null || (known.hasPlatformArguments && !type.hasPlatformArguments)) {
+                    types[name] = type
+                    // walked again for the supertypes it gives, like MutableCollection<String>, when already walked,
+                    // untyped, or through Java, or else walked with it, when still pending
+                    if (name in supertypeNames) {
+                        val index = pending.indexOfFirst { (pendingName, _) -> pendingName == metadataName }
+                        if (index >= 0) pending[index] = metadataName to type else pending += metadataName to type
+                    }
+                }
+            }
             val functionTypeClass = FunctionTypeClass.of(name)
             if (functionTypeClass != null) {
                 if (included(name)) supertypeNames += name
@@ -3131,6 +3147,11 @@ internal class DefaultKotlinIntrospector(
                 visitSupertypes(supertypeKmClass.supertypes, projections)
             } else {
                 val javaTypes = if (types != null) javaSupertypeTypes(supertypeName, type) else emptyMap()
+                // the Kotlin collection a JDK class implements purely, before its Java supertypes, see javaSupertypeTypes
+                PURE_IMPLEMENTATIONS[supertypeName]?.let { pureImplementation ->
+                    val name = pureImplementation.replace('/', '.')
+                    visit(name, pureImplementation, type = javaTypes[name])
+                }
                 javaSupertypeNames(supertypeName).forEach { (name, supertypeMetadataName) ->
                     visit(name, supertypeMetadataName, type = javaTypes[name])
                 }
@@ -3174,6 +3195,8 @@ internal class DefaultKotlinIntrospector(
      * see [FoundClass.javaClassHeader], and the ones of the [type] substituted for its type parameters,
      * like `Comparable<Base>` of `class Base implements Comparable<Base>`,
      * the types they give, as platform types, matching either nullability, see [javaSignatureType],
+     * but the Kotlin collection a JDK class is the pure implementation of, see [PURE_IMPLEMENTATIONS],
+     * like `MutableList<String>` of `java.util.ArrayList<String>`, not a `MutableList<String?>`, as kotlinc sees it,
      * or none, when its type arguments are not known, like of a raw type.
      */
     private fun javaSupertypeTypes(metadataName: String, type: KmType?): Map<String, KmType> {
@@ -3183,9 +3206,24 @@ internal class DefaultKotlinIntrospector(
             type == null -> return emptyMap()
             else -> projectionsOf(header, type) ?: return emptyMap()
         }
-        return header.supertypes.map { supertype ->
-            receiverIndexKeys(supertype).single() to supertype.substitutedProjecting(projections) { javaSignatureType(it) }
-        }.toMap()
+        val pureImplementation = PURE_IMPLEMENTATIONS[metadataName]?.replace('/', '.')
+        val types = header.supertypes.associate { supertype ->
+            val key = receiverIndexKeys(supertype).single()
+            key to if (key == pureImplementation) {
+                supertype.substitutedProjecting(projections) { substituted(it) }
+            } else {
+                supertype.substitutedProjecting(projections) { javaSignatureType(it) }
+            }
+        }
+        if (pureImplementation == null || pureImplementation in types) return types
+        // implemented through a Java supertype, like MutableSet<E> of java.util.LinkedHashSet<E>, through HashSet<E!>
+        val pureType = KmType().also { pureType ->
+            pureType.classifier = KmClassifier.Class(pureImplementation.replace('.', '/'))
+            header.typeParameters.mapTo(pureType.arguments) { typeParameter ->
+                KmTypeProjection(KmVariance.INVARIANT, KmType().also { it.classifier = KmClassifier.TypeParameter(typeParameter.id) })
+            }
+        }
+        return types + (pureImplementation to pureType.substitutedProjecting(projections) { substituted(it) })
     }
 
     /**
@@ -3194,6 +3232,9 @@ internal class DefaultKotlinIntrospector(
      * is not flooded with the generic extensions of the standard library,
      * nor with the ones of any other library on these types, like on `java.lang.AutoCloseable`,
      * or `java.util.function.Function`, which can still be called on the class,
+     * also on `kotlin.Comparable`, like `fun Comparable<Money>.atLeast()` of another package than
+     * `class Price : Comparable<Money>`, but the ones of the package of a comparable class, see [isComparable],
+     * and the ones of the standard library for a class comparable to itself, see [isComparableToItself],
      * except the function types, like `(String) -> Unit`, and their supertype `kotlin.Function`,
      * whose extensions are listed for a class implementing them, like for a function type class,
      * see [functionTypeReceiverNames].
@@ -3273,6 +3314,17 @@ internal class DefaultKotlinIntrospector(
             val name = (comparableTo.classifier as? KmClassifier.Class)?.name ?: return false
             return name == kmClass.name || name.replace('/', '.') in names
         }
+
+    /**
+     * Whether the class is comparable, to whatever type, like `class Price : Comparable<Money>`,
+     * so that the extensions on `Comparable` of the package of the class are listed for it, like next to it,
+     * see [listedExtensions], but not an enum class, see [isComparableToItself], which implies it,
+     * nor a class comparable only through a raw Java supertype, like `class Mid extends Base`, where
+     * `class Base<T> implements Comparable<Base<T>>`, told by its name, but not by its type, see [ClassSupertypes.types],
+     * comparable to the raw `Base`, on which kotlinc does not accept the extensions of the package, like on `Comparable<Money>`.
+     */
+    private val ClassSupertypes.isComparable: Boolean
+        get() = kmClass.kind != ClassKind.ENUM_CLASS && COMPARABLE_CLASS_NAME in types
 
     /**
      * Whether the [type] is a type parameter of the class bounded by the class itself, of its own type parameters,
@@ -3521,8 +3573,17 @@ internal class DefaultKotlinIntrospector(
 
         private val typeParameters = typeParameters.associateBy { it.id }
 
-        // the classes each type parameter is inferred from, by their metadata names, with the variances of their positions
-        private val inferred = HashMap<Int, MutableList<Pair<String, KmVariance>>>()
+        // the types each type parameter is inferred from, with the variances of their positions
+        private val inferred = HashMap<Int, MutableList<Pair<KmType, KmVariance>>>()
+
+        // the type parameters, in the order of what is inferred, see forgetInferredSince
+        private val inferredIds = ArrayList<Int>()
+
+        // telling whether a type the type parameter is inferred from is a subtype of another one, or the same type, see infer,
+        // without inferring the type parameters of the extension, whose ids the type parameters of the class can take
+        private val typeMatcher by lazy(LazyThreadSafetyMode.NONE) {
+            ReceiverMatcher(supertypes, emptyList(), receiverTypeParameterId = null, self)
+        }
 
         // the type parameters whose bounds are being checked, see satisfiesBounds
         private val boundsChecked = HashSet<Int>()
@@ -3640,49 +3701,81 @@ internal class DefaultKotlinIntrospector(
                             KmVariance.IN -> supertypes.isSubclass(self, actualClassifier.name)
                             KmVariance.OUT -> supertypes.isSubclass(actualClassifier.name, self)
                         }
-                    in typeParameters -> infer(classifier.id, actual, variance, isStrict)
+                    in typeParameters -> inferredFrom(expected, actual, variance)
+                        ?.let { infer(classifier.id, it, variance, isStrict) } == true
                     else -> true
                 }
+                // a raw type of a Java supertype, either the actual one, or the expected one, see matchesRaw
+                is KmClassifier.Class if (actual.isJavaRaw || expected.isJavaRaw) -> matchesRaw(expected, actual, variance, isStrict)
                 is KmClassifier.Class -> isNullabilityMatched(expected, actual, variance) && run {
                     // a Java collection, like (Mutable)List<String!>! of java.util.List<String>, is the read-only one,
                     // or else the mutable one, see isJavaCollection, either the actual one,
                     // or the expected one, of a supertype of the type argument of the extension, see classMatches,
                     // or in an invariant position, any type between them, see matchesMutable
-                    val mutable = actual.mutableAlternative()
-                    val expectedMutable = expected.mutableAlternative()
-                    if (mutable == null && expectedMutable == null) {
-                        classMatches(expected, classifier.name, actual, actualClassifier.name, variance, isStrict)
-                    } else {
-                        val inferredCounts = inferredCounts()
-                        val isInvariant = variance == KmVariance.INVARIANT
-                        classMatches(expected, classifier.name, actual, actualClassifier.name, variance, isStrict) ||
-                            (mutable != null && retrying(inferredCounts) { matchesMutable(expected, mutable, variance) }) ||
-                            (expectedMutable != null && retrying(inferredCounts) { matchesMutable(expectedMutable, actual, variance) }) ||
-                            (mutable != null && isInvariant && retrying(inferredCounts) {
-                                matchesMutable(expected, mutable, KmVariance.OUT) && matchesMutable(expected, actual, KmVariance.IN)
-                            }) ||
-                            (expectedMutable != null && isInvariant && retrying(inferredCounts) {
-                                matchesMutable(expectedMutable, actual, KmVariance.IN) && matchesMutable(expected, actual, KmVariance.OUT)
-                            })
-                    }
+                    val inferredCount = inferredIds.size
+                    classMatches(expected, classifier.name, actual, actualClassifier.name, variance, isStrict) ||
+                        ((actual.isJavaCollection || expected.isJavaCollection) && run {
+                            val mutable = actual.mutableAlternative()
+                            val expectedMutable = expected.mutableAlternative()
+                            val isInvariant = variance == KmVariance.INVARIANT
+                            (mutable != null && retrying(inferredCount) { matchesMutable(expected, mutable, variance) }) ||
+                                (expectedMutable != null && retrying(inferredCount) { matchesMutable(expectedMutable, actual, variance) }) ||
+                                (mutable != null && isInvariant && retrying(inferredCount) {
+                                    matchesMutable(expected, mutable, KmVariance.OUT) && matchesMutable(expected, actual, KmVariance.IN)
+                                }) ||
+                                (expectedMutable != null && isInvariant && retrying(inferredCount) {
+                                    matchesMutable(expectedMutable, actual, KmVariance.IN) && matchesMutable(expected, actual, KmVariance.OUT)
+                                })
+                        })
                 }
                 is KmClassifier.TypeAlias -> !isStrict
             }
         }
 
-        // the number of the classes each type parameter is inferred from so far, see forgetInferredSince
-        private fun inferredCounts(): Map<Int, Int> = inferred.mapValues { (_, types) -> types.size }
-
-        // forgets what is inferred since the given counts, see inferredCounts
-        private fun forgetInferredSince(counts: Map<Int, Int>) {
-            inferred.keys.retainAll(counts.keys)
-            counts.forEach { (id, count) -> inferred.getValue(id).let { it.subList(count, it.size).clear() } }
+        /**
+         * The type a type parameter of the [expected] type is inferred from, the [actual] type in a position of the given
+         * [variance], without the nullability of a nullable type parameter, like `String` of `String?` for `T?`
+         * in a covariant position, while it can be `String?` in a contravariant one, and either in an invariant one,
+         * like the platform type `String!`, or `null` if a not nullable type cannot be a nullable type parameter,
+         * like `String` for `T?` in a contravariant, or an invariant position.
+         */
+        private fun inferredFrom(expected: KmType, actual: KmType, variance: KmVariance): KmType? = when {
+            !expected.isNullable || actual.flexibleTypeUpperBound != null -> actual
+            !actual.isNullable -> actual.takeIf { variance == KmVariance.OUT }
+            variance == KmVariance.IN -> actual
+            else -> actual.copy().also { type ->
+                type.isNullable = false
+                if (variance == KmVariance.INVARIANT) {
+                    type.flexibleTypeUpperBound = KmFlexibleTypeUpperBound(actual.copy(), typeFlexibilityId = null)
+                }
+            }
         }
 
-        // whether the alternative matches, forgetting what is inferred since the given counts before, and when it does not
-        private inline fun retrying(inferredCounts: Map<Int, Int>, alternative: () -> Boolean): Boolean {
-            forgetInferredSince(inferredCounts)
-            return alternative().also { isMatched -> if (!isMatched) forgetInferredSince(inferredCounts) }
+        /**
+         * Whether the [expected] type matches the [actual] one, see [matches], either of them a raw type of a Java supertype,
+         * see [isJavaRaw], any type between its erasure, like `MutableMap<Any?, Any?>` of `Map`,
+         * and its star projection, like `Map<*, *>`, as kotlinc sees it:
+         * in a covariant position, the erasure is a subtype of the expected type, in a contravariant one,
+         * the expected type is a subtype of the star projection, and in an invariant one, both.
+         */
+        private fun matchesRaw(expected: KmType, actual: KmType, variance: KmVariance, isStrict: Boolean): Boolean {
+            val (expectedErasure, expectedStar) = expected.rawBounds()
+            val (actualErasure, actualStar) = actual.rawBounds()
+            val isSubtype = variance == KmVariance.IN || matches(expectedStar, actualErasure, KmVariance.OUT, isStrict)
+            return isSubtype && (variance == KmVariance.OUT || matches(expectedErasure, actualStar, KmVariance.IN, isStrict))
+        }
+
+        // forgets what is inferred since the given count of the inferredIds
+        private fun forgetInferredSince(count: Int) {
+            while (inferredIds.size > count) {
+                inferred.getValue(inferredIds.removeAt(inferredIds.lastIndex)).let { it.removeAt(it.lastIndex) }
+            }
+        }
+
+        // whether the alternative matches, forgetting what is inferred since the given count before, and when it does not
+        private inline fun retrying(inferredCount: Int, alternative: () -> Boolean): Boolean {
+            forgetInferredSince(inferredCount)
+            return alternative().also { isMatched -> if (!isMatched) forgetInferredSince(inferredCount) }
         }
 
         /**
@@ -3705,9 +3798,9 @@ internal class DefaultKotlinIntrospector(
                 }
                 // a Java array, like Array<(out) String!>!, either the actual one, or the expected one,
                 // is the invariant one, or else the covariant one
-                val inferredCounts = inferredCounts()
+                val inferredCount = inferredIds.size
                 return argumentsMatch(name, expected.arguments, actual.arguments, variance, isStrict) ||
-                    retrying(inferredCounts) {
+                    retrying(inferredCount) {
                         argumentsMatch(name, expected.javaArrayArguments(), actual.javaArrayArguments(), variance, isStrict)
                     }
             }
@@ -3719,14 +3812,23 @@ internal class DefaultKotlinIntrospector(
                 val supertype = supertypes.supertypeOf(subtype, supertypeName) ?: return !isStrict
                 return match(supertype)
             }
+            // a supertype without type arguments is matched by its name, also when its type is not told,
+            // like java.io.Serializable of String, see jvmSupertypeNamesOfBuiltins, as far as the supertypes of the subtype
+            // are told when isStrict, unlike of a class which cannot be loaded, see isSubclass
+            fun isMatchedByName(supertype: KmType, subtypeName: String) =
+                supertype.arguments.isEmpty() && (!isStrict || supertypes.supertypeNamesOf(subtypeName).isNotEmpty())
             return when (variance) {
                 KmVariance.INVARIANT -> false
-                KmVariance.OUT -> supertypes.isSubclass(actualName, name) && supertypeMatches(actual, name) { supertype ->
-                    argumentsMatch(name, expected.arguments, supertype.arguments, variance, isStrict)
-                }
-                KmVariance.IN -> supertypes.isSubclass(name, actualName) && supertypeMatches(expected, actualName) { supertype ->
-                    argumentsMatch(actualName, supertype.arguments, actual.arguments, variance, isStrict)
-                }
+                KmVariance.OUT -> supertypes.isSubclass(actualName, name) && (
+                    isMatchedByName(expected, actualName) || supertypeMatches(actual, name) { supertype ->
+                        argumentsMatch(name, expected.arguments, supertype.arguments, variance, isStrict)
+                    }
+                )
+                KmVariance.IN -> supertypes.isSubclass(name, actualName) && (
+                    isMatchedByName(actual, name) || supertypeMatches(expected, actualName) { supertype ->
+                        argumentsMatch(actualName, supertype.arguments, actual.arguments, variance, isStrict)
+                    }
+                )
             }
         }
 
@@ -3754,24 +3856,32 @@ internal class DefaultKotlinIntrospector(
          * a subtype of each type in a contravariant position, or an invariant one,
          * and a supertype of each type in a covariant position, or an invariant one,
          * like not `T` of `Pair<in A, out B>` for `Pair<String, Any>`, a subtype of `String`, and a supertype of `Any`,
+         * matched with their type arguments, see [typeMatcher], like not `T` of `Pair<T, T>` for `Pair<List<String>, List<Int>>`,
+         * a Java collection anything between its mutable and read-only bounds, like `MutableList<String>`
+         * for `(Mutable)List<String!>!`, and a platform type either nullable, or not,
          * while the types in the positions of the same variance can be the type parameter inferred
          * as their common supertype, or subtype,
          * and satisfying its bounds, see [satisfiesBounds].
          */
         private fun infer(id: Int, actual: KmType, variance: KmVariance, isStrict: Boolean): Boolean {
-            val name = (actual.classifier as? KmClassifier.Class)?.name ?: return true
+            if (actual.classifier !is KmClassifier.Class) return true
             val others = inferred.getOrPut(id) { mutableListOf() }
             val isInferred = others.all { (other, otherVariance) ->
                 if (variance == KmVariance.INVARIANT && otherVariance == KmVariance.INVARIANT) {
-                    name == other
+                    typeMatcher.matches(other, actual, KmVariance.INVARIANT, isStrict)
                 } else {
                     // a subtype of the other one, unless either of them is contravariant, or covariant, respectively
-                    (variance == KmVariance.IN || otherVariance == KmVariance.OUT || supertypes.isSubclass(name, other)) &&
-                        (variance == KmVariance.OUT || otherVariance == KmVariance.IN || supertypes.isSubclass(other, name))
+                    (variance == KmVariance.IN || otherVariance == KmVariance.OUT ||
+                        typeMatcher.matches(other, actual, KmVariance.OUT, isStrict)) &&
+                        (variance == KmVariance.OUT || otherVariance == KmVariance.IN ||
+                            typeMatcher.matches(actual, other, KmVariance.OUT, isStrict))
                 }
             }
-            // the same class in a position of the same variance tells nothing more
-            if ((name to variance) !in others) others += name to variance
+            // the same type in a position of the same variance tells nothing more
+            if (others.none { (other, otherVariance) -> otherVariance == variance && other.hasSameStructure(actual) }) {
+                others += actual to variance
+                inferredIds += id
+            }
             return isInferred && satisfiesBounds(id, actual, variance, isStrict)
         }
 
@@ -7019,11 +7129,13 @@ private fun KmVariance.compose(inner: KmVariance): KmVariance = when {
 
 /**
  * Whether the nullability of the [expected] type matches the one of the [actual] type in a position of the [variance],
- * like a nullable one in a covariant position, which is a supertype of the not nullable one.
+ * like a nullable one in a covariant position, which is a supertype of the not nullable one,
+ * while a platform type of Java matches either, also an expected one, like a type a type parameter is inferred from,
+ * see `ReceiverMatcher.infer`.
  */
 private fun isNullabilityMatched(expected: KmType, actual: KmType, variance: KmVariance): Boolean = when {
     // a platform type of Java, see javaSignatureType
-    actual.flexibleTypeUpperBound != null -> true
+    actual.flexibleTypeUpperBound != null || expected.flexibleTypeUpperBound != null -> true
     variance == KmVariance.INVARIANT -> expected.isNullable == actual.isNullable
     variance == KmVariance.OUT -> expected.isNullable || !actual.isNullable
     else -> actual.isNullable || !expected.isNullable
@@ -7070,6 +7182,26 @@ private fun KmType.javaSignatureType(substitution: Map<Int, KmType>): KmType = c
 
 // the marker of a Java collection of the signature of a Java class, see javaSignatureType, never rendered
 private const val JAVA_COLLECTION_MARKER = "com/xemantic/kotlin/introspection/JavaCollection"
+
+/**
+ * The metadata names of the supertypes which kotlinc sees the JDK classes, by their metadata names, implement purely,
+ * with their own type arguments, not as platform types, see `FakePureImplementationsProvider` of kotlinc,
+ * like `MutableList<E>` of `java.util.ArrayList<E>`, also when implemented through a Java supertype,
+ * like `MutableSet<E>` of `java.util.LinkedHashSet<E>`, through `HashSet<E!>`, see `javaSupertypeTypes`,
+ * walked before the Java supertypes, so that the supertypes of these are walked from them, like `MutableCollection<E>`,
+ * like kotlinc prefers a supertype reached through Kotlin to the one reached through Java, see `supertypeNames`.
+ */
+private val PURE_IMPLEMENTATIONS: Map<String, String> =
+    listOf("java/util/ArrayList", "java/util/LinkedList").associateWith { "kotlin/collections/MutableList" } +
+        listOf("java/util/HashSet", "java/util/TreeSet", "java/util/LinkedHashSet").associateWith { "kotlin/collections/MutableSet" } +
+        listOf(
+            "java/util/HashMap", "java/util/TreeMap", "java/util/LinkedHashMap",
+            "java/util/concurrent/ConcurrentHashMap", "java/util/concurrent/ConcurrentSkipListMap"
+        ).associateWith { "kotlin/collections/MutableMap" } +
+        mapOf(
+            "java/util/function/UnaryOperator" to "java/util/function/Function",
+            "java/util/function/BinaryOperator" to "java/util/function/BiFunction"
+        )
 
 // a wildcard bounded by Object in a generic signature, see objectWildcardsOf
 private const val OBJECT_WILDCARD = "+Ljava/lang/Object;"
@@ -7179,6 +7311,52 @@ private fun KmType.mutableAlternative(): KmType? {
 }
 
 /**
+ * The bounds of this raw type of a Java supertype, see [isJavaRaw], its erasure, like `MutableMap<Any?, Any?>` of `Map`,
+ * the mutable alternative of a Java collection, see [mutableAlternative], with the erasures of the bounds of its type parameters,
+ * as kotlin-reflect tells them, and its star projection, like `Map<*, *>`, or this type twice, if it is not raw.
+ */
+private fun KmType.rawBounds(): Pair<KmType, KmType> {
+    if (!isJavaRaw) return this to this
+    val erasure = (mutableAlternative() ?: copy()).also { type -> type.annotations.removeAll { it.className == JAVA_RAW_MARKER } }
+    val star = copy(arguments = arguments.map { KmTypeProjection.STAR }).also { type ->
+        type.annotations.removeAll { it.className == JAVA_RAW_MARKER || it.className == JAVA_COLLECTION_MARKER }
+    }
+    return erasure to star
+}
+
+/**
+ * Whether a type argument of this type, also a nested one, is a platform type of Java, see [javaSignatureType],
+ * like `String!` of `MutableCollection<String!>`, a supertype reached through a Java class.
+ */
+private val KmType.hasPlatformArguments: Boolean
+    get() = arguments.any { argument ->
+        val type = argument.type
+        // a Java collection, a Java array, or a raw type, is a platform type as well
+        type != null && (type.flexibleTypeUpperBound != null || type.hasPlatformArguments)
+    }
+
+/**
+ * Whether this type has the same structure as the [other] one, as told by [structureKey], without building the keys,
+ * comparing the same properties as [appendStructure] does, to be kept in line with it.
+ */
+private fun KmType.hasSameStructure(other: KmType): Boolean {
+    if (this === other) return true
+    if (classifier != other.classifier || isNullable != other.isNullable || isSuspend != other.isSuspend ||
+        isDefinitelyNonNull != other.isDefinitelyNonNull ||
+        (flexibleTypeUpperBound == null) != (other.flexibleTypeUpperBound == null) ||
+        isJavaCollection != other.isJavaCollection || isJavaArray != other.isJavaArray || isJavaRaw != other.isJavaRaw ||
+        arguments.size != other.arguments.size
+    ) {
+        return false
+    }
+    fun KmType?.isSame(otherType: KmType?) = if (this == null || otherType == null) this === otherType else hasSameStructure(otherType)
+    return outerType.isSame(other.outerType) && arguments.indices.all { index ->
+        arguments[index].variance == other.arguments[index].variance &&
+            arguments[index].type.isSame(other.arguments[index].type)
+    }
+}
+
+/**
  * The structure of this type, as a key, like `kotlin/Comparable<INVARIANT java/lang/Integer!>`,
  * telling the classifiers, the type arguments with their projections, whether suspend, the nullability, also definitely
  * not nullable, and the flexibility, but not the annotations of a function type, which do not tell its supertypes.
@@ -7208,6 +7386,7 @@ private fun KmType.appendStructure(key: StringBuilder) {
     if (flexibleTypeUpperBound != null) key.append('!')
     if (isJavaCollection) key.append('~')
     if (isJavaArray) key.append('#')
+    if (isJavaRaw) key.append('%')
 }
 
 /**

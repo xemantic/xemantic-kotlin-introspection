@@ -39,6 +39,13 @@ import com.xemantic.kotlin.introspection.test.other.JavaProjectedStringArraySour
 import com.xemantic.kotlin.introspection.test.other.JavaProjectedStringListSource
 import com.xemantic.kotlin.introspection.test.other.JavaProjectedStringListRows
 import com.xemantic.kotlin.introspection.test.other.JavaProjectedWildcardSource
+import com.xemantic.kotlin.introspection.test.other.JavaRawComparableBoth
+import com.xemantic.kotlin.introspection.test.other.JavaRawGenericComparableMid
+import com.xemantic.kotlin.introspection.test.other.JavaRawMapArrayBoth
+import com.xemantic.kotlin.introspection.test.other.JavaRawMapBoth
+import com.xemantic.kotlin.introspection.test.other.JavaRawWildcardMapBoth
+import com.xemantic.kotlin.introspection.test.other.JavaStringCollection
+import com.xemantic.kotlin.introspection.test.other.JavaStringList
 import com.xemantic.kotlin.introspection.test.other.JavaWildcardRows
 
 // Extensions on type parameter receivers, listed for the classes satisfying their bounds,
@@ -464,6 +471,9 @@ class BoundedReceiverNullableStringRows : JavaListRows<String?>()
 
 class BoundedReceiverIntRows : JavaListRows<Int>()
 
+// a mutable list of a supertype known only by its name, java.io.Serializable of String and Int, but not of String?
+fun BoundedReceiverRows<out MutableList<out java.io.Serializable>>.addSerializableRows() {}
+
 // the Java list of a Java supertype of a Kotlin type argument, substituted, still a read-only List<String>
 open class BoundedReceiverKotlinRows<T> : JavaListRows<T>()
 
@@ -477,6 +487,64 @@ interface BoundedReceiverTwoRows<A, B>
 fun <T> BoundedReceiverTwoRows<T, T>.sameBoth() {}
 
 class BoundedReceiverListBoth : JavaListBoth<List<String>>()
+
+// the same type parameter inferred from the mutable alternative of a Java list, and from the same type argument,
+// but not from another one of the same class, like MutableList<CharSequence>, or List<*>
+fun <T> BoundedReceiverTwoRows<T, out T>.sameOrSubtypeBoth() {}
+
+class BoundedReceiverMutableListBoth : JavaListBoth<MutableList<String>>()
+
+class BoundedReceiverNullableListBoth : JavaListBoth<MutableList<String?>>()
+
+class BoundedReceiverCharSequenceListBoth : JavaListBoth<MutableList<CharSequence>>()
+
+class BoundedReceiverStarListBoth : JavaListBoth<List<*>>()
+
+// a type parameter inferred from a raw type of a Java supertype, any type between its erasure and its star projection
+class BoundedReceiverRawMapBoth : JavaRawMapBoth<MutableMap<String, Int>>()
+
+class BoundedReceiverRawStarMapBoth : JavaRawMapBoth<Map<*, *>>()
+
+class BoundedReceiverRawComparableBoth : JavaRawComparableBoth<Comparable<String>>()
+
+// also as the bound of a wildcard, and as the component of an array
+class BoundedReceiverRawWildcardMapBoth : JavaRawWildcardMapBoth<List<Map<*, *>>>()
+
+class BoundedReceiverRawMapArrayBoth : JavaRawMapArrayBoth<Array<out Map<*, *>>>()
+
+// a nullable type parameter inferred from a nullable type, which the type parameter itself is not, unlike a not nullable type
+interface BoundedReceiverNullablePair<A, B>
+
+fun <T> BoundedReceiverNullablePair<T?, T>.nullableFirst() {}
+
+fun <T> BoundedReceiverNullablePair<T, T?>.nullableSecond() {}
+
+fun <T> BoundedReceiverNullablePair<out T?, T>.nullableOutFirst() {}
+
+class BoundedReceiverNullableFirstPair : BoundedReceiverNullablePair<String?, String>
+
+class BoundedReceiverNullableSecondPair : BoundedReceiverNullablePair<String, String?>
+
+// a JDK class implementing a Kotlin collection purely, of its own type argument, not a platform type,
+// see FakePureImplementationsProvider of kotlinc, unlike a JDK class implementing it through a Java supertype
+interface BoundedReceiverJdkSink<in T>
+
+fun BoundedReceiverJdkSink<java.util.ArrayList<String>>.sinkArrayList() {}
+
+fun BoundedReceiverJdkSink<java.util.HashSet<String>>.sinkHashSet() {}
+
+// also through a Java supertype, HashSet<E!>, not implementing MutableSet<E> directly
+fun BoundedReceiverJdkSink<java.util.LinkedHashSet<String>>.sinkLinkedHashSet() {}
+
+fun BoundedReceiverJdkSink<java.util.HashMap<String, Int>>.sinkHashMap() {}
+
+fun BoundedReceiverJdkSink<java.util.AbstractList<String>>.sinkAbstractList() {}
+
+fun BoundedReceiverJdkSink<java.util.Vector<String>>.sinkVector() {}
+
+class BoundedReceiverNullableListJdkSink : BoundedReceiverJdkSink<MutableCollection<String?>>
+
+class BoundedReceiverNullableMapJdkSink : BoundedReceiverJdkSink<MutableMap<String, Int?>>
 
 // a type parameter pinned to the class by the invariant type argument of a Java interface,
 // so that the member is called instead of the extension
@@ -614,3 +682,38 @@ fun <T> BoundedReceiverNestedSource<List<Array<out T>>>.nestedOutArrays() {}
 class BoundedReceiverOutNestSource : BoundedReceiverNestedSource<BoundedReceiverNest<out String>>
 
 class BoundedReceiverInArraysSource : BoundedReceiverNestedSource<List<Array<in String>>>
+
+// a class comparable to another type, listing the extensions on Comparable of its package, like next to it,
+// but not the ones of the other packages
+class BoundedReceiverMoney
+
+class BoundedReceiverPrice : Comparable<BoundedReceiverMoney> {
+    override fun compareTo(other: BoundedReceiverMoney): Int = 0
+}
+
+fun Comparable<BoundedReceiverMoney>.atLeastMoney() {}
+
+// a supertype reached both through Kotlin and through Java, the one of Kotlin preferred by kotlinc,
+// MutableCollection<String>, not a MutableCollection<String?>, unlike MutableCollection<String!> of Java
+interface BoundedReceiverKotlinStringCollection : MutableCollection<String>
+
+abstract class BoundedReceiverJavaKotlinStrings : JavaStringCollection, BoundedReceiverKotlinStringCollection
+
+fun BoundedReceiverJdkSink<BoundedReceiverJavaKotlinStrings>.sinkJavaKotlinStrings() {}
+
+// also when the supertype reached through Java is walked first, like MutableList<String!> of a Java list,
+// the one of Kotlin preferred, MutableList<String>, its own supertypes walked again from it,
+// MutableCollection<String>, not a MutableCollection<String?>, unlike MutableCollection<String!> of Java
+interface BoundedReceiverKotlinStringList : MutableList<String>
+
+interface BoundedReceiverDeepKotlinStringList : BoundedReceiverKotlinStringList
+
+abstract class BoundedReceiverJavaDeepKotlinStringList : JavaStringList, BoundedReceiverDeepKotlinStringList
+
+fun BoundedReceiverJdkSink<BoundedReceiverJavaDeepKotlinStringList>.sinkJavaDeepKotlinStringList() {}
+
+fun BoundedReceiverJdkSink<JavaStringList>.sinkJavaStringList() {}
+
+// a class comparable through a raw Java supertype, to the erasure of its type argument, the raw JavaGenericComparable,
+// told by its name only, not listing the extensions on Comparable of its package, which kotlinc does not accept
+class BoundedReceiverRawGenericComparable : JavaRawGenericComparableMid()

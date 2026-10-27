@@ -3517,6 +3517,7 @@ class KotlinIntrospectorTest {
                 fun compareTo(other: String): Int
             }
             // from com.xemantic.kotlin.introspection.test
+            fun Comparable<BoundedReceiverMoney>.atLeastMoney()
             fun Comparable<Int>.comparedToZero(): Int
             fun <E : Comparable<in E>> E.isBetween(low: E, high: E): Boolean
             // from com.xemantic.kotlin.introspection.test.BoundedReceiverComparisons
@@ -6131,7 +6132,8 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve class comparable to another type without stdlib extensions on Comparable`() {
-        // BoundedReceiverComparableToOther does not satisfy T : Comparable<T>
+        // BoundedReceiverComparableToOther does not satisfy T : Comparable<T>,
+        // but it is a Comparable<BoundedReceiverVersion>, extended by an object of its package
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.BoundedReceiverComparableToOther"
         ) sameAsKotlin """
@@ -6139,6 +6141,8 @@ class KotlinIntrospectorTest {
             class BoundedReceiverComparableToOther : Comparable<BoundedReceiverVersion> {
                 override operator fun compareTo(other: BoundedReceiverVersion): Int
             }
+            // from com.xemantic.kotlin.introspection.test.BoundedReceiverComparisons
+            fun Comparable<BoundedReceiverVersion>.isNewerThan(version: BoundedReceiverVersion): Boolean
         """.trimIndent()
     }
 
@@ -6497,7 +6501,8 @@ class KotlinIntrospectorTest {
     fun `should resolve class with extensions on read-only and mutable list of Java list type argument`() {
         // a java.util.List<String> is the flexible (Mutable)List<String!>!, either a List<String>, or a MutableList<String>,
         // also a MutableCollection<String>, but a MutableList<*>, or a MutableList<in String>, is not a MutableList<String> in an invariant position,
-        // nor is a List<*>, and String! satisfies both T : CharSequence, and T : Any
+        // nor is a List<*>, and String! satisfies both T : CharSequence, and T : Any,
+        // and it is a java.io.Serializable, a supertype known only by its name
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.BoundedReceiverStringRows"
         ) sameAsKotlin """
@@ -6506,6 +6511,7 @@ class KotlinIntrospectorTest {
             // from com.xemantic.kotlin.introspection.test
             fun <T : CharSequence> BoundedReceiverRows<MutableList<T>>.addCharSequenceRow()
             fun <T : Any> BoundedReceiverRows<MutableList<T>>.addNotNullRow()
+            fun BoundedReceiverRows<out MutableList<out java.io.Serializable>>.addSerializableRows()
             fun BoundedReceiverRows<MutableList<String>>.addStringRow()
             fun BoundedReceiverRows<out MutableCollection<String>>.addStringRows()
             fun BoundedReceiverRows<List<String>>.readStringRows()
@@ -6522,6 +6528,7 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.test.BoundedReceiverWildcardRows [page 1/1]
             class BoundedReceiverWildcardRows : com.xemantic.kotlin.introspection.test.other.JavaWildcardRows<String>
             // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverRows<out MutableList<out java.io.Serializable>>.addSerializableRows()
             fun BoundedReceiverRows<List<String>>.readStringRows()
         """.trimIndent()
     }
@@ -6577,6 +6584,7 @@ class KotlinIntrospectorTest {
             // from com.xemantic.kotlin.introspection.test
             fun BoundedReceiverRows<out MutableCollection<Int>>.addIntRows()
             fun <T : Any> BoundedReceiverRows<MutableList<T>>.addNotNullRow()
+            fun BoundedReceiverRows<out MutableList<out java.io.Serializable>>.addSerializableRows()
             fun BoundedReceiverRows<List<Int>>.readIntRows()
             fun BoundedReceiverRows<out MutableIterable<Int>>.removeIntRows()
         """.trimIndent()
@@ -6605,6 +6613,225 @@ class KotlinIntrospectorTest {
             class BoundedReceiverListBoth : com.xemantic.kotlin.introspection.test.other.JavaListBoth<List<String>>
             // from com.xemantic.kotlin.introspection.test
             fun <T> BoundedReceiverTwoRows<T, T>.sameBoth()
+            fun <T> BoundedReceiverTwoRows<T, out T>.sameOrSubtypeBoth()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extensions inferring type parameter from mutable list of Java list and same type argument`() {
+        // T is inferred as MutableList<String>, the mutable one of the (Mutable)List<String!>!
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverMutableListBoth"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverMutableListBoth [page 1/1]
+            class BoundedReceiverMutableListBoth : com.xemantic.kotlin.introspection.test.other.JavaListBoth<MutableList<String>>
+            // from com.xemantic.kotlin.introspection.test
+            fun <T> BoundedReceiverTwoRows<T, T>.sameBoth()
+            fun <T> BoundedReceiverTwoRows<T, out T>.sameOrSubtypeBoth()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extensions inferring type parameter from Java list and list of nullable type argument`() {
+        // the platform type String! of the (Mutable)List<String!>! is also a String?
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverNullableListBoth"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverNullableListBoth [page 1/1]
+            class BoundedReceiverNullableListBoth : com.xemantic.kotlin.introspection.test.other.JavaListBoth<MutableList<String?>>
+            // from com.xemantic.kotlin.introspection.test
+            fun <T> BoundedReceiverTwoRows<T, T>.sameBoth()
+            fun <T> BoundedReceiverTwoRows<T, out T>.sameOrSubtypeBoth()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extensions inferring type parameter from Java list and list of other type argument`() {
+        // a MutableList<CharSequence> is neither a (Mutable)List<String!>!, nor its subtype, though both of them are lists
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverCharSequenceListBoth"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverCharSequenceListBoth [page 1/1]
+            class BoundedReceiverCharSequenceListBoth : com.xemantic.kotlin.introspection.test.other.JavaListBoth<MutableList<CharSequence>>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extensions inferring type parameter from Java list and list of star projection`() {
+        // a List<*> is a supertype of the (Mutable)List<String!>!, not the same type, nor its subtype
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverStarListBoth"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverStarListBoth [page 1/1]
+            class BoundedReceiverStarListBoth : com.xemantic.kotlin.introspection.test.other.JavaListBoth<List<*>>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extension inferring type parameter from raw map of Java supertype and its subtype`() {
+        // the raw Map is any type between MutableMap<Any?, Any?> and Map<*, *>, a supertype of MutableMap<String, Int>,
+        // but not the same type
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverRawMapBoth"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverRawMapBoth [page 1/1]
+            class BoundedReceiverRawMapBoth : com.xemantic.kotlin.introspection.test.other.JavaRawMapBoth<MutableMap<String, Int>>
+            // from com.xemantic.kotlin.introspection.test
+            fun <T> BoundedReceiverTwoRows<T, out T>.sameOrSubtypeBoth()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extensions inferring type parameter from raw map of Java supertype and its star projection`() {
+        // the raw Map can be the Map<*, *>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverRawStarMapBoth"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverRawStarMapBoth [page 1/1]
+            class BoundedReceiverRawStarMapBoth : com.xemantic.kotlin.introspection.test.other.JavaRawMapBoth<Map<*, *>>
+            // from com.xemantic.kotlin.introspection.test
+            fun <T> BoundedReceiverTwoRows<T, T>.sameBoth()
+            fun <T> BoundedReceiverTwoRows<T, out T>.sameOrSubtypeBoth()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extensions inferring type parameter from raw comparable of Java supertype`() {
+        // the raw Comparable is any type between Comparable<Any?> and Comparable<*>, like Comparable<String>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverRawComparableBoth"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverRawComparableBoth [page 1/1]
+            class BoundedReceiverRawComparableBoth : com.xemantic.kotlin.introspection.test.other.JavaRawComparableBoth<Comparable<String>>
+            // from com.xemantic.kotlin.introspection.test
+            fun <T> BoundedReceiverTwoRows<T, T>.sameBoth()
+            fun <T> BoundedReceiverTwoRows<T, out T>.sameOrSubtypeBoth()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extensions inferring type parameter from raw map bounding wildcard of Java supertype`() {
+        // the raw Map bounding ? extends Map can be the Map<*, *>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverRawWildcardMapBoth"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverRawWildcardMapBoth [page 1/1]
+            class BoundedReceiverRawWildcardMapBoth : com.xemantic.kotlin.introspection.test.other.JavaRawWildcardMapBoth<List<Map<*, *>>>
+            // from com.xemantic.kotlin.introspection.test
+            fun <T> BoundedReceiverTwoRows<T, T>.sameBoth()
+            fun <T> BoundedReceiverTwoRows<T, out T>.sameOrSubtypeBoth()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extensions inferring type parameter from Java array of raw maps of Java supertype`() {
+        // the Map[] is an Array<(out) Map!>, of the raw Map, which can be the Map<*, *>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverRawMapArrayBoth"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverRawMapArrayBoth [page 1/1]
+            class BoundedReceiverRawMapArrayBoth : com.xemantic.kotlin.introspection.test.other.JavaRawMapArrayBoth<Array<out Map<*, *>>>
+            // from com.xemantic.kotlin.introspection.test
+            fun <T> BoundedReceiverTwoRows<T, T>.sameBoth()
+            fun <T> BoundedReceiverTwoRows<T, out T>.sameOrSubtypeBoth()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extensions inferring nullable type parameter from nullable type argument`() {
+        // T? is String? for T of String, but a String is no T?, unless in a covariant position
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverNullableFirstPair"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverNullableFirstPair [page 1/1]
+            class BoundedReceiverNullableFirstPair : BoundedReceiverNullablePair<String?, String>
+            // from com.xemantic.kotlin.introspection.test
+            fun <T> BoundedReceiverNullablePair<T?, T>.nullableFirst()
+            fun <T> BoundedReceiverNullablePair<out T?, T>.nullableOutFirst()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extensions inferring nullable type parameter from nullable second type argument`() {
+        // the String in a covariant position is a T?, for T of String
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverNullableSecondPair"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverNullableSecondPair [page 1/1]
+            class BoundedReceiverNullableSecondPair : BoundedReceiverNullablePair<String, String?>
+            // from com.xemantic.kotlin.introspection.test
+            fun <T> BoundedReceiverNullablePair<out T?, T>.nullableOutFirst()
+            fun <T> BoundedReceiverNullablePair<T, T?>.nullableSecond()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extensions on JDK classes purely implementing mutable collection of nullable type argument`() {
+        // a java.util.ArrayList<String> is a MutableList<String>, as kotlinc sees it, not a MutableCollection<String?>,
+        // unlike a java.util.AbstractList<String>, a (Mutable)List<String!>, also a MutableCollection<String?>,
+        // nor is a class reaching MutableCollection<String> through Kotlin, and MutableCollection<String!> through Java,
+        // also when reached through MutableList<String!> of Java first, unlike a Java list of strings alone
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverNullableListJdkSink"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverNullableListJdkSink [page 1/1]
+            class BoundedReceiverNullableListJdkSink : BoundedReceiverJdkSink<MutableCollection<String?>>
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverJdkSink<java.util.AbstractList<String>>.sinkAbstractList()
+            fun BoundedReceiverJdkSink<com.xemantic.kotlin.introspection.test.other.JavaStringList>.sinkJavaStringList()
+            fun BoundedReceiverJdkSink<java.util.Vector<String>>.sinkVector()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class comparable through raw Java supertype without extensions on comparable of its package`() {
+        // the Comparable of the raw JavaGenericComparable, told only by its name, is comparable to the raw type,
+        // so that kotlinc accepts none of the extensions on Comparable of the package, like Comparable<BoundedReceiverMoney>,
+        // but the ones on a type parameter bounded by Comparable, satisfied by its name
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverRawGenericComparable"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverRawGenericComparable [page 1/1]
+            class BoundedReceiverRawGenericComparable : com.xemantic.kotlin.introspection.test.other.JavaRawGenericComparableMid
+            // from com.xemantic.kotlin.introspection.test
+            fun <E : Comparable<in E>> E.isBetween(low: E, high: E): Boolean
+            // from kotlin
+            inline infix fun <T> Comparable<T>.compareTo(other: T): Int
+            // from kotlin.ranges
+            fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T): T
+            fun <T : Comparable<T>> T.coerceAtMost(maximumValue: T): T
+            fun <T : Comparable<T>> T.coerceIn(minimumValue: T?, maximumValue: T?): T
+            fun <T : Comparable<T>> T.coerceIn(range: ClosedFloatingPointRange<T>): T
+            fun <T : Comparable<T>> T.coerceIn(range: ClosedRange<T>): T
+            operator fun <T : Comparable<T>> T.rangeTo(that: T): ClosedRange<T>
+            operator fun <T : Comparable<T>> T.rangeUntil(that: T): OpenEndRange<T>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extension on JDK map purely implementing mutable map of nullable value`() {
+        // a java.util.HashMap<String, Int> is a MutableMap<String, Int>, not a MutableMap<String, Int?>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverNullableMapJdkSink"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverNullableMapJdkSink [page 1/1]
+            class BoundedReceiverNullableMapJdkSink : BoundedReceiverJdkSink<MutableMap<String, Int?>>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class comparable to other type with extension on comparable of its package only`() {
+        // like for a class comparable to itself, the extensions on Comparable of its package are listed, but not of the others,
+        // like otherAtLeastMoney of the test.other package, which can still be called
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverPrice"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverPrice [page 1/1]
+            class BoundedReceiverPrice : Comparable<BoundedReceiverMoney> {
+                override operator fun compareTo(other: BoundedReceiverMoney): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun Comparable<BoundedReceiverMoney>.atLeastMoney()
         """.trimIndent()
     }
 
