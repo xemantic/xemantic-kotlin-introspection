@@ -274,16 +274,37 @@ private fun KType.refersToJavaType(): Boolean =
  * The declaration of this Java class in the Kotlin metadata, named like `java/util/ArrayList`, as kotlin-reflect describes it,
  * without its members, which the caller describes one by one, see [toKmFunction], and [toKmProperty].
  * Its supertypes are named by their JVM classes, see [supertypeName],
- * like `kotlin/collections/MutableList` of `java.util.List`, as kotlin-reflect tells only its read-only counterpart.
+ * like `kotlin/collections/MutableList` of `java.util.List`, as kotlin-reflect tells only its read-only counterpart,
+ * and the wildcards bounded by `Object` in their type arguments, at the positions given by [objectWildcards],
+ * are `out Any`, like `? extends Object`, which kotlin-reflect tells as a star projection, like the wildcard `?`.
  */
-internal fun KClass<*>.toKmJavaClassHeader(name: String, supertypeName: (Class<*>) -> String): KmClass =
+internal fun KClass<*>.toKmJavaClassHeader(
+    name: String,
+    objectWildcards: (supertype: Class<*>) -> Set<List<Int>> = { emptySet() },
+    supertypeName: (Class<*>) -> String
+): KmClass =
     toKmClassHeader(name) { typeParameters ->
         supertypes.map { supertype ->
             supertype.toKmType(typeParameters).also { type ->
-                (supertype.classifier as? KClass<*>)?.let { type.classifier = KmClassifier.Class(supertypeName(it.java)) }
+                (supertype.classifier as? KClass<*>)?.let { supertypeClass ->
+                    type.classifier = KmClassifier.Class(supertypeName(supertypeClass.java))
+                    objectWildcards(supertypeClass.java).forEach { path -> type.projectObjectWildcard(path) }
+                }
             }
         }
     }
+
+/**
+ * Projects the star projection at the [path] of the type arguments of this type, see [toKmJavaClassHeader],
+ * as `out Any`, of a wildcard bounded by `Object`.
+ */
+private fun KmType.projectObjectWildcard(path: List<Int>) {
+    val type = path.dropLast(1).fold(this as KmType?) { type, index -> type?.arguments?.getOrNull(index)?.type } ?: return
+    val index = path.last()
+    if (index < type.arguments.size && type.arguments[index].type == null) {
+        type.arguments[index] = KmTypeProjection(KmVariance.OUT, classType("kotlin/Any"))
+    }
+}
 
 /**
  * The declaration of this class in the Kotlin metadata, named [name], without its members and constructors,

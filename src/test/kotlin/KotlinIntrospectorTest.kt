@@ -6497,16 +6497,17 @@ class KotlinIntrospectorTest {
     fun `should resolve class with extensions on read-only and mutable list of Java list type argument`() {
         // a java.util.List<String> is the flexible (Mutable)List<String!>!, either a List<String>, or a MutableList<String>,
         // also a MutableCollection<String>, but a MutableList<*>, or a MutableList<in String>, is not a MutableList<String> in an invariant position,
-        // while readAnyRows is listed, as a star projection matches any type argument, see #229
+        // nor is a List<*>, and String! satisfies both T : CharSequence, and T : Any
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.BoundedReceiverStringRows"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.BoundedReceiverStringRows [page 1/1]
             class BoundedReceiverStringRows : com.xemantic.kotlin.introspection.test.other.JavaListRows<String>
             // from com.xemantic.kotlin.introspection.test
+            fun <T : CharSequence> BoundedReceiverRows<MutableList<T>>.addCharSequenceRow()
+            fun <T : Any> BoundedReceiverRows<MutableList<T>>.addNotNullRow()
             fun BoundedReceiverRows<MutableList<String>>.addStringRow()
             fun BoundedReceiverRows<out MutableCollection<String>>.addStringRows()
-            fun BoundedReceiverRows<List<*>>.readAnyRows()
             fun BoundedReceiverRows<List<String>>.readStringRows()
         """.trimIndent()
     }
@@ -6514,17 +6515,13 @@ class KotlinIntrospectorTest {
     @Test
     fun `should resolve class without extensions on mutable list of Java list of wildcard type argument`() {
         // a (Mutable)List<out String!>! is not a MutableList<String>, nor a MutableList<*>, in an invariant position,
-        // nor a MutableCollection<String>, while a projected type argument matches any type, see #229,
-        // listing also readIntRows and readMutableRows
+        // nor a MutableCollection<String>, nor a List<*>, nor a List<Int>, but a List<String>, as List is covariant
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.BoundedReceiverWildcardRows"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.BoundedReceiverWildcardRows [page 1/1]
             class BoundedReceiverWildcardRows : com.xemantic.kotlin.introspection.test.other.JavaWildcardRows<String>
             // from com.xemantic.kotlin.introspection.test
-            fun BoundedReceiverRows<List<*>>.readAnyRows()
-            fun BoundedReceiverRows<List<Int>>.readIntRows()
-            fun BoundedReceiverRows<List<MutableList<String>>>.readMutableRows()
             fun BoundedReceiverRows<List<String>>.readStringRows()
         """.trimIndent()
     }
@@ -6532,50 +6529,46 @@ class KotlinIntrospectorTest {
     @Test
     fun `should resolve class without extensions on mutable list of nested Java list of unbounded wildcard`() {
         // a (Mutable)List<*>! is not a MutableList<String>, nor is the outer list a MutableList<String>,
-        // while readAnyRows is listed, as a star projection matches any type argument, see #229
+        // nor is a List<List<*>> a List<*> in an invariant position, while the platform type (Mutable)List<*>! satisfies T : Any
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.BoundedReceiverNestedRows"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.BoundedReceiverNestedRows [page 1/1]
             class BoundedReceiverNestedRows : com.xemantic.kotlin.introspection.test.other.JavaNestedRows
             // from com.xemantic.kotlin.introspection.test
-            fun BoundedReceiverRows<List<*>>.readAnyRows()
+            fun <T : Any> BoundedReceiverRows<MutableList<T>>.addNotNullRow()
         """.trimIndent()
     }
 
     @Test
     fun `should resolve class without extensions on supertypes of mutable list of Java list of unbounded wildcard`() {
         // a (Mutable)List<*>! is no MutableCollection<Int>, nor MutableCollection<String>, nor MutableIterable<Int>,
-        // while a star projection matches any type argument, see #229, listing the read-only ones
+        // nor a List<String>, nor a List<Int>, in an invariant position, but a List<*>, and a MutableList<*>
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.BoundedReceiverAnyRows"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.BoundedReceiverAnyRows [page 1/1]
             class BoundedReceiverAnyRows : com.xemantic.kotlin.introspection.test.other.JavaAnyRows
             // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverRows<MutableList<*>>.addAnyRow()
             fun BoundedReceiverRows<List<*>>.readAnyRows()
-            fun BoundedReceiverRows<List<Int>>.readIntRows()
-            fun BoundedReceiverRows<List<MutableList<String>>>.readMutableRows()
-            fun BoundedReceiverRows<List<String>>.readStringRows()
         """.trimIndent()
     }
 
     @Test
     fun `should resolve class without extensions on mutable list of Java list of type argument not satisfying bound of type parameter`() {
-        // String? satisfies no bound T : Any, while readAnyRows is listed, as a star projection matches any type argument, see #229
+        // String? satisfies no bound T : Any, nor T : CharSequence, and a List<String?> is no List<*> in an invariant position
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.BoundedReceiverNullableStringRows"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.BoundedReceiverNullableStringRows [page 1/1]
             class BoundedReceiverNullableStringRows : com.xemantic.kotlin.introspection.test.other.JavaListRows<String?>
-            // from com.xemantic.kotlin.introspection.test
-            fun BoundedReceiverRows<List<*>>.readAnyRows()
         """.trimIndent()
     }
 
     @Test
     fun `should resolve class without extension on mutable list of Java list of type argument not satisfying CharSequence bound`() {
-        // Int is no CharSequence, while readAnyRows is listed, as a star projection matches any type argument, see #229
+        // Int is no CharSequence, but satisfies T : Any, and a List<Int> is no List<*> in an invariant position
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.BoundedReceiverIntRows"
         ) sameAsKotlin """
@@ -6583,7 +6576,7 @@ class KotlinIntrospectorTest {
             class BoundedReceiverIntRows : com.xemantic.kotlin.introspection.test.other.JavaListRows<Int>
             // from com.xemantic.kotlin.introspection.test
             fun BoundedReceiverRows<out MutableCollection<Int>>.addIntRows()
-            fun BoundedReceiverRows<List<*>>.readAnyRows()
+            fun <T : Any> BoundedReceiverRows<MutableList<T>>.addNotNullRow()
             fun BoundedReceiverRows<List<Int>>.readIntRows()
             fun BoundedReceiverRows<out MutableIterable<Int>>.removeIntRows()
         """.trimIndent()
@@ -6641,6 +6634,275 @@ class KotlinIntrospectorTest {
             fun BoundedReceiverSink<BoundedReceiverKotlinRows<String>>.sinkKotlinRows()
             fun BoundedReceiverSink<BoundedReceiverKotlinStringRows>.sinkKotlinStringRows()
             fun BoundedReceiverSink<Nothing>.sinkNothing()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extensions on other projections of invariant type argument nor on type parameter of unsatisfied bounds`() {
+        // a List<String> is neither a List<*>, nor a List<Any?>, in an invariant position, nor a MutableList<String>,
+        // and String satisfies the bound T : Comparable<T>, but not T : Number
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverProjectedStringRows"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverProjectedStringRows [page 1/1]
+            class BoundedReceiverProjectedStringRows : BoundedReceiverProjectedRows<List<String>>
+            // from com.xemantic.kotlin.introspection.test
+            fun <T : Comparable<T>> BoundedReceiverProjectedRows<List<T>>.projectedComparableRows()
+            fun <T : List<String>> BoundedReceiverProjectedRows<T>.projectedStringListRows()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extensions on star projection of invariant type argument and on its equivalent type`() {
+        // a List<*> is the same type as a List<Any?>, as List is covariant, but not a List<Int>,
+        // while Any? satisfies neither T : Comparable<T>, nor T : List<String>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverProjectedStarRows"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverProjectedStarRows [page 1/1]
+            class BoundedReceiverProjectedStarRows : BoundedReceiverProjectedRows<List<*>>
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverProjectedRows<List<*>>.projectedAnyRows()
+            fun BoundedReceiverProjectedRows<List<Any?>>.projectedNullableAnyRows()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extensions on Java list of unbounded wildcard as star projection of invariant type argument`() {
+        // a (Mutable)List<*>! is the same type as a List<*>, or a List<Any?>, but not a List<Int>, nor a List<Any>,
+        // unlike the (Mutable)List<out Any!>! of ? extends Object, told apart by the generic signature of the class file
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverProjectedJavaAnyRows"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverProjectedJavaAnyRows [page 1/1]
+            class BoundedReceiverProjectedJavaAnyRows : com.xemantic.kotlin.introspection.test.other.JavaProjectedAnyRows
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverProjectedRows<List<*>>.projectedAnyRows()
+            fun BoundedReceiverProjectedRows<List<Any?>>.projectedNullableAnyRows()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extension on use-site projection between bounds of Java list of invariant type argument`() {
+        // a (Mutable)List<String!>! is the same type as a MutableList<out String>, a supertype of MutableList<String!>,
+        // and a subtype of List<String!>, but not as a List<*>, nor as a List<Any?>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverProjectedJavaStringRows"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverProjectedJavaStringRows [page 1/1]
+            class BoundedReceiverProjectedJavaStringRows : com.xemantic.kotlin.introspection.test.other.JavaProjectedStringListRows
+            // from com.xemantic.kotlin.introspection.test
+            fun <T : Comparable<T>> BoundedReceiverProjectedRows<List<T>>.projectedComparableRows()
+            fun <T : MutableList<String>> BoundedReceiverProjectedRows<T>.projectedMutableStringListRows()
+            fun BoundedReceiverProjectedRows<MutableList<out String>>.projectedOutStringRows()
+            fun <T : List<String>> BoundedReceiverProjectedRows<T>.projectedStringListRows()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extensions on Java list of wildcard bounded by Object as not nullable Any`() {
+        // a (Mutable)List<out Any!>! is a List<Any>, a List<*>, and a List<Any?>, but not a List<T> of T : Comparable<T>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverProjectedJavaObjectRows"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverProjectedJavaObjectRows [page 1/1]
+            class BoundedReceiverProjectedJavaObjectRows : com.xemantic.kotlin.introspection.test.other.JavaProjectedObjectWildcardRows
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverProjectedRows<List<*>>.projectedAnyRows()
+            fun BoundedReceiverProjectedRows<List<Any>>.projectedNotNullAnyRows()
+            fun BoundedReceiverProjectedRows<List<Any?>>.projectedNullableAnyRows()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extension on contravariant subtype of supertype of Java array type argument`() {
+        // the Array<(out) String!>! of JavaProjectedStringArraySource is an Array<out String>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverProjectedOutArraySink"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverProjectedOutArraySink [page 1/1]
+            class BoundedReceiverProjectedOutArraySink : BoundedReceiverProjectedSink<BoundedReceiverProjectedSrc<Array<out String>>>
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverProjectedSink<com.xemantic.kotlin.introspection.test.other.JavaProjectedStringArraySource>.sinkJavaArraySource()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extension on contravariant subtype of supertype of Java list type argument between its bounds`() {
+        // the (Mutable)List<String!>! of JavaProjectedStringListSource is the same type as a MutableList<out String>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverProjectedOutListSink"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverProjectedOutListSink [page 1/1]
+            class BoundedReceiverProjectedOutListSink : BoundedReceiverProjectedSink<BoundedReceiverProjectedSrc<MutableList<out String>>>
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverProjectedSink<com.xemantic.kotlin.introspection.test.other.JavaProjectedStringListSource>.sinkJavaListSource()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extension on approximated supertype of projected type argument nested in its type argument`() {
+        // BoundedReceiverNest<out String> is a List<MutableList<out String>>, but not a List<CharSequence>,
+        // nor a List<Array<T>>, nor a List<Array<out T>>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverOutNestSource"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverOutNestSource [page 1/1]
+            class BoundedReceiverOutNestSource : BoundedReceiverNestedSource<BoundedReceiverNest<out String>>
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverNestedSource<List<MutableList<out String>>>.nestedOutStrings()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extension on covariant projection of type parameter containing contravariant projection`() {
+        // an Array<in String> is an Array<out Any?>, an Array<out T> for T of Any?, but not an Array<T>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverInArraysSource"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverInArraysSource [page 1/1]
+            class BoundedReceiverInArraysSource : BoundedReceiverNestedSource<List<Array<in String>>>
+            // from com.xemantic.kotlin.introspection.test
+            fun <T> BoundedReceiverNestedSource<List<Array<out T>>>.nestedOutArrays()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extension on use-site projection of invariant type argument of mutable list`() {
+        // a MutableList<String> is not a MutableList<out String> in an invariant position,
+        // while it satisfies both T : List<String>, and T : MutableList<String>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverProjectedMutableRows"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverProjectedMutableRows [page 1/1]
+            class BoundedReceiverProjectedMutableRows : BoundedReceiverProjectedRows<MutableList<String>>
+            // from com.xemantic.kotlin.introspection.test
+            fun <T : MutableList<String>> BoundedReceiverProjectedRows<T>.projectedMutableStringListRows()
+            fun <T : List<String>> BoundedReceiverProjectedRows<T>.projectedStringListRows()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extension on same use-site projection of invariant type argument of mutable list`() {
+        // a MutableList<out String> is a MutableList<out String>, and a List<String>, but not a MutableList<String>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverProjectedOutRows"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverProjectedOutRows [page 1/1]
+            class BoundedReceiverProjectedOutRows : BoundedReceiverProjectedRows<MutableList<out String>>
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverProjectedRows<MutableList<out String>>.projectedOutStringRows()
+            fun <T : List<String>> BoundedReceiverProjectedRows<T>.projectedStringListRows()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extensions on type parameter bounded by other type than its type argument`() {
+        // a Map<String, Int> is neither a List<String>, nor a MutableList<String>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverProjectedMapRows"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverProjectedMapRows [page 1/1]
+            class BoundedReceiverProjectedMapRows : BoundedReceiverProjectedRows<Map<String, Int>>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extensions on supertypes of use-site projection of covariant type argument`() {
+        // a MutableList<out String> is a MutableList<out CharSequence>, a MutableList<*>, a MutableCollection<out CharSequence>,
+        // and a List<String>, but not a MutableList<String>, nor a List<T> of T : Number
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverProjectedOutSource"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverProjectedOutSource [page 1/1]
+            class BoundedReceiverProjectedOutSource : BoundedReceiverProjectedSource<MutableList<out String>>
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverProjectedSource<MutableList<*>>.sourceAny()
+            fun <T : MutableCollection<out CharSequence>> BoundedReceiverProjectedSource<T>.sourceMutableCharSequences()
+            fun BoundedReceiverProjectedSource<MutableList<out CharSequence>>.sourceOutCharSequences()
+            fun BoundedReceiverProjectedSource<List<String>>.sourceStringList()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extensions on supertypes of star projected type argument but star projected ones`() {
+        // a MutableList<*> is a List<*>, which is neither a List<String>, nor a List<T> of T : Number,
+        // nor a MutableCollection<*> a MutableCollection<out CharSequence>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverProjectedStarSource"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverProjectedStarSource [page 1/1]
+            class BoundedReceiverProjectedStarSource : BoundedReceiverProjectedSource<MutableList<*>>
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverProjectedSource<MutableList<*>>.sourceAny()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extensions on supertypes of Java list of wildcard keeping its projection`() {
+        // a (Mutable)List<out CharSequence!>! is a MutableList<out CharSequence>, and a MutableCollection<out CharSequence>,
+        // but not a List<String>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverProjectedWildcardSource"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverProjectedWildcardSource [page 1/1]
+            class BoundedReceiverProjectedWildcardSource : com.xemantic.kotlin.introspection.test.other.JavaProjectedWildcardSource
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverProjectedSource<MutableList<*>>.sourceAny()
+            fun <T : MutableCollection<out CharSequence>> BoundedReceiverProjectedSource<T>.sourceMutableCharSequences()
+            fun BoundedReceiverProjectedSource<MutableList<out CharSequence>>.sourceOutCharSequences()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extension on contravariant subtype of projected type arguments`() {
+        // a MutableList<out String> is a List<String>, but a MutableList<*> is not
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverProjectedStringListSink"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverProjectedStringListSink [page 1/1]
+            class BoundedReceiverProjectedStringListSink : BoundedReceiverProjectedSink<List<String>>
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverProjectedSink<MutableList<out String>>.sinkOutStrings()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extensions on contravariant subtypes of projected type arguments of invariant supertype`() {
+        // neither a MutableList<out String>, nor a MutableList<*>, is a MutableCollection<String>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverProjectedCollectionSink"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverProjectedCollectionSink [page 1/1]
+            class BoundedReceiverProjectedCollectionSink : BoundedReceiverProjectedSink<MutableCollection<String>>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extensions on either projection of Java array type argument`() {
+        // a Java String[] is the flexible Array<(out) String!>!, either an Array<String>, or an Array<out String>, but not an Array<*>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverProjectedStringArrayRows"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverProjectedStringArrayRows [page 1/1]
+            class BoundedReceiverProjectedStringArrayRows : com.xemantic.kotlin.introspection.test.other.JavaProjectedStringArrayRows
+            // from com.xemantic.kotlin.introspection.test
+            fun <T : CharSequence> BoundedReceiverProjectedRows<Array<out T>>.projectedOutCharSequenceArray()
+            fun BoundedReceiverProjectedRows<Array<out String>>.projectedOutStringArray()
+            fun BoundedReceiverProjectedRows<Array<String>>.projectedStringArray()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extension on star projection of Java array of objects`() {
+        // a Java Object[] is the flexible Array<(out) Any!>!, also an Array<*>, but not an Array<String>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverProjectedObjectArrayRows"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverProjectedObjectArrayRows [page 1/1]
+            class BoundedReceiverProjectedObjectArrayRows : com.xemantic.kotlin.introspection.test.other.JavaProjectedObjectArrayRows
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverProjectedRows<Array<*>>.projectedAnyArray()
         """.trimIndent()
     }
 
