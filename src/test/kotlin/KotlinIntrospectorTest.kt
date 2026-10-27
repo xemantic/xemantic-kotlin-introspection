@@ -6669,9 +6669,8 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve class with extensions on Java list of unbounded wildcard as star projection of invariant type argument`() {
-        // a (Mutable)List<*>! is the same type as a List<*>, or a List<Any?>, but not a List<Int>,
-        // while it is listed with projectedNotNullAnyRows, which kotlinc rejects, as kotlin-reflect tells the wildcard ?
-        // just like ? extends Object, the (Mutable)List<out Any!>! of a List<Any>
+        // a (Mutable)List<*>! is the same type as a List<*>, or a List<Any?>, but not a List<Int>, nor a List<Any>,
+        // unlike the (Mutable)List<out Any!>! of ? extends Object, told apart by the generic signature of the class file
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.BoundedReceiverProjectedJavaAnyRows"
         ) sameAsKotlin """
@@ -6679,7 +6678,6 @@ class KotlinIntrospectorTest {
             class BoundedReceiverProjectedJavaAnyRows : com.xemantic.kotlin.introspection.test.other.JavaProjectedAnyRows
             // from com.xemantic.kotlin.introspection.test
             fun BoundedReceiverProjectedRows<List<*>>.projectedAnyRows()
-            fun BoundedReceiverProjectedRows<List<Any>>.projectedNotNullAnyRows()
             fun BoundedReceiverProjectedRows<List<Any?>>.projectedNullableAnyRows()
         """.trimIndent()
     }
@@ -6726,6 +6724,19 @@ class KotlinIntrospectorTest {
             class BoundedReceiverProjectedOutArraySink : BoundedReceiverProjectedSink<BoundedReceiverProjectedSrc<Array<out String>>>
             // from com.xemantic.kotlin.introspection.test
             fun BoundedReceiverProjectedSink<com.xemantic.kotlin.introspection.test.other.JavaProjectedStringArraySource>.sinkJavaArraySource()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extension on contravariant subtype of supertype of Java list type argument between its bounds`() {
+        // the (Mutable)List<String!>! of JavaProjectedStringListSource is the same type as a MutableList<out String>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverProjectedOutListSink"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverProjectedOutListSink [page 1/1]
+            class BoundedReceiverProjectedOutListSink : BoundedReceiverProjectedSink<BoundedReceiverProjectedSrc<MutableList<out String>>>
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverProjectedSink<com.xemantic.kotlin.introspection.test.other.JavaProjectedStringListSource>.sinkJavaListSource()
         """.trimIndent()
     }
 

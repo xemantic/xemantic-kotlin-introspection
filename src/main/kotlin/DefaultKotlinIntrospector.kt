@@ -25,6 +25,8 @@ import org.objectweb.asm.ClassReader
 import org.objectweb.asm.ClassVisitor
 import org.objectweb.asm.MethodVisitor
 import org.objectweb.asm.Opcodes
+import org.objectweb.asm.signature.SignatureReader
+import org.objectweb.asm.signature.SignatureVisitor
 import org.objectweb.asm.Type as AsmType
 import java.io.File
 import java.io.IOException
@@ -838,7 +840,16 @@ internal class DefaultKotlinIntrospector(
         val javaClassHeader: KmClass? by lazy {
             clazz?.takeIf { metadataAnnotation == null }?.let { clazz ->
                 reflectedValue(default = null) {
-                    clazz.kotlin.toKmJavaClassHeader(kotlinClassName(clazz), ::javaSupertypeMetadataName)
+                    // kotlin-reflect tells ? extends Object like ?, unlike the generic signature of the class file
+                    val objectWildcards = classFile?.signature
+                        ?.takeIf { OBJECT_WILDCARD in it }
+                        ?.let(::objectWildcardsOf)
+                        .orEmpty()
+                    clazz.kotlin.toKmJavaClassHeader(
+                        kotlinClassName(clazz),
+                        objectWildcards = { supertype -> objectWildcards[supertype.name.replace('.', '/')].orEmpty() },
+                        supertypeName = ::javaSupertypeMetadataName
+                    )
                 }
             }
         }
@@ -1254,7 +1265,7 @@ internal class DefaultKotlinIntrospector(
      */
     private fun reflectedJavaClass(clazz: Class<*>): JavaClass? = reflectedValue(default = null) {
         val kClass = clazz.kotlin
-        val kmClass = kClass.toKmJavaClassHeader(kotlinClassName(clazz), ::javaSupertypeMetadataName)
+        val kmClass = kClass.toKmJavaClassHeader(kotlinClassName(clazz), supertypeName = ::javaSupertypeMetadataName)
         val typeParameters = ReflectedTypeParameters.classTypeParameters(kmClass.typeParameters)
         // kotlin-reflect tells no visibility of a protected Java member, which is also visible within its package
         fun Visibility.orProtected(modifiers: Int?): Visibility =
@@ -3313,8 +3324,9 @@ internal class DefaultKotlinIntrospector(
     /**
      * The supertype of the [type] of the class of the given [supertypeName], with the type arguments of the [type],
      * like `Comparable<String>` of `String`, or `null` if it is not told, see [ClassSupertypes.types],
-     * like of a supertype reached through a raw Java type, or cannot be substituted keeping the projections of the [type],
-     * see [substitutedProjecting], while a star projection, or another projection, is kept, like `Collection<*>` of `List<*>`.
+     * like of a supertype reached through a raw Java type,
+     * while a star projection, or another projection, is kept, like `Collection<*>` of `List<*>`,
+     * also approximated when nested in a type argument of the supertype, see [substitutedProjecting].
      */
     private fun ClassSupertypes.supertypeOf(type: KmType, supertypeName: String): KmType? {
         val name = (type.classifier as? KmClassifier.Class)?.name ?: return null
@@ -3456,7 +3468,9 @@ internal class DefaultKotlinIntrospector(
      */
     private fun KmType.approximated(substituted: KmType, projections: TypeProjections): Pair<KmType, Boolean> {
         val projected = projections.projected
-        val declared = (classifier as? KmClassifier.Class)?.name?.let(::declaredVariances)?.takeIf { it.size == arguments.size }
+        val declared by lazy(LazyThreadSafetyMode.NONE) {
+            (classifier as? KmClassifier.Class)?.name?.let(::declaredVariances)?.takeIf { it.size == arguments.size }
+        }
         var isApproximated = false
         val approximatedArguments = substituted.arguments.mapIndexed { index, argument ->
             val original = arguments[index]
@@ -3480,7 +3494,17 @@ internal class DefaultKotlinIntrospector(
                 else -> KmTypeProjection.STAR
             }
         }
-        return substituted.copy(arguments = approximatedArguments) to isApproximated
+        // the outer type of an inner class, like Outer<out String> of Outer<E>.Inner
+        val originalOuterType = outerType
+        val substitutedOuterType = substituted.outerType
+        val approximatedOuterType = if (originalOuterType != null && substitutedOuterType != null) {
+            originalOuterType.approximated(substitutedOuterType, projections).also { (_, isOuterApproximated) ->
+                if (isOuterApproximated) isApproximated = true
+            }.first
+        } else {
+            substitutedOuterType
+        }
+        return substituted.copy(arguments = approximatedArguments, outerType = approximatedOuterType) to isApproximated
     }
 
     /**
@@ -6227,7 +6251,19 @@ internal class DefaultKotlinIntrospector(
         val annotationsMethods = LazySet()
         val membersHidingMethods = LazySet()
         val isInterface = reader.access and Opcodes.ACC_INTERFACE != 0
+        var classSignature: String? = null
         reader.accept(object : ClassVisitor(Opcodes.ASM9) {
+            override fun visit(
+                version: Int,
+                access: Int,
+                name: String,
+                signature: String?,
+                superName: String?,
+                interfaces: Array<out String>?
+            ) {
+                classSignature = signature
+            }
+
             override fun visitAnnotation(descriptor: String, visible: Boolean): AnnotationVisitor? =
                 if (descriptor == METADATA_DESCRIPTOR) {
                     MetadataVisitor { metadata = it }
@@ -6285,7 +6321,8 @@ internal class DefaultKotlinIntrospector(
             },
             deprecatedMethods = deprecatedMethods ?: emptyMap(),
             annotationsMethods = annotationsMethods.toSet(),
-            membersHidingMethods = membersHidingMethods.toSet()
+            membersHidingMethods = membersHidingMethods.toSet(),
+            signature = classSignature
         )
     }
 
@@ -6327,7 +6364,8 @@ internal class DefaultKotlinIntrospector(
         val nesting: Nesting? = null,
         val deprecatedMethods: Map<String, Deprecation> = emptyMap(),
         val annotationsMethods: Set<String> = emptySet(),
-        val membersHidingMethods: Set<String> = emptySet()
+        val membersHidingMethods: Set<String> = emptySet(),
+        val signature: String? = null
     ) : Deprecations {
 
         /**
@@ -6936,7 +6974,8 @@ private fun projectionsOf(kmClass: KmClass, type: KmType): TypeProjections? {
     return TypeProjections(
         kmClass.typeParameters.zip(type.arguments).associate { (typeParameter, argument) ->
             val argumentType = argument.type
-            typeParameter.id to if (argumentType != null && argument.variance == typeParameter.variance) {
+            val isRedundant = argument.variance != KmVariance.INVARIANT && argument.variance == typeParameter.variance
+            typeParameter.id to if (argumentType != null && isRedundant) {
                 KmTypeProjection(KmVariance.INVARIANT, argumentType)
             } else {
                 argument
@@ -7006,9 +7045,7 @@ private fun isNullabilityMatched(expected: KmType, actual: KmType, variance: KmV
  */
 private fun KmType.javaSignatureType(substitution: Map<Int, KmType>): KmType = copy(
     arguments = arguments.map { argument ->
-        // a wildcard, also ? extends Object, which kotlin-reflect tells as a star projection, is out Any!
-        val type = argument.type ?: classType("kotlin/Any")
-        val argumentVariance = argument.variance ?: KmVariance.OUT
+        val type = argument.type ?: return@map argument
         val classifier = type.classifier
         val argumentType = if (classifier is KmClassifier.TypeParameter) {
             substitution[classifier.id]?.copy() ?: return@map argument
@@ -7026,13 +7063,82 @@ private fun KmType.javaSignatureType(substitution: Map<Int, KmType>): KmType = c
                 argumentType.annotations += KmAnnotation(JAVA_ARRAY_MARKER, emptyMap())
             }
         }
-        KmTypeProjection(argumentVariance, argumentType)
+        KmTypeProjection(argument.variance, argumentType)
     },
     outerType = outerType?.javaSignatureType(substitution)
 )
 
 // the marker of a Java collection of the signature of a Java class, see javaSignatureType, never rendered
 private const val JAVA_COLLECTION_MARKER = "com/xemantic/kotlin/introspection/JavaCollection"
+
+// a wildcard bounded by Object in a generic signature, see objectWildcardsOf
+private const val OBJECT_WILDCARD = "+Ljava/lang/Object;"
+
+/**
+ * The positions of the wildcards bounded by `Object`, like `? extends Object`, in the supertypes of a generic class
+ * [signature], seen by Kotlin as `out Any!`, unlike the unbounded wildcard `?`, a star projection,
+ * which kotlin-reflect does not tell apart, by the internal names of the supertypes, like `java/util/List`,
+ * each position the indices of the type arguments leading to the wildcard,
+ * like `[0, 1]` of `Map<String, ? extends Object>` in `List<Map<String, ? extends Object>>`,
+ * the component type of an array being its type argument, like of `Array<T>`,
+ * and only the ones of the innermost class of an inner class type, like of a type of the Kotlin metadata,
+ * or none if the signature cannot be read.
+ */
+private fun objectWildcardsOf(signature: String): Map<String, Set<List<Int>>> {
+    val wildcards = HashMap<String, Set<List<Int>>>()
+
+    // a type at the [path] of a supertype, the type argument of the [wildcard], if any,
+    // adding the positions of the wildcards bounded by Object to the [found] ones of the supertype
+    class TypeVisitor(
+        private val path: List<Int>,
+        private val found: MutableList<List<Int>>,
+        private val wildcard: Char? = null
+    ) : SignatureVisitor(Opcodes.ASM9) {
+        private var name = ""
+        private var index = 0
+
+        override fun visitClassType(name: String) {
+            this.name = name
+        }
+
+        override fun visitInnerClassType(name: String) {
+            this.name += "$$name"
+            // only the type arguments of the innermost class, the ones of the outer classes being the outer type
+            index = 0
+            found.removeAll { it.size > path.size && it.subList(0, path.size) == path }
+        }
+
+        override fun visitArrayType(): SignatureVisitor = TypeVisitor(path + 0, found)
+
+        override fun visitTypeArgument() {
+            index++
+        }
+
+        override fun visitTypeArgument(wildcard: Char): SignatureVisitor = TypeVisitor(path + index++, found, wildcard)
+
+        override fun visitEnd() {
+            if (wildcard == SignatureVisitor.EXTENDS && name == "java/lang/Object" && index == 0) found += path
+            if (path.isEmpty() && found.isNotEmpty()) wildcards[name] = found.toSet()
+        }
+    }
+
+    return try {
+        SignatureReader(signature).accept(object : SignatureVisitor(Opcodes.ASM9) {
+            override fun visitClassBound(): SignatureVisitor = IGNORING_SIGNATURE_VISITOR
+            override fun visitInterfaceBound(): SignatureVisitor = IGNORING_SIGNATURE_VISITOR
+            override fun visitSuperclass(): SignatureVisitor = TypeVisitor(emptyList(), mutableListOf())
+            override fun visitInterface(): SignatureVisitor = TypeVisitor(emptyList(), mutableListOf())
+        })
+        wildcards
+    } catch (_: IllegalArgumentException) {
+        emptyMap()
+    } catch (_: IndexOutOfBoundsException) {
+        emptyMap()
+    }
+}
+
+// a visitor of a part of a generic signature which is not needed, see objectWildcardsOf
+private val IGNORING_SIGNATURE_VISITOR = object : SignatureVisitor(Opcodes.ASM9) {}
 
 // the marker of a Java array of the signature of a Java class, see javaSignatureType, never rendered
 private const val JAVA_ARRAY_MARKER = "com/xemantic/kotlin/introspection/JavaArray"

@@ -36,6 +36,7 @@ import com.xemantic.kotlin.introspection.test.other.JavaProjectedObjectArrayRows
 import com.xemantic.kotlin.introspection.test.other.JavaProjectedObjectWildcardRows
 import com.xemantic.kotlin.introspection.test.other.JavaProjectedStringArrayRows
 import com.xemantic.kotlin.introspection.test.other.JavaProjectedStringArraySource
+import com.xemantic.kotlin.introspection.test.other.JavaProjectedStringListSource
 import com.xemantic.kotlin.introspection.test.other.JavaProjectedStringListRows
 import com.xemantic.kotlin.introspection.test.other.JavaProjectedWildcardSource
 import com.xemantic.kotlin.introspection.test.other.JavaWildcardRows
@@ -589,6 +590,12 @@ interface BoundedReceiverProjectedSrc<T>
 fun BoundedReceiverProjectedSink<JavaProjectedStringArraySource>.sinkJavaArraySource() {}
 
 class BoundedReceiverProjectedOutArraySink : BoundedReceiverProjectedSink<BoundedReceiverProjectedSrc<Array<out String>>>
+
+// a Java list, (Mutable)List<String!>!, of the supertype of the type argument of the extension,
+// in an invariant position the same type as any type between MutableList<String!> and List<String!>
+fun BoundedReceiverProjectedSink<JavaProjectedStringListSource>.sinkJavaListSource() {}
+
+class BoundedReceiverProjectedOutListSink : BoundedReceiverProjectedSink<BoundedReceiverProjectedSrc<MutableList<out String>>>
 
 // a projected type argument of a class nested in a type argument of its supertype, approximated like by kotlinc,
 // like List<MutableList<out String>> of BoundedReceiverNest<out String>
