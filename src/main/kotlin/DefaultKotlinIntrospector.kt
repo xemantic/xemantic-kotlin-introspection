@@ -265,10 +265,7 @@ internal class DefaultKotlinIntrospector(
     private val classLoader: ClassLoader = Thread.currentThread().contextClassLoader,
     scanEntireClasspath: Boolean = true,
     // the declarations of the built-in types, see readKotlinBuiltinClasses, replaced only by the tests
-    private val readBuiltinClasses: () -> Map<String, KmClass> = { readKotlinBuiltinClasses() },
-    // called by a lookup whose miss is cached, on receiving a miss of a concurrent lookup by name which is not probed,
-    // before looking the class up again, see lookUpClassByBinaryName, replaced only by the tests
-    private val onUnprobedMissReceived: (binaryName: String) -> Unit = {}
+    private val readBuiltinClasses: () -> Map<String, KmClass> = { readKotlinBuiltinClasses() }
 ) : KotlinIntrospector {
 
     private val logger = KotlinLogging.logger {}
@@ -1249,53 +1246,66 @@ internal class DefaultKotlinIntrospector(
     /**
      * The lookups of the recently found classes by their binary names, also of the ones not found,
      * so that neither a class is loaded, nor its metadata parsed, nor a missing class looked up, more than once,
-     * like for every nested class listed on every page of a paged resolve.
+     * like for every nested class listed on every page of a paged resolve,
+     * except for a lookup by a name given to resolve, see [lookUpClassByName], which is not shared with a concurrent lookup
+     * of the same class by its binary name, so that, until either is cached, the class might be loaded by each of them.
      * It is bounded, as a found class keeps its parsed metadata, so that a long-lived introspector
      * does not keep the metadata of every class ever looked up,
      * while the [overrideResolver] keeps the declarations it needs in its own bounded caches.
      * The outcome of a lookup which might be transient is not cached, see [lookUpClass],
-     * nor a miss of a lookup by a name given to resolve, see [lookUpClassByBinaryName].
+     * nor a miss of a lookup by a name given to resolve, see [lookUpClassByName].
      */
     private val foundClasses = BoundedCache<String, ClassLookup>(capacity = 1024)
 
     /**
-     * Finds a class by its binary name, like `com.example.Outer${'$'}Nested`, cached also when it is not found,
-     * unless [isMissCached] is `false`, like for a name which is not known to be exact.
+     * The lookups by a name given to resolve in progress, see [lookUpClassByName], each removed once computed,
+     * so that the concurrent lookups of the same name share one, rather than each loading the class.
      */
-    private fun findClassByBinaryName(binaryName: String, isMissCached: Boolean = true): FoundClass? =
-        lookUpClassByBinaryName(binaryName, isMissCached).foundClass
+    private val classLookupsByName = ConcurrentHashMap<String, Lazy<ClassLookup>>()
+
+    /**
+     * Finds a class by its binary name, like `com.example.Outer${'$'}Nested`, cached also when it is not found.
+     */
+    private fun findClassByBinaryName(binaryName: String): FoundClass? = lookUpClassByBinaryName(binaryName).foundClass
 
     /**
      * The lookup of a class by its binary name, see [findClassByBinaryName],
-     * shared with the concurrent lookups of the same class, and counted as the same failing attempt, see [attemptLookUpClass],
-     * except for a miss of a lookup whose miss is not cached, so not probed either, see [lookUpClass],
-     * which a concurrent lookup whose miss is cached does not receive, as if it were probed, looking the class up again,
-     * and which is not cached, as the names whose misses are not cached come from the user input,
-     * while a miss of such a lookup caused by an `IOException` is probed, and, if its class file is there,
-     * is a failing attempt like of any other lookup, cached once deemed final.
-     * After the misses of two such lookups in a row, the lookup whose miss is cached looks the class up on its own,
-     * outside the cache entry, so not shared with the concurrent lookups, caching the class, if found, over any other lookup,
-     * as a class once found stays loadable, and a final miss unless a lookup is cached, or computed, meanwhile,
-     * which might have found the class later.
+     * shared with the concurrent lookups of the same class by its binary name, never with the ones by name,
+     * see [lookUpClassByName], while counted as the same failing attempt as all of them, see [attemptLookUpClass].
      */
-    private fun lookUpClassByBinaryName(binaryName: String, isMissCached: Boolean = true): ClassLookup {
-        repeat(2) {
-            val computed = foundClasses.getOrCompute(binaryName) {
-                val lookup = attemptLookUpClass(binaryName, isMissProbed = isMissCached)
-                BoundedCache.Computed(lookup, isCacheable = lookup.isFinal && lookup.isMissProbed)
-            }
-            // also when computed by another thread
-            if (!isMissCached || computed.value.isMissProbed) return computed.value.markedUnlessFinal()
-            onUnprobedMissReceived(binaryName)
-        }
-        // after the misses of two concurrent lookups by name in a row, which might keep taking the cache entry for good
+    private fun lookUpClassByBinaryName(binaryName: String): ClassLookup = foundClasses.getOrCompute(binaryName) {
         val lookup = attemptLookUpClass(binaryName, isMissProbed = true)
-        // a class once found stays loadable, unlike a miss, which might be older than the lookup cached meanwhile,
-        // while a class found only from its class file after a linkage error which might be transient is not cached at all
-        if (lookup.isFinal) {
-            if (lookup.foundClass != null) foundClasses.put(binaryName, lookup) else foundClasses.putIfAbsent(binaryName, lookup)
+        BoundedCache.Computed(lookup, isCacheable = lookup.isFinal)
+    }.value.markedUnlessFinal()
+
+    /**
+     * The lookup of a class by a binary name which is not known to be exact, like one given to resolve,
+     * taken from the cache, if any, see [foundClasses], or else looked up outside of it,
+     * shared only with the concurrent lookups by the same name, see [classLookupsByName],
+     * so that a lookup whose miss is cached never receives a miss which is not probed, telling nothing.
+     * A final outcome is cached, unless it is such a miss, as such names come from the user input:
+     * a class found over any lookup cached meanwhile, as a class once found stays loadable,
+     * and a miss which is probed, like of a class failing to load, see [lookUpClass], only if none is,
+     * as it might be older than the one cached meanwhile, which is taken instead, if final,
+     * while a transient outcome of a concurrent lookup by binary name, which is not cached, gives way to this final miss.
+     */
+    private fun lookUpClassByName(binaryName: String): ClassLookup {
+        foundClasses.getIfCached(binaryName)?.let { return it }
+        val inProgress = lazy {
+            val lookup = attemptLookUpClass(binaryName, isMissProbed = false)
+            when {
+                !lookup.isFinal || !lookup.isMissProbed -> lookup
+                lookup.foundClass != null -> lookup.also { foundClasses.put(binaryName, it) }
+                else -> foundClasses.getOrCompute(binaryName) { BoundedCache.Computed(lookup, isCacheable = true) }
+                    .value.takeIf { it.isFinal } ?: lookup
+            }
         }
-        return lookup.markedUnlessFinal()
+        val shared = classLookupsByName.putIfAbsent(binaryName, inProgress) ?: inProgress
+        return try {
+            shared.value
+        } finally {
+            classLookupsByName.remove(binaryName, shared)
+        }.markedUnlessFinal()
     }
 
     /**
@@ -1325,7 +1335,7 @@ internal class DefaultKotlinIntrospector(
     private fun findClassByName(name: String): FoundClass? {
         var binaryName = name
         while (true) {
-            findClassByBinaryName(binaryName, isMissCached = false)?.let { return it }
+            lookUpClassByName(binaryName).foundClass?.let { return it }
             val lastDot = binaryName.lastIndexOf('.')
             if (lastDot < 0) return null
             binaryName = binaryName.substring(0, lastDot) + "$" + binaryName.substring(lastDot + 1)
