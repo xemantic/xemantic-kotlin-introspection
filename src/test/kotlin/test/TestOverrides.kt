@@ -854,6 +854,15 @@ class IndentedJavaDescribed : com.xemantic.kotlin.introspection.test.other.JavaD
     fun toString(indent: Int): String = ""
 }
 
+abstract class SizedJavaProbeList : com.xemantic.kotlin.introspection.test.other.JavaProbeList() {
+    fun toArray(size: Int): Array<Any?> = arrayOfNulls(size)
+}
+
+// An overload of a Java method named like a member of a built-in type, but not overriding its JVM method
+abstract class RadixCountingNumber : com.xemantic.kotlin.introspection.test.other.JavaCountingNumber() {
+    fun toInt(radix: Int): Int = radix
+}
+
 class IndexedJavaProperties : com.xemantic.kotlin.introspection.test.other.JavaDefaultedProperties() {
     val Int.property: String get() = ""
 }

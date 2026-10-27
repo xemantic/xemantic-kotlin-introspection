@@ -32,6 +32,7 @@ import java.lang.reflect.Modifier
 import java.lang.reflect.ParameterizedType
 import java.lang.reflect.TypeVariable
 import java.lang.reflect.WildcardType
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.metadata.ClassKind
 import kotlin.metadata.KmClass
 import kotlin.metadata.KmClassifier
@@ -228,7 +229,7 @@ internal class OverrideResolver(
      * @param isPlatform whether the member is a Java method of a platform class, like `Throwable.toString()`,
      *   also of the JVM type of a built-in type, like `java.util.List.sort`, which a shrinker never removes,
      *   so that it is no evidence for a shrunk override, see [shrunkOverridden],
-     *   or a Kotlin member of a built-in type of a platform class, like `Any.toString()`,
+     *   or a Kotlin function of `Any`, like `Any.toString()`, whose JVM class, `Object`, contributes no Java methods,
      *   telling the overrides of platform methods by the Java methods of an application, see [shrinkableJava].
      * @param declaresDefaultValues the indices of the value parameters declaring a default value,
      *   which only a Kotlin function can.
@@ -252,14 +253,23 @@ internal class OverrideResolver(
      *   or `null` if they can be neither read nor reflected;
      *   only needed to tell a shrunk member or a friend module, so read lazily, once, see [FinalOnce],
      *   and again after a transient failure, which might happen after the overridables are cached.
+     * @param hiddenPlatformFunctions the Java methods of the JVM types of the built-in collection types,
+     *   hidden from their members, like `toArray`, by their names,
+     *   only telling the overrides of platform methods by the Java methods of an application, see [shrinkableJava].
      */
     private class Overridables(
         val substitution: Map<Int, MemberType>,
         val functions: Map<String, List<Overridable>>,
         val properties: Map<String, List<Overridable>>,
+        val hiddenPlatformFunctions: Map<String, List<Overridable>>,
         private val readOwnerJvmMethods: FinalOnce<Set<String>?>
     ) {
         val ownerJvmMethods: Set<String>? get() = readOwnerJvmMethods.value
+
+        /**
+         * The results of [shrinkableJava] by the function names, computed once, as the overridables are cached.
+         */
+        val shrinkableJava = ConcurrentHashMap<String, List<Overridable>>()
     }
 
     /**
@@ -397,7 +407,7 @@ internal class OverrideResolver(
         val matching = candidates.filter { it.matches(signature) }
         val overridden = matching.asSequence().filter { overridables.isVisible(it, owner.kmClass, function.modality) }
             .ifEmpty {
-                val evidence = matching.ifEmpty { candidates.shrinkableJava() }
+                val evidence = matching.ifEmpty { overridables.shrinkableJava(function.name) }
                 overridables.shrunkOverridden(evidence, owner.kmClass, function.modality, function.signature)
             }
         return when {
@@ -558,11 +568,10 @@ internal class OverrideResolver(
         // a property of a Kotlin supertype without metadata is known only by its JVM getter,
         // which a private or a @JvmField property does not have, and which might be renamed or mangled
         val getter = property.getterSignature?.takeIf { property.visibility.isOverridable }
-        val getterCandidates = getter?.let { overridables.functions[it.name] }.orEmpty()
-        val javaGetters = getterCandidates.filter { it.isJava }
+        val javaGetters = getter?.let { overridables.functions[it.name] }.orEmpty().filter { it.isJava }
         // a Java method taking other parameters than the receiver is not a getter
         val evidence = matching.ifEmpty {
-            getterCandidates.shrinkableJava().filter {
+            getter?.let { overridables.shrinkableJava(it.name) }.orEmpty().filter {
                 it.parameters.size == (if (property.receiverParameterType != null) 1 else 0)
             }
         }
@@ -626,25 +635,35 @@ internal class OverrideResolver(
     }
 
     /**
-     * The Java members of these supertype members of the same name which a shrinker might remove,
+     * The Java supertype members of the function [name] which a shrinker might remove,
      * the evidence for a shrunk override when no member of the same signature is known, see [shrunkOverridden]:
      * neither the ones of a platform class, see [Overridable.isPlatform],
      * nor the ones of an application class overriding a platform member, like `toString()` of a Java exception,
      * which are kept as long as the platform member is, so that they prove no override of a same-name overload either.
      */
-    private fun List<Overridable>.shrinkableJava(): List<Overridable> {
-        val platform = filter { it.isPlatform }
-        return filter { member ->
-            member.isJava && !member.isPlatform && platform.none { it.isOverriddenByJava(member) }
+    private fun Overridables.shrinkableJava(name: String): List<Overridable> =
+        shrinkableJava.getOrPut(name) {
+            val candidates = functions[name].orEmpty()
+            val platform = candidates.filter { it.isPlatform } + hiddenPlatformFunctions[name].orEmpty()
+            candidates.filter { member ->
+                member.isJava && !member.isPlatform && platform.none { it.isOverriddenByJava(member) }
+            }
         }
-    }
 
     /**
-     * Whether this platform member is overridden by the Java [method], matched by the erasures of its parameter types.
+     * Whether this platform member is overridden by the Java [method], matched by the erasures of its parameter types,
+     * a generic one also by a method which is not, as Java allows; an unknown erasure matches none,
+     * so that a Java method is no evidence only when it surely overrides a platform member.
      */
     private fun Overridable.isOverriddenByJava(method: Overridable): Boolean =
         contexts.isEmpty() && receiver == null && parameters.size == method.parameters.size &&
-            parameters.zip(method.parameters).all { (overridden, overriding) -> erasuresMatch(overridden, overriding) }
+            (method.typeParameterCount == typeParameterCount || method.typeParameterCount == 0) &&
+            parameters.zip(method.parameters).all { (overridden, overriding) ->
+                val erasure = erasure(overridden)
+                erasure != null && erasure == erasure(overriding) &&
+                    // an int is erased to the same Kotlin class as an Integer
+                    (overridden as? ClassType)?.isJavaPrimitive == (overriding as? ClassType)?.isJavaPrimitive
+            }
 
     /**
      * Whether the JVM method of a member, declared in the metadata, has been removed from the class file of its owner,
@@ -714,6 +733,7 @@ internal class OverrideResolver(
         val ownerPackage = owner.name.substringBeforeLast('/', "").replace('/', '.')
         val functions = mutableMapOf<String, MutableList<Overridable>>()
         val properties = mutableMapOf<String, MutableList<Overridable>>()
+        val hiddenPlatformFunctions = mutableMapOf<String, MutableList<Overridable>>()
         val pending = ArrayDeque(ownerClass.supertypes.mapNotNull { kotlinType(it, ownerSubstitution) as? ClassType })
         // every class and interface is a subtype of Any, also when it is reached only through Java interfaces
         pending += ClassType("kotlin/Any")
@@ -743,9 +763,10 @@ internal class OverrideResolver(
 
             declaration.kotlin?.let { kmClass ->
                 val substitution = supertypeSubstitution(owner, kmClass, supertype)
-                // the members of a built-in type of a platform class, also of Any, the one of Object,
-                // whose overrides by the Java methods of an application are no evidence for a shrunk override
-                val isPlatform = kmClass.name == "kotlin/Any" || declaration.java?.isPlatformClass == true
+                // the members of Any, as Object contributes no Java methods, see Declaration,
+                // while the other built-in types contribute the Java methods of their JVM classes, named like on the JVM,
+                // unlike their Kotlin members, like Number.toInt() of intValue()
+                val isPlatform = kmClass.name == "kotlin/Any"
                 val isSameModuleName = kmClass.moduleName == ownerClass.moduleName
                 // the JVM name of an internal member is mangled with the module name, sanitized like by the compiler,
                 // unless it is a @PublishedApi one; the module name is absent only from the built-in declarations,
@@ -810,6 +831,8 @@ internal class OverrideResolver(
                 javaMethods(javaClass, ownerPackage, substitution).forEach { (name, method) ->
                     if (name !in declaration.hiddenJavaMethods) {
                         functions.getOrPut(name) { mutableListOf() } += method.withUnlocated(relocation)
+                    } else if (method.isPlatform) {
+                        hiddenPlatformFunctions.getOrPut(name) { mutableListOf() } += method
                     }
                 }
                 // the supertypes of a built-in type are known from its Kotlin declaration
@@ -831,7 +854,7 @@ internal class OverrideResolver(
         // only the name, the relocation, and whether it might have DefaultImpls are captured, as the overridables are cached
         val ownerName = owner.name
         val hasDefaultImpls = ownerClass.mayHaveDefaultImpls
-        return Overridables(ownerSubstitution, functions, properties, FinalOnce {
+        return Overridables(ownerSubstitution, functions, properties, hiddenPlatformFunctions, FinalOnce {
             // a transient failure is marked on this thread by the lookup failing, telling the caller not to cache
             val failureCount = transientFailures.count()
             // the descriptors of a relocated class file, compared with the JVM signatures of its metadata, which are not,

@@ -2599,6 +2599,12 @@ class ClassLoaderIntrospectionTest {
                 .filter { it.isFile && it.name != "OtherModuleMarker.class" }
                 .forEach { it.copyTo(root.resolve(it.relativeTo(dir).path).toFile(), overwrite = true) }
         }
+        val unreadableResources = setOf(
+            "com/xemantic/kotlin/introspection/othermodule/UnreflectableSameModuleSubclass.class",
+            "com/xemantic/kotlin/introspection/othermodule/UnreflectableOpenSameModuleSubclass.class",
+            "com/xemantic/kotlin/introspection/friendmodule/UnreflectableFriendModuleSubclass.class",
+            "com/xemantic/kotlin/introspection/friendmodule/UnreflectableOpenFriendModuleSubclass.class"
+        )
         // loading the fixtures of both modules itself, without the marker class, which their methods refer to
         val classLoader = object : URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader) {
             override fun loadClass(name: String, resolve: Boolean): Class<*> =
@@ -2612,7 +2618,7 @@ class ClassLoaderIntrospectionTest {
 
             override fun getResourceAsStream(name: String): InputStream? {
                 val stream = super.getResourceAsStream(name)
-                return if (stream != null && name.substringAfterLast('/').startsWith("Unreflectable")) {
+                return if (stream != null && name in unreadableResources) {
                     val bytes = stream.use { it.readBytes() }
                     // the major version, following the magic number and the minor version
                     bytes[6] = 0x7F
@@ -2894,11 +2900,13 @@ class ClassLoaderIntrospectionTest {
         // given
         val exceptionName = "com.xemantic.kotlin.introspection.test.IndentedJavaException"
         val describedName = "com.xemantic.kotlin.introspection.test.IndentedJavaDescribed"
+        val listName = "com.xemantic.kotlin.introspection.test.SizedJavaProbeList"
         val propertiesName = "com.xemantic.kotlin.introspection.test.IndexedJavaProperties"
 
         // when
         val exception = shrunkIntrospector(exceptionName, "toString").resolve(exceptionName)
         val described = shrunkIntrospector(describedName, "toString").resolve(describedName)
+        val list = shrunkIntrospector(listName, "toArray").resolve(listName)
         val properties = shrunkIntrospector(propertiesName, "getProperty").resolve(propertiesName)
 
         // then
@@ -2917,10 +2925,37 @@ class ClassLoaderIntrospectionTest {
                 fun toString(indent: Int): String
             }
         """.trimIndent()
+        // and of a JDK collection method hidden from the members of the Kotlin collection types
+        list sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SizedJavaProbeList [page 1/1]
+            abstract class SizedJavaProbeList : com.xemantic.kotlin.introspection.test.other.JavaProbeList {
+                fun toArray(size: Int): Array<Any?>
+            }
+        """.trimIndent()
         properties sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.IndexedJavaProperties [page 1/1]
             class IndexedJavaProperties : com.xemantic.kotlin.introspection.test.other.JavaDefaultedProperties {
                 val Int.property: String
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark shrunk overloads of application Java methods named like Kotlin members of built-in types as override`() {
+        // given
+        val className = "com.xemantic.kotlin.introspection.test.RadixCountingNumber"
+        val introspector = shrunkIntrospector(className, "toInt")
+
+        // when
+        val signature = introspector.resolve(className)
+
+        // then
+        // Number.toInt() is intValue() on the JVM, so the Java toInt() overrides no JDK method, and stays the evidence,
+        // as it might be shrunk together with its override
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.RadixCountingNumber [page 1/1]
+            abstract class RadixCountingNumber : com.xemantic.kotlin.introspection.test.other.JavaCountingNumber {
+                final override fun toInt(radix: Int): Int
             }
         """.trimIndent()
     }
