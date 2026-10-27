@@ -125,6 +125,89 @@ internal fun notNullableTypeParameters(typeParameters: List<KmTypeParameter>, no
 }
 
 /**
+ * The type parameters in scope of a rendered declaration, like the ones of a class, of its outer classes, and of a member:
+ * their [names] by their ids, and the ids of the [notNullable] ones, see [notNullableTypeParameters],
+ * whose uses as definitely not nullable are rendered as just these type parameters, like `U` of `U : Any`,
+ * while the ones of the other type parameters are rendered so, like `T & Any`.
+ * Kept together, so that no rendering is given the names without telling the not nullable ones,
+ * rendering an invalid `U & Any`.
+ *
+ * @param isIgnoringDefinitelyNotNull whether no use as definitely not nullable is rendered so,
+ *   see [ignoringDefinitelyNotNull].
+ */
+internal class TypeParameterScope(
+    val names: Map<Int, String>,
+    val notNullable: Set<Int>,
+    private val isIgnoringDefinitelyNotNull: Boolean = false
+) {
+
+    /**
+     * Whether a use as definitely not nullable of the type parameter of the [id] is rendered so, like `T & Any`,
+     * rather than as just the type parameter, like `T`, also of one outside of this scope, unless ignoring them.
+     */
+    fun isRenderedDefinitelyNotNull(id: Int): Boolean = !isIgnoringDefinitelyNotNull && id !in notNullable
+
+    /**
+     * This scope with the [typeParameters] declared within it, like the ones of a member of a class,
+     * which might be bounded by the ones of this scope, like `R : T`.
+     */
+    fun withDeclared(typeParameters: List<KmTypeParameter>): TypeParameterScope =
+        if (typeParameters.isEmpty()) this else TypeParameterScope(
+            names + typeParameters.associate { it.id to it.name },
+            notNullableTypeParameters(typeParameters, notNullable),
+            isIgnoringDefinitelyNotNull
+        )
+
+    /**
+     * This scope with the type parameters of the [names] standing for the ones of this scope, like the type parameters
+     * of an extension listed in the body of its receiver class, named like the ones of the class.
+     */
+    fun withNames(names: Map<Int, String>): TypeParameterScope =
+        if (names.isEmpty()) this else TypeParameterScope(this.names + names, notNullable, isIgnoringDefinitelyNotNull)
+
+    /**
+     * This scope with the ids of its type parameters renumbered by the [transform], like the ones of an inheriting class,
+     * renumbered apart from the ones of its supertypes.
+     */
+    fun mapIds(transform: (id: Int) -> Int): TypeParameterScope =
+        TypeParameterScope(
+            names.mapKeys { (id, _) -> transform(id) }, notNullable.mapTo(HashSet(), transform), isIgnoringDefinitelyNotNull
+        )
+
+    /**
+     * This scope with the type parameters of the [other] one, of distinct ids, like the ones of an inheriting class.
+     */
+    operator fun plus(other: TypeParameterScope): TypeParameterScope =
+        TypeParameterScope(
+            names + other.names,
+            notNullable + other.notNullable,
+            isIgnoringDefinitelyNotNull || other.isIgnoringDefinitelyNotNull
+        )
+
+    companion object {
+
+        val EMPTY: TypeParameterScope = TypeParameterScope(emptyMap(), emptySet())
+
+        /**
+         * The scope of the type parameters of the [names], whose uses as definitely not nullable, like `T & Any`,
+         * are all rendered as just these type parameters, like `T`, for a signature telling apart the overloads,
+         * which never differ only by it, as `T & Any` and `T` have the same JVM erasure.
+         */
+        fun ignoringDefinitelyNotNull(names: Map<Int, String>): TypeParameterScope =
+            TypeParameterScope(names, emptySet(), isIgnoringDefinitelyNotNull = true)
+
+        /**
+         * The scope of the type parameters of the [names], whose uses as definitely not nullable, like `T & Any`,
+         * are all rendered so, regardless of their bounds, for the signatures compared with one another,
+         * like the ones of the members and the extensions, which a `T & Any` tells apart, see [ignoringDefinitelyNotNull].
+         */
+        fun markingDefinitelyNotNull(names: Map<Int, String>): TypeParameterScope = TypeParameterScope(names, emptySet())
+
+    }
+
+}
+
+/**
  * Whether this type refers, if at all, only to the type parameters whose ids the [isKnown] tells.
  */
 internal fun KmType.refersOnlyTo(isKnown: (id: Int) -> Boolean): Boolean = when (val classifier = classifier) {

@@ -210,6 +210,22 @@ class MissingGenericOuter<T> {
     }
 }
 
+// tests leave the class file of the generic outer class out, so that the bounds of its type parameters are not known,
+// while the inner class inherits a member taking its type parameter as definitely not nullable
+class MissingNotNullOuter<T : Any> {
+    inner class Inner : DefinitelyNonNullHolder<T>()
+}
+
+// tests leave the class file of the generic outer class out, whose type parameter, of nullable bounds,
+// is then not known to be
+class MissingNullableOuter<T> {
+    inner class Inner : DefinitelyNonNullHolder<T>()
+}
+
+open class DefinitelyNonNullHolder<T> {
+    fun orDefault(value: T, default: T & Any): T & Any = value ?: default
+}
+
 // tests leave the class file of the generic outer class out, while the inner class declares the names given to its type parameters
 class ClashingGenericOuter<T> {
     inner class Inner<T0> : Comparable<T> {

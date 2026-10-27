@@ -235,6 +235,12 @@ class InheritedGenericJavaHashMap<V> : java.util.HashMap<String, V>()
 
 class InheritedNullableJavaHashMap : java.util.HashMap<String?, Int?>()
 
+class InheritedJavaStringKeyMap<V> : com.xemantic.kotlin.introspection.test.other.JavaStringKeyMap<V>()
+
+class InheritedJavaListValueMap<T> : com.xemantic.kotlin.introspection.test.other.JavaListValueMap<T>()
+
+class InheritedJavaListKeyMap<T, V> : com.xemantic.kotlin.introspection.test.other.JavaListKeyMap<T, V>()
+
 class InheritedFromJava : com.xemantic.kotlin.introspection.test.other.JavaInheritedMid<String>()
 
 open class OpenInheritedFromJava : com.xemantic.kotlin.introspection.test.other.JavaInheritedMid<String>()

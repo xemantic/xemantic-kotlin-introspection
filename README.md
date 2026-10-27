@@ -149,6 +149,8 @@ com.example.AnnotationTestClass
   and the types the compiler enhances as definitely not nullable are rendered so,
   like `MutableMap.merge(arg0: K, arg1: V & Any, arg2: java.util.function.BiFunction<in V & Any, in V & Any, out V?>): V?`,
   or as just the type argument given for `V` when it is not nullable anyway, like the `Int` of a `HashMap<String, Int>`, or a `V : Any`.
+  The overrides of these members by a Java map inherit the enhancement,
+  also of a narrower key type, like `merge(String, V, BiFunction)` of a `StringKeyMap<V> extends HashMap<String, V>`.
   An extension hiding a member of the same signature, annotated with `@kotlin.internal.HidesMembers` in the standard library,
   is listed in place of that member, while a member accepting more arguments is still listed next to it,
   like `Throwable.addSuppressed(arg0: Throwable?)`, called by `addSuppressed(null)`,

@@ -4241,6 +4241,46 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve member of Java map overriding JVM-only member with narrower key type taking value definitely not nullable`() {
+        // the override inherits the enhancement of java.util.Map.merge, though its JVM signature differs,
+        // in fun <V> f(m: InheritedJavaStringKeyMap<V>, v: V) m.merge("a", v) { … } does not compile, "'V' but 'V & Any' was expected"
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaStringKeyMap.merge") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaStringKeyMap.merge [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaStringKeyMap
+            override fun merge(arg0: String?, arg1: V & Any, arg2: java.util.function.BiFunction<in V & Any, in V & Any, out V?>): V?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of Java map overriding JVM-only member with narrower key type passing value definitely not nullable to function`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaStringKeyMap.computeIfPresent") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaStringKeyMap.computeIfPresent [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaStringKeyMap
+            override fun computeIfPresent(arg0: String?, arg1: java.util.function.BiFunction<in String, in V & Any, out V?>): V?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of Java map overriding JVM-only member with parameterized value type taking value not nullable`() {
+        // the List<T> given for V is never null, its T is not enhanced, m.merge("a", listOf<T>()) { a: List<T>, b: List<T> -> a } compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaListValueMap.merge") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaListValueMap.merge [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaListValueMap
+            override fun merge(arg0: String?, arg1: List<T>, arg2: java.util.function.BiFunction<in List<T>, in List<T>, out List<T>?>): List<T>?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of Java map overriding JVM-only member with parameterized key type passing value definitely not nullable to function`() {
+        // only the V passed to the function is enhanced, not the T of the List<T> key
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaListKeyMap.computeIfPresent") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaListKeyMap.computeIfPresent [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaListKeyMap
+            override fun computeIfPresent(arg0: List<T>?, arg1: java.util.function.BiFunction<in List<T>, in V & Any, out V?>): V?
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve inherited JVM-only member of mutable map of inner class taking value of outer type parameter bounded not nullable`() {
         assumeNoParameterNames(MERGE_METHOD)
         resolver.resolve("com.xemantic.kotlin.introspection.test.OuterNotNull.InnerMap.merge") sameAsKotlin """
