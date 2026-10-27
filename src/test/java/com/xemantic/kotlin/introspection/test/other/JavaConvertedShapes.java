@@ -83,4 +83,8 @@ public abstract class JavaConvertedShapes<T extends Comparable<? super T>, U> {
 
     public abstract java.util.Iterator<T> iterator();
 
+    public abstract @org.jetbrains.annotations.NotNull String notNull(@org.jetbrains.annotations.NotNull String value, @org.jetbrains.annotations.Nullable U other);
+
+    public abstract @org.jetbrains.annotations.Nullable T nullable(@org.jetbrains.annotations.Nullable T value);
+
 }
