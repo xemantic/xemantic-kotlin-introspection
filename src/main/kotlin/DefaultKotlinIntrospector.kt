@@ -1865,6 +1865,11 @@ internal class DefaultKotlinIntrospector(
             other.kmClass.name != kmClass.name && (other.member is Member.Property) == (member is Member.Property) &&
                 (other.signature == signature || other.overridden.any { it in overridden })
 
+        /**
+         * Whether the [member] overrides the one of the [other] candidate, telling it by its key.
+         */
+        fun overrides(other: InheritedCandidate): Boolean = other.key in overridden
+
     }
 
     /**
@@ -1893,7 +1898,10 @@ internal class DefaultKotlinIntrospector(
      * or the first one, when they are equally specific, while all of them are inherited when they cannot be compared.
      * None of them is inherited when the compiler picks a hidden one among the members which the direct supertypes contribute,
      * the one of the most specific return type, or else the one of the first direct supertype in the order of declaration,
-     * also when another direct supertype overrides it, like `f()` of `interface Join : Left, Right`, hidden by `Left`.
+     * also when another direct supertype overrides it, like `f()` of `interface Join : Left, Right`, hidden by `Left`,
+     * while a member overridden only by hidden ones is still inherited when the compiler picks it,
+     * like `f()` of `interface Join : Root, Left`, which `Left` overrides as hidden,
+     * or the `run()` of `java.lang.Runnable` next to a hidden Kotlin member of the same JVM signature.
      * Inherited by a class which the user code cannot subclass, see [ApiClass.isOpen], a member is neither `open`, nor `final`,
      * like its own members, but a member with a body of an interface, which is rendered as within its interface,
      * telling it apart from an abstract one.
@@ -1913,7 +1921,8 @@ internal class DefaultKotlinIntrospector(
      * A Java supertype whose members cannot be described, like one which cannot be loaded, is walked through to its supertypes,
      * as told by its class file, see [rawJavaSupertypes].
      * A Kotlin supertype which is not part of the API, see [ApiClasses], is walked through too,
-     * its members not inherited, so that the members it overrides stand for its overrides, which the user code cannot see.
+     * its members not inherited, so that the members it overrides stand for its overrides, which the user code cannot see,
+     * but the hidden ones, which still hide the members they override, like of a supertype deprecated as hidden.
      * Which members are part of the API is decided by the inheriting class, the [scope],
      * like a protected member, inherited by a final class, which is not.
      * The members of the [kmClass], see [apiMembersIncludingHidden], also the hidden ones, override the ones they match like any other override,
@@ -2010,7 +2019,9 @@ internal class DefaultKotlinIntrospector(
             val substitution = supertypeSubstitution(superKmClass, supertype)
             directSupertypes[name] = superKmClass.supertypes.classNames()
             pending += superKmClass.supertypes.map { it.substituted(substitution) }
-            if (superDeclarations !is JavaClass && apiClasses.apiClass(superKmClass.name) == null) return
+            // a Kotlin supertype which is not part of the API contributes only its hidden members,
+            // which still hide the ones they override, like of an internal supertype, or one deprecated as hidden
+            val isApi = superDeclarations is JavaClass || apiClasses.apiClass(superKmClass.name) != null
             val jvmOnlyFunctions = (superDeclarations as? BuiltinClass)?.jvmOnlyFunctions.orEmpty()
             val jvmOnlyFunctionsNotHidden = if (jvmOnlyFunctions.any { it.name == memberName }) {
                 // only an extension on the built-in type itself reads like its member, and hides it,
@@ -2027,6 +2038,7 @@ internal class DefaultKotlinIntrospector(
             apiMembersIncludingHidden(
                 superKmClass, superDeclarations, memberName, scope, jvmOnlyFunctionsNotHidden
             ).forEach { apiMember ->
+                if (!isApi && !apiMember.isHidden) return@forEach
                 val declared = apiMember.member
                 val overridden = (superDeclarations as? JavaClass)?.overriddenMembers(declared)
                     ?: declared.overridden(overrideResolver, superDeclarations.overrideOwner)
@@ -2097,22 +2109,24 @@ internal class DefaultKotlinIntrospector(
 
         // the declared members override the inherited ones, matched by the overridden keys,
         // or else, for a declared override whose overridden Kotlin members are not told, like of a Java supertype,
-        // by the same signature, with the type arguments of the supertypes substituted
-        val overridden = candidates.flatMapTo(HashSet()) { it.overridden }
+        // by the same signature, with the type arguments of the supertypes substituted,
+        // and so do the visible members of the other supertypes, like an override declared by an intermediate class,
+        // while the ones overridden only by hidden ones are told apart, see below
+        val overridden = candidates.filter { !it.isHidden }.flatMapTo(HashSet()) { it.overridden }
+        val overriddenByHidden = candidates.filter { it.isHidden }.flatMapTo(HashSet()) { it.overridden }
         // the Java members are overridden by the declared members, or by the ones of the other supertypes,
         // like an override declared by an intermediate class, also by a function of the same JVM signature,
         // overriding the JVM method on the JVM, though its metadata does not tell, like `ArrayDeque.addFirst(element: E)`
         // of the standard library, compiled against JDK 8, of `addFirst` of `java.util.List` since JDK 21
-        val overriddenJavaMembers = HashSet<String>()
-        val overridingJvmSignatures = HashSet<JvmMethodSignature>()
-        fun collectJavaOverrides(owner: OverrideResolver.Owner?, function: KmFunction) {
-            owner?.let { overriddenJavaMembers += overrideResolver.overriddenJavaMembers(it, function) }
-            function.signature?.let { overridingJvmSignatures += it }
-        }
+        val javaOverrides = JavaOverrides()
+        val hiddenJavaOverrides = JavaOverrides()
         val hasJavaCandidates = candidates.any { it.jvmMethod != null && !it.isHidden }
         if (hasJavaCandidates) {
             candidates.filter { it.declarations !is BuiltinClass }.forEach { candidate ->
-                (candidate.member as? Member.Function)?.let { collectJavaOverrides(candidate.declarations.overrideOwner, it.declaration) }
+                (candidate.member as? Member.Function)?.let {
+                    (if (candidate.isHidden) hiddenJavaOverrides else javaOverrides)
+                        .collect(candidate.declarations.overrideOwner, it.declaration)
+                }
             }
         }
         // the signatures of the declared members, collected only when there are Java candidates, which they override
@@ -2127,7 +2141,7 @@ internal class DefaultKotlinIntrospector(
         // also a hidden one, hiding the member it overrides, which cannot be called on the class either
         apiMembersIncludingHidden(kmClass, declarations, memberName, scope).map { it.member }.forEach { member ->
             if (member is Member.Function && hasJavaCandidates) {
-                collectJavaOverrides(owner, member.declaration)
+                javaOverrides.collect(owner, member.declaration)
             }
             val keys = member.overridden(overrideResolver, owner)
             overridden += keys
@@ -2139,11 +2153,10 @@ internal class DefaultKotlinIntrospector(
             }
         }
         // the declared signatures, of a Java candidate not hidden, include the ones of the untold overrides
-        val survivors = candidates.filter {
+        val notOverridden = candidates.filter {
             !it.isHidden && it.key !in overridden && when (it.jvmMethod) {
                 null -> it.signature !in untoldOverrideSignatures
-                else -> it.jvmMethod.key !in overriddenJavaMembers && it.jvmMethod.signature !in overridingJvmSignatures &&
-                    it.signature !in declaredSignatures
+                else -> !javaOverrides.overrides(it.jvmMethod) && it.signature !in declaredSignatures
             }
         }
         // whether the member a wins over the merged member b, of a less specific return type, or else declared later
@@ -2157,7 +2170,7 @@ internal class DefaultKotlinIntrospector(
         fun winner(members: List<InheritedCandidate>): InheritedCandidate? = members.withIndex().firstOrNull { (index, member) ->
             members.withIndex().all { (otherIndex, other) -> other === member || wins(member, index, other, otherIndex) }
         }?.value
-        val listed = survivors.filterIndexed { index, candidate ->
+        fun listed(survivors: List<InheritedCandidate>) = survivors.filterIndexed { index, candidate ->
             survivors.withIndex().none { (rivalIndex, rival) ->
                 rivalIndex != index && rival.isMergedWith(candidate) && wins(rival, rivalIndex, candidate, index)
             }
@@ -2170,24 +2183,58 @@ internal class DefaultKotlinIntrospector(
         // the listed member still stands for the picked one, which is visible, like the implementation of an abstract member,
         // declared by an interface of an intermediate class, of `abstract class Square : Shape, SquareBase()`,
         // while the compiler picks the abstract one of Shape, the first direct supertype
-        if (candidates.none { it.isHidden }) return listed
+        if (candidates.none { it.isHidden }) return listed(notOverridden)
         val candidatesByClass = candidates.groupBy { it.kmClass.name }
         val contributions = HashMap<Pair<String, InheritedCandidate>, List<InheritedCandidate>>()
         // the members merged with the listed candidate which the class named name contributes to its subclasses:
-        // its own one, or else the one picked of the ones its direct supertypes contribute, in the order of declaration,
-        // like the hidden f() of Left for `interface Join : Left, Right`, also when Right overrides it,
+        // its own one, or the hidden one overriding it, or else the one picked of the ones its direct supertypes contribute,
+        // in the order of declaration, like the hidden f() of Left for `interface Join : Left, Right`, also when Right overrides it,
         // or none, or all of them, when none can be picked, as some cannot be compared
         fun contribution(name: String, candidate: InheritedCandidate): List<InheritedCandidate> =
             contributions.getOrPut(name to candidate) {
                 val merged = candidatesByClass[name].orEmpty()
-                    .filter { it === candidate || it.isMergedWith(candidate) }
+                    .filter { it === candidate || it.isMergedWith(candidate) || it.overrides(candidate) }
                     .ifEmpty {
                         val picks = directSupertypes[name].orEmpty().map { contribution(it, candidate) }
                         picks.firstOrNull { it.size > 1 } ?: picks.flatten().distinct()
                     }
                 winner(merged)?.let { listOf(it) } ?: merged
             }
-        return listed.filter { candidate -> contribution(kmClass.name, candidate).singleOrNull()?.isHidden != true }
+        // a member overridden only by hidden ones is still inherited when the compiler picks it,
+        // like the visible f() of Root for `interface Join : Root, Left`, whose Left overrides it as hidden,
+        // or the run() of java.lang.Runnable for `abstract class Join : Runnable, HiddenRun`, of the same JVM signature,
+        // as the hidden member hides only the members it overrides on the class inheriting it through its own supertype
+        val survivors = notOverridden.filter { candidate ->
+            val isOverriddenByHidden = candidate.key in overriddenByHidden ||
+                candidate.jvmMethod?.let { hiddenJavaOverrides.overrides(it) } == true
+            !isOverriddenByHidden || contribution(kmClass.name, candidate).singleOrNull() === candidate
+        }
+        return listed(survivors).filter { candidate -> contribution(kmClass.name, candidate).singleOrNull()?.isHidden != true }
+    }
+
+    /**
+     * The JVM methods which the members of the supertypes override, see [inheritedCandidates]:
+     * the [members] they override, by their keys, see [javaMemberKey], and the JVM [signatures] of the overriding functions.
+     */
+    private inner class JavaOverrides {
+
+        val members = HashSet<String>()
+
+        val signatures = HashSet<JvmMethodSignature>()
+
+        /**
+         * Collect the JVM methods which the [function] of the [owner] overrides, by its JVM signature too.
+         */
+        fun collect(owner: OverrideResolver.Owner?, function: KmFunction) {
+            owner?.let { members += overrideResolver.overriddenJavaMembers(it, function) }
+            function.signature?.let { signatures += it }
+        }
+
+        /**
+         * Whether the [method] is overridden, as one of the [members], or of the same JVM signature as one of the overriding functions.
+         */
+        fun overrides(method: JvmMethod): Boolean = method.key in members || method.signature in signatures
+
     }
 
     /**
