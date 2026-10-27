@@ -234,6 +234,19 @@ class ReflectedDeclarationsTest {
     }
 
     @Test
+    fun `should read Java class type parameter bound of platform type as nullable`() {
+        // given - the implicit bound of the K and V of java.util.HashMap is Object, seen in Kotlin as Any!, admitting null
+        val kClass = java.util.HashMap::class
+
+        // when
+        val kmClass = kClass.toKmJavaClassHeader("java/util/HashMap") { kotlinClassName(it) }
+
+        // then - so that its V used as definitely not nullable, like the V & Any of merge, is rendered so
+        assert(kmClass.typeParameters.flatMap { it.upperBounds }.all { it.isNullable })
+        assert(notNullableTypeParameters(kmClass.typeParameters).isEmpty())
+    }
+
+    @Test
     fun `should render Java parameter of class type parameter as not nullable`() {
         // given - T! of a JavaLabelBase<String> accepts no null, unlike Any! of Object, as the receiver fixes T
         val getLabel = JavaLabelBase::class.memberFunctions.single { it.name == "getLabel" }

@@ -1096,6 +1096,25 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should not render type parameter of outer class without class file as definitely not nullable`() {
+        // given
+        val introspector = introspectorWithoutAbsentClass("MissingNotNullOuter.class")
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.MissingNotNullOuter.Inner.orDefault"
+        )
+
+        // then
+        // the bounds of the type parameters of the outer class are not known, like the T : Any, whose T & Any does not compile
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.MissingNotNullOuter.Inner.orDefault [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.isolated.DefinitelyNonNullHolder
+            fun orDefault(value: T0, default: T0): T0
+        """.trimIndent()
+    }
+
+    @Test
     fun `should name type parameters of outer class without class file apart from the ones of its inner class`() {
         // given
         val introspector = introspectorWithoutAbsentClass("ClashingGenericOuter.class")

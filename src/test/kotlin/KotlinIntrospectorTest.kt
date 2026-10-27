@@ -4241,6 +4241,26 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve member of Java map overriding JVM-only member with narrower key type taking value definitely not nullable`() {
+        // the override inherits the enhancement of java.util.Map.merge, though its JVM signature differs,
+        // in fun <V> f(m: InheritedJavaStringKeyMap<V>, v: V) m.merge("a", v) { … } does not compile, "'V' but 'V & Any' was expected"
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaStringKeyMap.merge") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaStringKeyMap.merge [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaStringKeyMap
+            override fun merge(arg0: String?, arg1: V & Any, arg2: java.util.function.BiFunction<in V & Any, in V & Any, out V?>): V?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of Java map overriding JVM-only member with narrower key type passing value definitely not nullable to function`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaStringKeyMap.computeIfPresent") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaStringKeyMap.computeIfPresent [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaStringKeyMap
+            override fun computeIfPresent(arg0: String?, arg1: java.util.function.BiFunction<in String, in V & Any, out V?>): V?
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve inherited JVM-only member of mutable map of inner class taking value of outer type parameter bounded not nullable`() {
         assumeNoParameterNames(MERGE_METHOD)
         resolver.resolve("com.xemantic.kotlin.introspection.test.OuterNotNull.InnerMap.merge") sameAsKotlin """

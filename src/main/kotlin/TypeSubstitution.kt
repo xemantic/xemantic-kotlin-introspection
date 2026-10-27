@@ -125,6 +125,48 @@ internal fun notNullableTypeParameters(typeParameters: List<KmTypeParameter>, no
 }
 
 /**
+ * The type parameters in scope of a rendered declaration, like the ones of a class, of its outer classes, and of a member:
+ * their [names] by their ids, and the ids of the [notNullable] ones, see [notNullableTypeParameters],
+ * whose uses as definitely not nullable are rendered as just these type parameters, like `U` of `U : Any`,
+ * while the ones of the other type parameters are rendered so, like `T & Any`.
+ * Kept together, so that no rendering is given the names without telling the not nullable ones,
+ * rendering an invalid `U & Any`.
+ */
+internal class TypeParameterScope(val names: Map<Int, String>, val notNullable: Set<Int>) {
+
+    /**
+     * This scope with the [typeParameters] declared within it, like the ones of a member of a class,
+     * which might be bounded by the ones of this scope, like `R : T`.
+     */
+    fun withDeclared(typeParameters: List<KmTypeParameter>): TypeParameterScope =
+        if (typeParameters.isEmpty()) this else TypeParameterScope(
+            names + typeParameters.associate { it.id to it.name },
+            notNullableTypeParameters(typeParameters, notNullable)
+        )
+
+    /**
+     * This scope with the type parameters of the [names] standing for the ones of this scope, like the type parameters
+     * of an extension listed in the body of its receiver class, named like the ones of the class.
+     */
+    fun withNames(names: Map<Int, String>): TypeParameterScope =
+        if (names.isEmpty()) this else TypeParameterScope(this.names + names, notNullable)
+
+    companion object {
+
+        val EMPTY: TypeParameterScope = TypeParameterScope(emptyMap(), emptySet())
+
+        /**
+         * The scope of the type parameters of the [names], whose uses as definitely not nullable, like `T & Any`,
+         * are all rendered as just these type parameters, like `T`, for a signature telling apart the overloads,
+         * which never differ only by it, as `T & Any` and `T` have the same JVM erasure.
+         */
+        fun ignoringDefinitelyNotNull(names: Map<Int, String>): TypeParameterScope = TypeParameterScope(names, names.keys)
+
+    }
+
+}
+
+/**
  * Whether this type refers, if at all, only to the type parameters whose ids the [isKnown] tells.
  */
 internal fun KmType.refersOnlyTo(isKnown: (id: Int) -> Boolean): Boolean = when (val classifier = classifier) {

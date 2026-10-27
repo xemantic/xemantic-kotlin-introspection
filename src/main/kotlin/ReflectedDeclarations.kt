@@ -19,7 +19,14 @@
 package com.xemantic.kotlin.introspection
 
 import org.objectweb.asm.Type as AsmType
+import java.lang.reflect.GenericArrayType
 import java.lang.reflect.Method
+import java.lang.reflect.Modifier
+import java.lang.reflect.ParameterizedType
+import java.lang.reflect.Type
+import java.lang.reflect.TypeVariable
+import java.lang.reflect.WildcardType
+import java.lang.reflect.Array as JavaArray
 import kotlin.jvm.functions.FunctionN
 import kotlin.metadata.*
 import kotlin.metadata.jvm.annotations
@@ -297,7 +304,8 @@ private fun KClass<*>.toKmClassHeader(name: String, supertypes: (ReflectedTypePa
     }
     val typeParameters = ReflectedTypeParameters.classTypeParameters(kmClass.typeParameters)
     this.typeParameters.zip(kmClass.typeParameters) { typeParameter, kmTypeParameter ->
-        typeParameter.upperBounds.mapTo(kmTypeParameter.upperBounds) { it.toKmType(typeParameters) }
+        // like the implicit Any! bound of a Java type parameter, which admits nullable type arguments, see [toKmTypeParameter]
+        typeParameter.upperBounds.mapTo(kmTypeParameter.upperBounds) { it.toKmType(typeParameters, platformAsNullable = true) }
     }
     kmClass.supertypes += supertypes(typeParameters)
     return kmClass
@@ -358,6 +366,7 @@ private val definitelyNotNullJdkMethodNames: Set<String> =
  * Marks the types of the value parameters of the [function], converted from this one,
  * which K2 enhances as definitely not nullable, see [DEFINITELY_NOT_NULL_JDK_TYPES],
  * also of a method overriding the JDK one, like `merge` of `java.util.HashMap`, which inherits the enhancement,
+ * even with narrower parameter types, see [overriddenMapMethodSignature],
  * when they are type parameters, like the `V` of the value of `merge`, unlike a type argument given by a subclass.
  * Whether such a type is rendered as definitely not nullable, like `V & Any`, is decided by the bounds of its type parameter,
  * see [notNullableTypeParameters], as the one substituted for it might be not nullable, like the `V` of a `V : Any`.
@@ -365,15 +374,77 @@ private val definitelyNotNullJdkMethodNames: Set<String> =
 private fun KFunction<*>.enhanceDefinitelyNotNull(function: KmFunction) {
     if (name !in definitelyNotNullJdkMethodNames) return
     val method = reflectedValue(default = null) { javaMethod } ?: return
-    val mapClass = Map::class.java
-    if (!mapClass.isAssignableFrom(method.declaringClass)) return
-    val signature = AsmType.getInternalName(mapClass) + "." + method.name + AsmType.getMethodDescriptor(method)
+    val signature = reflectedValue(default = null) { overriddenMapMethodSignature(method) } ?: return
     DEFINITELY_NOT_NULL_JDK_TYPES[signature]?.forEach { (position, indices) ->
         val types = function.valueParameters.getOrNull(position)?.type?.depthFirst().orEmpty()
         indices.mapNotNull { types.getOrNull(it) }.filter { it.classifier is KmClassifier.TypeParameter }.forEach { type ->
             type.isNullable = false
             type.isDefinitelyNonNull = true
         }
+    }
+}
+
+/**
+ * The JVM signature of the method of `java.util.Map`, like `java/util/Map.merge(…)`, which the [method] declares or overrides,
+ * or `null` if none.
+ * An override might take narrower parameter types, like `merge(String, V, BiFunction)`
+ * of a Java `StringKeyMap<V> extends HashMap<String, V>`, of a JVM signature of its own,
+ * which overrides by the Java rule: its parameter types are the erasures of the ones of the `java.util.Map` method,
+ * of the type arguments of `java.util.Map` given by the class declaring the [method], see [supertypeErasures].
+ */
+private fun overriddenMapMethodSignature(method: Method): String? {
+    val mapClass = Map::class.java
+    val erasures = supertypeErasures(method.declaringClass, mapClass) ?: return null
+    val parameterTypes = method.parameterTypes.toList()
+    val overridden = mapClass.methods.firstOrNull { candidate ->
+        candidate.name == method.name && !Modifier.isStatic(candidate.modifiers) &&
+            candidate.parameterCount == parameterTypes.size &&
+            candidate.genericParameterTypes.map { erasure(it, erasures) } == parameterTypes
+    } ?: return null
+    return AsmType.getInternalName(mapClass) + "." + overridden.name + AsmType.getMethodDescriptor(overridden)
+}
+
+/**
+ * The erasures of the type arguments of the type variables of the [target] class, a supertype of the [javaClass],
+ * where the type variables of the [javaClass] are the erasures of their bounds,
+ * like `String` and `Object` of `K` and `V` of `java.util.Map` seen from a `StringKeyMap<V> extends HashMap<String, V>`,
+ * or `null` if the [target] is not a supertype of the [javaClass].
+ */
+private fun supertypeErasures(
+    javaClass: Class<*>,
+    target: Class<*>,
+    erasures: Map<TypeVariable<*>, Class<*>> = javaClass.typeParameters.associateWith { erasure(it, emptyMap()) }
+): Map<TypeVariable<*>, Class<*>>? {
+    if (javaClass == target) return erasures
+    if (!target.isAssignableFrom(javaClass)) return null
+    return (listOfNotNull(javaClass.genericSuperclass) + javaClass.genericInterfaces).firstNotNullOfOrNull { supertype ->
+        val rawType = (if (supertype is ParameterizedType) supertype.rawType else supertype) as? Class<*>
+            ?: return@firstNotNullOfOrNull null
+        // a raw supertype gives the erasures of the bounds of its type variables
+        val arguments = (supertype as? ParameterizedType)?.actualTypeArguments
+        supertypeErasures(rawType, target, rawType.typeParameters.withIndex().associate { (index, typeVariable) ->
+            typeVariable to erasure(arguments?.getOrNull(index) ?: typeVariable, erasures)
+        })
+    }
+}
+
+/**
+ * The erasure of the Java [type], where the type variables of the [erasures] are erased to them,
+ * and any other one to the erasure of its first bound.
+ */
+private fun erasure(type: Type, erasures: Map<TypeVariable<*>, Class<*>>): Class<*> {
+    var erased: Type = type
+    // javac rejects cyclic bounds, but a malformed class file might declare them, which reflection does not check
+    val visited = mutableSetOf<TypeVariable<*>>()
+    while (erased is TypeVariable<*> && visited.add(erased)) {
+        erased = erasures[erased] ?: erased.bounds.firstOrNull() ?: Any::class.java
+    }
+    return when (erased) {
+        is Class<*> -> erased
+        is ParameterizedType -> erased.rawType as Class<*>
+        is GenericArrayType -> JavaArray.newInstance(erasure(erased.genericComponentType, erasures), 0).javaClass
+        is WildcardType -> erasure(erased.upperBounds.firstOrNull() ?: Any::class.java, erasures)
+        else -> Any::class.java
     }
 }
 
