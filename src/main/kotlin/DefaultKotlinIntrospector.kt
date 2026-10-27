@@ -1243,7 +1243,9 @@ internal class DefaultKotlinIntrospector(
     /**
      * The lookups of the recently found classes by their binary names, also of the ones not found,
      * so that neither a class is loaded, nor its metadata parsed, nor a missing class looked up, more than once,
-     * like for every nested class listed on every page of a paged resolve.
+     * like for every nested class listed on every page of a paged resolve,
+     * except for a lookup by a name given to resolve, see [lookUpClassByName], which is not shared with a concurrent lookup
+     * of the same class by its binary name, so that, until either is cached, the class might be loaded by each of them.
      * It is bounded, as a found class keeps its parsed metadata, so that a long-lived introspector
      * does not keep the metadata of every class ever looked up,
      * while the [overrideResolver] keeps the declarations it needs in its own bounded caches.
@@ -1253,10 +1255,10 @@ internal class DefaultKotlinIntrospector(
     private val foundClasses = BoundedCache<String, ClassLookup>(capacity = 1024)
 
     /**
-     * The lookups by a name given to resolve in progress, see [lookUpClassByName], never cached,
+     * The lookups by a name given to resolve in progress, see [lookUpClassByName], each removed once computed,
      * so that the concurrent lookups of the same name share one, rather than each loading the class.
      */
-    private val classLookupsByName = BoundedCache<String, ClassLookup>(capacity = 1024)
+    private val classLookupsByName = ConcurrentHashMap<String, Lazy<ClassLookup>>()
 
     /**
      * Finds a class by its binary name, like `com.example.Outer${'$'}Nested`, cached also when it is not found.
@@ -1265,8 +1267,8 @@ internal class DefaultKotlinIntrospector(
 
     /**
      * The lookup of a class by its binary name, see [findClassByBinaryName],
-     * shared with the concurrent lookups of the same class, and counted as the same failing attempt, see [attemptLookUpClass],
-     * also with the lookups by name, see [lookUpClassByName], which, unlike this one, do not cache a miss.
+     * shared with the concurrent lookups of the same class by its binary name, never with the ones by name,
+     * see [lookUpClassByName], while counted as the same failing attempt as all of them, see [attemptLookUpClass].
      */
     private fun lookUpClassByBinaryName(binaryName: String): ClassLookup = foundClasses.getOrCompute(binaryName) {
         val lookup = attemptLookUpClass(binaryName, isMissProbed = true)
@@ -1281,19 +1283,26 @@ internal class DefaultKotlinIntrospector(
      * A final outcome is cached, unless it is such a miss, as such names come from the user input:
      * a class found over any lookup cached meanwhile, as a class once found stays loadable,
      * and a miss which is probed, like of a class failing to load, see [lookUpClass], only if none is,
-     * as it might be older than the one cached meanwhile, which is taken instead.
+     * as it might be older than the one cached meanwhile, which is taken instead, if final,
+     * while a transient outcome of a concurrent lookup by binary name, which is not cached, gives way to this final miss.
      */
     private fun lookUpClassByName(binaryName: String): ClassLookup {
         foundClasses.getIfCached(binaryName)?.let { return it }
-        return classLookupsByName.getOrCompute(binaryName) {
+        val inProgress = lazy {
             val lookup = attemptLookUpClass(binaryName, isMissProbed = false)
-            val outcome = when {
+            when {
                 !lookup.isFinal || !lookup.isMissProbed -> lookup
                 lookup.foundClass != null -> lookup.also { foundClasses.put(binaryName, it) }
-                else -> foundClasses.getOrCompute(binaryName) { BoundedCache.Computed(lookup, isCacheable = true) }.value
+                else -> foundClasses.getOrCompute(binaryName) { BoundedCache.Computed(lookup, isCacheable = true) }
+                    .value.takeIf { it.isFinal } ?: lookup
             }
-            BoundedCache.Computed(outcome, isCacheable = false)
-        }.value.markedUnlessFinal()
+        }
+        val shared = classLookupsByName.putIfAbsent(binaryName, inProgress) ?: inProgress
+        return try {
+            shared.value
+        } finally {
+            classLookupsByName.remove(binaryName, shared)
+        }.markedUnlessFinal()
     }
 
     /**
