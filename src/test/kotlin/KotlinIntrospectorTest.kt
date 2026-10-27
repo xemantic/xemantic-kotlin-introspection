@@ -10535,6 +10535,57 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve member overridden by hidden one of internal supertype restored by internal subtype`() {
+        // the visible override of the internal HiddenMergedInternalRestored, which is not rendered, stops the hidden one,
+        // the member of HiddenMergedRoot it overrides standing for it
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedInternalRestoredSub.f"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedInternalRestoredSub.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.HiddenMergedRoot
+            fun f(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member overridden by hidden one of superclass deprecated with hidden level restored by its subclass`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedHiddenRestoredClassSub.f"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedHiddenRestoredClassSub.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.HiddenMergedRoot
+            fun f(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member overridden by hidden one restored by internal supertype`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedInternalRestoredLeftSub.f"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedInternalRestoredLeftSub.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.HiddenMergedRoot
+            fun f(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member of first supertype overridden by hidden one of second supertype`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedRunOverrideJoin.run"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedRunOverrideJoin.run [page 1/1]
+            // inherited from java.lang.Runnable
+            fun run()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve Java member of second supertype overridden by hidden one of first supertype`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenMergedRunOverrideJoinReversed.run") == null)
+    }
+
+    @Test
     fun `should resolve Java member of first supertype of same JVM signature as hidden one of second supertype`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.HiddenMergedRunJoin.run"

@@ -428,6 +428,37 @@ internal interface HiddenMergedInternalLeft : HiddenMergedRoot {
 @Suppress("EXPOSED_SUPER_INTERFACE")
 interface HiddenMergedInternalSub : HiddenMergedInternalLeft
 
+// while a visible override declared by a supertype which is not part of the API stops the hidden one it overrides,
+// the member it overrides standing for it, so that restored.f(), restoredClass.f() and restoredLeft.f() compile
+internal interface HiddenMergedInternalRestored : HiddenMergedInternalLeft {
+    override fun f(): Int
+}
+
+@Suppress("EXPOSED_SUPER_INTERFACE")
+interface HiddenMergedInternalRestoredSub : HiddenMergedInternalRestored
+
+@Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+abstract class HiddenMergedHiddenLeftClass : HiddenMergedRoot {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    abstract override fun f(): Int
+}
+
+@Suppress("DEPRECATION_ERROR")
+@Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+abstract class HiddenMergedHiddenRestoredClass : HiddenMergedHiddenLeftClass() {
+    override fun f(): Int = 1
+}
+
+@Suppress("DEPRECATION_ERROR")
+abstract class HiddenMergedHiddenRestoredClassSub : HiddenMergedHiddenRestoredClass()
+
+internal interface HiddenMergedInternalRestoredLeft : HiddenMergedLeft {
+    override fun f(): Int
+}
+
+@Suppress("EXPOSED_SUPER_INTERFACE")
+interface HiddenMergedInternalRestoredLeftSub : HiddenMergedInternalRestoredLeft
+
 // the hidden member of the same JVM signature as the Java method of the first direct supertype does not hide it,
 // so that join.run() compiles, while reversed.run() calls the run scope function instead
 interface HiddenMergedRun {
@@ -441,12 +472,26 @@ abstract class HiddenMergedRunJoinReversed : HiddenMergedRun, Runnable
 
 abstract class HiddenMergedRunThread : Thread(), HiddenMergedRun
 
+// the same when the hidden member overrides the Java method, which is still picked of the first direct supertype
+interface HiddenMergedRunOverride : Runnable {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    override fun run()
+}
+
+abstract class HiddenMergedRunOverrideJoin : Runnable, HiddenMergedRunOverride
+
+abstract class HiddenMergedRunOverrideJoinReversed : HiddenMergedRunOverride, Runnable
+
 // compiles, as the merged members picked are not hidden
 @Suppress("unused")
 private fun callMergedMembers(
     overriddenJoin: HiddenMergedOverriddenJoin,
     overriddenViaSub: HiddenMergedOverriddenViaSub,
     overriddenClassJoin: HiddenMergedOverriddenClassJoin,
+    restored: HiddenMergedInternalRestoredSub,
+    @Suppress("DEPRECATION_ERROR") restoredClass: HiddenMergedHiddenRestoredClassSub,
+    restoredLeft: HiddenMergedInternalRestoredLeftSub,
+    runOverrideJoin: HiddenMergedRunOverrideJoin,
     runJoin: HiddenMergedRunJoin,
     runThread: HiddenMergedRunThread,
     joinReversed: HiddenMergedJoinReversed,
@@ -461,6 +506,10 @@ private fun callMergedMembers(
     overriddenJoin.f()
     overriddenViaSub.f()
     overriddenClassJoin.f()
+    restored.f()
+    restoredClass.f()
+    restoredLeft.f()
+    runOverrideJoin.run()
     runJoin.run()
     runThread.run()
     joinReversed.f()
