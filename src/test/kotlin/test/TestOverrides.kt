@@ -479,7 +479,8 @@ abstract class JdkMutableList : AbstractMutableList<String>() {
 }
 
 // compiled against a JDK older than 21, like the libraries targeting old JVMs, without List.addFirst to override,
-// so that the JVM method takes String, not the Object of the erased E of java.util.List, and no bridge is generated
+// so that the JVM method takes String, not the Object of the erased E of java.util.List, and no bridge is generated,
+// a call through MutableList<String> on JDK 21+ running the JDK default of addFirst, not this function
 abstract class SequencedStringList : AbstractMutableList<String>() {
     fun addFirst(element: String) {}
 }

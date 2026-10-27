@@ -42,6 +42,13 @@ internal fun assumeNoParameterNames(method: Method) {
     assumeFalse(method.parameters.any { it.isNamePresent }, "$method has parameter names")
 }
 
+/**
+ * Skips a test assuming the sequenced collections of JDK 21+, like `addFirst` of `java.util.List`.
+ */
+internal fun assumeSequencedCollections() {
+    assumeTrue(runCatching { List::class.java.getMethod("addFirst", Any::class.java) }.isSuccess, "JDK 21+")
+}
+
 private val MERGE_METHOD: Method =
     Map::class.java.getMethod("merge", Any::class.java, Any::class.java, java.util.function.BiFunction::class.java)
 
@@ -4420,7 +4427,7 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve JVM-only member of mutable list of JDK 21 overridden by Java superclass as declared by built-in type`() {
-        assumeTrue(runCatching { List::class.java.getMethod("addFirst", Any::class.java) }.isSuccess, "JDK 21+")
+        assumeSequencedCollections()
         resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaArrayList.addFirst") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.InheritedJavaArrayList.addFirst [page 1/1]
             // inherited from kotlin.collections.MutableList
@@ -9227,7 +9234,7 @@ class KotlinIntrospectorTest {
     @Test
     fun `should resolve MutableList with sequenced members of JDK 21 taking its type parameter`() {
         // the parameter of type E! accepts no null, unlike one of a concrete platform type, like Throwable!
-        assumeTrue(runCatching { List::class.java.getMethod("addFirst", Any::class.java) }.isSuccess, "JDK 21+")
+        assumeSequencedCollections()
         resolver.resolve(
             "kotlin.collections.MutableList"
         ) sameAsKotlin """
@@ -9281,7 +9288,7 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve inherited JVM-only member of mutable list taking its type parameter`() {
-        assumeTrue(runCatching { List::class.java.getMethod("addFirst", Any::class.java) }.isSuccess, "JDK 21+")
+        assumeSequencedCollections()
         resolver.resolve("com.xemantic.kotlin.introspection.test.JdkMutableList.addFirst") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.JdkMutableList.addFirst [page 1/1]
             // inherited from kotlin.collections.MutableList
@@ -9292,8 +9299,14 @@ class KotlinIntrospectorTest {
     @Test
     fun `should resolve function of JVM-only member signature with type argument substituted as not inheriting it`() {
         // compiled against JDK 17, the addFirst(String) takes String on the JVM, not the Object of the erased E of java.util.List,
-        // still called instead of the addFirst(E) of JDK 21 on the class
-        assumeTrue(runCatching { List::class.java.getMethod("addFirst", Any::class.java) }.isSuccess, "JDK 21+")
+        // and no bridge overrides the latter, see `should declare JVM-only member signature fixture without bridge`,
+        // so a call through MutableList<String> runs the JDK default,
+        // still only the declared function is listed: per kotlinc 2.4.21, compiling against the class on JDK 21+,
+        // `addFirst("a")` called on the class resolves to it alone, and the addFirst(E) of JDK 21 cannot be called there,
+        // while listing both would render two functions of the same signature, which no Kotlin class can declare,
+        // listed without `override`, which kotlinc rejects compiled against JDK 17 ("overrides nothing"),
+        // while compiled against JDK 21+, with or without `override`, it gets the bridge, overriding the JDK member anyway
+        assumeSequencedCollections()
         resolver.resolve("com.xemantic.kotlin.introspection.test.SequencedStringList.addFirst") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.SequencedStringList.addFirst [page 1/1]
             fun addFirst(element: String)
@@ -9301,11 +9314,35 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should not mark function of JVM-only member signature without bridge as override in class listing`() {
+        assumeSequencedCollections()
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SequencedStringList") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SequencedStringList [page 1/1]
+            abstract class SequencedStringList : AbstractMutableList<String> {
+                fun addFirst(element: String)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should declare JVM-only member signature fixture without bridge`() {
+        // given
+        val clazz = com.xemantic.kotlin.introspection.test.SequencedStringList::class.java
+
+        // when
+        val addFirstParameterTypes = clazz.declaredMethods.filter { it.name == "addFirst" }.map { it.parameterTypes.toList() }
+
+        // then
+        // the premise of the tests above: compiled against JDK 21+, the class would also declare the addFirst(Object) bridge
+        assert(addFirstParameterTypes == listOf(listOf(String::class.java)))
+    }
+
+    @Test
     fun `should list inherited JVM-only member next to function taking its nullable counterpart`() {
         // the addFirst(E) of JDK 21 comes through as definitely not nullable, not as a platform type, so kotlinc 2.4.21
         // tells `override fun addFirst(element: String?)` "overrides nothing", and compiles it without override as an overload,
         // which a subclass can declare next to addFirst(String), calls with null and with a String resolving both
-        assumeTrue(runCatching { List::class.java.getMethod("addFirst", Any::class.java) }.isSuccess, "JDK 21+")
+        assumeSequencedCollections()
         resolver.resolve("com.xemantic.kotlin.introspection.test.NullableSequencedStringList.addFirst") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.NullableSequencedStringList.addFirst [page 1/1]
             fun addFirst(element: String?)
