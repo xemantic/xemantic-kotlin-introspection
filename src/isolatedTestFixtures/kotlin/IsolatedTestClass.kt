@@ -111,3 +111,10 @@ class RelocatedBoundListenerImpl : RelocatedBoundListener {
     override fun <E : RelocatedEvent> on(event: E) {}
     fun <E : RelocatedOther> on(event: E) {}
 }
+
+// tests relocate it, like shading, with or without its subclass, so that its members are inherited from its relocated name
+open class RelocatedInheritedBase {
+    fun inherited(event: RelocatedEvent) {}
+}
+
+class RelocatedInheritedImpl : RelocatedInheritedBase()

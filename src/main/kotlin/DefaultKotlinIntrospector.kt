@@ -2181,7 +2181,8 @@ internal class DefaultKotlinIntrospector(
         val superclass = lazy(LazyThreadSafetyMode.NONE) {
             declarations.clazz?.let { reflectedValue(default = null) { it.superclass } }
                 ?: kmClass.supertypes.classNames().firstNotNullOfOrNull { name ->
-                    inheritedDeclarations(name)?.clazz?.takeUnless { reflectedValue(default = true) { it.isInterface } }
+                    inheritedDeclarations(inheritedName(declarations, name))?.clazz
+                        ?.takeUnless { reflectedValue(default = true) { it.isInterface } }
                 }
         }
         return inherited.map { candidate ->
@@ -2242,10 +2243,11 @@ internal class DefaultKotlinIntrospector(
         // the names of the direct supertypes of each class walked, in the order of declaration, see contribution below
         val directSupertypes = hashMapOf(kmClass.name to kmClass.supertypes.classNames())
         fun collect(name: String, supertype: KmType) {
-            val superDeclarations = inheritedDeclarations(name)
+            val foundName = inheritedName(declarations, name)
+            val superDeclarations = inheritedDeclarations(foundName)
             val superKmClass = superDeclarations?.kmClass
             if (superDeclarations == null || superKmClass == null) {
-                val javaSupertypes = rawJavaSupertypes(name)
+                val javaSupertypes = rawJavaSupertypes(foundName)
                 directSupertypes[name] = javaSupertypes.classNames()
                 pending += javaSupertypes
                 return
@@ -2256,7 +2258,7 @@ internal class DefaultKotlinIntrospector(
             // a Kotlin supertype which is not part of the API contributes members which are never inherited:
             // the hidden ones, which still hide the ones they override, like of an internal supertype, or one deprecated as hidden,
             // and the visible ones, which stop the hidden ones they override, see InheritedCandidate.isApi
-            val isApi = superDeclarations is JavaClass || apiClasses.apiClass(superKmClass.name) != null
+            val isApi = superDeclarations is JavaClass || apiClasses.apiClass(foundName) != null
             val jvmOnlyFunctions = (superDeclarations as? BuiltinClass)?.jvmOnlyFunctions.orEmpty()
             val jvmOnlyFunctionsNotHidden = if (!isApi) {
                 emptyList()
@@ -2560,6 +2562,16 @@ internal class DefaultKotlinIntrospector(
             type = type.outerType
         }
     }
+
+    /**
+     * The name the supertype of the [metadataName], of the class of the [declarations], or of its supertypes, is found by,
+     * see [inheritedDeclarations]: its located name, when relocated with the class, or as a dependency of it, like by shading,
+     * see [OverrideResolver.locatedName], unless absent from the classpath, or else the [metadataName],
+     * like when collecting the members the class might override.
+     */
+    private fun inheritedName(declarations: ClassDeclarations, metadataName: String): String =
+        declarations.overrideOwner?.let { overrideResolver.locatedName(it, metadataName) }?.takeUnless { isAbsent(it) }
+            ?: metadataName
 
     /**
      * The declarations of the supertype named like `java/util/ArrayList`, whose members a class inherits, see [inheritedMembers]:

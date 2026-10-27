@@ -332,6 +332,46 @@ class ClassLoaderIntrospectionTest {
     """.trimIndent()
 
     @Test
+    fun `should list members inherited from relocated supertype of relocated class`() {
+        // given
+        val classFiles = arrayOf("RelocatedInheritedBase.class", "RelocatedInheritedImpl.class", "RelocatedEvent.class")
+        val root = isolatedTestFixturesCopy("relocatedInherited", *classFiles)
+        relocatedCopy(root, *classFiles)
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("shaded.com.xemantic.kotlin.introspection.isolated.RelocatedInheritedImpl.inherited")
+
+        // then
+        // the supertype, named by its metadata name, is found by its relocated name
+        signature sameAsKotlin """
+            // shaded.com.xemantic.kotlin.introspection.isolated.RelocatedInheritedImpl.inherited [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.isolated.RelocatedInheritedBase
+            fun inherited(event: com.xemantic.kotlin.introspection.isolated.RelocatedEvent)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should list members inherited from relocated supertype of class which is not relocated`() {
+        // given
+        // like an app shading its dependencies, rewriting the references of its own classes to them, but not the Kotlin metadata
+        val dependencies = arrayOf("RelocatedInheritedBase.class", "RelocatedEvent.class")
+        val root = isolatedTestFixturesCopy("relocatedInheritedDependency", *dependencies, "RelocatedInheritedImpl.class")
+        relocatedCopy(root, *dependencies, dependents = listOf("RelocatedInheritedImpl.class"))
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.RelocatedInheritedImpl.inherited")
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.RelocatedInheritedImpl.inherited [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.isolated.RelocatedInheritedBase
+            fun inherited(event: RelocatedEvent)
+        """.trimIndent()
+    }
+
+    @Test
     fun `should tell override of method of relocated Java supertype of class which is not relocated`() {
         // given
         // like an app shading its dependencies, relocating them, and rewriting the references of its own classes to them,
