@@ -311,6 +311,15 @@ open class ConcreteKotlinBase {
 
 abstract class InheritedReabstractedKotlinMember : com.xemantic.kotlin.introspection.test.other.JavaReabstractedKotlinMember()
 
+// A nullable return type of a Kotlin member implemented by a Java method returning a platform type,
+// which inherits the nullability, so that the Java method is not more specific
+interface NullableReturnKotlinBase {
+    fun name(): String?
+}
+
+abstract class InheritedNullableReturnImplementation :
+    com.xemantic.kotlin.introspection.test.other.JavaNullableReturnImplementation()
+
 // Members of Kotlin interfaces implemented by a Java superclass, java.util.ArrayList, inherited by an abstract class
 abstract class AbstractInheritedJavaArrayList : java.util.ArrayList<String>()
 

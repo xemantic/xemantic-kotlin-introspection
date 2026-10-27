@@ -4652,6 +4652,18 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve nullable member of Kotlin interface implemented by Java method returning platform type`() {
+        // the String! of the Java method inherits the nullability of the String? it overrides, so it is not more specific
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedNullableReturnImplementation.name"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedNullableReturnImplementation.name [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.NullableReturnKotlinBase
+            open fun name(): String?
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve member of Kotlin interface implemented by Java superclass of abstract class as open`() {
         // get(int) of java.util.ArrayList implements the abstract get of kotlin.collections.List,
         // rendered as within the interface, as a member with a body
@@ -10692,6 +10704,28 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve override of member of Any deprecated with hidden level`() {
+        // the compiler reports no hidden deprecation of an override of a member of kotlin.Any
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenAnyOverride.toString"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenAnyOverride.toString [page 1/1]
+            override fun toString(): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve inherited override of member of Any deprecated with hidden level`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenAnyOverrideSub.toString"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenAnyOverrideSub.toString [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.HiddenAnyOverride
+            override fun toString(): String
+        """.trimIndent()
+    }
+
+    @Test
     fun `should not resolve merged member hidden in first supertype`() {
         // of the members of HiddenMergedLeft and HiddenMergedRight, equally specific, the compiler picks the hidden one of the first
         assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenMergedJoin.f") == null)
@@ -10798,6 +10832,18 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve Java member overridden by internal superclass`() {
+        // the override of the internal HiddenMergedInternalThread, which is not rendered, is stood for by the run() of Thread
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedInternalThreadSub.run"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedInternalThreadSub.run [page 1/1]
+            // inherited from java.lang.Thread
+            override fun run()
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve Java member of first supertype overridden by hidden one of second supertype`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.HiddenMergedRunOverrideJoin.run"
@@ -10814,6 +10860,47 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve member of first supertype overridden by visible one overridden by hidden one of second supertype`() {
+        // the visible override of HiddenMergedMid stands for the member of HiddenMergedRoot only on HiddenMergedMidLeft,
+        // which hides it, so that the compiler picks the member of HiddenMergedRoot, of the first direct supertype
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedMidJoin.f"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedMidJoin.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.HiddenMergedRoot
+            fun f(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve member of second supertype overridden by visible one overridden by hidden one of first supertype`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenMergedMidJoinReversed.f") == null)
+    }
+
+    @Test
+    fun `should resolve member of first supertype overridden by visible one overridden by hidden one of superclass`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedMidClassJoin.f"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedMidClassJoin.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.HiddenMergedRoot
+            fun f(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member of first supertype overridden by Java one overridden by hidden one of superclass`() {
+        // the run() of java.lang.Thread, which HiddenMergedHiddenRunThread hides, stands for the one of Runnable only on it
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedHiddenRunThreadJoin.run"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedHiddenRunThreadJoin.run [page 1/1]
+            // inherited from java.lang.Runnable
+            fun run()
+        """.trimIndent()
+    }
+
+    @Test
     fun `should not resolve Java member of platform return type of first supertype overridden by hidden one`() {
         // the compiler prefers the String of the hidden call() over the platform String! of the one of Callable
         assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenMergedCallJoin.call") == null)
@@ -10827,6 +10914,18 @@ class KotlinIntrospectorTest {
     @Test
     fun `should not resolve Java member of platform class return type of first supertype overridden by hidden one`() {
         assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenMergedThreadFactoryJoin.newThread") == null)
+    }
+
+    @Test
+    fun `should resolve Java member of platform return type of nullable type argument of first supertype overridden by hidden one`() {
+        // the V! of call() of Callable<String?> is String?, which is no platform type, equally specific as the hidden one
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedNullableArgumentCallJoin.call"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedNullableArgumentCallJoin.call [page 1/1]
+            // inherited from java.util.concurrent.Callable
+            fun call(): String?
+        """.trimIndent()
     }
 
     @Test
