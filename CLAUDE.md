@@ -84,6 +84,9 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   Probe it with a concrete class inheriting a Java implementation and a Kotlin abstract member — `does not implement abstract member` means they stay apart.
   The rule is by JVM parameter types, see `isMergedJvmParameter`.
 
+- The test classpath resolves `org.jetbrains:annotations` to 26.x, of both the declaration and the `TYPE_USE` targets, not the 13.0 the standard library depends on —
+  javac writes the `@NotNull String[]` of a fixture also as a type annotation of the elements, so a kotlinc probe of the fixtures must compile against the same version.
+
 - Kotlin never passes named arguments to a Java method, even one compiled with `-parameters`, so a Java method taking parameters never shadows an extension — see `isShadowingJavaMethod`.
 
 ## Anti-patterns to avoid
