@@ -4862,6 +4862,7 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve member taking array of type argument merged with one taking array of boxed type`() {
+        // Array<T> takes Object[], Array<Int> Integer[], both arrays of references
         resolver.resolve("com.xemantic.kotlin.introspection.test.GenericBoxedArrayPutJoin.put") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.GenericBoxedArrayPutJoin.put [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.GenericArrayPut
@@ -4871,6 +4872,7 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve Java member taking primitive array merged with Kotlin one`() {
+        // both take int[]
         resolver.resolve("com.xemantic.kotlin.introspection.test.PrimitiveArrayJavaPutJoin.put") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.PrimitiveArrayJavaPutJoin.put [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.PrimitiveArrayPut
@@ -4880,6 +4882,7 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve Java member taking array of boxed type merged with Kotlin one`() {
+        // both take Integer[]
         resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedArrayJavaPutJoin.put") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.BoxedArrayJavaPutJoin.put [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.BoxedArrayPut
@@ -4889,6 +4892,7 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve Java member taking primitive array next to Kotlin one taking array of type argument`() {
+        // rendered apart already, IntArray? and Array<Int>, as a concrete subclass does not compile
         resolver.resolve("com.xemantic.kotlin.introspection.test.PrimitiveArrayJavaGenericPutJoin.put") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.PrimitiveArrayJavaGenericPutJoin.put [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.other.JavaPrimitiveArrayPut

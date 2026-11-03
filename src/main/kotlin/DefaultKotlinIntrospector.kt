@@ -405,12 +405,6 @@ internal class DefaultKotlinIntrospector(
             "kotlin.ULongArray" to ULongArray::class,
         )
 
-        // the JVM names of the boxed primitive types of Java, like java/lang/Integer, of the primitive types above,
-        // but the Void of Nothing, see isMergedJvmParameter
-        private val BOXED_JVM_NAMES: Set<String> = builtinTypes.values.mapNotNullTo(HashSet()) { kClass ->
-            kClass.javaPrimitiveType?.takeIf { it != Void.TYPE }?.let { AsmType.getInternalName(kClass.java) }
-        }
-
         private val mutableBuiltinTypes = builtinTypes.keys.filter {
             it.substringAfterLast('.').startsWith("Mutable")
         }.toSet()
@@ -1056,9 +1050,15 @@ internal class DefaultKotlinIntrospector(
             reflectedFunctions[signatureOf(function)]?.let { builtinDeprecation(it.kFunction) }
 
         /**
-         * The JVM method of a JVM-only [function], telling its overrides, see [inheritedMembers].
+         * The JVM method of the [function], of a JVM-only one telling its overrides, see [inheritedMembers],
+         * of any other one telling the JVM types of its value parameters, see [isMergedJvmParameter].
          */
-        fun jvmMethodOf(function: KmFunction): JvmMethod? = jvmMethodOf(reflectedFunctions[signatureOf(function)]?.kFunction)
+        fun jvmMethodOf(function: KmFunction): JvmMethod? = jvmMethods[signatureOf(function)]
+
+        // the JVM methods of the reflected functions, by their signatures, see jvmMethodOf, reflected once per class
+        private val jvmMethods: Map<String, JvmMethod?> by lazy {
+            reflectedFunctions.mapValues { (_, function) -> jvmMethodOf(function.kFunction) }
+        }
 
         override fun deprecation(constructor: KmConstructor): Deprecation? = null
 
@@ -2190,7 +2190,9 @@ internal class DefaultKotlinIntrospector(
     /**
      * Whether the compiler merges two members of the same rendered signature, see [InheritedCandidate.isMergedWith],
      * taking the [parameter] and the [other] one at the same position, which it does, as K2 does, when they are
-     * - of the same JVM type,
+     * - of the same JVM type, by the JVM method of a member of a Java class, of a JVM-only member, see [JvmMethod],
+     *   or of a member of a built-in type, see [BuiltinClass.jvmMethodOf], like `get(int)` of `java.util.List`,
+     *   or else told by the metadata,
      * - of a primitive JVM type, the other one of a Kotlin member erased from a type parameter, like `put(t: T)` of `G<Int>`
      *   with `put(key: Int)`, one intersection override through a bridge, but never one of a Java member,
      *   like `put(Integer)`, or `put(T)` of a Java class given `Integer`, nor of a JVM-only member, like `putIfAbsent` of `MutableMap`,
@@ -2211,7 +2213,7 @@ internal class DefaultKotlinIntrospector(
                 !reference.isJava && reference.type.sort == AsmType.OBJECT
             }
             parameter.type.sort == AsmType.ARRAY && other.type.sort == AsmType.ARRAY ->
-                !parameter.type.componentType.isPrimitive && !other.type.componentType.isPrimitive
+                !parameter.type.isPrimitiveArray && !other.type.isPrimitiveArray
             else -> !parameter.isBoxedJavaAgainst(other) && !other.isBoxedJavaAgainst(parameter)
         }
     }
@@ -7673,8 +7675,13 @@ private class TypeProjections(val projections: Map<Int, KmTypeProjection>) {
 // whether the JVM type is a primitive one, like int, see isMergedJvmParameter
 private val AsmType.isPrimitive: Boolean get() = sort in AsmType.BOOLEAN..AsmType.DOUBLE
 
-// the type of the elements of the JVM array type, one dimension less, like int[] of int[][], unlike AsmType.elementType, int
-private val AsmType.componentType: AsmType get() = AsmType.getType(descriptor.substring(1))
+// whether the JVM array type is one of a primitive type, like int[], unlike int[][], see isMergedJvmParameter
+private val AsmType.isPrimitiveArray: Boolean get() = dimensions == 1 && elementType.isPrimitive
+
+// the JVM names of the boxed primitive types of Java, like java/lang/Integer, see isMergedJvmParameter
+private val BOXED_JVM_NAMES: Set<String> = listOf(
+    Boolean::class, Char::class, Byte::class, Short::class, Int::class, Float::class, Long::class, Double::class
+).mapTo(HashSet()) { AsmType.getInternalName(it.javaObjectType) }
 
 // the type of Any?, never modified, see TypeProjections
 private val NULLABLE_ANY_TYPE = classType("kotlin/Any", nullable = true)
