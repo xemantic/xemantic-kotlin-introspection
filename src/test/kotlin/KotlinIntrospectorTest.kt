@@ -12387,6 +12387,17 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve override of member of Any deprecated with hidden level in value class`() {
+        // the JVM method of the override is mangled, toString-impl, still unreported by the compiler
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenAnyOverrideValue.toString"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenAnyOverrideValue.toString [page 1/1]
+            override fun toString(): String
+        """.trimIndent()
+    }
+
+    @Test
     fun `should not resolve override of equals deprecated with hidden level`() {
         // unlike of toString() and hashCode(), the compiler reports the hidden deprecation of an override of equals
         assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenAnyEqualsOverride.equals") == null)
@@ -12486,12 +12497,13 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve member overridden by hidden one of superclass deprecated with hidden level restored by its subclass`() {
+        // open, standing for the implementation of the hidden HiddenMergedHiddenRestoredClass
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.HiddenMergedHiddenRestoredClassSub.f"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.HiddenMergedHiddenRestoredClassSub.f [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.HiddenMergedRoot
-            fun f(): Int
+            open fun f(): Int
         """.trimIndent()
     }
 
@@ -12537,6 +12549,85 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.test.HiddenMergedInternalCallableSub.call [page 1/1]
             // inherited from java.util.concurrent.Callable
             open fun call(): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve abstract member implemented by internal superclass as open`() {
+        // the member of the interface stands for the implementation of the internal superclass, which a subclass can override
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedInternalImplementedSub.f"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedInternalImplementedSub.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.HiddenMergedImplementedRoot
+            open fun f(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve open member overridden as final by internal superclass as final`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedInternalFinalOverrideSub.f"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedInternalFinalOverrideSub.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.HiddenMergedOpenBase
+            fun f()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve built-in member overridden as final by internal superclass as final`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedInternalFinalGetSub.get"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedInternalFinalGetSub.get [page 1/1]
+            // inherited from kotlin.collections.AbstractList
+            final override operator fun get(index: Int): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve override of Java member overridden as final by internal superclass as final`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedInternalFinalThreadOverrideSub.run"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedInternalFinalThreadOverrideSub.run [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.HiddenMergedOverridingThread
+            final override fun run()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member implemented by internal interface as open`() {
+        // the member with a body of the internal interface implements it, not the stub the compiler generates in the subclass
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedInternalDefaultRunSub.run"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedInternalDefaultRunSub.run [page 1/1]
+            // inherited from java.lang.Runnable
+            open fun run()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member implemented by internal interface in abstract class as open`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedInternalDefaultRunAbstractSub.run"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedInternalDefaultRunAbstractSub.run [page 1/1]
+            // inherited from java.lang.Runnable
+            open fun run()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member of generic interface implemented by internal interface as open`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedInternalDefaultSupplierSub.get"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedInternalDefaultSupplierSub.get [page 1/1]
+            // inherited from java.util.function.Supplier
+            open fun get(): String
         """.trimIndent()
     }
 
