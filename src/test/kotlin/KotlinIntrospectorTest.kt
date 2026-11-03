@@ -4938,6 +4938,30 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve Java member taking boxed type overriding Java one next to Kotlin one taking primitive type`() {
+        // put(Integer) overrides the one of JavaBoxedPutInterface, not put(key: Int = 0), which a concrete subclass still has to implement
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaPutInterfaceImplementation.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaPutInterfaceImplementation.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedPutInterfaceImplementation
+            override fun put(arg0: Int?): String
+            // inherited from com.xemantic.kotlin.introspection.test.DefaultedPrimitivePut
+            fun put(key: Int = …): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking boxed types next to Kotlin one taking primitive types`() {
+        // put(Integer, Integer) does not implement put(a: Int, b: Int), and put(null, null) compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedPairJavaPut.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedPairJavaPut.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedPairPut
+            open fun put(arg0: Int?, arg1: Int?): String
+            // inherited from com.xemantic.kotlin.introspection.test.PrimitivePairPut
+            fun put(a: Int, b: Int): String
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve Java member taking boxed type implementing interface inheriting Kotlin one taking primitive type`() {
         // put(Integer) does not implement put(key: Int), which a concrete subclass still has to implement, and put(null) compiles
         resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaPutBelowInterface.put") sameAsKotlin """

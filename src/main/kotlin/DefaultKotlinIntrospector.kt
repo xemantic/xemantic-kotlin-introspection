@@ -2373,7 +2373,8 @@ internal class DefaultKotlinIntrospector(
         /**
          * Whether the [member], of a Java class, overrides none of the Kotlin members the override resolver tells,
          * like the `put(@NotNull Integer)` of a Java class the `put(key: Int)` of a Kotlin interface,
-         * which the `put(int)` of its Java superclass implements, see [takesReferenceForPrimitiveOf].
+         * which the `put(int)` of its Java superclass implements, see [takesReferenceForPrimitiveOf],
+         * nor a Java method, see [overridesJavaMember].
          */
         var isOverridingNothing: Boolean = false
 
@@ -2577,6 +2578,23 @@ internal class DefaultKotlinIntrospector(
                 jvmMethod.key in overriddenJavaMembers ||
                     jvmMethod.signature == (member as? Member.Function)?.declaration?.signature
             } == true
+
+        /**
+         * Whether the [member], of a Java class, overrides a Java method, see [OverrideResolver.overriddenJavaMembers],
+         * like the `put(Integer)` of a Java class the one of its Java interface, taking the same JVM types,
+         * unlike the `put(int)` of a Java superclass,
+         * which the override resolver matches regardless of the primitive types, see [takesReferenceForPrimitiveOf].
+         */
+        val overridesJavaMember: Boolean
+            get() {
+                val descriptor = jvmMethod?.signature?.descriptor ?: return overriddenJavaMembers.isNotEmpty()
+                val parameters = AsmType.getArgumentTypes(descriptor)
+                return overriddenJavaMembers.any { key ->
+                    val overridden = AsmType.getArgumentTypes("(" + key.substringAfter('#').substringAfter('('))
+                    overridden.size != parameters.size ||
+                        overridden.indices.none { overridden[it].isPrimitive && !parameters[it].isPrimitive }
+                }
+            }
 
         // the keys of the JVM methods the member overrides, see overrides
         private val overriddenJavaMembers: Set<String> by lazy(LazyThreadSafetyMode.NONE) {
@@ -2863,7 +2881,7 @@ internal class DefaultKotlinIntrospector(
             }
             if (overridden.size != candidate.overridden.size) {
                 candidate.overridden = overridden
-                candidate.isOverridingNothing = overridden.isEmpty()
+                candidate.isOverridingNothing = overridden.isEmpty() && !candidate.overridesJavaMember
             }
         }
         // the members of a JDK class reached only through a Java class of the user code lose the enhancement of their return types,
