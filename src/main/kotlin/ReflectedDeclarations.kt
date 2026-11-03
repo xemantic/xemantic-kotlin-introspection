@@ -471,6 +471,11 @@ internal fun KFunction<*>.toKmFunction(typeParameters: ReflectedTypeParameters):
     if (method.value?.let { reflectedValue(default = false) { isComparableJavaMethod(it) } } == true) {
         function.valueParameters.single().type.isNullable = true
     }
+    method.value?.let { javaMethod ->
+        function.valueParameters.forEachIndexed { position, parameter ->
+            if (reflectedValue(default = false) { isBoxedNextToPrimitive(javaMethod, position) }) parameter.type.isNullable = true
+        }
+    }
     function.returnType = returnType.toKmType(scope)
     enhanceDefinitelyNotNull(function)
     enhanceNullableReturn(function)
@@ -490,6 +495,21 @@ private fun isComparableJavaMethod(method: Method): Boolean {
     val declaringClass = method.declaringClass
     return Comparable::class.java.isAssignableFrom(declaringClass) &&
         declaringClass.kotlin.qualifiedName == declaringClass.canonicalName
+}
+
+/**
+ * Whether the value parameter of the [method] at the [position] is of a boxed type, like `Integer`,
+ * while its class, not of the JDK, declares the overload of the primitive type there, like `put(int)` next to `put(Integer)`,
+ * which kotlin-reflect describes as not nullable, like `put(arg0: Int)`, when both implement the `put(key: Int)` of a Kotlin supertype,
+ * though only the one of the primitive type does, so that K2 takes the boxed one as a platform type, like `Int!`, and `put(null)` compiles.
+ */
+private fun isBoxedNextToPrimitive(method: Method, position: Int): Boolean {
+    if (method.declaringClass.isJdkClass) return false
+    val parameterTypes = method.parameterTypes
+    val primitive = parameterTypes.getOrNull(position)?.kotlin?.javaPrimitiveType?.takeIf { it != parameterTypes[position] }
+        ?: return false
+    val primitiveTypes = parameterTypes.copyOf().also { it[position] = primitive }
+    return method.declaringClass.declaredMethods.any { it.name == method.name && it.parameterTypes.contentEquals(primitiveTypes) }
 }
 
 /**
