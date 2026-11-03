@@ -5162,6 +5162,50 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve member implemented by Java superclass reached also through Kotlin as open`() {
+        // contains of java.util.AbstractCollection implements the one of Collection, reached directly too,
+        // which List declares again, so that a concrete subclass need not implement it
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaCollectionDiamond.contains") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaCollectionDiamond.contains [page 1/1]
+            // inherited from kotlin.collections.List
+            open override operator fun contains(element: String): Boolean
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member implemented by Java superclass next to declared overload as open`() {
+        // pins the modality only: the declared contains(element: String?) overrides the contains(Object)
+        // of java.util.AbstractCollection, which neither the override resolver, nor this listing, tells yet
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedNullableContainsList.contains") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedNullableContainsList.contains [page 1/1]
+            open operator fun contains(element: String?): Boolean
+            // inherited from kotlin.collections.List
+            open override operator fun contains(element: String): Boolean
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve declared override of Java override of bounded type variable of JVM-only member of mutable list once`() {
+        // the addFirst(element: E?) overrides the addFirst(Comparable) of JavaComparableFirstList,
+        // overriding the addFirst(Object) of java.util.List by its bridge, so that MutableList adds no addFirst of its own
+        assumeSequencedCollections()
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OverridingJavaComparableFirstList.addFirst") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OverridingJavaComparableFirstList.addFirst [page 1/1]
+            override fun addFirst(element: E?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve inherited override of Java override of bounded type variable of JVM-only member of mutable list once`() {
+        assumeSequencedCollections()
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OverridingJavaComparableFirstListSub.addFirst") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OverridingJavaComparableFirstListSub.addFirst [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.OverridingJavaComparableFirstList
+            override fun addFirst(element: String?)
+        """.trimIndent()
+    }
+
+    @Test
     fun `should not resolve Java method overriding JDK method which built-in type does not expose`() {
         // Kotlin calls the MutableList<T>.sort extension instead, the JDK sort of java.util.List is not a member of MutableList
         assert(resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaArrayList.sort") == null)
