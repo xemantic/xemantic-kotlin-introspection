@@ -92,6 +92,8 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 - The test classpath resolves `org.jetbrains:annotations` to 26.x, of both the declaration and the `TYPE_USE` targets, not the 13.0 the standard library depends on —
   javac writes the `@NotNull String[]` of a fixture also as a type annotation of the elements, so a kotlinc probe of the fixtures must compile against the same version.
 
+- javac does not see a Kotlin member deprecated as `HIDDEN` (it is synthetic in the class file), so a Java test fixture implementing it cannot mark the method `@Override`, though it still overrides it on the JVM.
+
 - Kotlin never passes named arguments to a Java method, even one compiled with `-parameters`, so a Java method taking parameters never shadows an extension — see `isShadowingJavaMethod`.
 
 ## Anti-patterns to avoid

@@ -292,6 +292,11 @@ internal fun KmFunction.withNotNullableParameters(): KmFunction = copy(
 )
 
 /**
+ * This function with the types of its value parameters given by the [type].
+ */
+internal fun KmFunction.withValueParameterTypes(type: (KmType) -> KmType): KmFunction = copy(valueParameterType = type)
+
+/**
  * This function of the [modality], like an abstract member implemented by a Java class.
  */
 internal fun KmFunction.withModality(modality: Modality): KmFunction = copy().also { it.modality = modality }

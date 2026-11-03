@@ -836,6 +836,8 @@ abstract class HiddenPrimitiveNotNullBoxedJavaPutJoin : com.xemantic.kotlin.intr
 
 interface HiddenPrimitiveGenericPutJoin : HiddenPrimitivePut, GenericPut<Int>
 
+abstract class PrimitiveAndBoxedJavaHiddenPut : com.xemantic.kotlin.introspection.test.other.JavaPrimitiveAndBoxedHiddenPut()
+
 interface HiddenGenericPut<T> {
     @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
     fun put(t: T): String

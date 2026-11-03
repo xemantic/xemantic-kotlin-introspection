@@ -2275,9 +2275,12 @@ internal class DefaultKotlinIntrospector(
      * @param overridden the keys of the members of the supertypes of the [kmClass] which the [member] overrides.
      * @param signature the signature of the [member] as rendered, see [Member.signature],
      *   the same for the members of the same signature of unrelated supertypes.
-     * @param notNullableSignature the [signature] of a member of a Java class with its value parameters of the platform types
-     *   of Java not nullable, see [withNotNullableParameters], like the `K!` of `computeIfAbsent` of a Java subclass
-     *   of `java.util.HashMap<K, V>`, of the same signature for the compiler as a Kotlin member taking `K`, see [isMergedWith],
+     * @param notNullableSignature the [signature] of the [member] with its value parameters not nullable, see [withNotNullableParameters],
+     *   like the platform types of Java, like the `K!` of `computeIfAbsent` of a Java subclass of `java.util.HashMap<K, V>`,
+     *   of the same signature for the compiler as a Kotlin member taking `K`, or `K?`, also of mixed nullability,
+     *   like `take(first: String, second: String?)` and the `take(String, String)` of Java, see [isMergedWith],
+     *   and of a member of a Java class with its redundant projections invariant, see [withoutRedundantProjections],
+     *   like the `Collection<out Int>` of a `Collection<? extends Integer>`, the `Collection<Int>` of a Kotlin member,
      *   told only when needed, while a boxed parameter, like the `Int?` of `java.lang.Integer`, which becomes `Int`,
      *   is told apart from a primitive one by its JVM type, see [isMergedJvmParameter].
      * @param typeParameters the type parameters the [member] refers to, the not nullable ones, see [TypeParameterScope],
@@ -2296,7 +2299,7 @@ internal class DefaultKotlinIntrospector(
         val declarations: ClassDeclarations,
         val member: Member,
         val key: String,
-        val overridden: Set<String>,
+        overridden: Set<String>,
         val signature: String,
         notNullableSignature: Lazy<String>,
         val typeParameters: TypeParameterScope,
@@ -2306,6 +2309,12 @@ internal class DefaultKotlinIntrospector(
     ) {
 
         val notNullableSignature: String by notNullableSignature
+
+        /**
+         * The keys of the members the [member] overrides, but the ones of the Kotlin members a Java method does not override
+         * on the JVM, see [takesReferenceForPrimitiveOf], dropped once the candidates are collected, see [inheritedCandidates].
+         */
+        var overridden: Set<String> = overridden
 
         /**
          * Whether the [member], of a JDK class, is inherited only through a Java class of the user code,
@@ -2326,9 +2335,17 @@ internal class DefaultKotlinIntrospector(
 
         /**
          * The Java class whose method the [implementationModality] is of, if told, which the visible override
-         * of a supertype which is not part of the API below it wins over, see [inheritedCandidates], or `null`.
+         * of a supertype which is not part of the API below it wins over, see [inheritedCandidates], or `null`,
+         * also implementing a member merged with the [member], see [inheritedCandidates].
          */
         var implementingClass: Class<*>? = null
+
+        /**
+         * The JVM method of the Java class implementing the [member], see [implementingClass], if told,
+         * like the `getOrDefault(Object, Object)` of `java.util.HashMap` of the `getOrDefault` of `Map`,
+         * which the [member] is merged by, like a member of a Java class, see [isMergedJvmParameter], or `null`.
+         */
+        var implementingJvmMethod: JvmMethod? = null
 
         /**
          * The modality of the method of the nearest Java interface declaring the [member] again, like abstract,
@@ -2456,16 +2473,21 @@ internal class DefaultKotlinIntrospector(
 
         /**
          * Whether the [member] is merged with the one of the [other] candidate, competing with it,
-         * as of the same kind, and of the same [signature], also regardless of the platform types of Java of their value parameters,
-         * see [notNullableSignature], unless their value parameters are of JVM types the compiler keeps apart, see [isMergedJvmParameter],
+         * as of the same kind, and of the same [signature], also regardless of the nullability of their value parameters,
+         * see [notNullableSignature], when one of them is a member of a Java class, taking the platform types of Java,
+         * as two Kotlin members differing by it clash on the JVM,
+         * unless their value parameters are of JVM types the compiler keeps apart, see [isMergedJvmParameter],
          * or overriding the same member, declared by another supertype,
          * as the members of the same supertype are its overloads.
          */
         fun isMergedWith(other: InheritedCandidate): Boolean =
             other.kmClass.name != kmClass.name && (other.member is Member.Property) == (member is Member.Property) &&
                 (other.overridden.any { it in overridden } ||
-                    (other.signature == signature || other.notNullableSignature == notNullableSignature) &&
+                    (other.signature == signature || isJavaRivalry(other) && other.notNullableSignature == notNullableSignature) &&
                     isMergedOnJvm(other))
+
+        // whether one of the members is a member of a Java class, see isMergedWith
+        private fun isJavaRivalry(other: InheritedCandidate): Boolean = declarations is JavaClass || other.declarations is JavaClass
 
         // whether the value parameters of the JVM methods of both members are merged position by position, where both are told
         private fun isMergedOnJvm(other: InheritedCandidate): Boolean {
@@ -2478,31 +2500,60 @@ internal class DefaultKotlinIntrospector(
             }
         }
 
-        // a JVM-only member is a Java method of its own, see jvmMethod, merged like the members of a Java class
-        private val isJavaMethod: Boolean get() = jvmMethod != null || declarations is JavaClass
+        // a JVM-only member is a Java method of its own, see jvmMethod, merged like the members of a Java class,
+        // and so is a member standing for the method of the Java class implementing it, see implementingJvmMethod
+        private val jvmParameters: List<JvmParameter?>?
+            get() = if (implementingJvmMethod == null) declaredJvmParameters else implementingJvmParameters
 
         // the value parameters of the JVM method of the function, see JvmParameter, by its JVM signature,
-        // of a member of a Java class, or of a JVM-only member, or else told by the metadata, or by kotlin-reflect
-        // of a member of a built-in type, like get(I) of java.util.List, or else erased from its declared types, see erasedJavaClass,
+        // of a member of a Java class, or of a JVM-only member, or else told by the metadata,
+        // or by kotlin-reflect of a member of a built-in type, like get(I) of java.util.List,
+        // or else erased from its declared types, see erasedJavaClass,
         // each null if it cannot be told, like a declared type of a Java member which is not nullable, maybe primitive or not
-        private val jvmParameters: List<JvmParameter?>? by lazy(LazyThreadSafetyMode.NONE) {
-            val function = member as? Member.Function ?: return@lazy null
+        private val declaredJvmParameters: List<JvmParameter?>? by lazy(LazyThreadSafetyMode.NONE) {
+            val declaration = (member as? Member.Function)?.declaration ?: return@lazy null
+            jvmParametersOf(
+                jvmMethod?.signature ?: declaration.signature ?: (declarations as? BuiltinClass)?.jvmMethodOf(declaration)?.signature,
+                isJava = jvmMethod != null || declarations is JavaClass
+            )
+        }
+
+        // the value parameters of the Java method implementing the function, see implementingJvmMethod
+        private val implementingJvmParameters: List<JvmParameter?>? by lazy(LazyThreadSafetyMode.NONE) {
+            jvmParametersOf(implementingJvmMethod?.signature, isJava = true)
+        }
+
+        // the value parameters of the JVM method of the signature, see declaredJvmParameters
+        private fun jvmParametersOf(signature: JvmMethodSignature?, isJava: Boolean): List<JvmParameter?>? {
+            val function = member as? Member.Function ?: return null
             val declaration = function.declaration
             val valueParameters = function.function.valueParameters
-            val descriptor = (
-                jvmMethod?.signature ?: declaration.signature ?: (declarations as? BuiltinClass)?.jvmMethodOf(declaration)?.signature
-            )?.descriptor
             // the Continuation of a suspend function follows its value parameters, which its receivers precede
-            val types = descriptor?.let { AsmType.getArgumentTypes(it) }
+            val types = signature?.descriptor?.let { AsmType.getArgumentTypes(it) }
                 ?.let { if (declaration.isSuspend) it.dropLast(1) else it.toList() }
                 ?.takeLast(valueParameters.size)
                 ?.takeIf { it.size == valueParameters.size }
                 ?: declaration.valueParameters.map { parameter ->
                     // a primitive Java type is never nullable, unlike a boxed one, while the vararg ones are not told
-                    val type = parameter.type.takeIf { parameter.varargElementType == null && (!isJavaMethod || it.isNullable) }
+                    val type = parameter.type.takeIf { parameter.varargElementType == null && (!isJava || it.isNullable) }
                     type?.let { erasedJavaClass(it) }?.let { AsmType.getType(it) }
                 }
-            types.zip(valueParameters) { type, parameter -> type?.let { JvmParameter(it, isJavaMethod, parameter.type.isNullable) } }
+            return types.zip(valueParameters) { type, parameter -> type?.let { JvmParameter(it, isJava, parameter.type.isNullable) } }
+        }
+
+        /**
+         * Whether the [member], of a Java class, takes a reference type, like `Integer`, where the [member] of the [kotlin] candidate,
+         * a Kotlin one, which the override resolver matches regardless of the nullability, takes a primitive type on the JVM,
+         * like the `put(key: Int)` of a Kotlin interface, which it does not override then, as the `put(int)` declared next to it does.
+         */
+        fun takesReferenceForPrimitiveOf(kotlin: InheritedCandidate): Boolean {
+            val parameters = declaredJvmParameters ?: return false
+            val kotlinParameters = kotlin.declaredJvmParameters ?: return false
+            return parameters.size == kotlinParameters.size && parameters.indices.any { index ->
+                val parameter = parameters[index]
+                val kotlinParameter = kotlinParameters[index]
+                parameter != null && kotlinParameter != null && kotlinParameter.type.isPrimitive && !parameter.type.isPrimitive
+            }
         }
 
         /**
@@ -2759,10 +2810,13 @@ internal class DefaultKotlinIntrospector(
                     superKmClass, superDeclarations, member, declared.key(superKmClass), overridden,
                     signature = signature,
                     notNullableSignature = lazy(LazyThreadSafetyMode.NONE) {
-                        val function = (erased ?: (declared as? Member.Function)?.declaration)?.takeIf { superDeclarations is JavaClass }
-                        function?.withNotNullableParameters()?.let {
-                            Member.Function(it).substituted(substitution, inheritingNames).signature(inheritingNames)
-                        } ?: signature
+                        val function = (erased ?: (declared as? Member.Function)?.declaration)?.withNotNullableParameters()
+                        // like the Collection<out Int> of a Collection<? extends Integer> of Java
+                        val invariant = if (superDeclarations !is JavaClass) function else {
+                            function?.withValueParameterTypes { type -> type.withoutRedundantProjections() }
+                        }
+                        invariant?.let { Member.Function(it).substituted(substitution, inheritingNames).signature(inheritingNames) }
+                            ?: signature
                     },
                     typeParameters = typeParameters,
                     isHidden = apiMember.isHidden,
@@ -2786,6 +2840,16 @@ internal class DefaultKotlinIntrospector(
             if (visited.add(name)) collect(name, supertype)
         }
         if (kmClass.name != ANY_CLASS_NAME) collect(ANY_CLASS_NAME, classType(ANY_CLASS_NAME))
+        // a Java method taking a boxed type, like put(Integer), never overrides a Kotlin member taking a primitive type there,
+        // like put(key: Int), which the override resolver matches regardless of the nullability, see takesReferenceForPrimitiveOf
+        val candidatesByKey by lazy(LazyThreadSafetyMode.NONE) { candidates.groupBy { it.key } }
+        candidates.forEach { candidate ->
+            if (candidate.declarations !is JavaClass || candidate.overridden.isEmpty()) return@forEach
+            val overridden = candidate.overridden.filterTo(HashSet()) { key ->
+                candidatesByKey[key].orEmpty().none { candidate.takesReferenceForPrimitiveOf(it) }
+            }
+            if (overridden.size != candidate.overridden.size) candidate.overridden = overridden
+        }
         // the members of a JDK class reached only through a Java class of the user code lose the enhancement of their return types,
         // like the get() of java.util.function.Supplier for a subclass of a Java class implementing it without declaring it again,
         // unless reached also directly, or through the JDK, or a Kotlin class not overriding them, whatever the order of the supertypes
@@ -2861,7 +2925,9 @@ internal class DefaultKotlinIntrospector(
             val isTakingOver = overriddenKotlin.none { it.kmClass.name in reachedThroughKotlin }
             fun isTakenOver(overridden: InheritedCandidate) = isTakingOver && candidate.acceptsNullUnlike(overridden)
             val implementing = overriddenKotlin.filter { !candidate.refines(it, supertypeNamesOf) }
-            val implemented = implementing.filter { !isTakenOver(it) }
+            // a Kotlin member deprecated as hidden, like put(key: Int), does not hide the Java method implementing it, like put(int),
+            // which is called in its place
+            val implemented = implementing.filter { !isTakenOver(it) && !it.isHidden }
             // the Kotlin member stands for the Java method implementing it, like toInt() of kotlin.Number
             // for intValue() of java.util.concurrent.atomic.AtomicInteger, the nearest one, walked first,
             // which might declare it abstract again, like an abstract Java subclass of the implementing one,
@@ -2901,6 +2967,7 @@ internal class DefaultKotlinIntrospector(
                     !isJavaInterface -> if (it.implementationModality == null) {
                         it.implementationModality = implementationModality.value
                         it.implementingClass = javaClass.clazz
+                        it.implementingJvmMethod = candidate.jvmMethod
                     }
                     modality == Modality.ABSTRACT && it.kmClass.name == ANY_CLASS_NAME -> {}
                     it.interfaceModality == null -> it.interfaceModality = modality
@@ -2917,6 +2984,13 @@ internal class DefaultKotlinIntrospector(
                 jvmOnly.signature == candidate.signature && !candidate.raisesVisibility(jvmOnly)
             }
             if (candidate.returnsPlatformType) standingJvmOnly.forEach { it.standsForPlatformType = true }
+            // of the modality of the method of the Java class, which implements them, like the putIfAbsent of java.util.HashMap
+            if (!isJavaInterface) {
+                standingJvmOnly.filter { it.implementationModality == null }.forEach {
+                    it.implementationModality = implementationModality.value
+                    it.implementingClass = javaClass.clazz
+                }
+            }
             val isOverriddenBelow = lazy(LazyThreadSafetyMode.NONE) {
                 method.value != null && overriding.value != null && unlisted.value == null
             }
@@ -3103,10 +3177,58 @@ internal class DefaultKotlinIntrospector(
         fun winner(members: List<InheritedCandidate>): InheritedCandidate? = members.withIndex().firstOrNull { (index, member) ->
             members.withIndex().all { (otherIndex, other) -> other === member || wins(member, index, other, otherIndex) }
         }?.value
-        fun listed(survivors: List<InheritedCandidate>) = survivors.filterIndexed { index, candidate ->
-            survivors.withIndex().none { (rivalIndex, rival) ->
-                rivalIndex != index && rival.isMergedWith(candidate) && wins(rival, rivalIndex, candidate, index)
+        // the index of the first direct supertype of the kmClass reaching the class of each name, see listed
+        val directIndices = HashMap<String, Int>()
+        directSupertypes[kmClass.name].orEmpty().forEachIndexed { index, direct ->
+            val reached = ArrayDeque(listOf(direct))
+            while (reached.isNotEmpty()) {
+                val name = reached.removeFirst()
+                if (name !in directIndices) {
+                    directIndices[name] = index
+                    reached += directSupertypes[name].orEmpty()
+                }
             }
+        }
+        // the compiler groups the members merged with the first one, in the order of the direct supertypes contributing them,
+        // like the K2 intersection of the members of the supertypes, then with the first one left, and so on,
+        // so that the members merged with one member only, but not with each other, stay apart,
+        // like the put(T) of a Java JGen<Integer>, taking Object, merged with the put(t: T) of GenericPut<Int>,
+        // which is merged with the put(key: Int) of PrimitivePut, but not the Java one, taking int,
+        // for `abstract class Join : JGenOfInteger(), PrimitivePut, GenericPut<Int>`, unlike for `interface Join : GenericPut<Int>, …`
+        // each group listing its members of the most specific return type, see wins, which stand for the implementation
+        // of a class merged with them, see InheritedCandidate.implementationModality, while the member of an interface implements none,
+        // also grouping the Java methods, and the JVM-only members, which a member of the same JVM signature overrides,
+        // see javaOverrides, so that they are not listed, though they still implement it, when of a class,
+        // like the put(Object) of JGen<Integer>, or the putIfAbsent of java.util.HashMap, see InheritedCandidate.implementingClass,
+        // the putIfAbsent(key: K, value: V) of a Kotlin interface given Int and String
+        fun listed(survivors: List<InheritedCandidate>): List<InheritedCandidate> {
+            val overriddenOnJvm = candidates.filter { candidate ->
+                candidate.jvmMethod != null && !candidate.isHidden && candidate.isApi && candidate !in survivors &&
+                    javaOverrides.overrides(candidate.jvmMethod)
+            }
+            val ordered = (survivors + overriddenOnJvm).sortedBy { directIndices[it.kmClass.name] ?: Int.MAX_VALUE }
+            val groups = IdentityHashMap<InheritedCandidate, InheritedCandidate>()
+            ordered.forEach { first ->
+                if (first in groups) return@forEach
+                ordered.filter { it === first || (it !in groups && first.isMergedWith(it)) }.forEach { groups[it] = first }
+            }
+            val listed = survivors.filterIndexed { index, candidate ->
+                survivors.withIndex().none { (rivalIndex, rival) ->
+                    rivalIndex != index && groups[rival] === groups[candidate] && wins(rival, rivalIndex, candidate, index)
+                }
+            }
+            listed.filter { it.kmClass.kind == ClassKind.INTERFACE && it.implementationModality == null }.forEach { candidate ->
+                ordered.firstNotNullOfOrNull { merged ->
+                    merged.takeIf { it !== candidate && groups[it] === groups[candidate] }?.let {
+                        when {
+                            it.implementingClass != null -> it.implementationModality
+                            it.kmClass.kind != ClassKind.INTERFACE -> it.implementationModality ?: it.member.modality
+                            else -> null
+                        }
+                    }
+                }?.let { candidate.implementationModality = it }
+            }
+            return listed
         }
         // the compiler merges the members which the direct supertypes contribute, each its own, or the one it inherits,
         // also a hidden one overridden by another direct supertype, and picks the one of the most specific return type,
@@ -3144,6 +3266,31 @@ internal class DefaultKotlinIntrospector(
             }
         }
         return listed(survivors).filter { candidate -> contribution(kmClass.name, candidate).singleOrNull()?.isHidden != true }
+    }
+
+    /**
+     * This type with the projections of its type arguments, also nested, which the variance of their type parameters
+     * makes redundant, made invariant, like the `Collection<out Int>` of a `Collection<? extends Integer>` of Java,
+     * the `Collection<Int>` of a Kotlin member for the compiler, as `Collection` is covariant,
+     * or this very type, if it has none, see [InheritedCandidate.notNullableSignature].
+     */
+    private fun KmType.withoutRedundantProjections(): KmType {
+        val name = (classifier as? KmClassifier.Class)?.name ?: return this
+        if (arguments.isEmpty()) return this
+        val typeParameters by lazy(LazyThreadSafetyMode.NONE) { (builtinClasses[name] ?: loadKmClass(name))?.typeParameters }
+        var isChanged = false
+        val projections = arguments.mapIndexed { index, projection ->
+            val type = projection.type ?: return@mapIndexed projection
+            val invariant = type.withoutRedundantProjections()
+            val variance = projection.variance?.takeUnless { it == KmVariance.INVARIANT }
+                ?.takeUnless { it == typeParameters?.getOrNull(index)?.variance }
+                ?: KmVariance.INVARIANT
+            if (invariant === type && variance == projection.variance) projection else {
+                isChanged = true
+                KmTypeProjection(variance, invariant)
+            }
+        }
+        return if (isChanged) copy(arguments = projections) else this
     }
 
     /**

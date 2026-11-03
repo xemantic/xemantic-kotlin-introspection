@@ -373,6 +373,37 @@ abstract class GenericMapJoin : MutableMap<Int, String>, GenericMapMembers<Int, 
 
 abstract class GenericHashMapJoin : java.util.HashMap<Int, String>(), GenericMapMembers<Int, String>
 
+// the getOrDefault and remove of java.util.HashMap are Java methods taking Object, apart from the ones taking int
+abstract class PrimitiveKeyHashMapJoin : java.util.HashMap<Int, String>(), PrimitiveKeyMapMembers
+
+abstract class PrimitiveAndBoxedJavaPut : com.xemantic.kotlin.introspection.test.other.JavaPrimitiveAndBoxedPut()
+
+// the put(T) of JavaGenericPut<Integer> implements the put(t: T) of GenericPut<Int>, not the put(key: Int) of PrimitivePut,
+// though the two Kotlin members alone are merged
+abstract class GenericBoxedJavaPrimitiveGenericPutJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaIntegerPut(), PrimitivePut, GenericPut<Int>
+
+interface MixedNullabilityTaker {
+    fun take(first: String, second: String?): String
+}
+
+interface NotNullableTaker {
+    fun take(first: String, second: String): String
+}
+
+abstract class MixedNullabilityJavaTakerJoin : com.xemantic.kotlin.introspection.test.other.JavaTwoStringTaker(), MixedNullabilityTaker
+
+abstract class NotNullableJavaTakerJoin : com.xemantic.kotlin.introspection.test.other.JavaTwoStringTaker(), NotNullableTaker
+
+interface PrimitiveCompareTo {
+    fun compareTo(other: Int): Int
+}
+
+abstract class BoxedJavaComparablePrimitiveJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaIntegerComparable(), PrimitiveCompareTo
+
+abstract class IndexedAddAllJavaListJoin : com.xemantic.kotlin.introspection.test.other.JavaIndexedAddAll(), MutableList<Int>
+
 abstract class BoxedJavaListJoin : com.xemantic.kotlin.introspection.test.other.JavaBoxedMembers(), List<String>
 
 abstract class BoxedJavaComparableJoin : com.xemantic.kotlin.introspection.test.other.JavaBoxedMembers(), Comparable<Int>
