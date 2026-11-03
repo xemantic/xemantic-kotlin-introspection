@@ -4962,6 +4962,20 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve Java member taking primitive and boxed types next to Java and Kotlin ones it does not override`() {
+        // put(int, Integer) overrides neither put(Integer, Integer), nor put(a: Int, b: Int), both still abstract
+        resolver.resolve("com.xemantic.kotlin.introspection.test.MixedPairJavaPut.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.MixedPairJavaPut.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaMixedPairPut
+            open fun put(arg0: Int, arg1: Int?): String
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedPairPutInterface
+            fun put(arg0: Int?, arg1: Int?): String
+            // inherited from com.xemantic.kotlin.introspection.test.PrimitivePairPut
+            fun put(a: Int, b: Int): String
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve Java member taking boxed type implementing interface inheriting Kotlin one taking primitive type`() {
         // put(Integer) does not implement put(key: Int), which a concrete subclass still has to implement, and put(null) compiles
         resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaPutBelowInterface.put") sameAsKotlin """
