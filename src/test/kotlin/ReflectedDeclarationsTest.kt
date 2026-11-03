@@ -355,8 +355,21 @@ class ReflectedDeclarationsTest {
     }
 
     @Test
-    fun `should render Java parameter of class type parameter as not nullable`() {
-        // given - T! of a JavaLabelBase<String> accepts no null, unlike Any! of Object, as the receiver fixes T
+    fun `should render JDK parameter of class type parameter as not nullable`() {
+        // given - E of add of a java.util.ArrayList<String> accepts no null in K2, as the receiver fixes E
+        val add = java.util.ArrayList::class.memberFunctions.single { it.name == "add" && it.parameters.size == 2 }
+        val typeParameters = ReflectedTypeParameters.classTypeParameters(listOf(KmTypeParameter("E", 0, KmVariance.INVARIANT)))
+
+        // when
+        val type = add.toKmFunction(typeParameters).valueParameters.single().type
+
+        // then
+        assert(!type.isNullable && (type.classifier as? KmClassifier.TypeParameter)?.id == 0)
+    }
+
+    @Test
+    fun `should render Java parameter of class type parameter as nullable`() {
+        // given - T! of a JavaLabelBase<String>, not of the JDK, is a platform type in K2, getLabel(null) compiles
         val getLabel = JavaLabelBase::class.memberFunctions.single { it.name == "getLabel" }
         val typeParameters = ReflectedTypeParameters.classTypeParameters(listOf(KmTypeParameter("T", 0, KmVariance.INVARIANT)))
 
@@ -364,7 +377,7 @@ class ReflectedDeclarationsTest {
         val type = getLabel.toKmFunction(typeParameters).valueParameters.single().type
 
         // then
-        assert(!type.isNullable && (type.classifier as? KmClassifier.TypeParameter)?.id == 0)
+        assert(type.isNullable && (type.classifier as? KmClassifier.TypeParameter)?.id == 0)
     }
 
     @Test

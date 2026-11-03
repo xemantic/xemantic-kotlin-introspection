@@ -159,11 +159,18 @@ internal class TypeParameterScope(
         )
 
     /**
-     * This scope with the type parameters of the [names] standing for the ones of this scope, like the type parameters
-     * of an extension listed in the body of its receiver class, named like the ones of the class.
+     * This scope with the type parameters, by their ids, standing for the type parameters of the [classScope], the [standingFor],
+     * like the type parameters of an extension listed in the body of its receiver class, named like the ones of the class,
+     * also not nullable when the ones of the class are, like `T` standing for `A` of `A : Any`,
+     * though declared of a nullable bound, which only suppressing the bound violation of the receiver lets it,
+     * as `T & Any`, rendered as `A & Any`, does not compile.
      */
-    fun withNames(names: Map<Int, String>): TypeParameterScope =
-        if (names.isEmpty()) this else TypeParameterScope(this.names + names, notNullable, isIgnoringDefinitelyNotNull)
+    fun withStandingFor(standingFor: Map<Int, KmTypeParameter>, classScope: TypeParameterScope): TypeParameterScope =
+        if (standingFor.isEmpty()) this else TypeParameterScope(
+            names + standingFor.mapValues { (_, classTypeParameter) -> classTypeParameter.name },
+            notNullable + standingFor.filterValues { it.id in classScope.notNullable }.keys,
+            isIgnoringDefinitelyNotNull
+        )
 
     /**
      * This scope with the ids of its type parameters renumbered by the [transform], like the ones of an inheriting class,
