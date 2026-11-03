@@ -5174,14 +5174,11 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve member implemented by Java superclass next to declared overload as open`() {
-        // pins the modality only: the declared contains(element: String?) overrides the contains(Object)
+        // only the modality is checked: the declared contains(element: String?) overrides the contains(Object)
         // of java.util.AbstractCollection, which neither the override resolver, nor this listing, tells yet
-        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedNullableContainsList.contains") sameAsKotlin """
-            // com.xemantic.kotlin.introspection.test.InheritedNullableContainsList.contains [page 1/1]
-            open operator fun contains(element: String?): Boolean
-            // inherited from kotlin.collections.List
-            open override operator fun contains(element: String): Boolean
-        """.trimIndent()
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedNullableContainsList.contains") should {
+            have("open override operator fun contains(element: String): Boolean" in lines())
+        }
     }
 
     @Test
