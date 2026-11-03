@@ -134,3 +134,58 @@ class DeprecatedOuterAndCompanionExtensionHolder {
 
 @Suppress("DEPRECATION")
 fun DeprecatedOuterAndCompanionExtensionHolder.Companion.of(): Int = 0
+
+// Extensions on a supertype of a companion object, called on the name of the class, like SupertypeCompanionHolder.onSupertype(),
+// for which Kotlin reports the deprecation of the companion object, like for an extension on the companion object itself
+interface CompanionSupertype
+
+class SupertypeCompanionHolder {
+    companion object : CompanionSupertype
+}
+
+class DeprecatedSupertypeCompanionHolder {
+    @Deprecated("Use the constructor")
+    companion object : CompanionSupertype
+}
+
+fun CompanionSupertype.onSupertype(): Int = 0
+
+fun <T : CompanionSupertype> T.onBoundedSupertype(): Int = 0
+
+val CompanionSupertype.onSupertypeProperty: Int get() = 0
+
+// the supertype of both the class and its companion object, called both as SharedSupertypeCompanionHolder.onSupertype(),
+// and as holder.onSupertype(), the first one reporting the deprecation of the companion object, if any
+class SharedSupertypeCompanionHolder : CompanionSupertype {
+    companion object : CompanionSupertype
+}
+
+class DeprecatedSharedSupertypeCompanionHolder : CompanionSupertype {
+    @Deprecated("Use the constructor")
+    companion object : CompanionSupertype
+}
+
+// called as ProtectedSupertypeCompanionHolder.onSupertype() only within its subclasses
+open class ProtectedSupertypeCompanionHolder {
+    protected companion object : CompanionSupertype
+}
+
+// called as ProtectedOuterSupertypeCompanionHolder.Inner.onSupertype() only within its subclasses
+open class ProtectedOuterSupertypeCompanionHolder {
+    protected class Inner {
+        companion object : CompanionSupertype
+    }
+}
+
+// overloads on type parameters of the same index, one called on an instance, holder.describeBounded(),
+// for which Kotlin reports no deprecation of the class, the other on its name, DeprecatedMarkedCompanionHolder.describeBounded()
+interface InstanceMarker
+
+@Deprecated("Use CompanionExtensionHolder")
+class DeprecatedMarkedCompanionHolder : InstanceMarker {
+    companion object : CompanionSupertype
+}
+
+fun <T : InstanceMarker> T.describeBounded(): Int = 0
+
+fun <T : CompanionSupertype> T.describeBounded(): Int = 1

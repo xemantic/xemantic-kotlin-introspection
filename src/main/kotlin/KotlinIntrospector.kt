@@ -55,8 +55,9 @@ public interface KotlinIntrospector {
      * and one resolved by a name going through deprecated classes, like `com.example.Foo.Nested.create`,
      * follows a comment for each of them, the outermost first, like `// in @Deprecated("Use Bar") class Foo`,
      * as Kotlin reports each on its name the caller writes, like `Foo.Nested.create()`,
-     * on every page, but, for a member resolved by its name, the ones with only the extensions called on an instance,
-     * like `foo.ext()`.
+     * on every page, but, for a member resolved by its name, the ones with only the members, and the extensions,
+     * called on an instance, like `foo.bar()`, or `foo.ext()`, and never for the classes enclosing the class a typealias expands to,
+     * like `Foo` for `Alias.create` of `typealias Alias = Foo.Nested`.
      * A `var` whose setter cannot be called, like with `private set`, is rendered as a `val`,
      * while a setter narrower than its property, like `protected set`, is rendered on the line following it.
      * An override of a `var` stays a `var`, as a `val` cannot override it, with its setter rendered
