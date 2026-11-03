@@ -605,6 +605,15 @@ abstract class HiddenPrimitiveGenericBoxedJavaPutJoin : com.xemantic.kotlin.intr
 
 abstract class HiddenPrimitiveNotNullBoxedJavaPutJoin : com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPut(), HiddenPrimitivePut
 
+interface HiddenPrimitiveGenericPutJoin : HiddenPrimitivePut, GenericPut<Int>
+
+interface HiddenGenericPut<T> {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    fun put(t: T): String
+}
+
+abstract class PrimitiveJavaHiddenGenericPutJoin : com.xemantic.kotlin.introspection.test.other.JavaPrimitivePut(), HiddenGenericPut<Int>
+
 // the computeIfAbsent of java.util.HashMap keeps the enhancement of the one of java.util.Map, so that join.computeIfAbsent(…) compiles,
 // while the one of a Java override does not, losing to the hidden member, so that javaJoin.computeIfAbsent(…) does not,
 // nor the one of java.util.HashMap inherited through a Java class not declaring it again

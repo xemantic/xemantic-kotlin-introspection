@@ -4671,6 +4671,26 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve member taking type argument of primitive type merged with one taking primitive type`() {
+        // one intersection override in K2, through a bridge of put(Object) to put(int)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.GenericPrimitivePutJoin.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GenericPrimitivePutJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.GenericPut
+            fun put(t: Int): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member taking type argument of primitive type merged with Java one taking primitive type`() {
+        // one member in K2, like a concrete class implementing put(t: Int) by the put(int) of JavaPrimitivePut compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.PrimitiveJavaGenericPutJoin.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PrimitiveJavaGenericPutJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.GenericPut
+            fun put(t: Int): String
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve Kotlin member merged with Java override of JVM-only member taking key nullable`() {
         // the String! key of the computeIfAbsent of JavaComputingMap does not tell it apart from the String one,
         // and its String! return loses to the String, so that computeIfAbsent(null) { … } does not compile
@@ -12440,6 +12460,17 @@ class KotlinIntrospectorTest {
             // inherited from com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPut
             open fun put(arg0: Int): String
         """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve member taking type argument of primitive type merged with hidden one taking primitive type`() {
+        // the put(t: T) of GenericPut<Int> is one intersection override with the hidden put(key: Int), through a bridge
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenPrimitiveGenericPutJoin.put") == null)
+    }
+
+    @Test
+    fun `should not resolve Java member taking primitive type merged with hidden one taking type argument of primitive type`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.PrimitiveJavaHiddenGenericPutJoin.put") == null)
     }
 
     @Test

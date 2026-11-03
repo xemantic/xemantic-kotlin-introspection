@@ -2187,7 +2187,9 @@ internal class DefaultKotlinIntrospector(
      *   of Java not nullable, see [withNotNullableParameters], like the `K!` of `computeIfAbsent` of a Java subclass
      *   of `java.util.HashMap<K, V>`, of the same signature for the compiler as a Kotlin member taking `K`, see [isMergedWith],
      *   but the boxed primitive ones, like the `Int?` of `java.lang.Integer`, of another JVM method than a Kotlin `Int`,
-     *   told only when needed.
+     *   told only when needed; a boxed parameter rendered as not nullable, like the `Int` of `put(@NotNull Integer)`,
+     *   or one of a type argument, like the `put(T)` of a Java class given `Integer`, is told apart by its JVM type instead,
+     *   see [InheritedCandidate.isJvmPrimitiveRivalry].
      * @param typeParameters the type parameters the [member] refers to, the not nullable ones, see [TypeParameterScope],
      *   also like the `U` of a `U : Any` of the inheriting class, given for the `T` of a `T & Any` of the [member].
      * @param isHidden whether the [member] is deprecated as hidden, so that it is not inherited,
@@ -2344,24 +2346,34 @@ internal class DefaultKotlinIntrospector(
                     !isJvmPrimitiveRivalry(other))
 
         /**
-         * Whether a value parameter of the [member] is of a primitive JVM type, where the one of the [other] candidate is not,
-         * or the other way round, like the `Int` of `put(int)` and the one of a `put(@NotNull Integer)`, or of `put(T)`
-         * of a Java class given `Integer` for `T`, so that they are JVM methods of their own, which the compiler does not merge,
-         * see [jvmPrimitiveParameters].
+         * Whether a value parameter of the [member] is of a primitive JVM type, where the one of the [other] candidate,
+         * a member of a Java class, is of a boxed, or another reference, type, or the other way round,
+         * like the `Int` of `put(int)` and the one of a `put(@NotNull Integer)`, or of `put(T)` of a Java class given `Integer`,
+         * so that they are JVM methods of their own, which the compiler does not merge, see [jvmPrimitiveParameters],
+         * while the `put(t: T)` of a Kotlin `G<Int>` is merged with `put(key: Int)`, as one intersection override with a bridge.
          */
-        private fun isJvmPrimitiveRivalry(other: InheritedCandidate): Boolean {
+        fun isJvmPrimitiveRivalry(other: InheritedCandidate): Boolean {
             val primitives = jvmPrimitiveParameters ?: return false
             val otherPrimitives = other.jvmPrimitiveParameters ?: return false
-            return primitives.size == otherPrimitives.size && primitives.indices.any { primitives[it] != otherPrimitives[it] }
+            return primitives.size == otherPrimitives.size && primitives.indices.any { index ->
+                val primitive = primitives[index]
+                val otherPrimitive = otherPrimitives[index]
+                primitive != null && otherPrimitive != null && primitive != otherPrimitive
+            }
         }
 
-        // whether each value parameter of the function is of a primitive JVM type, by its JVM signature,
-        // of a member of a Java class, of a JVM-only member, or else told by the metadata, or null if unknown
-        private val jvmPrimitiveParameters: List<Boolean>? by lazy(LazyThreadSafetyMode.NONE) {
+        // whether each value parameter of the function is of a primitive JVM type, true, by its JVM signature,
+        // of a member of a Java class, of a JVM-only member, or else told by the metadata, or of a reference type, false,
+        // told only of a member of a Java class, as the erased one of a Kotlin member, or of a JVM-only one, like Object of T,
+        // might stand for a primitive type argument, so that it is null, as the whole list, if the signature is unknown
+        private val jvmPrimitiveParameters: List<Boolean?>? by lazy(LazyThreadSafetyMode.NONE) {
             val function = (member as? Member.Function)?.declaration ?: return@lazy null
             val descriptor = (jvmMethod?.signature ?: function.signature)?.descriptor ?: return@lazy null
-            AsmType.getArgumentTypes(descriptor).takeLast(function.valueParameters.size)
-                .map { it.sort in AsmType.BOOLEAN..AsmType.DOUBLE }
+            val isJavaMember = declarations is JavaClass
+            // the Continuation of a suspend function follows its value parameters
+            AsmType.getArgumentTypes(descriptor).let { if (function.isSuspend) it.dropLast(1) else it.toList() }
+                .takeLast(function.valueParameters.size)
+                .map { type -> if (type.sort in AsmType.BOOLEAN..AsmType.DOUBLE) true else if (isJavaMember) false else null }
         }
 
         /**
