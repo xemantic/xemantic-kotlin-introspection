@@ -7069,6 +7069,161 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve class with extensions on either supertype reached through Kotlin and through Java without platform type arguments`() {
+        // BoundedReceiverPaths<List<String!>> of Java, whose type argument is not a platform type itself,
+        // is kept by kotlinc next to BoundedReceiverPaths<List<String>> of Kotlin, accepting an extension matching either of them
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverJavaKotlinListPaths"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverJavaKotlinListPaths [page 1/1]
+            class BoundedReceiverJavaKotlinListPaths : com.xemantic.kotlin.introspection.test.other.JavaStringListPaths, BoundedReceiverStringListPaths
+            // from com.xemantic.kotlin.introspection.test
+            fun <T : Any> BoundedReceiverPaths<List<T>>.nonNullListPaths()
+            fun BoundedReceiverPaths<List<String?>>.nullableStringListPaths()
+            fun <P : BoundedReceiverPaths<List<String?>>> P.nullableStringListPathsOf()
+            fun BoundedReceiverPaths<List<String>>.stringListPaths()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extension on supertype of type argument reached through Kotlin and through Java without platform type arguments`() {
+        // like for the class itself, either supertype of its type argument
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverJavaKotlinListPathsSource"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverJavaKotlinListPathsSource [page 1/1]
+            class BoundedReceiverJavaKotlinListPathsSource : BoundedReceiverPathsSource<BoundedReceiverJavaKotlinListPaths>
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverPathsSource<BoundedReceiverPaths<List<String?>>>.nullableStringListPathsSource()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extensions on supertype of platform type argument reached through Java next to another one`() {
+        // BoundedReceiverPaths<(Mutable)List<String!>!> of JavaFlexibleListPaths is left out by kotlinc
+        // next to BoundedReceiverPaths<MutableList<String!>> of JavaStringMutableListPaths, of a type argument which is not a platform type
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverJavaMutableListPaths"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverJavaMutableListPaths [page 1/1]
+            class BoundedReceiverJavaMutableListPaths : com.xemantic.kotlin.introspection.test.other.JavaFlexibleListPaths, com.xemantic.kotlin.introspection.test.other.JavaStringMutableListPaths
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverPaths<MutableList<String>>.mutableStringListPaths()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with raw Kotlin supertype of Java supertype erased to bound of its type parameter`() {
+        // kotlinc erases the raw BoundedReceiverListPaths to BoundedReceiverPaths<List<Any?>>, not to a platform type Any!,
+        // which T : Any would match
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverRawListPaths"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverRawListPaths [page 1/1]
+            class BoundedReceiverRawListPaths : com.xemantic.kotlin.introspection.test.other.JavaRawListPaths
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverPaths<List<Any?>>.anyListPaths()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with raw Kotlin supertype of Java supertype next to same supertype reached through Kotlin`() {
+        // the raw path, BoundedReceiverPaths<List<Any?>>, is the same as the one of Kotlin, adding nothing T : Any would match
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverKotlinRawListPaths"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverKotlinRawListPaths [page 1/1]
+            class BoundedReceiverKotlinRawListPaths : BoundedReceiverAnyListPaths, com.xemantic.kotlin.introspection.test.other.JavaRawListPaths
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverPaths<List<Any?>>.anyListPaths()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with supertype reached through paths doubling at each level`() {
+        // 2^16 distinct types of BoundedReceiverDoubling0 reached through Kotlin and through Java,
+        // walking each of them would take half an hour, only a limited number of them is walked,
+        // still telling that none of them is a BoundedReceiverDoubling0<String>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverDoublingChain"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverDoublingChain [page 1/1]
+            class BoundedReceiverDoublingChain : BoundedReceiverDoubling16<String>
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverDoubling0<*>.doublingPaths()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extension on supertype reached only through Java through more paths than walked`() {
+        // 2^5 distinct types of BoundedReceiverDoublingRows, each one of a platform type argument, all of them kept by kotlinc
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverShortDoublingChain"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverShortDoublingChain [page 1/1]
+            class BoundedReceiverShortDoublingChain : BoundedReceiverDoubling5<String>
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverDoublingRows<MutableList<MutableList<MutableList<MutableList<MutableList<MutableList<String>>>>>>>.doublingMutableRows()
+            fun BoundedReceiverDoubling0<*>.doublingPaths()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extension on supertype reached through Kotlin after more paths through Java than walked`() {
+        // BoundedReceiverDoublingRows<List<…>> of BoundedReceiverDoublingPad24, reached after 2^5 platform ones, is the only one kotlinc keeps
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverDoublingPadChain"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverDoublingPadChain [page 1/1]
+            class BoundedReceiverDoublingPadChain : BoundedReceiverDoubling5<String>, BoundedReceiverDoublingPad24
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverDoubling0<*>.doublingPaths()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with raw Kotlin supertype of Java supertype erased to not nullable bound of its type parameter`() {
+        // kotlinc erases the raw BoundedReceiverCharSequenceListPaths to BoundedReceiverPaths<List<CharSequence>>, not to CharSequence!
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverRawCharSequenceListPaths"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverRawCharSequenceListPaths [page 1/1]
+            class BoundedReceiverRawCharSequenceListPaths : com.xemantic.kotlin.introspection.test.other.JavaRawCharSequenceListPaths
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverPaths<List<CharSequence>>.charSequenceListPaths()
+            fun <T : Any> BoundedReceiverPaths<List<T>>.nonNullListPaths()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with raw Kotlin supertype of Java supertype erased through type parameter bounding its type parameter`() {
+        // B of <A, B : A> is erased through A, to Any?, not to Any!
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverRawBoundedListPaths"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverRawBoundedListPaths [page 1/1]
+            class BoundedReceiverRawBoundedListPaths : com.xemantic.kotlin.introspection.test.other.JavaRawBoundedListPaths
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverPaths<List<Any?>>.anyListPaths()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with erased type argument of raw Kotlin supertype substituted for type parameter of Java supertype as platform type`() {
+        // CharSequence, the erasure of T : CharSequence, is CharSequence! in BoundedReceiverPaths<(Mutable)List<CharSequence!>!> of JavaListPathsOf
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverRawCharSequenceJavaListPaths"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverRawCharSequenceJavaListPaths [page 1/1]
+            class BoundedReceiverRawCharSequenceJavaListPaths : com.xemantic.kotlin.introspection.test.other.JavaRawCharSequenceJavaListPaths
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverPaths<List<CharSequence>>.charSequenceListPaths()
+            fun <T : Any> BoundedReceiverPaths<List<T>>.nonNullListPaths()
+            fun BoundedReceiverPaths<List<CharSequence?>>.nullableCharSequenceListPaths()
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve class comparable through raw Java supertype without extensions on comparable of its package`() {
         // the Comparable of the raw JavaGenericComparable, told only by its name, is comparable to the raw type,
         // so that kotlinc accepts none of the extensions on Comparable of the package, like Comparable<BoundedReceiverMoney>,
