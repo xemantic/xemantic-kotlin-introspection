@@ -43,6 +43,7 @@ import java.util.jar.JarOutputStream
 import java.util.jar.Manifest
 import kotlin.io.path.createDirectories
 import kotlin.io.path.outputStream
+import kotlin.io.path.readBytes
 import kotlin.io.path.writeBytes
 import kotlin.metadata.KmClassifier
 import kotlin.metadata.KmType
@@ -330,6 +331,131 @@ class ClassLoaderIntrospectionTest {
             fun on(event: RelocatedOther)
         }
     """.trimIndent()
+
+    @Test
+    fun `should list members inherited from relocated supertype of relocated class`() {
+        // given
+        val classFiles = arrayOf("RelocatedInheritedBase.class", "RelocatedInheritedImpl.class", "RelocatedEvent.class")
+        val root = isolatedTestFixturesCopy("relocatedInherited", *classFiles)
+        relocatedCopy(root, *classFiles)
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("shaded.com.xemantic.kotlin.introspection.isolated.RelocatedInheritedImpl.inherited")
+
+        // then
+        // the supertype, named by its metadata name, is found by its relocated name
+        signature sameAsKotlin """
+            // shaded.com.xemantic.kotlin.introspection.isolated.RelocatedInheritedImpl.inherited [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.isolated.RelocatedInheritedBase
+            fun inherited(event: com.xemantic.kotlin.introspection.isolated.RelocatedEvent)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should list members inherited from relocated supertype of class which is not relocated`() {
+        // given
+        // like an app shading its dependencies, rewriting the references of its own classes to them, but not the Kotlin metadata
+        val dependencies = arrayOf("RelocatedInheritedBase.class", "RelocatedEvent.class")
+        val root = isolatedTestFixturesCopy("relocatedInheritedDependency", *dependencies, "RelocatedInheritedImpl.class")
+        relocatedCopy(root, *dependencies, dependents = listOf("RelocatedInheritedImpl.class"))
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.RelocatedInheritedImpl.inherited")
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.RelocatedInheritedImpl.inherited [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.isolated.RelocatedInheritedBase
+            fun inherited(event: RelocatedEvent)
+        """.trimIndent()
+    }
+
+    /**
+     * Copies the dependencies of the `RelocatedJavaBaseImpl`, which is not relocated itself, to the [root] directory,
+     * relocated, like by shading, together with the class depending on them, see [relocatedCopy].
+     */
+    private fun relocatedJavaBaseDependencies(root: Path) {
+        val dependencies = arrayOf("RelocatedJavaBase.class", "RelocatedDefaultInterface.class", "RelocatedEvent.class")
+        relocatedCopy(root, *dependencies, dependents = listOf("RelocatedJavaBaseImpl.class"))
+    }
+
+    @Test
+    fun `should list member inherited from relocated Kotlin interface of relocated Java supertype once`() {
+        // given
+        val root = isolatedTestFixturesCopy(
+            "relocatedJavaBase", "RelocatedJavaBase.class", "RelocatedDefaultInterface.class", "RelocatedEvent.class",
+            "RelocatedJavaBaseImpl.class"
+        )
+        relocatedJavaBaseDependencies(root)
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.RelocatedJavaBaseImpl.kf")
+
+        // then
+        // the Kotlin interface, named by its relocated name among the supertypes of the relocated Java class,
+        // is the one named by its metadata name among the supertypes of the class
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.RelocatedJavaBaseImpl.kf [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.isolated.RelocatedDefaultInterface
+            open fun kf(event: RelocatedEvent)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should list member inherited from original Java supertype when relocated one cannot be described`() {
+        // given
+        val shadedRoot = tempDir.resolve("relocatedJavaBaseNextToOriginal")
+        relocatedJavaBaseDependencies(shadedRoot)
+        val root = isolatedTestFixturesCopy("originalJavaBase", "RelocatedJavaBaseImpl.class")
+        val introspector = KotlinIntrospector(
+            URLClassLoader(arrayOf(shadedRoot.toUri().toURL(), root.toUri().toURL()), javaClass.classLoader)
+        )
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.RelocatedJavaBaseImpl.jm")
+
+        // then
+        // kotlin-reflect cannot describe the relocated Java class, implementing the relocated Kotlin interface
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.RelocatedJavaBaseImpl.jm [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.isolated.RelocatedJavaBase
+            fun jm(arg0: RelocatedEvent?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should tell shrunk override of relocated Java supertype next to overload taking relocated class of the same simple name`() {
+        // given
+        // like an app shading its dependencies, and shrinking its classes, removing the JVM method of the override
+        val dependencies = arrayOf("RelocatedEventListener.class", "RelocatedEvent.class", "sub/RelocatedEvent.class")
+        val dependent = "RelocatedShrunkEventListener.class"
+        val root = isolatedTestFixturesCopy("relocatedShrunkOverride", *dependencies, dependent)
+        relocatedCopy(root, *dependencies, dependents = listOf(dependent))
+        val dependentFile = root.resolve("com/xemantic/kotlin/introspection/isolated/$dependent")
+        dependentFile.writeBytes(
+            withoutMethods(dependentFile.readBytes()) { name, descriptor ->
+                name == "handle" && descriptor == "(Lshaded/com/xemantic/kotlin/introspection/isolated/RelocatedEvent;)V"
+            }
+        )
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.RelocatedShrunkEventListener")
+
+        // then
+        // the JVM method of the overload, the only one of its shape, is not paired with both JVM signatures of the metadata,
+        // which would relocate RelocatedEvent to the subpackage, and the package of the Java interface to two packages
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.RelocatedShrunkEventListener [page 1/1]
+            class RelocatedShrunkEventListener : RelocatedEventListener {
+                override fun handle(event: RelocatedEvent)
+                fun handle(event: com.xemantic.kotlin.introspection.isolated.sub.RelocatedEvent)
+            }
+        """.trimIndent()
+    }
 
     @Test
     fun `should tell override of method of relocated Java supertype of class which is not relocated`() {
@@ -1638,6 +1764,30 @@ class ClassLoaderIntrospectionTest {
         // read from the class file the first time, and loaded the second time, rather than never again
         assert(signatures.all { it != null && "class AbsentSubclass : Absent" in it })
         assert(classLoader.loads[subclass] == 2)
+    }
+
+    @Test
+    fun `should read class file of class which is not relocated once for its relocated dependencies and its JVM methods`() {
+        // given
+        val target = "com.xemantic.kotlin.introspection.test.AppListener"
+        val classLoader = CountingClassLoader(javaClass.classLoader)
+        val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
+
+        // when
+        val signature = introspector.resolve(target)
+
+        // then
+        // once for the declarations, and once for the overrides, both whether the dependencies are relocated,
+        // as the Java method of the name of the overload takes a class which might be relocated,
+        // and whether the overload is shrunk, as it overrides no Java method
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.AppListener [page 1/1]
+            class AppListener : com.xemantic.kotlin.introspection.test.other.JavaAppListener {
+                override fun on(event: AppListenedEvent)
+                fun on(event: AppListenedOther)
+            }
+        """.trimIndent()
+        assert(classLoader.reads[target] == 2)
     }
 
     @Test
