@@ -537,7 +537,7 @@ internal fun KFunction<*>.toKmFunction(typeParameters: ReflectedTypeParameters):
     enhanceDefinitelyNotNull(function)
     enhanceNullableReturn(function)
     // the annotations win over the enhancements of the JDK methods overridden, like the @NotNull of a get() of a WeakReference
-    reflectedValue(default = null) { javaMethod }?.let { enhanceJavaNullability(it, function) }
+    method.value?.let { enhanceJavaNullability(it, function) }
     return function
 }
 
@@ -1023,9 +1023,17 @@ internal val NOT_NULL_PARAMETER_JDK_METHODS: Map<String, Set<Int>> = mapOf(
     "java/util/function/Predicate.test(Ljava/lang/Object;)Z" to setOf(0)
 )
 
-// the names and JVM descriptors of the methods, like `addFirst(Ljava/lang/Object;)V`, see isNotNullClassTypeParameter
-private val notNullParameterJdkMethodDescriptors: Set<String> =
-    NOT_NULL_PARAMETER_JDK_METHODS.keys.mapTo(HashSet()) { it.substringAfter('.') }
+// telling most methods apart without computing their JVM descriptors, see isNotNullClassTypeParameter
+private val notNullParameterJdkMethodNames: Set<String> =
+    NOT_NULL_PARAMETER_JDK_METHODS.keys.mapTo(HashSet()) { it.substringAfter('.').substringBefore('(') }
+
+// the JVM signatures of NOT_NULL_PARAMETER_JDK_METHODS by the names and JVM descriptors of the methods,
+// like `addFirst(Ljava/lang/Object;)V`, and by the positions of their value parameters, see isNotNullClassTypeParameter
+private val notNullParameterJdkMethodSignatures: Map<String, Map<Int, Set<String>>> =
+    NOT_NULL_PARAMETER_JDK_METHODS.entries.groupBy { it.key.substringAfter('.') }.mapValues { (_, entries) ->
+        entries.flatMap { (signature, positions) -> positions.map { it to signature } }
+            .groupBy({ it.first }, { it.second }).mapValues { it.value.toSet() }
+    }
 
 /**
  * Whether the value parameter at the [position] of the [method], of a type parameter of its class,
@@ -1046,11 +1054,10 @@ internal fun isNotNullClassTypeParameter(method: Method, position: Int, isConver
     if (!declaringClass.isJdkClass) return false
     // like java.util.List, described as kotlin.collections.List
     if (declaringClass.kotlin.qualifiedName != declaringClass.canonicalName) return true
-    val nameAndDescriptor = method.name + AsmType.getMethodDescriptor(method)
-    if (nameAndDescriptor in notNullParameterJdkMethodDescriptors &&
-        method.overridesAnyOf(nameAndDescriptor, NOT_NULL_PARAMETER_JDK_METHODS.filterValues { position in it }.keys)
-    ) {
-        return true
+    if (method.name in notNullParameterJdkMethodNames) {
+        val nameAndDescriptor = method.name + AsmType.getMethodDescriptor(method)
+        val signatures = notNullParameterJdkMethodSignatures[nameAndDescriptor]?.get(position)
+        if (signatures != null && method.overridesAnyOf(nameAndDescriptor, signatures)) return true
     }
     return isConverted && AsmType.getInternalName(declaringClass) in PURE_IMPLEMENTATIONS && overridesBuiltinJavaMethod(method)
 }

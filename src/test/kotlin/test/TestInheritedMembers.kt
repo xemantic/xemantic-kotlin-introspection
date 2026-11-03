@@ -273,6 +273,19 @@ abstract class InheritedKotlinContainsList : java.util.AbstractList<String>() {
 
 abstract class InheritedKotlinContainsListSub : InheritedKotlinContainsList()
 
+abstract class InheritedJavaCollectionDiamond : java.util.AbstractList<String>(), Collection<String>
+
+open class OverridingJavaComparableFirstList<E : Comparable<E>> :
+    com.xemantic.kotlin.introspection.test.other.JavaComparableFirstList<E>() {
+    override fun addFirst(element: E?) {}
+}
+
+class OverridingJavaComparableFirstListSub : OverridingJavaComparableFirstList<String>()
+
+abstract class InheritedNullableContainsList : java.util.AbstractList<String>() {
+    override fun contains(element: String?): Boolean = true
+}
+
 interface MergedComputeIfAbsent : MutableMap<String, String> {
     override fun computeIfAbsent(key: String, mappingFunction: java.util.function.Function<in String, out String>): String
 }
