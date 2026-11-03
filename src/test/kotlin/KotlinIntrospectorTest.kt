@@ -5766,6 +5766,31 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve parameter of Java override of class marked by NullMarked overriding nullable parameter as platform type`() {
+        // the own mark tells the parameter not nullable, the overridden method nullable, which the compiler takes as accepting null,
+        // while the own mark wins for the return type
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaNullMarkedOverriding.lookup"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaNullMarkedOverriding.lookup [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNullMarkedOverriding
+            abstract override fun lookup(arg0: String?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java override marked by NullUnmarked in class marked by NullMarked of platform types`() {
+        // the method marked by @NullUnmarked inherits no annotation of the method it overrides
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaNullMarkedOverriding.other"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaNullMarkedOverriding.other [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNullMarkedOverriding
+            abstract override fun other(arg0: String?): String
+        """.trimIndent()
+    }
+
+    @Test
     fun `should keep nullable return type of JDK method overridden by Java class reached through raw supertype`() {
         // the V? of the get of java.util.HashMap, erased to Any?
         resolver.resolve(

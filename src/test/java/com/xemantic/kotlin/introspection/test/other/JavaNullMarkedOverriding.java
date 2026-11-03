@@ -20,12 +20,21 @@ package com.xemantic.kotlin.introspection.test.other;
 
 /**
  * A Java class marked by {@code @NullMarked} of JSpecify, overriding the methods of {@code JavaAnnotatedBase} not annotated,
- * whose types the compiler takes as not nullable by its own mark, rather than as the overridden ones are annotated.
+ * whose types the compiler takes as not nullable by its own mark, rather than as the overridden ones are annotated,
+ * but a parameter of an overridden nullable one, taken as a platform type, and the types of a method marked by {@code @NullUnmarked},
+ * which inherits nothing, of platform types.
  */
 @org.jspecify.annotations.NullMarked
 public abstract class JavaNullMarkedOverriding extends JavaAnnotatedBase<String> {
 
     @Override
     public abstract String find(String key);
+
+    @Override
+    public abstract String lookup(String key);
+
+    @Override
+    @org.jspecify.annotations.NullUnmarked
+    public abstract String other(String key);
 
 }
