@@ -394,6 +394,8 @@ interface PrimitivePairPut {
 
 abstract class BoxedPairJavaPut : com.xemantic.kotlin.introspection.test.other.JavaBoxedPairPut()
 
+abstract class MixedPairJavaPut : com.xemantic.kotlin.introspection.test.other.JavaMixedPairPut()
+
 interface PrimitivePutRedeclaring : PrimitivePut
 
 abstract class BoxedJavaPutBelowInterface : com.xemantic.kotlin.introspection.test.other.JavaBoxedPutBelowInterface()

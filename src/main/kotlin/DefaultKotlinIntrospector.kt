@@ -2375,7 +2375,8 @@ internal class DefaultKotlinIntrospector(
          * Whether the [member], of a Java class, overrides none of the Kotlin members the override resolver tells,
          * like the `put(@NotNull Integer)` of a Java class the `put(key: Int)` of a Kotlin interface,
          * which the `put(int)` of its Java superclass implements, see [takesReferenceForPrimitiveOf],
-         * nor a Java method, see [overridesJavaMember].
+         * nor a Java method, see [overridesJavaMember], like the `put(int, Integer)` of a Java class
+         * the `put(Integer, Integer)` of its Java interface, see [overridesJavaMemberOnlyByKotlinTypes].
          */
         var isOverridingNothing: Boolean = false
 
@@ -2581,24 +2582,32 @@ internal class DefaultKotlinIntrospector(
             } == true
 
         /**
-         * Whether the [member], of a Java class, overrides a Java method, see [OverrideResolver.overriddenJavaMembers],
-         * like the `put(Integer)` of a Java class the one of its Java interface, taking the same JVM types,
-         * unlike the `put(int)` of a Java superclass,
-         * which the override resolver matches regardless of the primitive types, see [takesReferenceForPrimitiveOf].
+         * Whether the [member] overrides a Java method, see [OverrideResolver.overriddenJavaMembers],
+         * like the `put(Integer)` of a Java class the one of its Java interface, of the same primitive JVM types, see [javaDescriptor].
          */
-        val overridesJavaMember: Boolean
-            get() {
-                val descriptor = jvmMethod?.signature?.descriptor ?: return overriddenJavaMembers.isNotEmpty()
-                val parameters = AsmType.getArgumentTypes(descriptor)
-                return overriddenJavaMembers.any { key ->
-                    val overridden = AsmType.getArgumentTypes("(" + key.substringAfter('#').substringAfter('('))
-                    overridden.size != parameters.size ||
-                        overridden.indices.none { overridden[it].isPrimitive && !parameters[it].isPrimitive }
-                }
-            }
+        val overridesJavaMember: Boolean get() = overriddenJavaMembers.isNotEmpty()
+
+        /**
+         * Whether the override resolver matches the [member], of a Java class, with Java methods only regardless of the primitive types,
+         * like the `put(int, Integer)` of a Java class with the `put(Integer, Integer)` of its Java interface, which it does not override.
+         */
+        val overridesJavaMemberOnlyByKotlinTypes: Boolean
+            get() = javaDescriptor?.let { descriptor -> AsmType.getArgumentTypes(descriptor).any { it.isPrimitive } } == true &&
+                overriddenJavaMembers.isEmpty() && overriddenJavaMembersByKotlinTypes.isNotEmpty()
+
+        // the JVM descriptor of the member of a Java class, telling its primitive types, see OverrideResolver.overriddenJavaMembers
+        private val javaDescriptor: String? get() = jvmMethod?.signature?.descriptor?.takeIf { declarations is JavaClass }
 
         // the keys of the JVM methods the member overrides, see overrides
         private val overriddenJavaMembers: Set<String> by lazy(LazyThreadSafetyMode.NONE) {
+            val function = (member as? Member.Function)?.declaration
+            val owner = declarations.overrideOwner
+            if (function == null || owner == null) emptySet() else overrideResolver.overriddenJavaMembers(owner, function, javaDescriptor)
+        }
+
+        // the keys of the JVM methods the override resolver matches by the Kotlin types of the member,
+        // see overridesJavaMemberOnlyByKotlinTypes
+        private val overriddenJavaMembersByKotlinTypes: Set<String> by lazy(LazyThreadSafetyMode.NONE) {
             val function = (member as? Member.Function)?.declaration
             val owner = declarations.overrideOwner
             if (function == null || owner == null) emptySet() else overrideResolver.overriddenJavaMembers(owner, function)
@@ -2872,8 +2881,14 @@ internal class DefaultKotlinIntrospector(
         // a Java method taking a boxed type, like put(Integer), never overrides a Kotlin member taking a primitive type there,
         // like put(key: Int), which the override resolver matches regardless of the nullability, see takesReferenceForPrimitiveOf
         val candidatesByKey by lazy(LazyThreadSafetyMode.NONE) { candidates.groupBy { it.key } }
+        // and neither does a Java method a Java one of other primitive types, like put(int, Integer) the put(Integer, Integer)
+        // of a Java interface, which the override resolver matches by the Kotlin types, see overridesJavaMemberOnlyByKotlinTypes
         candidates.forEach { candidate ->
-            if (candidate.declarations !is JavaClass || candidate.overridden.isEmpty()) return@forEach
+            if (candidate.declarations !is JavaClass) return@forEach
+            if (candidate.overridden.isEmpty()) {
+                if (candidate.overridesJavaMemberOnlyByKotlinTypes) candidate.isOverridingNothing = true
+                return@forEach
+            }
             val overridden = candidate.overridden.filterTo(HashSet()) { key ->
                 candidatesByKey[key].orEmpty().none { candidate.takesReferenceForPrimitiveOf(it) }
             }
@@ -3118,7 +3133,10 @@ internal class DefaultKotlinIntrospector(
         val hasJavaCandidates = candidates.any { it.jvmMethod != null && !it.isHidden }
         fun collectJavaOverrides(overrides: JavaOverrides, candidates: List<InheritedCandidate>) {
             candidates.filter { it.declarations !is BuiltinClass }.forEach { candidate ->
-                (candidate.member as? Member.Function)?.let { overrides.collect(candidate.declarations.overrideOwner, it.declaration) }
+                (candidate.member as? Member.Function)?.let { function ->
+                    val jvmDescriptor = candidate.jvmMethod?.signature?.descriptor?.takeIf { candidate.declarations is JavaClass }
+                    overrides.collect(candidate.declarations.overrideOwner, function.declaration, jvmDescriptor)
+                }
             }
         }
         if (hasJavaCandidates) collectJavaOverrides(hiddenJavaOverrides, hiddenCandidates)
@@ -3377,8 +3395,8 @@ internal class DefaultKotlinIntrospector(
         /**
          * Collect the JVM methods which the [function] of the [owner] overrides, by its JVM signature too.
          */
-        fun collect(owner: OverrideResolver.Owner?, function: KmFunction) {
-            owner?.let { members += overrideResolver.overriddenJavaMembers(it, function) }
+        fun collect(owner: OverrideResolver.Owner?, function: KmFunction, jvmDescriptor: String? = null) {
+            owner?.let { members += overrideResolver.overriddenJavaMembers(it, function, jvmDescriptor) }
             function.signature?.let { signatures += it }
         }
 
