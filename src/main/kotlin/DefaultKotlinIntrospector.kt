@@ -2278,6 +2278,12 @@ internal class DefaultKotlinIntrospector(
         var implementationModality: Modality? = null
 
         /**
+         * The Java class whose method the [implementationModality] is of, if told, which the visible override
+         * of a supertype which is not part of the API below it wins over, see [inheritedCandidates], or `null`.
+         */
+        var implementingClass: Class<*>? = null
+
+        /**
          * The modality of the method of the nearest Java interface declaring the [member] again, like abstract,
          * which the [implementationModality] of a Java class wins over, wherever walked, see [inheritedCandidates], or `null`.
          */
@@ -2755,7 +2761,10 @@ internal class DefaultKotlinIntrospector(
             // the implementation of a Java class wins over the declaration of a Java interface, also walked before it
             (implemented + redeclared).forEach {
                 when {
-                    !isJavaInterface -> if (it.implementationModality == null) it.implementationModality = modality
+                    !isJavaInterface -> if (it.implementationModality == null) {
+                        it.implementationModality = modality
+                        it.implementingClass = javaClass.clazz
+                    }
                     modality == Modality.ABSTRACT && it.kmClass.name == ANY_CLASS_NAME -> {}
                     it.interfaceModality == null -> it.interfaceModality = modality
                 }
@@ -2801,13 +2810,30 @@ internal class DefaultKotlinIntrospector(
         // a member standing for the visible override of a supertype which is not part of the API is of its modality as well,
         // of the nearest one, like the f() of a Kotlin interface implemented by an internal class, open,
         // or the run() of java.lang.Runnable implemented by a member with a body of an internal interface,
-        // which overridingBelow does not tell, as the compiler generates only a bridge to it in the inheriting class
+        // which overridingBelow does not tell, as the compiler generates only a bridge to it in the inheriting class,
+        // while the one of a class wins over the ones of the interfaces, whatever the order of the supertypes,
+        // also when abstract, like the compiler picks the member of the superclass, and implements with it
+        // the member of an interface it does not override, merged with it, like a redeclaration,
+        // and over the implementation of a Java class above it, like intValue() of java.util.concurrent.atomic.AtomicInteger
         val unlistedOverrides = unlistedKotlinCandidates.filter { !it.isHidden }
-        if (unlistedOverrides.isNotEmpty()) candidates.forEach { candidate ->
-            if (candidate.isHidden || !candidate.isApi || candidate.implementationModality != null) return@forEach
-            val overriding = unlistedOverrides.filter { it.overrides(candidate) }
+        fun nearest(overriding: List<InheritedCandidate>) =
             overriding.firstOrNull { nearest -> overriding.none { it !== nearest && it.overrides(nearest) } }
-                ?.let { candidate.implementationModality = it.member.modality }
+        if (unlistedOverrides.isNotEmpty()) candidates.forEach { candidate ->
+            if (candidate.isHidden || !candidate.isApi) return@forEach
+            val isInterfaceMember = candidate.kmClass.kind == ClassKind.INTERFACE
+            val (classOverrides, interfaceOverrides) = unlistedOverrides
+                .filter { it.overrides(candidate) || (isInterfaceMember && it.isMergedWith(candidate)) }
+                .partition { it.kmClass.kind != ClassKind.INTERFACE }
+            val implementing = candidate.implementingClass
+            val override = when {
+                candidate.implementationModality == null ->
+                    nearest(classOverrides) ?: nearest(interfaceOverrides.filter { it.overrides(candidate) })
+                implementing != null -> nearest(classOverrides)?.takeIf { override ->
+                    reflectedValue(default = false) { override.declarations.clazz?.let(implementing::isAssignableFrom) == true }
+                }
+                else -> null
+            }
+            override?.let { candidate.implementationModality = it.member.modality }
         }
 
         // the declared members override the inherited ones, matched by the overridden keys,
@@ -8474,7 +8500,8 @@ private val UNREPORTED_HIDDEN_ANY_MEMBERS = setOf("toString", "hashCode")
 
 /**
  * Whether the function, of a class, overrides one of the [UNREPORTED_HIDDEN_ANY_MEMBERS], told by its Kotlin signature,
- * taking nothing, as its JVM signature is mangled in a value class, like `toString-impl(Ljava/lang/String;)`,
+ * taking nothing, as the JVM signature of `toString()` is mangled in a value class, like `toString-impl(Ljava/lang/String;)`,
+ * which cannot override `hashCode()`,
  * while a top-level function of the same JVM signature, of a file facade, overrides nothing.
  */
 @OptIn(ExperimentalContextParameters::class)
