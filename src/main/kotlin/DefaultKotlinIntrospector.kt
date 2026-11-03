@@ -2278,8 +2278,7 @@ internal class DefaultKotlinIntrospector(
 
         /**
          * The Java class whose method the [implementationModality] is of, if told, which the visible override
-         * of a supertype which is not part of the API below it wins over, see [inheritedCandidates], or `null`,
-         * also once it does.
+         * of a supertype which is not part of the API below it wins over, see [inheritedCandidates], or `null`.
          */
         var implementingClass: Class<*>? = null
 
@@ -2822,32 +2821,35 @@ internal class DefaultKotlinIntrospector(
         // implementing the abstract one of an internal class, merged with the member of an unrelated interface,
         // and over the implementation of a Java class above it, like intValue() of java.util.concurrent.atomic.AtomicInteger
         val unlistedOverrides = unlistedKotlinCandidates.filter { !it.isHidden }
-        val classMembers = candidates.filter {
-            !it.isHidden && it.declarations !is JavaClass && it.kmClass.kind != ClassKind.INTERFACE
-        }
-        fun nearest(overriding: List<InheritedCandidate>) =
-            overriding.firstOrNull { nearest -> overriding.none { it !== nearest && it.overrides(nearest) } }
-        if (unlistedOverrides.isNotEmpty()) candidates.forEach { candidate ->
-            val implementing = candidate.implementingClass
-            if (candidate.isHidden || !candidate.isApi || (candidate.implementationModality != null && implementing == null)) {
-                return@forEach
+        if (unlistedOverrides.isNotEmpty()) {
+            val classMembers = candidates.filter {
+                !it.isHidden && it.declarations !is JavaClass && it.kmClass.kind != ClassKind.INTERFACE
             }
-            val isInterfaceMember = candidate.kmClass.kind == ClassKind.INTERFACE
-            fun InheritedCandidate.standsFor() =
-                this !== candidate && (overrides(candidate) || (isInterfaceMember && isMergedWith(candidate)))
-            // the members of the classes, but only when one of them is not part of the API, as otherwise listed on their own
-            val classOverride = classMembers.filter { it.standsFor() }.takeIf { members -> members.any { !it.isApi } }
-                ?.let(::nearest)
-            val override = if (implementing == null) {
-                classOverride ?: nearest(unlistedOverrides.filter { it.kmClass.kind == ClassKind.INTERFACE && it.overrides(candidate) })
-            } else {
-                classOverride?.takeIf { override ->
-                    reflectedValue(default = false) { override.declarations.clazz?.let(implementing::isAssignableFrom) == true }
+            val unlistedClassMembers = classMembers.filter { !it.isApi }
+            fun nearest(overriding: List<InheritedCandidate>) =
+                overriding.firstOrNull { nearest -> overriding.none { it !== nearest && it.overrides(nearest) } }
+            candidates.forEach { candidate ->
+                val implementing = candidate.implementingClass
+                if (candidate.isHidden || !candidate.isApi || (candidate.implementationModality != null && implementing == null)) {
+                    return@forEach
                 }
-            }
-            override?.let {
-                candidate.implementationModality = it.member.modality
-                candidate.implementingClass = null
+                val isInterfaceMember = candidate.kmClass.kind == ClassKind.INTERFACE
+                fun InheritedCandidate.standsFor() =
+                    this !== candidate && (overrides(candidate) || (isInterfaceMember && isMergedWith(candidate)))
+                // the members of the classes, but only when one of them is not part of the API, as otherwise listed on their own
+                val classOverride = if (unlistedClassMembers.none { it.standsFor() }) null else {
+                    nearest(classMembers.filter { it.standsFor() })
+                }
+                val override = if (implementing == null) {
+                    classOverride ?: nearest(
+                        unlistedOverrides.filter { it.kmClass.kind == ClassKind.INTERFACE && it.overrides(candidate) }
+                    )
+                } else {
+                    classOverride?.takeIf { override ->
+                        reflectedValue(default = false) { override.declarations.clazz?.let(implementing::isAssignableFrom) == true }
+                    }
+                }
+                override?.let { candidate.implementationModality = it.member.modality }
             }
         }
 
