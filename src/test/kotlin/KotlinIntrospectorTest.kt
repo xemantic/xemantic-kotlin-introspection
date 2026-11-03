@@ -4702,6 +4702,155 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve Java member taking boxed type next to Kotlin one taking type argument of primitive type`() {
+        // put(Integer) is another JVM method than put(Object), as K2 tells a boxed Java type from the Int given for T
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaGenericPutJoin.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaGenericPutJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedPut
+            open fun put(arg0: Int?): String
+            // inherited from com.xemantic.kotlin.introspection.test.GenericPut
+            fun put(t: Int): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking boxed type annotated not null next to Kotlin one taking type argument of primitive type`() {
+        // a concrete subclass does not compile, as the put(@NotNull Integer) does not implement the put(t: T) of GenericPut<Int>
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NotNullBoxedJavaGenericPutJoin.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NotNullBoxedJavaGenericPutJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPut
+            open fun put(arg0: Int): String
+            // inherited from com.xemantic.kotlin.introspection.test.GenericPut
+            fun put(t: Int): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking boxed type annotated not null next to Kotlin ones merged`() {
+        // the put(key: Int) of PrimitivePut and the put(t: T) of GenericPut<Int> are one intersection override, the Java one apart
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NotNullBoxedJavaPrimitiveGenericPutJoin.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NotNullBoxedJavaPrimitiveGenericPutJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPut
+            open fun put(arg0: Int): String
+            // inherited from com.xemantic.kotlin.introspection.test.PrimitivePut
+            fun put(key: Int): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking primitive type next to JVM-only member of map of primitive type keys`() {
+        // the putIfAbsent of MutableMap is the putIfAbsent(Object, Object) of java.util.Map, another JVM method than putIfAbsent(int, String)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.PrimitivePutIfAbsentMap.putIfAbsent") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PrimitivePutIfAbsentMap.putIfAbsent [page 1/1]
+            // inherited from kotlin.collections.MutableMap
+            open fun putIfAbsent(arg0: Int, arg1: String): String?
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaPrimitivePutIfAbsent
+            fun putIfAbsent(arg0: Int, arg1: String?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member taking primitive type next to JVM-only member of map of primitive type keys`() {
+        // a JVM-only member is a Java method, merged with a Kotlin one like a Java member, never on a primitive type
+        resolver.resolve("com.xemantic.kotlin.introspection.test.PrimitiveKeyMapJoin.computeIfAbsent") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PrimitiveKeyMapJoin.computeIfAbsent [page 1/1]
+            // inherited from kotlin.collections.MutableMap
+            open fun computeIfAbsent(arg0: Int, arg1: java.util.function.Function<in Int, out String>): String
+            // inherited from com.xemantic.kotlin.introspection.test.PrimitiveKeyMapMembers
+            fun computeIfAbsent(key: Int, mappingFunction: java.util.function.Function<in Int, out String>): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member taking primitive type and value next to JVM-only member of map of primitive type keys`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.PrimitiveKeyMapJoin.putIfAbsent") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PrimitiveKeyMapJoin.putIfAbsent [page 1/1]
+            // inherited from kotlin.collections.MutableMap
+            open fun putIfAbsent(arg0: Int, arg1: String): String?
+            // inherited from com.xemantic.kotlin.introspection.test.PrimitiveKeyMapMembers
+            fun putIfAbsent(key: Int, value: String): String?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member merged with platform-dependent member of map of primitive type keys`() {
+        // getOrDefault of Map is a built-in member, not a JVM-only one, so that it is merged like a Kotlin one
+        resolver.resolve("com.xemantic.kotlin.introspection.test.PrimitiveKeyMapJoin.getOrDefault") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PrimitiveKeyMapJoin.getOrDefault [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.PrimitiveKeyMapMembers
+            fun getOrDefault(key: Int, defaultValue: String): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member merged with platform-dependent remove of map of primitive type keys`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.PrimitiveKeyMapJoin.remove") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PrimitiveKeyMapJoin.remove [page 1/1]
+            // inherited from kotlin.collections.MutableMap
+            fun remove(key: Int): String?
+            open fun remove(key: Int, value: String): Boolean
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member merged with JVM-only member of map of reference type keys`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.StringKeyMapJoin.computeIfAbsent") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.StringKeyMapJoin.computeIfAbsent [page 1/1]
+            // inherited from kotlin.collections.MutableMap
+            open fun computeIfAbsent(arg0: String, arg1: java.util.function.Function<in String, out String>): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member taking type arguments merged with JVM-only member of map of primitive type keys`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.GenericMapJoin.putIfAbsent") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GenericMapJoin.putIfAbsent [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.GenericMapMembers
+            fun putIfAbsent(key: Int, value: String): String?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member taking type arguments merged with Java member of map of primitive type keys`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.GenericHashMapJoin.putIfAbsent") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GenericHashMapJoin.putIfAbsent [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.GenericMapMembers
+            fun putIfAbsent(key: Int, value: String): String?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member taking type argument of unsigned type merged with one taking unsigned type`() {
+        // the put(t: T) of GenericPut<UInt> takes Object, the put(key: UInt) the mangled int, one intersection override
+        resolver.resolve("com.xemantic.kotlin.introspection.test.GenericUIntPutJoin.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GenericUIntPutJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.GenericPut
+            fun put(t: UInt): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve suspend member taking type argument of primitive type merged with one taking primitive type`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SuspendGenericPrimitivePutJoin.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SuspendGenericPrimitivePutJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.SuspendGenericPut
+            suspend fun put(t: Int): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve vararg member taking type argument of primitive type next to one taking primitive type`() {
+        // Array<out Int> and IntArray are rendered alike, while put(1) is ambiguous in K2
+        resolver.resolve("com.xemantic.kotlin.introspection.test.VarargGenericPrimitivePutJoin.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.VarargGenericPrimitivePutJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.VarargGenericPut
+            fun put(vararg t: Int): String
+            // inherited from com.xemantic.kotlin.introspection.test.VarargPrimitivePut
+            fun put(vararg key: Int): String
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve member of Java map overriding JVM-only member with key and value of same type variable`() {
         // only the value is enhanced, the key stays V! in K2, while V & Any of the V : Comparable<V> does not compile
         resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaSelfKeyMap.merge") sameAsKotlin """

@@ -280,6 +280,66 @@ interface GenericPrimitivePutJoin : GenericPut<Int>, PrimitivePut
 
 abstract class PrimitiveJavaGenericPutJoin : com.xemantic.kotlin.introspection.test.other.JavaPrimitivePut(), GenericPut<Int>
 
+abstract class BoxedJavaGenericPutJoin : com.xemantic.kotlin.introspection.test.other.JavaBoxedPut(), GenericPut<Int>
+
+abstract class NotNullBoxedJavaGenericPutJoin : com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPut(), GenericPut<Int>
+
+abstract class NotNullBoxedJavaPrimitiveGenericPutJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPut(), PrimitivePut, GenericPut<Int>
+
+interface UIntPut {
+    fun put(key: UInt): String
+}
+
+interface GenericUIntPutJoin : GenericPut<UInt>, UIntPut
+
+interface SuspendGenericPut<T> {
+    suspend fun put(t: T): String
+}
+
+interface SuspendPrimitivePut {
+    suspend fun put(key: Int): String
+}
+
+interface SuspendGenericPrimitivePutJoin : SuspendGenericPut<Int>, SuspendPrimitivePut
+
+interface VarargGenericPut<T> {
+    fun put(vararg t: T): String
+}
+
+interface VarargPrimitivePut {
+    fun put(vararg key: Int): String
+}
+
+// put(vararg t: Int) of VarargGenericPut<Int> takes Array<out Int>, the one of VarargPrimitivePut IntArray
+interface VarargGenericPrimitivePutJoin : VarargGenericPut<Int>, VarargPrimitivePut
+
+interface PrimitivePutIfAbsentMap : MutableMap<Int, String>, com.xemantic.kotlin.introspection.test.other.JavaPrimitivePutIfAbsent
+
+interface PrimitiveKeyMapMembers {
+    fun computeIfAbsent(key: Int, mappingFunction: java.util.function.Function<in Int, out String>): String
+    fun putIfAbsent(key: Int, value: String): String?
+    fun getOrDefault(key: Int, defaultValue: String): String
+    fun remove(key: Int, value: String): Boolean
+}
+
+abstract class PrimitiveKeyMapJoin : MutableMap<Int, String>, PrimitiveKeyMapMembers
+
+interface StringKeyMapMembers {
+    fun computeIfAbsent(key: String, mappingFunction: java.util.function.Function<in String, out String>): String
+    fun putIfAbsent(key: String, value: String): String?
+}
+
+abstract class StringKeyMapJoin : MutableMap<String, String>, StringKeyMapMembers
+
+interface GenericMapMembers<K, V> {
+    fun putIfAbsent(key: K, value: V): V?
+}
+
+abstract class GenericMapJoin : MutableMap<Int, String>, GenericMapMembers<Int, String>
+
+abstract class GenericHashMapJoin : java.util.HashMap<Int, String>(), GenericMapMembers<Int, String>
+
 class InheritedFromJava : com.xemantic.kotlin.introspection.test.other.JavaInheritedMid<String>()
 
 open class OpenInheritedFromJava : com.xemantic.kotlin.introspection.test.other.JavaInheritedMid<String>()

@@ -285,22 +285,10 @@ internal fun KmFunction.substituted(substitution: Map<Int, KmType>, names: Map<I
 /**
  * This function with the nullable types of its value parameters not nullable,
  * like the platform types of Java, rendered as nullable, see [toKmFunction], which a Kotlin override declares not nullable,
- * telling the members of the Kotlin supertypes it overrides, see [OverrideResolver.overriddenMembers],
- * but the boxed primitive types, like the `Int?` of `java.lang.Integer`, when [isKeepingBoxed],
- * as they are of another JVM signature than the primitive ones, like `Int` of `int`.
+ * telling the members of the Kotlin supertypes it overrides, see [OverrideResolver.overriddenMembers].
  */
-internal fun KmFunction.withNotNullableParameters(isKeepingBoxed: Boolean = false): KmFunction = copy(
-    valueParameterType = { type ->
-        val isBoxed = isKeepingBoxed && (type.classifier as? KmClassifier.Class)?.name in PRIMITIVE_CLASS_NAMES
-        if (type.isNullable && !isBoxed) type.notNullable() else type
-    }
-)
-
-/**
- * The names of the Kotlin classes of the primitive types of Java, see [withNotNullableParameters].
- */
-private val PRIMITIVE_CLASS_NAMES: Set<String> = setOf(
-    "kotlin/Boolean", "kotlin/Char", "kotlin/Byte", "kotlin/Short", "kotlin/Int", "kotlin/Float", "kotlin/Long", "kotlin/Double"
+internal fun KmFunction.withNotNullableParameters(): KmFunction = copy(
+    valueParameterType = { type -> if (type.isNullable) type.notNullable() else type }
 )
 
 /**

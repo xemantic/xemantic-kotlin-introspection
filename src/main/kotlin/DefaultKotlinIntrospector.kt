@@ -2175,6 +2175,41 @@ internal class DefaultKotlinIntrospector(
     private class JvmMethod(val key: String, val signature: JvmMethodSignature)
 
     /**
+     * A value parameter of the JVM method of an [InheritedCandidate], of the JVM [type],
+     * of a member of a Java class, or of a JVM-only member of a built-in type, when [isJava], see [JvmMethod],
+     * or of a Kotlin member, of a type which [isNullable] as substituted, see [isMergedJvmParameter].
+     */
+    private class JvmParameter(val type: AsmType, val isJava: Boolean, val isNullable: Boolean)
+
+    /**
+     * Whether the compiler merges two members of the same rendered signature, see [InheritedCandidate.isMergedWith],
+     * taking the [parameter] and the [other] one at the same position, which it does, as K2 does, when they are
+     * - of the same JVM type,
+     * - of a primitive JVM type, the other one of a Kotlin member erased from a type parameter, like `put(t: T)` of `G<Int>`
+     *   with `put(key: Int)`, one intersection override through a bridge, but never one of a Java member,
+     *   like `put(Integer)`, or `put(T)` of a Java class given `Integer`, nor of a JVM-only member, like `putIfAbsent` of `MutableMap`,
+     * - of arrays of reference types, as an array of a primitive type is never merged with another one,
+     *   like the `IntArray` of `vararg key: Int` with the `Array<out Int>` of `vararg t: T` of `G<Int>`,
+     * - of reference types otherwise, like the `Object` of `put(T)` of a Java class with the `Integer` of `put(Integer)`,
+     *   but a boxed type of a Java member, like `put(Integer)`, also annotated not null, with the erased one of a Kotlin member
+     *   which is not nullable, like `put(t: T)` of `G<Int>`, unlike of `G<Int?>`.
+     */
+    private fun isMergedJvmParameter(parameter: JvmParameter, other: JvmParameter): Boolean {
+        fun JvmParameter.isBoxedJavaAgainst(kotlin: JvmParameter) =
+            isJava && type.internalName in BOXED_JVM_NAMES && !kotlin.isJava && !kotlin.isNullable
+        return when {
+            parameter.type == other.type -> true
+            parameter.type.isPrimitive || other.type.isPrimitive -> {
+                val reference = if (parameter.type.isPrimitive) other else parameter
+                !reference.isJava && reference.type.sort == AsmType.OBJECT
+            }
+            parameter.type.sort == AsmType.ARRAY && other.type.sort == AsmType.ARRAY ->
+                !parameter.type.elementType.isPrimitive && !other.type.elementType.isPrimitive
+            else -> !parameter.isBoxedJavaAgainst(other) && !other.isBoxedJavaAgainst(parameter)
+        }
+    }
+
+    /**
      * A [member] named like the one looked up, declared by a supertype, the [kmClass] of the [declarations],
      * which is inherited, unless a member of another supertype overrides it, see [inheritedMembers],
      * rendered with the type arguments of the inheriting class substituted, see [Member.substituted].
@@ -2186,10 +2221,8 @@ internal class DefaultKotlinIntrospector(
      * @param notNullableSignature the [signature] of a member of a Java class with its value parameters of the platform types
      *   of Java not nullable, see [withNotNullableParameters], like the `K!` of `computeIfAbsent` of a Java subclass
      *   of `java.util.HashMap<K, V>`, of the same signature for the compiler as a Kotlin member taking `K`, see [isMergedWith],
-     *   but the boxed primitive ones, like the `Int?` of `java.lang.Integer`, of another JVM method than a Kotlin `Int`,
-     *   told only when needed; a boxed parameter rendered as not nullable, like the `Int` of `put(@NotNull Integer)`,
-     *   or one of a type argument, like the `put(T)` of a Java class given `Integer`, is told apart by its JVM type instead,
-     *   see [InheritedCandidate.isJvmPrimitiveRivalry].
+     *   told only when needed, while a boxed parameter, like the `Int?` of `java.lang.Integer`, which becomes `Int`,
+     *   is told apart from a primitive one by its JVM type, see [isMergedJvmParameter].
      * @param typeParameters the type parameters the [member] refers to, the not nullable ones, see [TypeParameterScope],
      *   also like the `U` of a `U : Any` of the inheriting class, given for the `T` of a `T & Any` of the [member].
      * @param isHidden whether the [member] is deprecated as hidden, so that it is not inherited,
@@ -2335,45 +2368,37 @@ internal class DefaultKotlinIntrospector(
         /**
          * Whether the [member] is merged with the one of the [other] candidate, competing with it,
          * as of the same kind, and of the same [signature], also regardless of the platform types of Java of their value parameters,
-         * see [notNullableSignature], but of a primitive JVM type where the other one takes a boxed, or another, one,
-         * see [jvmPrimitiveParameters], or overriding the same member, declared by another supertype,
+         * see [notNullableSignature], unless their value parameters are of JVM types the compiler keeps apart, see [isMergedJvmParameter],
+         * or overriding the same member, declared by another supertype,
          * as the members of the same supertype are its overloads.
          */
         fun isMergedWith(other: InheritedCandidate): Boolean =
             other.kmClass.name != kmClass.name && (other.member is Member.Property) == (member is Member.Property) &&
                 (other.overridden.any { it in overridden } ||
                     (other.signature == signature || other.notNullableSignature == notNullableSignature) &&
-                    !isJvmPrimitiveRivalry(other))
+                    isMergedOnJvm(other))
 
-        /**
-         * Whether a value parameter of the [member] is of a primitive JVM type, where the one of the [other] candidate,
-         * a member of a Java class, is of a boxed, or another reference, type, or the other way round,
-         * like the `Int` of `put(int)` and the one of a `put(@NotNull Integer)`, or of `put(T)` of a Java class given `Integer`,
-         * so that they are JVM methods of their own, which the compiler does not merge, see [jvmPrimitiveParameters],
-         * while the `put(t: T)` of a Kotlin `G<Int>` is merged with `put(key: Int)`, as one intersection override with a bridge.
-         */
-        fun isJvmPrimitiveRivalry(other: InheritedCandidate): Boolean {
-            val primitives = jvmPrimitiveParameters ?: return false
-            val otherPrimitives = other.jvmPrimitiveParameters ?: return false
-            return primitives.size == otherPrimitives.size && primitives.indices.any { index ->
-                val primitive = primitives[index]
-                val otherPrimitive = otherPrimitives[index]
-                primitive != null && otherPrimitive != null && primitive != otherPrimitive
-            }
+        // whether the value parameters of the JVM methods of both members are merged position by position, if both are told
+        private fun isMergedOnJvm(other: InheritedCandidate): Boolean {
+            val parameters = jvmParameters ?: return true
+            val otherParameters = other.jvmParameters ?: return true
+            return parameters.size != otherParameters.size ||
+                parameters.indices.all { isMergedJvmParameter(parameters[it], otherParameters[it]) }
         }
 
-        // whether each value parameter of the function is of a primitive JVM type, true, by its JVM signature,
-        // of a member of a Java class, of a JVM-only member, or else told by the metadata, or of a reference type, false,
-        // told only of a member of a Java class, as the erased one of a Kotlin member, or of a JVM-only one, like Object of T,
-        // might stand for a primitive type argument, so that it is null, as the whole list, if the signature is unknown
-        private val jvmPrimitiveParameters: List<Boolean?>? by lazy(LazyThreadSafetyMode.NONE) {
-            val function = (member as? Member.Function)?.declaration ?: return@lazy null
-            val descriptor = (jvmMethod?.signature ?: function.signature)?.descriptor ?: return@lazy null
-            val isJavaMember = declarations is JavaClass
-            // the Continuation of a suspend function follows its value parameters
-            AsmType.getArgumentTypes(descriptor).let { if (function.isSuspend) it.dropLast(1) else it.toList() }
-                .takeLast(function.valueParameters.size)
-                .map { type -> if (type.sort in AsmType.BOOLEAN..AsmType.DOUBLE) true else if (isJavaMember) false else null }
+        // the value parameters of the JVM method of the function, see JvmParameter, by its JVM signature,
+        // of a member of a Java class, or of a JVM-only member, or else told by the metadata, or null if the signature is unknown
+        private val jvmParameters: List<JvmParameter>? by lazy(LazyThreadSafetyMode.NONE) {
+            val function = member as? Member.Function ?: return@lazy null
+            val descriptor = (jvmMethod?.signature ?: function.declaration.signature)?.descriptor ?: return@lazy null
+            // a JVM-only member is a Java method of its own, see jvmMethod, merged like the members of a Java class
+            val isJava = jvmMethod != null || declarations is JavaClass
+            val valueParameters = function.function.valueParameters
+            // the Continuation of a suspend function follows its value parameters, which its receivers precede
+            AsmType.getArgumentTypes(descriptor).let { if (function.function.isSuspend) it.dropLast(1) else it.toList() }
+                .takeLast(valueParameters.size)
+                .takeIf { it.size == valueParameters.size }
+                ?.zip(valueParameters) { type, parameter -> JvmParameter(type, isJava, parameter.type.isNullable) }
         }
 
         /**
@@ -2609,7 +2634,7 @@ internal class DefaultKotlinIntrospector(
                     signature = signature,
                     notNullableSignature = lazy(LazyThreadSafetyMode.NONE) {
                         val function = (declared as? Member.Function)?.declaration?.takeIf { superDeclarations is JavaClass }
-                        function?.withNotNullableParameters(isKeepingBoxed = true)?.let {
+                        function?.withNotNullableParameters()?.let {
                             Member.Function(it).substituted(substitution, inheritingNames).signature(inheritingNames)
                         } ?: signature
                     },
@@ -7622,6 +7647,14 @@ private class TypeProjections(val projections: Map<Int, KmTypeProjection>) {
     val substitution: Map<Int, KmType> = projections.mapValues { (_, projection) -> projection.type ?: NULLABLE_ANY_TYPE }
     val projected: Set<Int> = projections.filterValues { it.type == null || it.variance != KmVariance.INVARIANT }.keys
 }
+
+// whether the JVM type is a primitive one, like int, see isMergedJvmParameter
+private val AsmType.isPrimitive: Boolean get() = sort in AsmType.BOOLEAN..AsmType.DOUBLE
+
+// the JVM names of the boxed primitive types of Java, like java/lang/Integer, see isMergedJvmParameter
+private val BOXED_JVM_NAMES: Set<String> = listOf(
+    Boolean::class, Char::class, Byte::class, Short::class, Int::class, Float::class, Long::class, Double::class
+).mapTo(HashSet()) { AsmType.getInternalName(it.javaObjectType) }
 
 // the type of Any?, never modified, see TypeProjections
 private val NULLABLE_ANY_TYPE = classType("kotlin/Any", nullable = true)

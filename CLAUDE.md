@@ -80,6 +80,10 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   so a call reported as compiling there may not compile — confirm such a shape in a file of its own,
   assigning the call to a mistyped `val x: Int = …`, whose error names the type it resolves to.
 
+- A call cannot tell whether kotlinc merges two inherited members of the same signature: K2 drops equivalent candidates instead of reporting an ambiguity.
+  Probe it with a concrete class inheriting a Java implementation and a Kotlin abstract member — `does not implement abstract member` means they stay apart.
+  The rule is by JVM parameter types, see `isMergedJvmParameter`.
+
 - Kotlin never passes named arguments to a Java method, even one compiled with `-parameters`, so a Java method taking parameters never shadows an extension — see `isShadowingJavaMethod`.
 
 ## Anti-patterns to avoid
