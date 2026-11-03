@@ -24,6 +24,7 @@ import com.xemantic.kotlin.introspection.test.other.JavaBoxBase
 import com.xemantic.kotlin.introspection.test.other.JavaComparableBase
 import com.xemantic.kotlin.introspection.test.other.JavaFace
 import com.xemantic.kotlin.introspection.test.other.JavaFaceBase
+import com.xemantic.kotlin.introspection.test.other.JavaFlexibleListPaths
 import com.xemantic.kotlin.introspection.test.other.JavaFunctionBase
 import com.xemantic.kotlin.introspection.test.other.JavaGenericComparable
 import com.xemantic.kotlin.introspection.test.other.JavaLinkBase
@@ -46,6 +47,8 @@ import com.xemantic.kotlin.introspection.test.other.JavaRawMapBoth
 import com.xemantic.kotlin.introspection.test.other.JavaRawWildcardMapBoth
 import com.xemantic.kotlin.introspection.test.other.JavaStringCollection
 import com.xemantic.kotlin.introspection.test.other.JavaStringList
+import com.xemantic.kotlin.introspection.test.other.JavaStringListPaths
+import com.xemantic.kotlin.introspection.test.other.JavaStringMutableListPaths
 import com.xemantic.kotlin.introspection.test.other.JavaWildcardRows
 
 // Extensions on type parameter receivers, listed for the classes satisfying their bounds,
@@ -808,3 +811,35 @@ fun <T> BoundedReceiverProducer<List<T>>.produceFirst(): T? = null
 fun <E, T : List<E>> BoundedReceiverProducer<T>.produceElements() {}
 
 class BoundedReceiverNothingProducer : BoundedReceiverProducer<Nothing>
+
+// a supertype reached both through Kotlin and through Java, of type arguments which are not platform types themselves,
+// like BoundedReceiverPaths<List<String!>> of JavaStringListPaths, unlike its nested String!,
+// is kept by kotlinc next to BoundedReceiverPaths<List<String>> of Kotlin, an extension matching either of them accepted
+interface BoundedReceiverPaths<T>
+
+interface BoundedReceiverListPaths<T> : BoundedReceiverPaths<List<T>>
+
+interface BoundedReceiverMutableListPaths<T> : BoundedReceiverPaths<MutableList<T>>
+
+interface BoundedReceiverStringListPaths : BoundedReceiverPaths<List<String>>
+
+class BoundedReceiverJavaKotlinListPaths : JavaStringListPaths, BoundedReceiverStringListPaths
+
+fun BoundedReceiverPaths<List<String>>.stringListPaths() {}
+
+fun BoundedReceiverPaths<List<String?>>.nullableStringListPaths() {}
+
+fun BoundedReceiverPaths<MutableList<String>>.mutableStringListPaths() {}
+
+fun <P : BoundedReceiverPaths<List<String?>>> P.nullableStringListPathsOf() {}
+
+// also as the supertype of a type argument
+interface BoundedReceiverPathsSource<out T>
+
+fun BoundedReceiverPathsSource<BoundedReceiverPaths<List<String?>>>.nullableStringListPathsSource() {}
+
+class BoundedReceiverJavaKotlinListPathsSource : BoundedReceiverPathsSource<BoundedReceiverJavaKotlinListPaths>
+
+// while the one of a platform type argument, like BoundedReceiverPaths<(Mutable)List<String!>!> of JavaFlexibleListPaths,
+// is left out by kotlinc next to another one, like BoundedReceiverPaths<MutableList<String!>> of JavaStringMutableListPaths
+class BoundedReceiverJavaMutableListPaths : JavaFlexibleListPaths, JavaStringMutableListPaths

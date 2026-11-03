@@ -71,6 +71,9 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 
 - Reflecting the members of a class one by one does not get around a missing parameter type, see `reflectedMembersFile`.
 
+- When probing kotlinc with Java fixtures, compile the Java sources with javac first and pass the classes on the classpath:
+  K2 analyzing `.java` sources next to the Kotlin ones crashes in supertype resolution (`ClassCastException`) on shapes like `interface J extends KG<String>` where `KG<T> : R<Array<T>>`.
+
 - Kotlin never passes named arguments to a Java method, even one compiled with `-parameters`, so a Java method taking parameters never shadows an extension — see `isShadowingJavaMethod`.
 
 ## Anti-patterns to avoid
