@@ -682,6 +682,42 @@ abstract class HiddenMergedReabstractingProperty : HiddenMergedInternalImplement
 abstract class HiddenMergedReabstractingPropertyRedeclaringSub :
     HiddenMergedImplementedPropertyRedeclaring, HiddenMergedReabstractingProperty()
 
+@Suppress("EXPOSED_SUPER_CLASS")
+abstract class HiddenMergedFinalImplementedProperty : HiddenMergedInternalImplementedProperty() {
+    final override val x: Int = 2
+}
+
+abstract class HiddenMergedFinalPropertyRedeclaringSub :
+    HiddenMergedImplementedPropertyRedeclaring, HiddenMergedFinalImplementedProperty()
+
+internal abstract class HiddenMergedInternalAbstractProperty {
+    abstract val x: Int
+}
+
+@Suppress("EXPOSED_SUPER_CLASS")
+abstract class HiddenMergedImplementingProperty : HiddenMergedInternalAbstractProperty() {
+    override val x: Int = 1
+}
+
+abstract class HiddenMergedImplementingPropertyRedeclaringSub : HiddenMergedImplementedPropertyRoot, HiddenMergedImplementingProperty()
+
+class HiddenMergedImplementingPropertyRedeclaringConcrete : HiddenMergedImplementingPropertyRedeclaringSub()
+
+// the same with the class first, whose member is listed then
+abstract class HiddenMergedReabstractingClassFirstSub : HiddenMergedReabstracting(), HiddenMergedImplementedRedeclaring
+
+abstract class HiddenMergedFinalClassFirstSub : HiddenMergedFinalImplemented(), HiddenMergedImplementedRedeclaring
+
+abstract class HiddenMergedImplementingClassFirstSub : HiddenMergedImplementing(), HiddenMergedImplementedRoot
+
+abstract class HiddenMergedReabstractingPropertyClassFirstSub :
+    HiddenMergedReabstractingProperty(), HiddenMergedImplementedPropertyRedeclaring
+
+abstract class HiddenMergedFinalPropertyClassFirstSub :
+    HiddenMergedFinalImplementedProperty(), HiddenMergedImplementedPropertyRedeclaring
+
+abstract class HiddenMergedImplementingPropertyClassFirstSub : HiddenMergedImplementingProperty(), HiddenMergedImplementedPropertyRoot
+
 // and over the implementation of a Java class above it, which kotlinc 2.4 does not let a subclass override, unchecked by the build
 internal abstract class HiddenMergedInternalFinalToInt : java.util.concurrent.atomic.AtomicInteger() {
     final override fun toInt(): Int = 0
