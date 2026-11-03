@@ -63,6 +63,7 @@ class OverrideResolverTest {
     /**
      * @param classFiles the class files served by their Kotlin class names, like `test/Owner`.
      * @param unloadableClassFiles the class files of the classes which cannot be loaded, by their Kotlin class names.
+     * @param readClassFile reads the class file of a class by its Kotlin class name, like from the [classFiles].
      */
     private fun overrideResolver(
         builtinClasses: Map<String, KmClass> = emptyMap(),
@@ -72,12 +73,13 @@ class OverrideResolverTest {
         transientFailures: TransientFailures = TransientFailures(),
         classLoader: ClassLoader = javaClass.classLoader,
         loadClass: (String) -> Class<*>? = { null },
+        readClassFile: (String) -> ByteArray? = { classFiles[it] },
         loadKmClass: (String) -> KmClass? = { classes[it] }
     ) = OverrideResolver(
         classLoader = classLoader,
         loadClassByMetadataName = loadClass,
         loadKmClassByMetadataName = loadKmClass,
-        readClassBytesByMetadataName = { classFiles[it] },
+        readClassBytesByMetadataName = readClassFile,
         unloadableClassBytesByMetadataName = { unloadableClassFiles[it] },
         transientFailures = transientFailures,
         builtinClasses = { builtinClasses },
@@ -902,6 +904,65 @@ class OverrideResolverTest {
         // then
         // lib/ relocated to the root package tells both JVM methods, unlike lib/ to sub/, or lib/sub/ to the root package
         assert(overrides == listOf(true, false))
+    }
+
+    @Test
+    fun `should not read class files of supertypes when overloads of the same shape are paired by the package prefix`() {
+        // given
+        // like above, through the class app/Mid of the app
+        val owner = kmClass("app/Owner", supertype = "app/Mid").apply {
+            functions += functionTaking("on", "lib/Event")
+            functions += functionTaking("on", "lib/sub/Event")
+        }
+        val classFiles = mapOf(
+            "shaded/app/Owner" to classFile("shaded/app/Owner", listOf("on(LEvent;)V", "on(Lsub/Event;)V"), superName = "shaded/app/Mid"),
+            "shaded/app/Mid" to classFile("shaded/app/Mid", listOf(), interfaces = listOf("shaded/app/Listener"))
+        )
+        val reads = mutableListOf<String>()
+        val resolver = overrideResolver(
+            classes = mapOf("shaded/app/Mid" to kmClass("app/Mid", supertype = "app/Listener")),
+            unloadableClassFiles = mapOf(
+                "shaded/app/Listener" to classFile("shaded/app/Listener", listOf("on(LEvent;)V"), isInterface = true)
+            ),
+            readClassFile = { name -> reads += name; classFiles[name] }
+        )
+
+        // when
+        val overrides = owner.functions.map { resolver.isOverride(OverrideResolver.Owner(owner, "shaded/app/Owner"), it) }
+
+        // then
+        // nothing is left for the class file of app/Mid to tell
+        assert(overrides == listOf(true, false))
+        assert("shaded/app/Mid" !in reads)
+    }
+
+    @Test
+    fun `should prefer relocation told by JVM method of its own shape over the package prefix of overloads of the same shape`() {
+        // given
+        // like an app shading its dependencies, its JVM methods telling lib/Event relocated to shaded/Event,
+        // while lib/ relocated to the root package tells the overloads of the same shape best
+        val owner = kmClass("app/Owner", supertype = "app/Listener").apply {
+            functions += functionTaking("emit", "lib/Event")
+            functions += functionTaking("on", "lib/Event")
+            functions += functionTaking("on", "lib/sub/Event")
+        }
+        val resolver = overrideResolver(
+            classFiles = mapOf(
+                "app/Owner" to classFile(
+                    "app/Owner", listOf("emit(Lshaded/Event;)V", "on(LEvent;)V", "on(Lsub/Event;)V"), interfaces = listOf("app/Listener")
+                )
+            ),
+            unloadableClassFiles = mapOf(
+                "app/Listener" to classFile("app/Listener", listOf("emit(Lshaded/Event;)V"), isInterface = true)
+            )
+        )
+
+        // when
+        val overrides = owner.functions.map { resolver.isOverride(OverrideResolver.Owner(owner), it) }
+
+        // then
+        // the JVM method of emit, the only one of its shape, tells lib/Event as shaded/Event
+        assert(overrides == listOf(true, false, false))
     }
 
     @Test

@@ -2776,7 +2776,7 @@ internal class DefaultKotlinIntrospector(
         declarations.overrideOwner?.let { overrideResolver.unlocatedName(it, jvmName) } ?: jvmName
 
     /**
-     * This type, of a Java class described by kotlin-reflect, with its classifier, and the ones of its type arguments and outer type,
+     * This type, of a Java class described by kotlin-reflect, with its classifier, and the ones of its type arguments,
      * named by the names the Kotlin metadata refers to them by, see [unlocatedName], or this very type, if none is relocated.
      */
     private fun KmType.unlocated(declarations: ClassDeclarations): KmType {
@@ -2786,11 +2786,8 @@ internal class DefaultKotlinIntrospector(
             val type = argument.type ?: return@map argument
             type.unlocated(declarations).takeIf { it !== type }?.let { KmTypeProjection(argument.variance, it) } ?: argument
         }
-        val unlocatedOuterType = outerType?.unlocated(declarations)
-        if (metadataName == jvmName && unlocatedOuterType === outerType &&
-            unlocatedArguments.indices.all { unlocatedArguments[it] === arguments[it] }
-        ) return this
-        return copy(arguments = unlocatedArguments, outerType = unlocatedOuterType).also { type ->
+        if (metadataName == jvmName && unlocatedArguments.indices.all { unlocatedArguments[it] === arguments[it] }) return this
+        return copy(arguments = unlocatedArguments).also { type ->
             if (metadataName != null && metadataName != jvmName) type.classifier = KmClassifier.Class(metadataName)
         }
     }
