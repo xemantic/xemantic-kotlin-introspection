@@ -600,3 +600,10 @@ abstract class InheritedJavaNullMarkedOverriding : com.xemantic.kotlin.introspec
 
 // The members of a generic Java subclass of java.util.HashMap reached through its raw subclass
 abstract class InheritedJavaRawSourceMap : com.xemantic.kotlin.introspection.test.other.JavaRawSourceMapMid()
+
+// Java classes marked by @NullUnmarked, by their class, by their outer class, or by their package, overriding annotated methods
+abstract class InheritedJavaNullUnmarkedOverriding : com.xemantic.kotlin.introspection.test.other.JavaNullUnmarkedOverriding()
+
+abstract class InheritedJavaNullUnmarkedOuter : com.xemantic.kotlin.introspection.test.other.JavaNullUnmarkedOuter.Inner()
+
+abstract class InheritedJavaNullUnmarkedPackage : com.xemantic.kotlin.introspection.test.unmarked.JavaNullUnmarkedPackageOverriding()
