@@ -763,6 +763,25 @@ fun <T> BoundedReceiverConsumer<MutableList<in T>>.consumeIntoMutable() {}
 
 class BoundedReceiverNullableAnyListConsumer : BoundedReceiverConsumer<List<Any?>>
 
+// a type parameter kotlinc infers as an intersection type, not checked against its recursive bound, like by kotlinc,
+// of multiple bounds, which a final class satisfies by Nothing, like Int, which is no CharSequence
+fun <T> BoundedReceiverConsumer<T>.consumeComparableCharSequence() where T : Comparable<T>, T : CharSequence {}
+
+class BoundedReceiverPlain
+
+class BoundedReceiverPlainConsumer : BoundedReceiverConsumer<BoundedReceiverPlain>
+
+// of multiple contravariant positions, or of the bound of another type parameter, like A of B : A
+interface BoundedReceiverBiConsumer<in A, in B>
+
+fun <T : Comparable<T>> BoundedReceiverBiConsumer<T, T>.biConsumeComparable() {}
+
+fun <A : Comparable<A>, B : A> BoundedReceiverBiConsumer<B, A>.biConsumeBounded() {}
+
+class BoundedReceiverStringBiConsumer : BoundedReceiverBiConsumer<String, CharSequence>
+
+class BoundedReceiverIntStringBiConsumer : BoundedReceiverBiConsumer<Int, String>
+
 // or a covariant position of the same type parameter, which it is inferred from instead, also through a bound, like B : A
 interface BoundedReceiverMixed<out A, in B>
 
