@@ -717,3 +717,37 @@ fun BoundedReceiverJdkSink<JavaStringList>.sinkJavaStringList() {}
 // a class comparable through a raw Java supertype, to the erasure of its type argument, the raw JavaGenericComparable,
 // told by its name only, not listing the extensions on Comparable of its package, which kotlinc does not accept
 class BoundedReceiverRawGenericComparable : JavaRawGenericComparableMid()
+
+// a type parameter of a contravariant position, inferred by kotlinc as the type argument when its bound refers to a type parameter,
+// like T : Comparable<T>, or E of T : List<E>, unlike T : CharSequence, which a subtype of both satisfies
+interface BoundedReceiverConsumer<in T>
+
+fun <T : Comparable<T>> BoundedReceiverConsumer<T>.consumeComparable() {}
+
+fun <T : CharSequence> BoundedReceiverConsumer<T>.consumeCharSequence() {}
+
+fun <E, T : List<E>> BoundedReceiverConsumer<T>.consumeElements() {}
+
+// a type parameter constrained only by a star projection, which kotlinc cannot infer, unless a value parameter tells it
+fun <T : CharSequence> BoundedReceiverConsumer<List<T>>.consumeCharSequences() {}
+
+fun <T : CharSequence> BoundedReceiverConsumer<List<T>>.consumeCharSequencesOf(value: T) {}
+
+class BoundedReceiverListConsumer : BoundedReceiverConsumer<List<String>>
+
+class BoundedReceiverStarListConsumer : BoundedReceiverConsumer<List<*>>
+
+class BoundedReceiverStringConsumer : BoundedReceiverConsumer<String>
+
+// a type parameter constrained only by Nothing, which kotlinc cannot infer, unless the expected type of the call tells it
+interface BoundedReceiverProducer<out T>
+
+fun <T> BoundedReceiverProducer<T>.produce() {}
+
+fun <T> BoundedReceiverProducer<List<T>>.produceList() {}
+
+fun <T> BoundedReceiverProducer<List<T>>.produceFirst(): T? = null
+
+fun <E, T : List<E>> BoundedReceiverProducer<T>.produceElements() {}
+
+class BoundedReceiverNothingProducer : BoundedReceiverProducer<Nothing>

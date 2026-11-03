@@ -7227,6 +7227,69 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve class without extension on contravariant type parameter of recursive bound unsatisfied by type argument`() {
+        // T : Comparable<T> of a contravariant position is inferred as List<String>, which is not a Comparable<List<String>>,
+        // while T : CharSequence is a subtype of both, E of T : List<E> is inferred from List<String>,
+        // and T of BoundedReceiverConsumer<List<T>> from String
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverListConsumer"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverListConsumer [page 1/1]
+            class BoundedReceiverListConsumer : BoundedReceiverConsumer<List<String>>
+            // from com.xemantic.kotlin.introspection.test
+            fun <T : CharSequence> BoundedReceiverConsumer<T>.consumeCharSequence()
+            fun <T : CharSequence> BoundedReceiverConsumer<List<T>>.consumeCharSequences()
+            fun <T : CharSequence> BoundedReceiverConsumer<List<T>>.consumeCharSequencesOf(value: T)
+            fun <E, T : List<E>> BoundedReceiverConsumer<T>.consumeElements()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extension on contravariant type parameter of recursive bound satisfied by type argument`() {
+        // String is a Comparable<String>, but not a List<E>, which E could be inferred from
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverStringConsumer"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverStringConsumer [page 1/1]
+            class BoundedReceiverStringConsumer : BoundedReceiverConsumer<String>
+            // from com.xemantic.kotlin.introspection.test
+            fun <T : CharSequence> BoundedReceiverConsumer<T>.consumeCharSequence()
+            fun <T : Comparable<T>> BoundedReceiverConsumer<T>.consumeComparable()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extension on type parameter constrained only by star projection`() {
+        // T of BoundedReceiverConsumer<List<T>> is only a subtype of the star projection, which kotlinc cannot infer it from,
+        // unless the value parameter tells it, while E of T : List<E> is a supertype of it, inferred as Any?
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverStarListConsumer"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverStarListConsumer [page 1/1]
+            class BoundedReceiverStarListConsumer : BoundedReceiverConsumer<List<*>>
+            // from com.xemantic.kotlin.introspection.test
+            fun <T : CharSequence> BoundedReceiverConsumer<T>.consumeCharSequence()
+            fun <T : CharSequence> BoundedReceiverConsumer<List<T>>.consumeCharSequencesOf(value: T)
+            fun <E, T : List<E>> BoundedReceiverConsumer<T>.consumeElements()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extension on type parameter constrained only by Nothing`() {
+        // Nothing is a List<T>, and a List<E>, of any T, and E, which kotlinc cannot infer then,
+        // unless the expected type of the call tells it, like of produceFirst returning T?
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverNothingProducer"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverNothingProducer [page 1/1]
+            class BoundedReceiverNothingProducer : BoundedReceiverProducer<Nothing>
+            // from com.xemantic.kotlin.introspection.test
+            fun <T> BoundedReceiverProducer<T>.produce()
+            fun <T> BoundedReceiverProducer<List<T>>.produceFirst(): T?
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve class with extension on contravariant subtype of supertype of Java array type argument`() {
         // the Array<(out) String!>! of JavaProjectedStringArraySource is an Array<out String>
         resolver.resolve(
