@@ -30,6 +30,7 @@ import com.xemantic.kotlin.introspection.test.other.JavaFunctionBase
 import com.xemantic.kotlin.introspection.test.other.JavaGenericComparable
 import com.xemantic.kotlin.introspection.test.other.JavaLinkBase
 import com.xemantic.kotlin.introspection.test.other.JavaListBoth
+import com.xemantic.kotlin.introspection.test.other.JavaListPathsOf
 import com.xemantic.kotlin.introspection.test.other.JavaListRows
 import com.xemantic.kotlin.introspection.test.other.JavaNamedLinkBase
 import com.xemantic.kotlin.introspection.test.other.JavaNestedRows
@@ -43,6 +44,7 @@ import com.xemantic.kotlin.introspection.test.other.JavaProjectedStringListRows
 import com.xemantic.kotlin.introspection.test.other.JavaProjectedWildcardSource
 import com.xemantic.kotlin.introspection.test.other.JavaRawComparableBoth
 import com.xemantic.kotlin.introspection.test.other.JavaRawBoundedListPaths
+import com.xemantic.kotlin.introspection.test.other.JavaRawCharSequenceJavaListPaths
 import com.xemantic.kotlin.introspection.test.other.JavaRawCharSequenceListPaths
 import com.xemantic.kotlin.introspection.test.other.JavaRawGenericComparableMid
 import com.xemantic.kotlin.introspection.test.other.JavaRawListPaths
@@ -977,3 +979,9 @@ fun BoundedReceiverPaths<List<CharSequence?>>.nullableCharSequenceListPaths() {}
 class BoundedReceiverRawCharSequenceListPaths : JavaRawCharSequenceListPaths
 
 class BoundedReceiverRawBoundedListPaths : JavaRawBoundedListPaths
+
+// the erased type argument, CharSequence, substituted for a type parameter of a Java supertype, is a platform type then,
+// like BoundedReceiverPaths<(Mutable)List<CharSequence!>!> of JavaListPathsOf<CharSequence>
+interface BoundedReceiverCharSequenceJavaListPaths<T : CharSequence> : JavaListPathsOf<T>
+
+class BoundedReceiverRawCharSequenceJavaListPaths : JavaRawCharSequenceJavaListPaths
