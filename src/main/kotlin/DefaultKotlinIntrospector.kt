@@ -1701,7 +1701,10 @@ internal class DefaultKotlinIntrospector(
      * and the extensions of the class and of its supertypes, under the `// from …` header
      * of the package, or the object, to import them from, see [listedExtensions].
      * A member of a class which only the subclasses of an enclosing class can use, like a protected companion object,
-     * or of a deprecated class, or one within a deprecated class, follows the comments telling them, see [enclosingContext].
+     * follows the comment telling it, and one called on the name of a deprecated class, or of one within a deprecated class,
+     * like `Foo.create()`, but not one called on its instance, like `foo.bar()`, the comments telling them, see [enclosingContext].
+     * So do the extensions on the supertypes of the companion object, called on the name of the class too,
+     * which its listing leaves out, see [companionSupertypeExtensions].
      * The JVM-only members of a built-in type, like `String.chars()`, follow its functions, see [BuiltinClass],
      * but the ones hidden by an extension, which its listing leaves out too, see [jvmOnlyFunctionsNotHidden].
      * Then the members it inherits from its supertypes, and does not override, see [inheritedMembers],
@@ -1760,19 +1763,23 @@ internal class DefaultKotlinIntrospector(
         val isObject = kmClass.kind == ClassKind.OBJECT || kmClass.kind == ClassKind.COMPANION_OBJECT ||
             kmClass.kind == ClassKind.ENUM_CLASS
         val companionName = kmClass.companionObject?.let { "${kmClass.name}.$it" }
+        // also called on the name of the class, when also listed for the class, like on a supertype of both,
+        // as told with the deprecation of the companion object, reported for Foo.ext()
         val companionSupertypeExtensions = if (isBuiltin) null else companionSupertypeExtensions(
-            kmClass, className, apiClass, declarations, memberName, listedExtensions
+            kmClass, className, apiClass, declarations, memberName
         )
-        // told by their receivers, the very instances of their declarations
-        val companionSupertypeReceivers = companionSupertypeExtensions?.let { extensions ->
-            extensions.functions.map { it.function.receiverParameterType } + extensions.properties.map { it.property.receiverParameterType }
-        }.orEmpty().toSet()
+        val companionFunctions = companionSupertypeExtensions?.functions.orEmpty()
+        val companionProperties = companionSupertypeExtensions?.properties.orEmpty()
+        val companionExtensions = (companionFunctions + companionProperties).toSet()
+        val companionFunctionDeclarations = companionFunctions.mapTo(HashSet()) { it.function }
+        val companionPropertyDeclarations = companionProperties.mapTo(HashSet()) { it.property }
         val extensions = extensionSignatures(
-            (listedExtensions.functions + hidingExtensions).distinct() + companionSupertypeExtensions?.functions.orEmpty(),
-            listedExtensions.properties + companionSupertypeExtensions?.properties.orEmpty(),
+            (listedExtensions.functions + hidingExtensions).distinct().filter { it.function !in companionFunctionDeclarations } +
+                companionFunctions,
+            listedExtensions.properties.filter { it.property !in companionPropertyDeclarations } + companionProperties,
             contextPackage
-        ) { receiver ->
-            isObject || receiver in companionSupertypeReceivers ||
+        ) { extension, receiver ->
+            isObject || extension in companionExtensions ||
                 (companionName != null && (receiver?.classifier as? KmClassifier.Class)?.name == companionName)
         }
         return MemberListing.of(
@@ -1786,9 +1793,10 @@ internal class DefaultKotlinIntrospector(
      * The extensions named [memberName] on the supertypes of the companion object of the [kmClass], named [className],
      * called on the name of the class too, like `Foo.ext()` of `fun Bar.ext()` for `companion object : Bar`,
      * which its listing leaves out, see [extendedCompanionOf], as listed for the companion object, see [listedExtensions],
-     * telling the deprecation of the companion object, which Kotlin reports for them too,
-     * but the ones already [listed] for the class, like the ones on the companion object itself,
-     * or `null` if the class has no companion object which is part of the API, or one extending `Any` only.
+     * also the ones on the companion object itself, and the ones listed for the class too, like on a supertype of both,
+     * telling the deprecation of the companion object, which Kotlin reports for them, like for `Foo.ext()`,
+     * or `null` if the class has no companion object which is part of the API, or one extending `Any` only,
+     * or a protected one, whose extensions are called on the name of the class only within its subclasses.
      *
      * @param apiClass the [kmClass] as a class of the API.
      */
@@ -1797,21 +1805,19 @@ internal class DefaultKotlinIntrospector(
         className: String,
         apiClass: ApiClass,
         declarations: ClassDeclarations,
-        memberName: String,
-        listed: ListedExtensions
+        memberName: String
     ): ListedExtensions? {
         val companion = apiCompanionOf(kmClass, declarations, apiClass) ?: return null
+        if (companion.apiClass.scopes.last().visibility == Visibility.PROTECTED) return null
         if (companion.kmClass.supertypes.all { (it.classifier as? KmClassifier.Class)?.name == ANY_CLASS_NAME }) return null
         val extensions = listedExtensions(
             companion.kmClass, "$className.${kmClass.companionObject}", companion.apiClass, companion.foundClass,
             isBuiltin = false, memberName
         )
-        val listedFunctions = listed.functions.mapTo(HashSet()) { it.function }
-        val listedProperties = listed.properties.mapTo(HashSet()) { it.property }
         val deprecation = companion.foundClass.classDeprecation
         return ListedExtensions(
-            extensions.functions.filter { it.function !in listedFunctions }.map { it.copy(companionDeprecation = deprecation) },
-            extensions.properties.filter { it.property !in listedProperties }.map { it.copy(companionDeprecation = deprecation) }
+            extensions.functions.map { it.copy(companionDeprecation = deprecation) },
+            extensions.properties.map { it.copy(companionDeprecation = deprecation) }
         )
     }
 
@@ -3096,7 +3102,7 @@ internal class DefaultKotlinIntrospector(
      *   unlike for the class resolved directly, whose header tells its own visibility and deprecation.
      * @param isBuiltin whether the class is a built-in type, or its companion object, never deprecated, nor looked up.
      * @param aliasedClass the class a typealias the declarations are resolved through expands to, like `com/example/Foo.Nested`,
-     *   the [kmClass] itself, or one enclosing it, like when resolving `Alias.Companion.create`.
+     *   the [kmClass] itself, like for `Alias.create` of `typealias Alias = Foo.Nested`, or one enclosing it.
      */
     private fun enclosingContext(
         kmClass: KmClass,
@@ -3117,10 +3123,12 @@ internal class DefaultKotlinIntrospector(
             }?.takeUnless { it.isHidden }
             val isProtected = apiClass.scopes[index].visibility == Visibility.PROTECTED
             if (deprecation == null && index != outermostProtected) return@mapNotNull null
+            fun line(deprecation: Deprecation?) = "// in " + formatDeprecation(deprecation) + (if (isProtected) "protected " else "") +
+                formatClassKind(apiClass.scopes[index].kind) + escapeQualifiedName(name.substringAfterLast('/'))
             EnclosingClass(
-                "// in " + formatDeprecation(deprecation) + (if (isProtected) "protected " else "") +
-                    formatClassKind(apiClass.scopes[index].kind) + escapeQualifiedName(name.substringAfterLast('/')),
-                isDeprecated = deprecation != null
+                line(deprecation),
+                isDeprecated = deprecation != null,
+                protectedLine = if (index == outermostProtected) line(deprecation = null) else null
             )
         }
     }
@@ -5291,14 +5299,14 @@ internal class DefaultKotlinIntrospector(
      * The extensions of all the receivers are sorted together, not grouped by receiver,
      * so that the overloads callable on the class, like `Iterable.first()` and `List.first()`, are adjacent.
      *
-     * @param isCalledOnClassName whether an extension on the receiver of this type is called on the name of a class,
+     * @param isCalledOnClassName whether the extension, on the receiver of this type, is called on the name of a class,
      *   see [ListingItem.Extension.isCalledOnClassName].
      */
     private fun extensionSignatures(
         functions: List<IndexedExtension>,
         properties: List<IndexedExtensionProperty>,
         contextPackage: String?,
-        isCalledOnClassName: (receiver: KmType?) -> Boolean = { false }
+        isCalledOnClassName: (extension: ReceiverBounded, receiver: KmType?) -> Boolean = { _, _ -> false }
     ): List<ListingItem.Extension> {
         val functionsBySource = functions.groupBy { it.source }
         val propertiesBySource = properties.groupBy { it.source }
@@ -5313,7 +5321,7 @@ internal class DefaultKotlinIntrospector(
                             it.property, it.setterVisibility, contextPackage = contextPackage,
                             deprecation = it.deprecation, companionDeprecation = it.companionDeprecation
                         ),
-                        isCalledOnClassName(it.property.receiverParameterType)
+                        isCalledOnClassName(it, it.property.receiverParameterType)
                     )
                 } +
                 functionsBySource[source].orEmpty()
@@ -5327,7 +5335,7 @@ internal class DefaultKotlinIntrospector(
                                     deprecation = it.deprecation, companionDeprecation = it.companionDeprecation
                                 )
                             ),
-                            isCalledOnClassName(it.function.receiverParameterType)
+                            isCalledOnClassName(it, it.function.receiverParameterType)
                         )
                     }
         }
@@ -7124,16 +7132,23 @@ private fun List<ListingItem.Extension>.renderLines(): List<String> = buildList 
  * @param isDeprecated whether the class is deprecated, which Kotlin reports on its name the caller writes,
  *   also when calling an extension on it, see [ListingItem.Extension.isCalledOnClassName],
  *   unlike a class told only as protected, which does not matter to an extension.
+ * @param protectedLine the comment telling the outermost protected class without its deprecation,
+ *   like `// in protected class Outer.Foo`, or `null` if the class is not the outermost protected one.
  */
-private class EnclosingClass(val line: String, val isDeprecated: Boolean) {
+private class EnclosingClass(val line: String, val isDeprecated: Boolean, val protectedLine: String?) {
 
     /**
-     * Whether the [line] is rendered on a page of a [MemberListing], which [hasMembers], not only extensions,
-     * or [isOnClassName], with a declaration called on the name of the class, like a member of an object,
+     * The comment rendered on a page of a [MemberListing], if any: the [line] of a deprecated class
+     * when [isOnClassName], with a declaration called on the name of the class, like a member of an object,
      * or of a companion object, or an extension called so, see [ListingItem.Extension.isCalledOnClassName],
-     * unlike a member, or an extension, of a class, called on its instance, like `foo.bar()`.
+     * unlike a member, or an extension, of a class, called on its instance, like `foo.bar()`,
+     * else the [protectedLine] when it [hasMembers], not only extensions.
      */
-    fun isRendered(hasMembers: Boolean, isOnClassName: Boolean): Boolean = if (isDeprecated) isOnClassName else hasMembers
+    fun lineOn(hasMembers: Boolean, isOnClassName: Boolean): String? = when {
+        isDeprecated && isOnClassName -> line
+        hasMembers -> protectedLine
+        else -> null
+    }
 
 }
 
@@ -7244,7 +7259,7 @@ private class MemberListing(
                 is ListingItem.Declaration, is ListingItem.InheritedMember -> areMembersCalledOnClassName
             }
         }
-        context.forEach { if (it.isRendered(hasMembers, isOnClassName)) add(it.line) }
+        context.forEach { enclosingClass -> enclosingClass.lineOn(hasMembers, isOnClassName)?.let { add(it) } }
         page.items.filterIsInstance<ListingItem.Declaration>().forEach { addAll(it.lines) }
         page.items.filterIsInstance<ListingItem.InheritedMember>().groupBy { it.source }.forEach { (source, members) ->
             add("// inherited from ${escapeQualifiedName(source)}")
@@ -7263,8 +7278,9 @@ private class MemberListing(
         /**
          * The listing of the [items], or `null` if nothing is found.
          *
-         * @param context the comments rendered first on every page with the members of the class, not only its extensions,
-         *   while the one of a deprecated class only on every page with a declaration called on its name, see [EnclosingClass].
+         * @param context the comments rendered first: the one of a protected class on every page with the members of the class,
+         *   not only its extensions, while the one of a deprecated class only on every page with a declaration called on its name,
+         *   else without the deprecation, if protected, see [EnclosingClass.lineOn].
          * @param areMembersCalledOnClassName whether the members of the class, also the inherited ones, are called on its name,
          *   like the ones of an object, or of an enum class, called on its entry, like `Color.RED.rgb()`,
          *   unlike the ones of any other class, called on its instance, like `foo.bar()`.

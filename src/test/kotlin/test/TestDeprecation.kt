@@ -179,6 +179,7 @@ typealias AliasedDeprecatedObject = DeprecatedObject
 open class DeprecatedProtectedHolder {
     @Deprecated("Use DeprecationTarget")
     protected class DeprecatedProtected {
+        fun member(): Int = 0
         companion object {
             fun create(): Int = 0
         }

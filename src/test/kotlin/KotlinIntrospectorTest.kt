@@ -1068,6 +1068,74 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve extension property of supertype of companion object as class member`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.SupertypeCompanionHolder.onSupertypeProperty"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SupertypeCompanionHolder.onSupertypeProperty [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            val CompanionSupertype.onSupertypeProperty: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension of supertype of both class and its companion object once`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.SharedSupertypeCompanionHolder.onSupertype"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SharedSupertypeCompanionHolder.onSupertype [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            fun CompanionSupertype.onSupertype(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension of supertype of both class and its deprecated companion object with its deprecation`() {
+        // Kotlin reports the deprecation of the companion object for DeprecatedSharedSupertypeCompanionHolder.onSupertype()
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.DeprecatedSharedSupertypeCompanionHolder.onSupertype"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DeprecatedSharedSupertypeCompanionHolder.onSupertype [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            /* companion object deprecated: "Use the constructor" */ fun CompanionSupertype.onSupertype(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve extension of supertype of protected companion object as class member`() {
+        // ProtectedSupertypeCompanionHolder.onSupertype() compiles only within its subclasses
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.ProtectedSupertypeCompanionHolder.onSupertype") == null)
+    }
+
+    @Test
+    fun `should not tell deprecation of class on page of extension on type parameter of same index called on instance`() {
+        // holder.describeBounded() reports nothing, unlike DeprecatedMarkedCompanionHolder.describeBounded() of the other overload
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.DeprecatedMarkedCompanionHolder.describeBounded",
+            pageSize = 1
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DeprecatedMarkedCompanionHolder.describeBounded [page 1/2]
+            // from com.xemantic.kotlin.introspection.test
+            fun <T : InstanceMarker> T.describeBounded(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should tell deprecation of class on page of extension of supertype of companion object`() {
+        // called as DeprecatedMarkedCompanionHolder.describeBounded(), for which Kotlin reports the deprecation of the class
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.DeprecatedMarkedCompanionHolder.describeBounded",
+            page = 2,
+            pageSize = 1
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DeprecatedMarkedCompanionHolder.describeBounded [page 2/2]
+            // in @Deprecated("Use CompanionExtensionHolder") class DeprecatedMarkedCompanionHolder
+            // from com.xemantic.kotlin.introspection.test
+            fun <T : CompanionSupertype> T.describeBounded(): Int
+        """.trimIndent()
+    }
+
+    @Test
     fun `should not list extensions of supertype of companion object with class`() {
         // not to flood the listing of the class, see extendedCompanionOf
         resolver.resolve(
@@ -10602,6 +10670,18 @@ class KotlinIntrospectorTest {
             @Deprecated("Use DeprecationTarget") class Inner {
                 fun member(): Int
             }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should tell protected deprecated class enclosing its instance member as protected only`() {
+        // only the subclasses of DeprecatedProtectedHolder can use it, while deprecatedProtected.member() reports no deprecation
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.DeprecatedProtectedHolder.DeprecatedProtected.member"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DeprecatedProtectedHolder.DeprecatedProtected.member [page 1/1]
+            // in protected class DeprecatedProtectedHolder.DeprecatedProtected
+            fun member(): Int
         """.trimIndent()
     }
 

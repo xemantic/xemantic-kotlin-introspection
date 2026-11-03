@@ -151,3 +151,34 @@ class DeprecatedSupertypeCompanionHolder {
 fun CompanionSupertype.onSupertype(): Int = 0
 
 fun <T : CompanionSupertype> T.onBoundedSupertype(): Int = 0
+
+val CompanionSupertype.onSupertypeProperty: Int get() = 0
+
+// the supertype of both the class and its companion object, called both as SharedSupertypeCompanionHolder.onSupertype(),
+// and as holder.onSupertype(), the first one reporting the deprecation of the companion object, if any
+class SharedSupertypeCompanionHolder : CompanionSupertype {
+    companion object : CompanionSupertype
+}
+
+class DeprecatedSharedSupertypeCompanionHolder : CompanionSupertype {
+    @Deprecated("Use the constructor")
+    companion object : CompanionSupertype
+}
+
+// called as ProtectedSupertypeCompanionHolder.onSupertype() only within its subclasses
+open class ProtectedSupertypeCompanionHolder {
+    protected companion object : CompanionSupertype
+}
+
+// overloads on type parameters of the same index, one called on an instance, holder.describeBounded(),
+// for which Kotlin reports no deprecation of the class, the other on its name, DeprecatedMarkedCompanionHolder.describeBounded()
+interface InstanceMarker
+
+@Deprecated("Use CompanionExtensionHolder")
+class DeprecatedMarkedCompanionHolder : InstanceMarker {
+    companion object : CompanionSupertype
+}
+
+fun <T : InstanceMarker> T.describeBounded(): Int = 0
+
+fun <T : CompanionSupertype> T.describeBounded(): Int = 1

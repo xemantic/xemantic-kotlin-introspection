@@ -98,11 +98,13 @@ com.example.AnnotationTestClass
   not to flood the listing of the class, like with the ones on `Any`,
   which are still resolved by the name of the class, like `com.example.Foo.parse` of `fun Parser.parse()` for `companion object : Parser`,
   except the ones of the standard library, like for the supertypes of the class,
+  and the ones of a protected companion object, called so only within the subclasses,
   while a class nested in the companion object is resolved only through it, like `com.example.Foo.Companion.Builder`,
   as Kotlin does not resolve `Foo.Builder` either.
   The deprecation of a companion object deprecated with the `WARNING` or the `ERROR` level,
   which Kotlin reports for `Foo.parse()`, and `Foo.Companion.parse()`,
   is told on its extensions listed with the class, or resolved by the name of the class, like `com.example.Foo.parse`,
+  also on the ones on its supertypes resolved so, even when the class extends the supertype too, also called as `foo.parse()`,
   in a comment, as no annotation compiles there,
   after the deprecation of the extension itself, if any,
   like `/* companion object deprecated: "Use the constructor", level = DeprecationLevel.ERROR */ fun Foo.Companion.parse(): Foo`.
