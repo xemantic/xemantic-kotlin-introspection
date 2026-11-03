@@ -260,6 +260,12 @@ interface MergedComputeIfAbsent : MutableMap<String, String> {
 abstract class MergedJavaComputeIfAbsentJoin :
     com.xemantic.kotlin.introspection.test.other.JavaComputingMap<String, String>(), MergedComputeIfAbsent
 
+interface PrimitivePut {
+    fun put(key: Int): String
+}
+
+abstract class BoxedJavaPutJoin : com.xemantic.kotlin.introspection.test.other.JavaBoxedPut(), PrimitivePut
+
 class InheritedFromJava : com.xemantic.kotlin.introspection.test.other.JavaInheritedMid<String>()
 
 open class OpenInheritedFromJava : com.xemantic.kotlin.introspection.test.other.JavaInheritedMid<String>()

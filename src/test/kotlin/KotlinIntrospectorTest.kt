@@ -4626,6 +4626,18 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve Java member taking boxed type next to Kotlin one taking primitive type`() {
+        // put(Integer) and put(int) are JVM methods of their own, both put(null) and put(1) compile
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaPutJoin.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaPutJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedPut
+            open fun put(arg0: Int?): String
+            // inherited from com.xemantic.kotlin.introspection.test.PrimitivePut
+            fun put(key: Int): String
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve Kotlin member merged with Java override of JVM-only member taking key nullable`() {
         // the String! key of the computeIfAbsent of JavaComputingMap does not tell it apart from the String one,
         // and its String! return loses to the String, so that computeIfAbsent(null) { … } does not compile
@@ -12364,6 +12376,16 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.test.HiddenMergedComputeIfAbsentJoin.computeIfAbsent [page 1/1]
             // inherited from kotlin.collections.MutableMap
             open fun computeIfAbsent(arg0: String, arg1: java.util.function.Function<in String, out String>): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking boxed type next to hidden one taking primitive type`() {
+        // put(Integer) and put(int) are JVM methods of their own, so that put(null) still compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenPrimitiveBoxedJavaPutJoin.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenPrimitiveBoxedJavaPutJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedPut
+            open fun put(arg0: Int?): String
         """.trimIndent()
     }
 

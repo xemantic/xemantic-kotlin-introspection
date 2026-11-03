@@ -597,6 +597,13 @@ abstract class HiddenMergedSuspendInvokeJoin : suspend (Int) -> String, HiddenMe
 // the computeIfAbsent of java.util.HashMap keeps the enhancement of the one of java.util.Map, so that join.computeIfAbsent(…) compiles,
 // while the one of a Java override does not, losing to the hidden member, so that javaJoin.computeIfAbsent(…) does not,
 // nor the one of java.util.HashMap inherited through a Java class not declaring it again
+interface HiddenPrimitivePut {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    fun put(key: Int): String
+}
+
+abstract class HiddenPrimitiveBoxedJavaPutJoin : com.xemantic.kotlin.introspection.test.other.JavaBoxedPut(), HiddenPrimitivePut
+
 interface HiddenMergedComputeIfAbsent : MutableMap<String, String> {
     @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
     override fun computeIfAbsent(key: String, mappingFunction: java.util.function.Function<in String, out String>): String
