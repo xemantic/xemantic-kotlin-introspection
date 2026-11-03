@@ -36,6 +36,7 @@ import kotlin.metadata.KmTypeParameter
 import kotlin.metadata.KmVariance
 import kotlin.metadata.isDefinitelyNonNull
 import kotlin.metadata.isNullable
+import kotlin.reflect.KClass
 import kotlin.reflect.KFunction
 import kotlin.reflect.KProperty
 import kotlin.reflect.full.declaredMemberExtensionFunctions
@@ -187,6 +188,62 @@ class ReflectedDeclarationsTest {
 
         // then
         assert(nullable == NULLABLE_RETURN_JDK_METHODS)
+    }
+
+    @Test
+    fun `should tell the JDK methods whose value parameters the compiler enhances as not nullable`() {
+        // given - the enhanced JDK signatures of kotlin-reflect, the same as of the compiler, of the classes which are not final
+        val info = Class.forName("kotlin.reflect.jvm.internal.impl.load.java.typeEnhancement.PredefinedEnhancementInfoKt")
+        val bySignature = info.getDeclaredField("PREDEFINED_FUNCTION_ENHANCEMENT_INFO_BY_SIGNATURE")
+            .apply { isAccessible = true }.get(null) as Map<*, *>
+        fun Any.property(name: String): Any? = javaClass.getMethod(name).invoke(this)
+
+        // when - the value parameters whose types themselves, at 0, are enhanced as not nullable
+        val enhanced = bySignature.mapKeys { it.key as String }.filterKeys { signature ->
+            val className = signature.substringBefore('.').replace('/', '.')
+            !java.lang.reflect.Modifier.isFinal(Class.forName(className).modifiers)
+        }.mapValues { (_, functionInfo) ->
+            (functionInfo!!.property("getParametersInfo") as List<*>).withIndex().filter { (_, typeInfo) ->
+                (typeInfo?.property("getMap") as Map<*, *>?).orEmpty()[0]?.property("getNullability")?.toString() == "NOT_NULL"
+            }.mapTo(HashSet()) { it.index }
+        }.filterValues { it.isNotEmpty() }
+
+        // then
+        assert(enhanced == NOT_NULL_PARAMETER_JDK_METHODS)
+    }
+
+    @Test
+    fun `should take type parameter of class as platform type in JDK method unless the compiler enhances it`() {
+        // given - K2 takes push(null) of a LinkedList<String>, and addElement(null) of a Vector<String>,
+        // but neither accept(null) of a Consumer<String>, nor add(null) of a MutableList<String>
+        fun method(kClass: KClass<*>, name: String) = kClass.java.methods.single { it.name == name && it.parameterCount == 1 }
+
+        // when
+        val notNull = listOf(
+            method(java.util.LinkedList::class, "push"),
+            method(java.util.Vector::class, "addElement"),
+            method(java.util.ArrayDeque::class, "addFirst"),
+            method(java.util.function.Consumer::class, "accept"),
+            method(java.util.List::class, "add"),
+        ).map { isNotNullClassTypeParameter(it, 0) }
+
+        // then
+        assert(notNull == listOf(false, false, false, true, true))
+    }
+
+    @Test
+    fun `should take type parameter of class as in Kotlin in converted JDK method overriding member of built-in type purely implemented`() {
+        // given - kotlin-reflect tells the E of add of java.util.ArrayList, the pure implementation of MutableList, not a platform type,
+        // unlike the converted method, whose class tells it, unlike for the add of java.util.Vector
+        val methods = listOf(java.util.ArrayList::class.java, java.util.Vector::class.java).map { clazz ->
+            clazz.getMethod("add", Any::class.java)
+        }
+
+        // when
+        val notNull = methods.map { isNotNullClassTypeParameter(it, 0, isConverted = true) }
+
+        // then
+        assert(notNull == listOf(true, false))
     }
 
     @Test

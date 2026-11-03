@@ -253,6 +253,26 @@ class InheritedJavaComparableFirstList<E : Comparable<E>> : com.xemantic.kotlin.
 
 class InheritedJavaStringFirstList : com.xemantic.kotlin.introspection.test.other.JavaStringFirstList()
 
+class InheritedJavaOverridingList<E> : com.xemantic.kotlin.introspection.test.other.JavaOverridingList<E>()
+
+class InheritedJavaOverridingMap<K, V> : com.xemantic.kotlin.introspection.test.other.JavaOverridingMap<K, V>()
+
+class InheritedJavaComparableBox : com.xemantic.kotlin.introspection.test.other.JavaComparableBox()
+
+abstract class InheritedJavaAddFirstHolder : com.xemantic.kotlin.introspection.test.other.JavaAddFirstHolder()
+
+class InheritedJavaVector : java.util.Vector<String>()
+
+class InheritedJavaLinkedList : java.util.LinkedList<String>()
+
+class InheritedJavaAtomicReference : java.util.concurrent.atomic.AtomicReference<String>()
+
+abstract class InheritedKotlinContainsList : java.util.AbstractList<String>() {
+    override fun contains(element: String): Boolean = false
+}
+
+abstract class InheritedKotlinContainsListSub : InheritedKotlinContainsList()
+
 interface MergedComputeIfAbsent : MutableMap<String, String> {
     override fun computeIfAbsent(key: String, mappingFunction: java.util.function.Function<in String, out String>): String
 }
