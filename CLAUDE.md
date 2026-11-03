@@ -84,6 +84,9 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   Probe it with a concrete class inheriting a Java implementation and a Kotlin abstract member — `does not implement abstract member` means they stay apart.
   The rule is by JVM parameter types, see `isMergedJvmParameter`.
 
+- When probing kotlinc with Java fixtures, compile the Java sources with javac first and pass the classes on the classpath:
+  K2 analyzing `.java` sources next to the Kotlin ones crashes in supertype resolution (`ClassCastException`) on shapes like `interface J extends KG<String>` where `KG<T> : R<Array<T>>`.
+
 - Kotlin never passes named arguments to a Java method, even one compiled with `-parameters`, so a Java method taking parameters never shadows an extension — see `isShadowingJavaMethod`.
 
 ## Anti-patterns to avoid
