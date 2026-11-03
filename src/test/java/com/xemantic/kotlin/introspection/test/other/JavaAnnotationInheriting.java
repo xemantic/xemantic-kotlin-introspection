@@ -20,7 +20,8 @@ package com.xemantic.kotlin.introspection.test.other;
 
 /**
  * Overrides the methods of {@code JavaAnnotatedBase}, and of {@code JavaAnnotatedFace}, not annotated,
- * of the nullability the compiler inherits from the overridden ones, also through the bridge of a generic one.
+ * of the nullability the compiler inherits from the overridden ones, also through the bridge of a generic one,
+ * but not by an overload, like {@code resolve(Integer)}, which the bridge {@code resolve(Object)} does not call.
  */
 public abstract class JavaAnnotationInheriting extends JavaAnnotatedBase<String> implements JavaAnnotatedFace {
 
@@ -29,6 +30,8 @@ public abstract class JavaAnnotationInheriting extends JavaAnnotatedBase<String>
 
     @Override
     public abstract String resolve(String value);
+
+    public abstract String resolve(Integer value);
 
     @Override
     public abstract String label(String value);
