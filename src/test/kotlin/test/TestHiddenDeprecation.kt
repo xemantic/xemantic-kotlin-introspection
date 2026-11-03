@@ -251,6 +251,13 @@ interface HiddenAnyEqualsOverride {
 
 abstract class HiddenAnyEqualsOverrideSub : HiddenAnyEqualsOverride
 
+// also of an override of toString() of a value class, whose JVM method is mangled, so that valueToString.toString() compiles
+@JvmInline
+value class HiddenAnyOverrideValue(val value: String) {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    override fun toString(): String = value
+}
+
 // the members of the same signature merged from several supertypes, one of them hidden:
 // the compiler picks the one of the most specific return type, or else the one of the first direct supertype,
 // in the order of declaration, and none can be called when the picked one is hidden
@@ -504,6 +511,228 @@ abstract class HiddenMergedInternalCallableOverride : HiddenMergedInternalCallab
     override fun call(): String = "overridden"
 }
 
+// and so is a Kotlin member standing for the visible override of a supertype which is not part of the API,
+// which kotlinc 2.4 lets a subclass override, of the open f() of HiddenMergedInternalImplemented,
+// but not of the final f() of HiddenMergedInternalFinalOverride, get(index) of HiddenMergedInternalFinalGet,
+// and run() of HiddenMergedInternalFinalThreadOverride, unchecked by the build
+interface HiddenMergedImplementedRoot {
+    fun f(): Int
+}
+
+internal abstract class HiddenMergedInternalImplemented : HiddenMergedImplementedRoot {
+    override fun f(): Int = 1
+}
+
+@Suppress("EXPOSED_SUPER_CLASS")
+abstract class HiddenMergedInternalImplementedSub : HiddenMergedInternalImplemented()
+
+abstract class HiddenMergedImplementedOverride : HiddenMergedInternalImplementedSub() {
+    override fun f(): Int = 2
+}
+
+abstract class HiddenMergedOpenBase {
+    open fun f() {}
+}
+
+internal abstract class HiddenMergedInternalFinalOverride : HiddenMergedOpenBase() {
+    final override fun f() {}
+}
+
+@Suppress("EXPOSED_SUPER_CLASS")
+abstract class HiddenMergedInternalFinalOverrideSub : HiddenMergedInternalFinalOverride()
+
+internal abstract class HiddenMergedInternalFinalGet : AbstractList<String>() {
+    final override fun get(index: Int): String = ""
+}
+
+@Suppress("EXPOSED_SUPER_CLASS")
+abstract class HiddenMergedInternalFinalGetSub : HiddenMergedInternalFinalGet()
+
+open class HiddenMergedOverridingThread : Thread() {
+    override fun run() {}
+}
+
+internal open class HiddenMergedInternalFinalThreadOverride : HiddenMergedOverridingThread() {
+    final override fun run() {}
+}
+
+@Suppress("EXPOSED_SUPER_CLASS")
+open class HiddenMergedInternalFinalThreadOverrideSub : HiddenMergedInternalFinalThreadOverride()
+
+// and the Java method implemented by a member with a body of an internal interface, not abstract,
+// so that a subclass of HiddenMergedInternalDefaultRunSub, or of HiddenMergedInternalDefaultRunAbstractSub,
+// need not override run()
+internal interface HiddenMergedInternalDefaultRun : Runnable {
+    override fun run() {}
+}
+
+@Suppress("EXPOSED_SUPER_INTERFACE")
+open class HiddenMergedInternalDefaultRunSub : HiddenMergedInternalDefaultRun
+
+@Suppress("EXPOSED_SUPER_INTERFACE")
+abstract class HiddenMergedInternalDefaultRunAbstractSub : HiddenMergedInternalDefaultRun
+
+class HiddenMergedInternalDefaultRunConcrete : HiddenMergedInternalDefaultRunAbstractSub()
+
+internal interface HiddenMergedInternalDefaultSupplier : java.util.function.Supplier<String> {
+    override fun get(): String = ""
+}
+
+@Suppress("EXPOSED_SUPER_INTERFACE")
+open class HiddenMergedInternalDefaultSupplierSub : HiddenMergedInternalDefaultSupplier
+
+// the override of an internal superclass wins over the one of an internal interface, whatever the order of the supertypes,
+// like the abstract f() of HiddenMergedInternalReabstracted over the member with a body of HiddenMergedInternalDefaultF,
+// so that a subclass of HiddenMergedInternalReabstractedSub has to override f(), unchecked by the build,
+// or the f() of HiddenMergedInternalImplemented over the abstract one of HiddenMergedInternalRedeclared
+internal abstract class HiddenMergedInternalReabstracted : HiddenMergedImplementedRoot {
+    abstract override fun f(): Int
+}
+
+internal interface HiddenMergedInternalDefaultF : HiddenMergedImplementedRoot {
+    override fun f(): Int = 1
+}
+
+@Suppress("EXPOSED_SUPER_CLASS", "EXPOSED_SUPER_INTERFACE")
+abstract class HiddenMergedInternalReabstractedSub : HiddenMergedInternalDefaultF, HiddenMergedInternalReabstracted()
+
+@Suppress("EXPOSED_SUPER_CLASS", "EXPOSED_SUPER_INTERFACE")
+abstract class HiddenMergedInternalReabstractedClassFirstSub : HiddenMergedInternalReabstracted(), HiddenMergedInternalDefaultF
+
+interface HiddenMergedImplementedPropertyRoot {
+    val x: Int
+}
+
+internal abstract class HiddenMergedInternalReabstractedProperty : HiddenMergedImplementedPropertyRoot {
+    abstract override val x: Int
+}
+
+internal interface HiddenMergedInternalDefaultProperty : HiddenMergedImplementedPropertyRoot {
+    override val x: Int get() = 1
+}
+
+@Suppress("EXPOSED_SUPER_CLASS", "EXPOSED_SUPER_INTERFACE")
+abstract class HiddenMergedInternalReabstractedPropertySub :
+    HiddenMergedInternalDefaultProperty, HiddenMergedInternalReabstractedProperty()
+
+internal interface HiddenMergedInternalRedeclared : HiddenMergedImplementedRoot {
+    override fun f(): Int
+}
+
+@Suppress("EXPOSED_SUPER_CLASS", "EXPOSED_SUPER_INTERFACE")
+abstract class HiddenMergedInternalRedeclaredSub : HiddenMergedInternalRedeclared, HiddenMergedInternalImplemented()
+
+class HiddenMergedInternalRedeclaredConcrete : HiddenMergedInternalRedeclaredSub()
+
+// and over the redeclaration of an interface which is part of the API, which it implements
+interface HiddenMergedImplementedRedeclaring : HiddenMergedImplementedRoot {
+    override fun f(): Int
+}
+
+@Suppress("EXPOSED_SUPER_CLASS")
+abstract class HiddenMergedInternalImplementedRedeclaringSub : HiddenMergedInternalImplemented(), HiddenMergedImplementedRedeclaring
+
+class HiddenMergedInternalImplementedRedeclaringConcrete : HiddenMergedInternalImplementedRedeclaringSub()
+
+// unless a public class below the internal one overrides it again, like abstract, so that a subclass
+// of HiddenMergedReabstractingRedeclaringSub has to override f(), unchecked by the build, or final,
+// which a subclass of HiddenMergedFinalRedeclaringSub cannot override, unchecked by the build,
+// or open, implementing the abstract f() of HiddenMergedInternalAbstract, which a subclass of HiddenMergedImplementingRedeclaringSub
+// need not override, whatever the order of the supertypes
+@Suppress("EXPOSED_SUPER_CLASS")
+abstract class HiddenMergedReabstracting : HiddenMergedInternalImplemented() {
+    abstract override fun f(): Int
+}
+
+abstract class HiddenMergedReabstractingRedeclaringSub : HiddenMergedImplementedRedeclaring, HiddenMergedReabstracting()
+
+@Suppress("EXPOSED_SUPER_CLASS")
+abstract class HiddenMergedFinalImplemented : HiddenMergedInternalImplemented() {
+    final override fun f(): Int = 2
+}
+
+abstract class HiddenMergedFinalRedeclaringSub : HiddenMergedImplementedRedeclaring, HiddenMergedFinalImplemented()
+
+internal abstract class HiddenMergedInternalAbstract {
+    abstract fun f(): Int
+}
+
+@Suppress("EXPOSED_SUPER_CLASS")
+abstract class HiddenMergedImplementing : HiddenMergedInternalAbstract() {
+    override fun f(): Int = 1
+}
+
+abstract class HiddenMergedImplementingRedeclaringSub : HiddenMergedImplementedRoot, HiddenMergedImplementing()
+
+class HiddenMergedImplementingRedeclaringConcrete : HiddenMergedImplementingRedeclaringSub()
+
+interface HiddenMergedImplementedPropertyRedeclaring : HiddenMergedImplementedPropertyRoot {
+    override val x: Int
+}
+
+internal abstract class HiddenMergedInternalImplementedProperty : HiddenMergedImplementedPropertyRoot {
+    override val x: Int = 1
+}
+
+@Suppress("EXPOSED_SUPER_CLASS")
+abstract class HiddenMergedReabstractingProperty : HiddenMergedInternalImplementedProperty() {
+    abstract override val x: Int
+}
+
+abstract class HiddenMergedReabstractingPropertyRedeclaringSub :
+    HiddenMergedImplementedPropertyRedeclaring, HiddenMergedReabstractingProperty()
+
+@Suppress("EXPOSED_SUPER_CLASS")
+abstract class HiddenMergedFinalImplementedProperty : HiddenMergedInternalImplementedProperty() {
+    final override val x: Int = 2
+}
+
+abstract class HiddenMergedFinalPropertyRedeclaringSub :
+    HiddenMergedImplementedPropertyRedeclaring, HiddenMergedFinalImplementedProperty()
+
+internal abstract class HiddenMergedInternalAbstractProperty {
+    abstract val x: Int
+}
+
+@Suppress("EXPOSED_SUPER_CLASS")
+abstract class HiddenMergedImplementingProperty : HiddenMergedInternalAbstractProperty() {
+    override val x: Int = 1
+}
+
+abstract class HiddenMergedImplementingPropertyRedeclaringSub : HiddenMergedImplementedPropertyRoot, HiddenMergedImplementingProperty()
+
+class HiddenMergedImplementingPropertyRedeclaringConcrete : HiddenMergedImplementingPropertyRedeclaringSub()
+
+// the same with the class first, whose member is listed then
+abstract class HiddenMergedReabstractingClassFirstSub : HiddenMergedReabstracting(), HiddenMergedImplementedRedeclaring
+
+abstract class HiddenMergedFinalClassFirstSub : HiddenMergedFinalImplemented(), HiddenMergedImplementedRedeclaring
+
+abstract class HiddenMergedImplementingClassFirstSub : HiddenMergedImplementing(), HiddenMergedImplementedRoot
+
+abstract class HiddenMergedReabstractingPropertyClassFirstSub :
+    HiddenMergedReabstractingProperty(), HiddenMergedImplementedPropertyRedeclaring
+
+abstract class HiddenMergedFinalPropertyClassFirstSub :
+    HiddenMergedFinalImplementedProperty(), HiddenMergedImplementedPropertyRedeclaring
+
+abstract class HiddenMergedImplementingPropertyClassFirstSub : HiddenMergedImplementingProperty(), HiddenMergedImplementedPropertyRoot
+
+// and over the implementation of a Java class above it, which kotlinc 2.4 does not let a subclass override, unchecked by the build
+internal abstract class HiddenMergedInternalFinalToInt : java.util.concurrent.atomic.AtomicInteger() {
+    final override fun toInt(): Int = 0
+}
+
+@Suppress("EXPOSED_SUPER_CLASS")
+abstract class HiddenMergedInternalFinalToIntSub : HiddenMergedInternalFinalToInt()
+
+internal abstract class HiddenMergedInternalFinalJavaGet : java.util.AbstractList<String>() {
+    final override fun get(index: Int): String = ""
+}
+
+@Suppress("EXPOSED_SUPER_CLASS")
+abstract class HiddenMergedInternalFinalJavaGetSub : HiddenMergedInternalFinalJavaGet()
+
 // the hidden member of the same JVM signature as the Java method of the first direct supertype does not hide it,
 // so that join.run() compiles, while reversed.run() calls the run scope function instead
 interface HiddenMergedRun {
@@ -712,6 +941,13 @@ private fun callMergedMembers(
     nullableArgumentCallJoin: HiddenMergedNullableArgumentCallJoin,
     anyOverride: HiddenAnyOverride,
     anyOverrideSub: HiddenAnyOverrideSub,
+    valueToString: HiddenAnyOverrideValue,
+    implemented: HiddenMergedInternalImplementedSub,
+    finalOverride: HiddenMergedInternalFinalOverrideSub,
+    finalGet: HiddenMergedInternalFinalGetSub,
+    finalThreadOverride: HiddenMergedInternalFinalThreadOverrideSub,
+    defaultRun: HiddenMergedInternalDefaultRunSub,
+    defaultSupplier: HiddenMergedInternalDefaultSupplierSub,
     computeIfAbsentJoin: HiddenMergedComputeIfAbsentJoin,
     inheritedDirectSupplierJoin: HiddenMergedJavaInheritedDirectSupplierJoin
 ) {
@@ -740,6 +976,13 @@ private fun callMergedMembers(
     nullableArgumentCallJoin.call()
     anyOverride.toString()
     anyOverrideSub.toString()
+    valueToString.toString()
+    implemented.f()
+    finalOverride.f()
+    finalGet[0]
+    finalThreadOverride.run()
+    defaultRun.run()
+    defaultSupplier.get()
     computeIfAbsentJoin.computeIfAbsent("") { it }
     inheritedDirectSupplierJoin.get()
 }

@@ -870,11 +870,11 @@ internal class DefaultKotlinIntrospector(
         // the deprecation of a declaration of this class, see ClassFile, reflected when the class file cannot be read,
         // see reflectedMembersFile, like the one of a hidden constructor, telling whether the class can be subclassed,
         // but the hidden one of an override of toString() or hashCode() of kotlin.Any, which the compiler does not report,
-        // see UNREPORTED_HIDDEN_ANY_MEMBERS, not of a top-level function of the same JVM signature, of a file facade
+        // see isUnreportedHiddenAnyMember, not of a top-level function of the same signature, of a file facade
 
         override fun deprecation(function: KmFunction): Deprecation? =
             (classFile ?: reflectedMembersFile).deprecation(function)?.takeUnless {
-                it.isHidden && function.signature in UNREPORTED_HIDDEN_ANY_MEMBERS && kmClass != null
+                it.isHidden && function.isUnreportedHiddenAnyMember && kmClass != null
             }
 
         override fun deprecation(constructor: KmConstructor): Deprecation? =
@@ -2270,9 +2270,17 @@ internal class DefaultKotlinIntrospector(
          * The modality of the method of the nearest Java class implementing the [member], which is inherited in its place,
          * like `intValue()` of `java.util.concurrent.atomic.AtomicInteger` of the abstract `toInt()` of `kotlin.Number`,
          * or the abstract `hashCode()` of `java.security.Permission`, declaring the one of `kotlin.Any` abstract again,
-         * or of the getter of a Java class implementing an abstract property, see [inheritedCandidates], or `null`.
+         * or of the getter of a Java class implementing an abstract property,
+         * or of the nearest visible override of a supertype which is not part of the API, which the [member] stands for,
+         * like a final one, or one implementing it with a body, see [inheritedCandidates], or `null`.
          */
         var implementationModality: Modality? = null
+
+        /**
+         * The Java class whose method the [implementationModality] is of, if told, which the visible override
+         * of a supertype which is not part of the API below it wins over, see [inheritedCandidates], or `null`.
+         */
+        var implementingClass: Class<*>? = null
 
         /**
          * The modality of the method of the nearest Java interface declaring the [member] again, like abstract,
@@ -2503,6 +2511,7 @@ internal class DefaultKotlinIntrospector(
      * like `kotlin.coroutines.SuspendFunction1`, see [withSuspendFunctionTypeClass].
      * A Kotlin supertype which is not part of the API, see [ApiClasses], is walked through too,
      * its members not inherited, so that the members it overrides stand for its overrides, which the user code cannot see,
+     * of their modality, see [InheritedCandidate.implementationModality],
      * also the methods of a Java supertype, like `run()` of `java.lang.Thread` overridden by an internal subclass,
      * while its hidden ones still hide the members they override, like of a supertype deprecated as hidden,
      * unless its visible ones override them again.
@@ -2754,7 +2763,10 @@ internal class DefaultKotlinIntrospector(
             // the implementation of a Java class wins over the declaration of a Java interface, also walked before it
             (implemented + redeclared).forEach {
                 when {
-                    !isJavaInterface -> if (it.implementationModality == null) it.implementationModality = modality
+                    !isJavaInterface -> if (it.implementationModality == null) {
+                        it.implementationModality = modality
+                        it.implementingClass = javaClass.clazz
+                    }
                     modality == Modality.ABSTRACT && it.kmClass.name == ANY_CLASS_NAME -> {}
                     it.interfaceModality == null -> it.interfaceModality = modality
                 }
@@ -2795,6 +2807,49 @@ internal class DefaultKotlinIntrospector(
                 candidate.declarations !is JavaClass && candidate.declarations !is BuiltinClass
             ) {
                 candidate.implementationModality = javaGetterModality(property, candidate.declarations.clazz, declarations.clazz)
+            }
+        }
+        // a member standing for the visible override of a supertype which is not part of the API is of its modality as well,
+        // of the nearest one, like the f() of a Kotlin interface implemented by an internal class, open,
+        // or the run() of java.lang.Runnable implemented by a member with a body of an internal interface,
+        // which overridingBelow does not tell, as the compiler generates only a bridge to it in the inheriting class,
+        // while the member of a class wins over the ones of the interfaces, whatever the order of the supertypes,
+        // also when abstract, like the compiler picks the member of the superclass, and implements with it
+        // the member of an interface it does not override, merged with it, like a redeclaration,
+        // and so does the member of a public class below, overriding the one of the internal class again, like abstract,
+        // which the member of the interface stands for, when listed, or the member of a public class
+        // implementing the abstract one of an internal class, merged with the member of an unrelated interface,
+        // and over the implementation of a Java class above it, like intValue() of java.util.concurrent.atomic.AtomicInteger
+        val unlistedOverrides = unlistedKotlinCandidates.filter { !it.isHidden }
+        if (unlistedOverrides.isNotEmpty()) {
+            val classMembers = candidates.filter {
+                !it.isHidden && it.declarations !is JavaClass && it.kmClass.kind != ClassKind.INTERFACE
+            }
+            val unlistedClassMembers = classMembers.filter { !it.isApi }
+            fun nearest(overriding: List<InheritedCandidate>) =
+                overriding.firstOrNull { nearest -> overriding.none { it !== nearest && it.overrides(nearest) } }
+            candidates.forEach { candidate ->
+                val implementing = candidate.implementingClass
+                if (candidate.isHidden || !candidate.isApi || (candidate.implementationModality != null && implementing == null)) {
+                    return@forEach
+                }
+                val isInterfaceMember = candidate.kmClass.kind == ClassKind.INTERFACE
+                fun InheritedCandidate.standsFor() =
+                    this !== candidate && (overrides(candidate) || (isInterfaceMember && isMergedWith(candidate)))
+                // the members of the classes, but only when one of them is not part of the API, as otherwise listed on their own
+                val classOverride = if (unlistedClassMembers.none { it.standsFor() }) null else {
+                    nearest(classMembers.filter { it.standsFor() })
+                }
+                val override = if (implementing == null) {
+                    classOverride ?: nearest(
+                        unlistedOverrides.filter { it.kmClass.kind == ClassKind.INTERFACE && it.overrides(candidate) }
+                    )
+                } else {
+                    classOverride?.takeIf { override ->
+                        reflectedValue(default = false) { override.declarations.clazz?.let(implementing::isAssignableFrom) == true }
+                    }
+                }
+                override?.let { candidate.implementationModality = it.member.modality }
             }
         }
 
@@ -8147,14 +8202,22 @@ private const val ANY_RECEIVER_KEY = "kotlin.Any"
 private const val COMPARABLE_CLASS_NAME = "kotlin.Comparable"
 
 /**
- * The JVM signatures of the members of `kotlin.Any` whose overrides the compiler reports no hidden deprecation of,
+ * The names of the members of `kotlin.Any` whose overrides the compiler reports no hidden deprecation of,
  * like `@Deprecated(level = HIDDEN) override fun toString()`, which can still be called,
  * while it does report the other levels, and the hidden one of an override of `equals`.
  */
-private val UNREPORTED_HIDDEN_ANY_MEMBERS = setOf(
-    JvmMethodSignature("toString", "()Ljava/lang/String;"),
-    JvmMethodSignature("hashCode", "()I")
-)
+private val UNREPORTED_HIDDEN_ANY_MEMBERS = setOf("toString", "hashCode")
+
+/**
+ * Whether the function, of a class, overrides one of the [UNREPORTED_HIDDEN_ANY_MEMBERS], told by its Kotlin signature,
+ * taking nothing, as the JVM signature of `toString()` is mangled in a value class, like `toString-impl(Ljava/lang/String;)`,
+ * which cannot override `hashCode()`,
+ * while a top-level function of the same JVM signature, of a file facade, overrides nothing.
+ */
+@OptIn(ExperimentalContextParameters::class)
+private val KmFunction.isUnreportedHiddenAnyMember: Boolean
+    get() = name in UNREPORTED_HIDDEN_ANY_MEMBERS && valueParameters.isEmpty() && contextParameters.isEmpty() &&
+        receiverParameterType == null && typeParameters.isEmpty()
 
 /**
  * The message Kotlin reports the use of a Java member annotated with `@java.lang.Deprecated` with.

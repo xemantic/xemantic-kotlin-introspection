@@ -12387,6 +12387,17 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve override of member of Any deprecated with hidden level in value class`() {
+        // the JVM method of the override is mangled, toString-impl, still unreported by the compiler
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenAnyOverrideValue.toString"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenAnyOverrideValue.toString [page 1/1]
+            override fun toString(): String
+        """.trimIndent()
+    }
+
+    @Test
     fun `should not resolve override of equals deprecated with hidden level`() {
         // unlike of toString() and hashCode(), the compiler reports the hidden deprecation of an override of equals
         assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenAnyEqualsOverride.equals") == null)
@@ -12486,12 +12497,13 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve member overridden by hidden one of superclass deprecated with hidden level restored by its subclass`() {
+        // open, standing for the implementation of the hidden HiddenMergedHiddenRestoredClass
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.HiddenMergedHiddenRestoredClassSub.f"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.HiddenMergedHiddenRestoredClassSub.f [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.HiddenMergedRoot
-            fun f(): Int
+            open fun f(): Int
         """.trimIndent()
     }
 
@@ -12537,6 +12549,299 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.test.HiddenMergedInternalCallableSub.call [page 1/1]
             // inherited from java.util.concurrent.Callable
             open fun call(): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve abstract member implemented by internal superclass as open`() {
+        // the member of the interface stands for the implementation of the internal superclass, which a subclass can override
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedInternalImplementedSub.f"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedInternalImplementedSub.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.HiddenMergedImplementedRoot
+            open fun f(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve open member overridden as final by internal superclass as final`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedInternalFinalOverrideSub.f"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedInternalFinalOverrideSub.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.HiddenMergedOpenBase
+            fun f()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve built-in member overridden as final by internal superclass as final`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedInternalFinalGetSub.get"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedInternalFinalGetSub.get [page 1/1]
+            // inherited from kotlin.collections.AbstractList
+            final override operator fun get(index: Int): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve override of Java member overridden as final by internal superclass as final`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedInternalFinalThreadOverrideSub.run"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedInternalFinalThreadOverrideSub.run [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.HiddenMergedOverridingThread
+            final override fun run()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member implemented by internal interface as open`() {
+        // the member with a body of the internal interface implements it, not the stub the compiler generates in the subclass
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedInternalDefaultRunSub.run"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedInternalDefaultRunSub.run [page 1/1]
+            // inherited from java.lang.Runnable
+            open fun run()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member implemented by internal interface in abstract class as open`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedInternalDefaultRunAbstractSub.run"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedInternalDefaultRunAbstractSub.run [page 1/1]
+            // inherited from java.lang.Runnable
+            open fun run()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member of generic interface implemented by internal interface as open`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedInternalDefaultSupplierSub.get"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedInternalDefaultSupplierSub.get [page 1/1]
+            // inherited from java.util.function.Supplier
+            open fun get(): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member made abstract again by internal superclass after internal interface implementing it as abstract`() {
+        // the abstract override of the internal superclass wins over the member with a body of the internal interface declared first
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedInternalReabstractedSub.f"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedInternalReabstractedSub.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.HiddenMergedImplementedRoot
+            fun f(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve property made abstract again by internal superclass after internal interface implementing it as abstract`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedInternalReabstractedPropertySub.x"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedInternalReabstractedPropertySub.x [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.HiddenMergedImplementedPropertyRoot
+            val x: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member made abstract again by internal superclass before internal interface implementing it as abstract`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedInternalReabstractedClassFirstSub.f"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedInternalReabstractedClassFirstSub.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.HiddenMergedImplementedRoot
+            fun f(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member implemented by internal superclass after internal interface redeclaring it as open`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedInternalRedeclaredSub.f"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedInternalRedeclaredSub.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.HiddenMergedImplementedRoot
+            open fun f(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member redeclared by interface implemented by internal superclass as open`() {
+        // the redeclaration of the interface, which the implementation of the internal superclass does not override, stands for it
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedInternalImplementedRedeclaringSub.f"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedInternalImplementedRedeclaringSub.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.HiddenMergedImplementedRedeclaring
+            open override fun f(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member made abstract again by public class below internal superclass implementing it as abstract`() {
+        // the abstract override of the public class wins over the implementation of the internal class above it
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedReabstractingRedeclaringSub.f"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedReabstractingRedeclaringSub.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.HiddenMergedImplementedRedeclaring
+            override fun f(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member overridden as final by public class below internal superclass implementing it as final`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedFinalRedeclaringSub.f"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedFinalRedeclaringSub.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.HiddenMergedImplementedRedeclaring
+            final override fun f(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of interface implemented by public class below internal superclass declaring it abstract as open`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedImplementingRedeclaringSub.f"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedImplementingRedeclaringSub.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.HiddenMergedImplementedRoot
+            open fun f(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve property made abstract again by public class below internal superclass implementing it as abstract`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedReabstractingPropertyRedeclaringSub.x"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedReabstractingPropertyRedeclaringSub.x [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.HiddenMergedImplementedPropertyRedeclaring
+            override val x: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve property overridden as final by public class below internal superclass implementing it as final`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedFinalPropertyRedeclaringSub.x"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedFinalPropertyRedeclaringSub.x [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.HiddenMergedImplementedPropertyRedeclaring
+            final override val x: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve property of interface implemented by public class below internal superclass declaring it abstract as open`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedImplementingPropertyRedeclaringSub.x"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedImplementingPropertyRedeclaringSub.x [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.HiddenMergedImplementedPropertyRoot
+            open val x: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member made abstract again by public class below internal superclass declared first`() {
+        // the member of the public class declared first is listed
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedReabstractingClassFirstSub.f"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedReabstractingClassFirstSub.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.HiddenMergedReabstracting
+            abstract override fun f(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member overridden as final by public class below internal superclass declared first`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedFinalClassFirstSub.f"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedFinalClassFirstSub.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.HiddenMergedFinalImplemented
+            final override fun f(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member implemented by public class below internal superclass declared first`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedImplementingClassFirstSub.f"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedImplementingClassFirstSub.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.HiddenMergedImplementing
+            override fun f(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve property made abstract again by public class below internal superclass declared first`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedReabstractingPropertyClassFirstSub.x"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedReabstractingPropertyClassFirstSub.x [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.HiddenMergedReabstractingProperty
+            abstract override val x: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve property overridden as final by public class below internal superclass declared first`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedFinalPropertyClassFirstSub.x"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedFinalPropertyClassFirstSub.x [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.HiddenMergedFinalImplementedProperty
+            final override val x: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve property implemented by public class below internal superclass declared first`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedImplementingPropertyClassFirstSub.x"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedImplementingPropertyClassFirstSub.x [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.HiddenMergedImplementingProperty
+            override val x: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member implemented by Java class overridden as final by internal subclass as final`() {
+        // the final override of the internal class wins over the implementation of java.util.concurrent.atomic.AtomicInteger above it
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedInternalFinalToIntSub.toInt"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedInternalFinalToIntSub.toInt [page 1/1]
+            // inherited from kotlin.Number
+            fun toInt(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve built-in member of Java class overridden as final by internal subclass as final`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedInternalFinalJavaGetSub.get"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedInternalFinalJavaGetSub.get [page 1/1]
+            // inherited from kotlin.collections.List
+            final operator fun get(index: Int): String
         """.trimIndent()
     }
 
