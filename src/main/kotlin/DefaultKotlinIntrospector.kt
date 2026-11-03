@@ -2241,7 +2241,8 @@ internal class DefaultKotlinIntrospector(
      *   or of a member of a built-in type, see [BuiltinClass.jvmMethodOf], like `get(int)` of `java.util.List`,
      *   or else told by the metadata,
      * - of a primitive JVM type, the other one of a Kotlin member erased from a type parameter, like `put(t: T)` of `G<Int>`
-     *   with `put(key: Int)`, one intersection override through a bridge, but never one of a Java member,
+     *   with `put(key: Int)`, one intersection override through a bridge, but never a nullable one, like the `Integer`
+     *   of `put(key: Int?)`, nor the one of `G<Int?>`, as a Java primitive type is never a platform type, nor one of a Java member,
      *   like `put(Integer)`, or `put(T)` of a Java class given `Integer`, nor of a JVM-only member, like `putIfAbsent` of `MutableMap`,
      * - of arrays of reference types, like `Array<IntArray>` with the `Array<T>` of `G<IntArray>`,
      *   as an array of a primitive type is never merged with another one,
@@ -2257,7 +2258,7 @@ internal class DefaultKotlinIntrospector(
             parameter.type == other.type -> true
             parameter.type.isPrimitive || other.type.isPrimitive -> {
                 val reference = if (parameter.type.isPrimitive) other else parameter
-                !reference.isJava && reference.type.sort == AsmType.OBJECT
+                !reference.isJava && !reference.isNullable && reference.type.sort == AsmType.OBJECT
             }
             parameter.type.sort == AsmType.ARRAY && other.type.sort == AsmType.ARRAY ->
                 !parameter.type.isPrimitiveArray && !other.type.isPrimitiveArray
@@ -3279,13 +3280,13 @@ internal class DefaultKotlinIntrospector(
     private fun KmType.withoutRedundantProjections(): KmType {
         val name = (classifier as? KmClassifier.Class)?.name ?: return this
         if (arguments.isEmpty()) return this
-        val typeParameters by lazy(LazyThreadSafetyMode.NONE) { (builtinClasses[name] ?: loadKmClass(name))?.typeParameters }
+        val variances by lazy(LazyThreadSafetyMode.NONE) { declaredVariancesOf(name) }
         var isChanged = false
         val projections = arguments.mapIndexed { index, projection ->
             val type = projection.type ?: return@mapIndexed projection
             val invariant = type.withoutRedundantProjections()
             val variance = projection.variance?.takeUnless { it == KmVariance.INVARIANT }
-                ?.takeUnless { it == typeParameters?.getOrNull(index)?.variance }
+                ?.takeUnless { it == variances.getOrNull(index) }
                 ?: KmVariance.INVARIANT
             if (invariant === type && variance == projection.variance) projection else {
                 isChanged = true

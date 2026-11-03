@@ -4914,6 +4914,18 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve Java member taking boxed type below Java one implementing Kotlin one taking primitive type`() {
+        // the put(Integer) of JavaBoxedPutBelow overrides nothing, so that put(null) compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaPutBelowPrimitive.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaPutBelowPrimitive.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedPutBelow
+            open fun put(arg0: Int?): String
+            // inherited from com.xemantic.kotlin.introspection.test.PrimitivePut
+            open fun put(key: Int): String
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve members merged pairwise apart when not merged with each other`() {
         // the put(T) of JavaGenericPut<Integer>, put(Object) on the JVM, is merged with the put(t: T) of GenericPut<Int>,
         // which is merged with the put(key: Int) of PrimitivePut, but K2 groups the members around the one of the superclass,
@@ -4955,6 +4967,30 @@ class KotlinIntrospectorTest {
             override operator fun compareTo(arg0: Int?): Int
             // inherited from com.xemantic.kotlin.introspection.test.PrimitiveCompareTo
             fun compareTo(other: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking primitive type next to Kotlin one taking nullable type`() {
+        // put(int) and put(Integer) are JVM methods of their own, a Java primitive type is never a platform type
+        resolver.resolve("com.xemantic.kotlin.introspection.test.PrimitiveJavaNullablePutJoin.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PrimitiveJavaNullablePutJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaPrimitivePut
+            open fun put(arg0: Int): String
+            // inherited from com.xemantic.kotlin.introspection.test.NullablePrimitivePut
+            fun put(key: Int?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member taking nullable type apart from Java one taking primitive type merged with type argument`() {
+        // the put(int) of JavaPrimitivePut implements the put(t: T) of GenericPut<Int>, not the put(key: Int?) of NullablePrimitivePut
+        resolver.resolve("com.xemantic.kotlin.introspection.test.PrimitiveJavaGenericNullablePutJoin.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PrimitiveJavaGenericNullablePutJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.GenericPut
+            open fun put(t: Int): String
+            // inherited from com.xemantic.kotlin.introspection.test.NullablePrimitivePut
+            fun put(key: Int?): String
         """.trimIndent()
     }
 

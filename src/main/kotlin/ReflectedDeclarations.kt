@@ -499,17 +499,23 @@ private fun isComparableJavaMethod(method: Method): Boolean {
 
 /**
  * Whether the value parameter of the [method] at the [position] is of a boxed type, like `Integer`,
- * while its class, not of the JDK, declares the overload of the primitive type there, like `put(int)` next to `put(Integer)`,
- * which kotlin-reflect describes as not nullable, like `put(arg0: Int)`, when both implement the `put(key: Int)` of a Kotlin supertype,
- * though only the one of the primitive type does, so that K2 takes the boxed one as a platform type, like `Int!`, and `put(null)` compiles.
+ * while its class, not of the JDK, declares or inherits the overload of the primitive type there,
+ * like `put(int)` next to `put(Integer)`, also the `put(key: Int)` of a Kotlin interface, deprecated as hidden or not,
+ * which kotlin-reflect takes as overridden by the boxed one, describing it as not nullable, like `put(arg0: Int)`,
+ * though only the one of the primitive type overrides it on the JVM, so that K2 takes the boxed one as a platform type,
+ * like `Int!`, and `put(null)` compiles.
  */
 private fun isBoxedNextToPrimitive(method: Method, position: Int): Boolean {
-    if (method.declaringClass.isJdkClass) return false
+    val declaringClass = method.declaringClass
+    if (declaringClass.isJdkClass) return false
     val parameterTypes = method.parameterTypes
     val primitive = parameterTypes.getOrNull(position)?.kotlin?.javaPrimitiveType?.takeIf { it != parameterTypes[position] }
         ?: return false
     val primitiveTypes = parameterTypes.copyOf().also { it[position] = primitive }
-    return method.declaringClass.declaredMethods.any { it.name == method.name && it.parameterTypes.contentEquals(primitiveTypes) }
+    // the public methods include the ones of the interfaces, the declared ones of the superclasses the other ones
+    val methods = declaringClass.methods.asSequence() +
+        generateSequence(declaringClass) { it.superclass }.flatMap { it.declaredMethods.asSequence() }
+    return methods.any { it.name == method.name && it.parameterTypes.contentEquals(primitiveTypes) }
 }
 
 /**
