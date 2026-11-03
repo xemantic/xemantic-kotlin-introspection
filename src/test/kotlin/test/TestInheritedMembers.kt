@@ -382,6 +382,18 @@ abstract class BoxedJavaPutBelowPrimitive : com.xemantic.kotlin.introspection.te
 
 abstract class NotNullBoxedJavaPutBelowPrimitive : com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPutBelow()
 
+interface DefaultedPrimitivePut {
+    fun put(key: Int = 0): String
+}
+
+abstract class BoxedJavaPutInterfaceImplementation : com.xemantic.kotlin.introspection.test.other.JavaBoxedPutInterfaceImplementation()
+
+interface PrimitivePairPut {
+    fun put(a: Int, b: Int): String
+}
+
+abstract class BoxedPairJavaPut : com.xemantic.kotlin.introspection.test.other.JavaBoxedPairPut()
+
 interface PrimitivePutRedeclaring : PrimitivePut
 
 abstract class BoxedJavaPutBelowInterface : com.xemantic.kotlin.introspection.test.other.JavaBoxedPutBelowInterface()

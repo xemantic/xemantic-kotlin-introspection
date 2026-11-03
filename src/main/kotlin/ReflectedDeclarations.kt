@@ -567,7 +567,8 @@ private fun isComparableJavaMethod(method: Method): Boolean {
 /**
  * Whether the value parameter of the [method] at the [position] is of a boxed type, like `Integer`,
  * while its class, not of the JDK, declares or inherits the overload of the primitive type there,
- * like `put(int)` next to `put(Integer)`, also the `put(key: Int)` of a Kotlin interface, deprecated as hidden or not,
+ * or of the primitive types at the positions of all its boxed ones, like `put(int)` next to `put(Integer)`,
+ * or `put(int, int)` next to `put(Integer, Integer)`, also the `put(key: Int)` of a Kotlin interface, deprecated as hidden or not,
  * which kotlin-reflect takes as overridden by the boxed one, describing it as not nullable, like `put(arg0: Int)`,
  * though only the one of the primitive type overrides it on the JVM, so that K2 takes the boxed one as a platform type,
  * like `Int!`, and `put(null)` compiles.
@@ -578,9 +579,13 @@ private fun isBoxedNextToPrimitive(method: Method, position: Int): Boolean {
     val parameterTypes = method.parameterTypes
     val primitive = parameterTypes.getOrNull(position)?.kotlin?.javaPrimitiveType?.takeIf { it != parameterTypes[position] }
         ?: return false
+    // the overload of the primitive type at this position only, or at the position of each boxed type
     val primitiveTypes = parameterTypes.copyOf().also { it[position] = primitive }
-    return method.name + AsmType.getMethodDescriptor(AsmType.VOID_TYPE, *primitiveTypes.map(AsmType::getType).toTypedArray()) in
-        overridableMethods.get(declaringClass)
+    val allPrimitiveTypes = parameterTypes.map { it.kotlin.javaPrimitiveType ?: it }
+    val methods = overridableMethods.get(declaringClass)
+    return listOf(primitiveTypes.toList(), allPrimitiveTypes).any { types ->
+        method.name + AsmType.getMethodDescriptor(AsmType.VOID_TYPE, *types.map(AsmType::getType).toTypedArray()) in methods
+    }
 }
 
 /**
