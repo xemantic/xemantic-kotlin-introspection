@@ -7876,6 +7876,21 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve class with erased type argument of raw Kotlin supertype substituted for type parameter of Java supertype as platform type`() {
+        // CharSequence, the erasure of T : CharSequence, is CharSequence! in BoundedReceiverPaths<(Mutable)List<CharSequence!>!> of JavaListPathsOf
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverRawCharSequenceJavaListPaths"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverRawCharSequenceJavaListPaths [page 1/1]
+            class BoundedReceiverRawCharSequenceJavaListPaths : com.xemantic.kotlin.introspection.test.other.JavaRawCharSequenceJavaListPaths
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverPaths<List<CharSequence>>.charSequenceListPaths()
+            fun <T : Any> BoundedReceiverPaths<List<T>>.nonNullListPaths()
+            fun BoundedReceiverPaths<List<CharSequence?>>.nullableCharSequenceListPaths()
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve class comparable through raw Java supertype without extensions on comparable of its package`() {
         // the Comparable of the raw JavaGenericComparable, told only by its name, is comparable to the raw type,
         // so that kotlinc accepts none of the extensions on Comparable of the package, like Comparable<BoundedReceiverMoney>,

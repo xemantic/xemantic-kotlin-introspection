@@ -392,7 +392,7 @@ private fun KmType.eraseRawKotlinArguments(supertypeClass: KClass<*>) {
 /**
  * The type kotlinc erases the [typeParameter] of a raw type to, its first bound, nullable like it,
  * through the bound of a type parameter, like `CharSequence?` of `B` of `<A : CharSequence?, B : A>`,
- * or `null` when it is not told exactly, like of a bound taking type arguments, like `T : Comparable<T>`,
+ * or `null` when it is not told exactly, like of a bound taking type arguments, like `T : Comparable<T>`, also of its outer class,
  * erased by kotlinc to a raw type, or of bounds of different nullability.
  */
 private fun rawErasure(typeParameter: KTypeParameter, visited: Set<KTypeParameter> = emptySet()): KmType? {
@@ -400,7 +400,8 @@ private fun rawErasure(typeParameter: KTypeParameter, visited: Set<KTypeParamete
     val bound = bounds.firstOrNull() ?: return null
     if (bounds.any { it.isMarkedNullable != bound.isMarkedNullable }) return null
     return when (val classifier = bound.classifier) {
-        is KClass<*> -> if (classifier.typeParameters.isNotEmpty()) null else KmType().also { type ->
+        // like of an inner class of a generic class, like Outer<String>.Inner, as well
+        is KClass<*> -> if (classifier.typeParameters.isNotEmpty() || bound.arguments.isNotEmpty()) null else KmType().also { type ->
             type.classifier = KmClassifier.Class(reflectedClassName(classifier))
             type.isNullable = bound.isMarkedNullable
         }

@@ -8050,7 +8050,7 @@ private fun isNullabilityMatched(expected: KmType, actual: KmType, variance: KmV
  * its type arguments, also the nested ones, as the platform types of Java, like `Comparable<Base!>`,
  * flexible from not nullable to nullable, see [isNullabilityMatched],
  * also a not nullable type argument substituted for a type parameter, like `Box<String!>` of `Box<T>` for `T` of `String`,
- * but not an erased type argument of a raw Kotlin supertype, see [isJavaErasure],
+ * but not an erased type argument of a raw Kotlin supertype, see [isJavaErasure], unless substituted for a type parameter,
  * but not a nullable one, like `Box<String?>` for `T` of `String?`, nor the nested type arguments of either,
  * declared by Kotlin.
  * A Java collection of the signature, like `java.util.List<T>`, read-only as kotlin-reflect tells it,
@@ -8064,7 +8064,10 @@ private fun KmType.javaSignatureType(substitution: Map<Int, KmType>): KmType = c
         val type = argument.type ?: return@map argument
         val classifier = type.classifier
         val argumentType = if (classifier is KmClassifier.TypeParameter) {
-            substitution[classifier.id]?.copy() ?: return@map argument
+            // an erased type argument of a raw Kotlin supertype substituted for a type variable of Java is a platform type,
+            // like CharSequence! of List<E> for E of CharSequence, see isJavaErasure
+            substitution[classifier.id]?.copy()?.also { type -> type.annotations.removeAll { it.className == JAVA_ERASURE_MARKER } }
+                ?: return@map argument
         } else {
             type.javaSignatureType(substitution)
         }
