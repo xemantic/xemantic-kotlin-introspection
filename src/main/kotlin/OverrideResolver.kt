@@ -585,17 +585,28 @@ internal class OverrideResolver(
      * matched like the Java members are, see [typesMatch], regardless of the nullability of a platform type,
      * which an override declares either way, like `PrintStream` or `PrintStream?` of `PrintStream!`,
      * and with the type arguments of the supertypes substituted, like `Consumer<in String>` of `Consumer<? super T>`
-     * of `java.lang.Iterable<T>`, implemented as `Iterable<String>`.
+     * of `java.lang.Iterable<T>`, implemented as `Iterable<String>`,
+     * and, of a [function] of a Java class of the [jvmDescriptor], by the primitive types on the JVM,
+     * which the Kotlin types do not tell, like the `Int` of both `int` and `@NotNull Integer`,
+     * so that `put(int, Integer)` does not override `put(Integer, Integer)`.
      */
-    fun overriddenJavaMembers(owner: Owner, function: KmFunction): Set<String> {
+    fun overriddenJavaMembers(owner: Owner, function: KmFunction, jvmDescriptor: String? = null): Set<String> {
         val overridables = overridables(owner)
         val candidates = overridables.functions[function.name] ?: return emptySet()
         val signature = overridables.signature(function)
+        val primitives = jvmDescriptor?.let(::primitivesOfDescriptor)
+        fun primitivesMatch(javaKey: String) = primitives == null ||
+            primitivesOfDescriptor("(" + javaKey.substringAfter('#').substringAfter('(')).let { it.size != primitives.size || it == primitives }
         return candidates.filter {
-            it.javaKey != null && it.matches(signature) && overridables.isVisible(it, owner.kmClass, function.modality)
+            it.javaKey != null && it.matches(signature) && overridables.isVisible(it, owner.kmClass, function.modality) &&
+                primitivesMatch(it.javaKey)
         }
             .mapTo(HashSet()) { it.javaKey!! }
     }
+
+    // whether each parameter of the JVM method descriptor is of a primitive type, see overriddenJavaMembers
+    private fun primitivesOfDescriptor(descriptor: String): List<Boolean> =
+        AsmType.getArgumentTypes(descriptor).map { it.sort in AsmType.BOOLEAN..AsmType.DOUBLE }
 
     /**
      * The keys of the properties of the Kotlin supertypes of the [owner] which its [property] overrides,

@@ -373,6 +373,78 @@ abstract class GenericMapJoin : MutableMap<Int, String>, GenericMapMembers<Int, 
 
 abstract class GenericHashMapJoin : java.util.HashMap<Int, String>(), GenericMapMembers<Int, String>
 
+// the getOrDefault and remove of java.util.HashMap are Java methods taking Object, apart from the ones taking int
+abstract class PrimitiveKeyHashMapJoin : java.util.HashMap<Int, String>(), PrimitiveKeyMapMembers
+
+abstract class PrimitiveAndBoxedJavaPut : com.xemantic.kotlin.introspection.test.other.JavaPrimitiveAndBoxedPut()
+
+abstract class BoxedJavaPutBelowPrimitive : com.xemantic.kotlin.introspection.test.other.JavaBoxedPutBelow()
+
+abstract class NotNullBoxedJavaPutBelowPrimitive : com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPutBelow()
+
+interface DefaultedPrimitivePut {
+    fun put(key: Int = 0): String
+}
+
+abstract class BoxedJavaPutInterfaceImplementation : com.xemantic.kotlin.introspection.test.other.JavaBoxedPutInterfaceImplementation()
+
+interface PrimitivePairPut {
+    fun put(a: Int, b: Int): String
+}
+
+abstract class BoxedPairJavaPut : com.xemantic.kotlin.introspection.test.other.JavaBoxedPairPut()
+
+abstract class MixedPairJavaPut : com.xemantic.kotlin.introspection.test.other.JavaMixedPairPut()
+
+interface PrimitivePutRedeclaring : PrimitivePut
+
+abstract class BoxedJavaPutBelowInterface : com.xemantic.kotlin.introspection.test.other.JavaBoxedPutBelowInterface()
+
+// the put(T) of JavaGenericPut<Integer> implements the put(t: T) of GenericPut<Int>, not the put(key: Int) of PrimitivePut,
+// though the two Kotlin members alone are merged
+abstract class GenericBoxedJavaPrimitiveGenericPutJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaIntegerPut(), PrimitivePut, GenericPut<Int>
+
+interface MixedNullabilityTaker {
+    fun take(first: String, second: String?): String
+}
+
+interface NotNullableTaker {
+    fun take(first: String, second: String): String
+}
+
+abstract class MixedNullabilityJavaTakerJoin : com.xemantic.kotlin.introspection.test.other.JavaTwoStringTaker(), MixedNullabilityTaker
+
+abstract class NotNullableJavaTakerJoin : com.xemantic.kotlin.introspection.test.other.JavaTwoStringTaker(), NotNullableTaker
+
+interface PrimitiveCompareTo {
+    fun compareTo(other: Int): Int
+}
+
+abstract class BoxedJavaComparablePrimitiveJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaIntegerComparable(), PrimitiveCompareTo
+
+abstract class IndexedAddAllJavaListJoin : com.xemantic.kotlin.introspection.test.other.JavaIndexedAddAll(), MutableList<Int>
+
+interface NullablePrimitivePut {
+    fun put(key: Int?): String
+}
+
+// the put(int) of JavaPrimitivePut is another JVM method than put(Integer), which a concrete subclass still has to implement
+abstract class PrimitiveJavaNullablePutJoin : com.xemantic.kotlin.introspection.test.other.JavaPrimitivePut(), NullablePrimitivePut
+
+abstract class PrimitiveJavaGenericNullablePutJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaPrimitivePut(), GenericPut<Int>, NullablePrimitivePut
+
+// the put(t: T) of GenericPut<Int?> takes Int?, which the put(int) of JavaPrimitivePut never implements
+abstract class PrimitiveJavaNullableGenericPutJoin : com.xemantic.kotlin.introspection.test.other.JavaPrimitivePut(), GenericPut<Int?>
+
+interface FunctionTaker {
+    fun take(function: (String) -> Int): String
+}
+
+abstract class ProjectedFunctionJavaTakerJoin : com.xemantic.kotlin.introspection.test.other.JavaProjectedFunctionTaker(), FunctionTaker
+
 abstract class BoxedJavaListJoin : com.xemantic.kotlin.introspection.test.other.JavaBoxedMembers(), List<String>
 
 abstract class BoxedJavaComparableJoin : com.xemantic.kotlin.introspection.test.other.JavaBoxedMembers(), Comparable<Int>

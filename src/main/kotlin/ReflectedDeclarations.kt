@@ -471,6 +471,11 @@ internal fun KFunction<*>.toKmFunction(typeParameters: ReflectedTypeParameters):
     if (method.value?.let { reflectedValue(default = false) { isComparableJavaMethod(it) } } == true) {
         function.valueParameters.single().type.isNullable = true
     }
+    method.value?.let { javaMethod ->
+        function.valueParameters.forEachIndexed { position, parameter ->
+            if (reflectedValue(default = false) { isBoxedNextToPrimitive(javaMethod, position) }) parameter.type.isNullable = true
+        }
+    }
     function.returnType = returnType.toKmType(scope)
     enhanceDefinitelyNotNull(function)
     enhanceNullableReturn(function)
@@ -490,6 +495,54 @@ private fun isComparableJavaMethod(method: Method): Boolean {
     val declaringClass = method.declaringClass
     return Comparable::class.java.isAssignableFrom(declaringClass) &&
         declaringClass.kotlin.qualifiedName == declaringClass.canonicalName
+}
+
+/**
+ * Whether the value parameter of the [method] at the [position] is of a boxed type, like `Integer`,
+ * while its class, not of the JDK, declares or inherits the overload of the primitive type there,
+ * or of the primitive types at the positions of all its boxed ones, like `put(int)` next to `put(Integer)`,
+ * or `put(int, int)` next to `put(Integer, Integer)`, also the `put(key: Int)` of a Kotlin interface, deprecated as hidden or not,
+ * which kotlin-reflect takes as overridden by the boxed one, describing it as not nullable, like `put(arg0: Int)`,
+ * though only the one of the primitive type overrides it on the JVM, so that K2 takes the boxed one as a platform type,
+ * like `Int!`, and `put(null)` compiles.
+ */
+private fun isBoxedNextToPrimitive(method: Method, position: Int): Boolean {
+    val declaringClass = method.declaringClass
+    if (declaringClass.isJdkClass) return false
+    val parameterTypes = method.parameterTypes
+    val primitive = parameterTypes.getOrNull(position)?.kotlin?.javaPrimitiveType?.takeIf { it != parameterTypes[position] }
+        ?: return false
+    // the overload of the primitive type at this position only, or at the position of each boxed type
+    val primitiveTypes = parameterTypes.copyOf().also { it[position] = primitive }
+    val allPrimitiveTypes = parameterTypes.map { it.kotlin.javaPrimitiveType ?: it }
+    val methods = overridableMethods.get(declaringClass)
+    return listOf(primitiveTypes.toList(), allPrimitiveTypes).any { types ->
+        method.name + AsmType.getMethodDescriptor(AsmType.VOID_TYPE, *types.map(AsmType::getType).toTypedArray()) in methods
+    }
+}
+
+/**
+ * The instance methods a method of a class might be an overload of, see [isBoxedNextToPrimitive], by their names
+ * followed by their parameter types, as a JVM method descriptor returning `void`, like `put(I)V`:
+ * the ones the class declares, the ones of its superclasses, but the private ones, and the public ones of its interfaces,
+ * also the synthetic ones of the members of a Kotlin interface deprecated as hidden, computed once per class,
+ * the ones of the class still told when the ones of its supertypes cannot be reflected, like on a broken classpath.
+ */
+private val overridableMethods = object : ClassValue<Set<String>>() {
+    override fun computeValue(type: Class<*>): Set<String> {
+        fun Method.key() = name + AsmType.getMethodDescriptor(AsmType.VOID_TYPE, *AsmType.getArgumentTypes(this))
+        fun Method.isOverridable() = !Modifier.isStatic(modifiers) && !Modifier.isPrivate(modifiers)
+        val keys = HashSet<String>()
+        fun collect(methods: () -> Array<Method>) = reflectedValue(default = Unit) {
+            methods().forEach { if (it.isOverridable()) keys += it.key() }
+        }
+        collect { type.declaredMethods }
+        reflectedValue(default = Unit) {
+            generateSequence(type.superclass) { it.superclass }.forEach { superclass -> collect { superclass.declaredMethods } }
+        }
+        collect { type.methods }
+        return keys
+    }
 }
 
 /**
