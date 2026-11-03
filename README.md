@@ -98,7 +98,7 @@ com.example.AnnotationTestClass
   not to flood the listing of the class, like with the ones on `Any`,
   which are still resolved by the name of the class, like `com.example.Foo.parse` of `fun Parser.parse()` for `companion object : Parser`,
   except the ones of the standard library, like for the supertypes of the class,
-  and the ones of a protected companion object, called so only within the subclasses,
+  and the ones of a protected companion object, or one within a protected class, called so only within the subclasses,
   while a class nested in the companion object is resolved only through it, like `com.example.Foo.Companion.Builder`,
   as Kotlin does not resolve `Foo.Builder` either.
   The deprecation of a companion object deprecated with the `WARNING` or the `ERROR` level,

@@ -1108,6 +1108,14 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should not resolve extension of supertype of companion object of protected class as class member`() {
+        // ProtectedOuterSupertypeCompanionHolder.Inner.onSupertype() compiles only within its subclasses
+        assert(
+            resolver.resolve("com.xemantic.kotlin.introspection.test.ProtectedOuterSupertypeCompanionHolder.Inner.onSupertype") == null
+        )
+    }
+
+    @Test
     fun `should not tell deprecation of class on page of extension on type parameter of same index called on instance`() {
         // holder.describeBounded() reports nothing, unlike DeprecatedMarkedCompanionHolder.describeBounded() of the other overload
         resolver.resolve(

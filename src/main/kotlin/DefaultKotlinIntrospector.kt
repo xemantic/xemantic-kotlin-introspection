@@ -1770,7 +1770,6 @@ internal class DefaultKotlinIntrospector(
         )
         val companionFunctions = companionSupertypeExtensions?.functions.orEmpty()
         val companionProperties = companionSupertypeExtensions?.properties.orEmpty()
-        val companionExtensions = (companionFunctions + companionProperties).toSet()
         val companionFunctionDeclarations = companionFunctions.mapTo(HashSet()) { it.function }
         val companionPropertyDeclarations = companionProperties.mapTo(HashSet()) { it.property }
         val extensions = extensionSignatures(
@@ -1779,7 +1778,13 @@ internal class DefaultKotlinIntrospector(
             listedExtensions.properties.filter { it.property !in companionPropertyDeclarations } + companionProperties,
             contextPackage
         ) { extension, receiver ->
-            isObject || extension in companionExtensions ||
+            // told by their declarations, the very instances of the index, as two receivers may look the same, like T
+            val isOnCompanion = when (extension) {
+                is IndexedExtension -> extension.function in companionFunctionDeclarations
+                is IndexedExtensionProperty -> extension.property in companionPropertyDeclarations
+            }
+            // the ones on the companion object itself are listed for the class only, when it extends Any only
+            isObject || isOnCompanion ||
                 (companionName != null && (receiver?.classifier as? KmClassifier.Class)?.name == companionName)
         }
         return MemberListing.of(
@@ -1793,10 +1798,12 @@ internal class DefaultKotlinIntrospector(
      * The extensions named [memberName] on the supertypes of the companion object of the [kmClass], named [className],
      * called on the name of the class too, like `Foo.ext()` of `fun Bar.ext()` for `companion object : Bar`,
      * which its listing leaves out, see [extendedCompanionOf], as listed for the companion object, see [listedExtensions],
-     * also the ones on the companion object itself, and the ones listed for the class too, like on a supertype of both,
+     * also the ones listed for the class too, like on the companion object itself, or on a supertype of both,
      * telling the deprecation of the companion object, which Kotlin reports for them, like for `Foo.ext()`,
      * or `null` if the class has no companion object which is part of the API, or one extending `Any` only,
-     * or a protected one, whose extensions are called on the name of the class only within its subclasses.
+     * whose extensions on itself are listed for the class, see [listedExtensions],
+     * or one which only subclasses can use, as it, or a class enclosing it, is protected,
+     * whose extensions are called on the name of the class only within the subclasses.
      *
      * @param apiClass the [kmClass] as a class of the API.
      */
@@ -1808,7 +1815,7 @@ internal class DefaultKotlinIntrospector(
         memberName: String
     ): ListedExtensions? {
         val companion = apiCompanionOf(kmClass, declarations, apiClass) ?: return null
-        if (companion.apiClass.scopes.last().visibility == Visibility.PROTECTED) return null
+        if (companion.apiClass.scopes.any { it.visibility == Visibility.PROTECTED }) return null
         if (companion.kmClass.supertypes.all { (it.classifier as? KmClassifier.Class)?.name == ANY_CLASS_NAME }) return null
         val extensions = listedExtensions(
             companion.kmClass, "$className.${kmClass.companionObject}", companion.apiClass, companion.foundClass,
@@ -3125,10 +3132,15 @@ internal class DefaultKotlinIntrospector(
             if (deprecation == null && index != outermostProtected) return@mapNotNull null
             fun line(deprecation: Deprecation?) = "// in " + formatDeprecation(deprecation) + (if (isProtected) "protected " else "") +
                 formatClassKind(apiClass.scopes[index].kind) + escapeQualifiedName(name.substringAfterLast('/'))
+            val line = line(deprecation)
             EnclosingClass(
-                line(deprecation),
+                line,
                 isDeprecated = deprecation != null,
-                protectedLine = if (index == outermostProtected) line(deprecation = null) else null
+                protectedLine = when {
+                    index != outermostProtected -> null
+                    deprecation == null -> line
+                    else -> line(deprecation = null)
+                }
             )
         }
     }

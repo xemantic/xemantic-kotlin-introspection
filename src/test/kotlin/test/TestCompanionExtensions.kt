@@ -170,6 +170,13 @@ open class ProtectedSupertypeCompanionHolder {
     protected companion object : CompanionSupertype
 }
 
+// called as ProtectedOuterSupertypeCompanionHolder.Inner.onSupertype() only within its subclasses
+open class ProtectedOuterSupertypeCompanionHolder {
+    protected class Inner {
+        companion object : CompanionSupertype
+    }
+}
+
 // overloads on type parameters of the same index, one called on an instance, holder.describeBounded(),
 // for which Kotlin reports no deprecation of the class, the other on its name, DeprecatedMarkedCompanionHolder.describeBounded()
 interface InstanceMarker
