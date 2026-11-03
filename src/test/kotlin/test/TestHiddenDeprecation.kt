@@ -251,6 +251,13 @@ interface HiddenAnyEqualsOverride {
 
 abstract class HiddenAnyEqualsOverrideSub : HiddenAnyEqualsOverride
 
+// also of an override of toString() of a value class, whose JVM method is mangled, so that valueToString.toString() compiles
+@JvmInline
+value class HiddenAnyOverrideValue(val value: String) {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    override fun toString(): String = value
+}
+
 // the members of the same signature merged from several supertypes, one of them hidden:
 // the compiler picks the one of the most specific return type, or else the one of the first direct supertype,
 // in the order of declaration, and none can be called when the picked one is hidden
@@ -504,6 +511,76 @@ abstract class HiddenMergedInternalCallableOverride : HiddenMergedInternalCallab
     override fun call(): String = "overridden"
 }
 
+// and so is a Kotlin member standing for the visible override of a supertype which is not part of the API,
+// which kotlinc 2.4 lets a subclass override, of the open f() of HiddenMergedInternalImplemented,
+// but not of the final f() of HiddenMergedInternalFinalOverride, get(index) of HiddenMergedInternalFinalGet,
+// and run() of HiddenMergedInternalFinalThreadOverride, unchecked by the build
+interface HiddenMergedImplementedRoot {
+    fun f(): Int
+}
+
+internal abstract class HiddenMergedInternalImplemented : HiddenMergedImplementedRoot {
+    override fun f(): Int = 1
+}
+
+@Suppress("EXPOSED_SUPER_CLASS")
+abstract class HiddenMergedInternalImplementedSub : HiddenMergedInternalImplemented()
+
+abstract class HiddenMergedImplementedOverride : HiddenMergedInternalImplementedSub() {
+    override fun f(): Int = 2
+}
+
+abstract class HiddenMergedOpenBase {
+    open fun f() {}
+}
+
+internal abstract class HiddenMergedInternalFinalOverride : HiddenMergedOpenBase() {
+    final override fun f() {}
+}
+
+@Suppress("EXPOSED_SUPER_CLASS")
+abstract class HiddenMergedInternalFinalOverrideSub : HiddenMergedInternalFinalOverride()
+
+internal abstract class HiddenMergedInternalFinalGet : AbstractList<String>() {
+    final override fun get(index: Int): String = ""
+}
+
+@Suppress("EXPOSED_SUPER_CLASS")
+abstract class HiddenMergedInternalFinalGetSub : HiddenMergedInternalFinalGet()
+
+open class HiddenMergedOverridingThread : Thread() {
+    override fun run() {}
+}
+
+internal open class HiddenMergedInternalFinalThreadOverride : HiddenMergedOverridingThread() {
+    final override fun run() {}
+}
+
+@Suppress("EXPOSED_SUPER_CLASS")
+open class HiddenMergedInternalFinalThreadOverrideSub : HiddenMergedInternalFinalThreadOverride()
+
+// and the Java method implemented by a member with a body of an internal interface, not abstract,
+// so that a subclass of HiddenMergedInternalDefaultRunSub, or of HiddenMergedInternalDefaultRunAbstractSub,
+// need not override run()
+internal interface HiddenMergedInternalDefaultRun : Runnable {
+    override fun run() {}
+}
+
+@Suppress("EXPOSED_SUPER_INTERFACE")
+open class HiddenMergedInternalDefaultRunSub : HiddenMergedInternalDefaultRun
+
+@Suppress("EXPOSED_SUPER_INTERFACE")
+abstract class HiddenMergedInternalDefaultRunAbstractSub : HiddenMergedInternalDefaultRun
+
+class HiddenMergedInternalDefaultRunConcrete : HiddenMergedInternalDefaultRunAbstractSub()
+
+internal interface HiddenMergedInternalDefaultSupplier : java.util.function.Supplier<String> {
+    override fun get(): String = ""
+}
+
+@Suppress("EXPOSED_SUPER_INTERFACE")
+open class HiddenMergedInternalDefaultSupplierSub : HiddenMergedInternalDefaultSupplier
+
 // the hidden member of the same JVM signature as the Java method of the first direct supertype does not hide it,
 // so that join.run() compiles, while reversed.run() calls the run scope function instead
 interface HiddenMergedRun {
@@ -712,6 +789,13 @@ private fun callMergedMembers(
     nullableArgumentCallJoin: HiddenMergedNullableArgumentCallJoin,
     anyOverride: HiddenAnyOverride,
     anyOverrideSub: HiddenAnyOverrideSub,
+    valueToString: HiddenAnyOverrideValue,
+    implemented: HiddenMergedInternalImplementedSub,
+    finalOverride: HiddenMergedInternalFinalOverrideSub,
+    finalGet: HiddenMergedInternalFinalGetSub,
+    finalThreadOverride: HiddenMergedInternalFinalThreadOverrideSub,
+    defaultRun: HiddenMergedInternalDefaultRunSub,
+    defaultSupplier: HiddenMergedInternalDefaultSupplierSub,
     computeIfAbsentJoin: HiddenMergedComputeIfAbsentJoin,
     inheritedDirectSupplierJoin: HiddenMergedJavaInheritedDirectSupplierJoin
 ) {
@@ -740,6 +824,13 @@ private fun callMergedMembers(
     nullableArgumentCallJoin.call()
     anyOverride.toString()
     anyOverrideSub.toString()
+    valueToString.toString()
+    implemented.f()
+    finalOverride.f()
+    finalGet[0]
+    finalThreadOverride.run()
+    defaultRun.run()
+    defaultSupplier.get()
     computeIfAbsentJoin.computeIfAbsent("") { it }
     inheritedDirectSupplierJoin.get()
 }
