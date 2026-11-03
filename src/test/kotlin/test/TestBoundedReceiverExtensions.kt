@@ -739,6 +739,41 @@ class BoundedReceiverStarListConsumer : BoundedReceiverConsumer<List<*>>
 
 class BoundedReceiverStringConsumer : BoundedReceiverConsumer<String>
 
+// unless something else constrains the type parameter, like a value parameter, or a bound which is not recursive,
+// like T : U, also through the bound of a value parameter, like E of T : List<E> for value: T,
+// while a bound referring to the type parameter only covariantly, like T : List<T>, is satisfied by a final class,
+// like Int, but not by Any
+fun <T : Comparable<T>> BoundedReceiverConsumer<T>.consumeComparableOf(value: T) {}
+
+fun <T : U, U : CharSequence> BoundedReceiverConsumer<T>.consumeBoundedByTypeParameter() {}
+
+fun <E, T : List<E>> BoundedReceiverConsumer<T>.consumeElementsOf(element: E) {}
+
+fun <E, T : List<E>> BoundedReceiverConsumer<List<T>>.consumeListsOf(value: T) {}
+
+fun <T : List<T>> BoundedReceiverConsumer<T>.consumeSelfList() {}
+
+class BoundedReceiverAnyConsumer : BoundedReceiverConsumer<Any>
+
+class BoundedReceiverIntConsumer : BoundedReceiverConsumer<Int>
+
+// a type parameter in a projection contradicting the type parameter of a supertype, like T of List<in T>,
+// the supertype of MutableList<in T>, which kotlinc infers, not told, like by a star projection
+fun <T> BoundedReceiverConsumer<MutableList<in T>>.consumeIntoMutable() {}
+
+class BoundedReceiverNullableAnyListConsumer : BoundedReceiverConsumer<List<Any?>>
+
+// or a covariant position of the same type parameter, which it is inferred from instead, also through a bound, like B : A
+interface BoundedReceiverMixed<out A, in B>
+
+fun <T : Comparable<T>> BoundedReceiverMixed<T, T>.mixComparable() {}
+
+fun <A : Comparable<A>, B : A> BoundedReceiverMixed<B, A>.mixBounded() {}
+
+class BoundedReceiverStringMixed : BoundedReceiverMixed<String, CharSequence>
+
+class BoundedReceiverListMixed : BoundedReceiverMixed<List<String>, Any>
+
 // a type parameter constrained only by Nothing, which kotlinc cannot infer, unless the expected type of the call tells it
 interface BoundedReceiverProducer<out T>
 
