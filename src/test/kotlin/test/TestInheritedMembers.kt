@@ -253,6 +253,13 @@ class InheritedJavaComparableFirstList<E : Comparable<E>> : com.xemantic.kotlin.
 
 class InheritedJavaStringFirstList : com.xemantic.kotlin.introspection.test.other.JavaStringFirstList()
 
+interface MergedComputeIfAbsent : MutableMap<String, String> {
+    override fun computeIfAbsent(key: String, mappingFunction: java.util.function.Function<in String, out String>): String
+}
+
+abstract class MergedJavaComputeIfAbsentJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaComputingMap<String, String>(), MergedComputeIfAbsent
+
 class InheritedFromJava : com.xemantic.kotlin.introspection.test.other.JavaInheritedMid<String>()
 
 open class OpenInheritedFromJava : com.xemantic.kotlin.introspection.test.other.JavaInheritedMid<String>()

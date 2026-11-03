@@ -4626,6 +4626,17 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve Kotlin member merged with Java override of JVM-only member taking key nullable`() {
+        // the String! key of the computeIfAbsent of JavaComputingMap does not tell it apart from the String one,
+        // and its String! return loses to the String, so that computeIfAbsent(null) { … } does not compile
+        resolver.resolve("com.xemantic.kotlin.introspection.test.MergedJavaComputeIfAbsentJoin.computeIfAbsent") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.MergedJavaComputeIfAbsentJoin.computeIfAbsent [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.MergedComputeIfAbsent
+            override fun computeIfAbsent(key: String, mappingFunction: java.util.function.Function<in String, out String>): String
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve member of Java map overriding JVM-only member with key and value of same type variable`() {
         // only the value is enhanced, the key stays V! in K2, while V & Any of the V : Comparable<V> does not compile
         resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaSelfKeyMap.merge") sameAsKotlin """

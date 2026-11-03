@@ -1172,6 +1172,12 @@ internal class DefaultKotlinIntrospector(
         }
 
         /**
+         * The [function] of this class with its value parameters of the platform types of Java not nullable,
+         * see [JavaFunction.notNullable], or `null`.
+         */
+        fun notNullableOf(function: KmFunction): KmFunction? = functions[function]?.notNullable
+
+        /**
          * The JVM method of the [function], telling its overrides, see [inheritedMembers].
          */
         fun jvmMethodOf(function: KmFunction): JvmMethod? = jvmMethodOf(functions[function]?.method)
@@ -2183,6 +2189,9 @@ internal class DefaultKotlinIntrospector(
      * @param overridden the keys of the members of the supertypes of the [kmClass] which the [member] overrides.
      * @param signature the signature of the [member] as rendered, see [Member.signature],
      *   the same for the members of the same signature of unrelated supertypes.
+     * @param notNullableSignature the [signature] of a member of a Java class with its value parameters of the platform types
+     *   of Java not nullable, see [JavaClass.notNullableOf], like the `K!` of `computeIfAbsent` of a Java subclass
+     *   of `java.util.HashMap<K, V>`, of the same signature for the compiler as a Kotlin member taking `K`, see [isMergedWith].
      * @param typeParameters the type parameters the [member] refers to, the not nullable ones, see [TypeParameterScope],
      *   also like the `U` of a `U : Any` of the inheriting class, given for the `T` of a `T & Any` of the [member].
      * @param isHidden whether the [member] is deprecated as hidden, so that it is not inherited,
@@ -2201,6 +2210,7 @@ internal class DefaultKotlinIntrospector(
         val key: String,
         val overridden: Set<String>,
         val signature: String,
+        val notNullableSignature: String,
         val typeParameters: TypeParameterScope,
         val isHidden: Boolean,
         val jvmMethod: JvmMethod?,
@@ -2324,12 +2334,14 @@ internal class DefaultKotlinIntrospector(
 
         /**
          * Whether the [member] is merged with the one of the [other] candidate, competing with it,
-         * as of the same kind, and of the same [signature], or overriding the same member, declared by another supertype,
+         * as of the same kind, and of the same [signature], also regardless of the platform types of Java of their value parameters,
+         * see [notNullableSignature], or overriding the same member, declared by another supertype,
          * as the members of the same supertype are its overloads.
          */
         fun isMergedWith(other: InheritedCandidate): Boolean =
             other.kmClass.name != kmClass.name && (other.member is Member.Property) == (member is Member.Property) &&
-                (other.signature == signature || other.overridden.any { it in overridden })
+                (other.signature == signature || other.notNullableSignature == notNullableSignature ||
+                    other.overridden.any { it in overridden })
 
         /**
          * Whether the [member] overrides the one of the [other] candidate, telling it by its key,
@@ -2558,9 +2570,13 @@ internal class DefaultKotlinIntrospector(
                 val overridden = (superDeclarations as? JavaClass)?.overriddenMembers(declared)
                     ?: declared.overridden(overrideResolver, superDeclarations.overrideOwner)
                 val member = declared.substituted(substitution, inheritingNames)
+                val signature = member.signature(inheritingNames)
                 candidates += InheritedCandidate(
                     superKmClass, superDeclarations, member, declared.key(superKmClass), overridden,
-                    signature = member.signature(inheritingNames),
+                    signature = signature,
+                    notNullableSignature = (declared as? Member.Function)?.let { function ->
+                        (superDeclarations as? JavaClass)?.notNullableOf(function.declaration)
+                    }?.let { Member.Function(it).substituted(substitution, inheritingNames).signature(inheritingNames) } ?: signature,
                     typeParameters = typeParameters,
                     isHidden = apiMember.isHidden,
                     // a JVM-only member, or a member of a Java class, is a Java method of its own, which the Kotlin members are not

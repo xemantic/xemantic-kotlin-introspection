@@ -1130,13 +1130,15 @@ internal fun Method.toKmJavaFunction(typeParameters: ReflectedTypeParameters, is
             typeVariable.bounds.mapTo(typeParameter.upperBounds) { it.toKmJavaType(scope, platformAsNullable = true) }
         }
     }
+    val isJdkMember by lazy(LazyThreadSafetyMode.NONE) { reflectedValue(default = true) { declaringClass.isJdkClass } }
     parameters.withIndex().mapTo(function.valueParameters) { (position, parameter) ->
         // the name told by the class file, or else the one of its position, like arg0, as kotlin-reflect names it
         KmValueParameter(if (parameter.isNamePresent) parameter.name else "arg$position").also { valueParameter ->
-            // nullable like the one kotlin-reflect describes, see toKmValueParameter
+            // nullable like the one kotlin-reflect describes, and star projected when raw, see toKmValueParameter
             val type = parameter.parameterizedType
-            val isClassTypeParameter = type is TypeVariable<*> && type.genericDeclaration is Class<*>
+            val isClassTypeParameter = type is TypeVariable<*> && type.genericDeclaration is Class<*> && isJdkMember
             valueParameter.type = type.toKmJavaType(scope, platformAsNullable = !parameter.isVarArgs && !isClassTypeParameter)
+            if (type is Class<*> && type.typeParameters.isNotEmpty()) valueParameter.type.arguments.replaceAll { KmTypeProjection.STAR }
             if (parameter.isVarArgs) {
                 val elementType = when (type) {
                     is GenericArrayType -> type.genericComponentType

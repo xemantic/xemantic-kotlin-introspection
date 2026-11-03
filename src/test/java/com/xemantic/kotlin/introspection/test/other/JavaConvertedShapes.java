@@ -34,6 +34,8 @@ public abstract class JavaConvertedShapes<T extends Comparable<? super T>, U> {
 
     public abstract java.util.Map rawMap(java.util.Map map);
 
+    public abstract void typeVariable(U value);
+
     public abstract T[] genericArray(U[] array);
 
     public abstract java.util.List<String>[] parameterizedArray();
