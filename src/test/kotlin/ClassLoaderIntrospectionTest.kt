@@ -3042,8 +3042,14 @@ class ClassLoaderIntrospectionTest {
         val introspector = unreflectableIntrospector(methodTables = true)
 
         // when
+        val sameModule = introspector.resolve(
+            "com.xemantic.kotlin.introspection.othermodule.UnreflectableOpenSameModuleSubclass"
+        )
         val friendModule = introspector.resolve(
             "com.xemantic.kotlin.introspection.friendmodule.UnreflectableOpenFriendModuleSubclass"
+        )
+        val finalFriendModule = introspector.resolve(
+            "com.xemantic.kotlin.introspection.friendmodule.UnreflectableFriendModuleSubclass"
         )
         val otherModule = introspector.resolve(
             "com.xemantic.kotlin.introspection.test.UnreflectableOpenOtherModuleSubclass"
@@ -3051,10 +3057,28 @@ class ClassLoaderIntrospectionTest {
 
         // then
         // the class files are too new to be parsed, and the methods refer to the missing marker class,
-        // but the method tables still tell the bridges, without loading the types of their descriptors
+        // but the method tables still tell the overrides of the same module by their mangled JVM methods
+        sameModule sameAsKotlin """
+            // com.xemantic.kotlin.introspection.othermodule.UnreflectableOpenSameModuleSubclass [page 1/1]
+            open class UnreflectableOpenSameModuleSubclass : InternalBase {
+                override val state: Int
+                override fun mark(marker: OtherModuleMarker)
+                fun take(marker: OtherModuleMarker)
+            }
+        """.trimIndent()
+        // and the bridges of a friend module, without loading the types of their descriptors
         friendModule sameAsKotlin """
             // com.xemantic.kotlin.introspection.friendmodule.UnreflectableOpenFriendModuleSubclass [page 1/1]
             open class UnreflectableOpenFriendModuleSubclass : com.xemantic.kotlin.introspection.othermodule.InternalBase {
+                override val state: Int
+                override fun mark(marker: com.xemantic.kotlin.introspection.othermodule.OtherModuleMarker)
+                fun take(marker: com.xemantic.kotlin.introspection.othermodule.OtherModuleMarker)
+            }
+        """.trimIndent()
+        // also in a final class, where they are no longer left to the modality
+        finalFriendModule sameAsKotlin """
+            // com.xemantic.kotlin.introspection.friendmodule.UnreflectableFriendModuleSubclass [page 1/1]
+            class UnreflectableFriendModuleSubclass : com.xemantic.kotlin.introspection.othermodule.InternalBase {
                 override val state: Int
                 override fun mark(marker: com.xemantic.kotlin.introspection.othermodule.OtherModuleMarker)
                 fun take(marker: com.xemantic.kotlin.introspection.othermodule.OtherModuleMarker)
@@ -3773,6 +3797,47 @@ class ClassLoaderIntrospectionTest {
     @Test
     fun `should mark shrunk overload of interface member as override when its DefaultImpls can be neither read nor loaded`() {
         // given
+        val introspector = shrunkDefaultImplsOverloaderIntrospector(methodTable = false)
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsOverloader")
+
+        // then
+        // the JVM methods of the interface itself still tell the overload as shrunk,
+        // an override with a default body, which a subinterface can still override
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsOverloader [page 1/1]
+            interface DefaultImplsOverloader : DefaultImplsBase {
+                open override fun greet(times: Int): String
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not mark overload of interface member as override when the method table of its DefaultImpls tells its body`() {
+        // given
+        val introspector = shrunkDefaultImplsOverloaderIntrospector(methodTable = true)
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsOverloader")
+
+        // then
+        // the class file of DefaultImpls is too new to be parsed, but its method table tells the body of the overload,
+        // so that it is not shrunk
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsOverloader [page 1/1]
+            interface DefaultImplsOverloader : DefaultImplsBase {
+                open fun greet(times: Int): String
+            }
+        """.trimIndent()
+    }
+
+    /**
+     * An introspector of `DefaultImplsOverloader`, whose JVM method of the overload is removed, like by R8,
+     * while its `DefaultImpls` class cannot be loaded, and its class file cannot be parsed,
+     * its method table readable only if [methodTable].
+     */
+    private fun shrunkDefaultImplsOverloaderIntrospector(methodTable: Boolean): KotlinIntrospector {
         val interfaceResource = "com/xemantic/kotlin/introspection/defaultimpls/DefaultImplsOverloader.class"
         val defaultImplsName = "com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsOverloader\$DefaultImpls"
         val baseName = "com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsBase"
@@ -3797,30 +3862,17 @@ class ClassLoaderIntrospectionTest {
                         methodName == "greet" && descriptor == "(I)Ljava/lang/String;"
                     }
                     // the major version, following the magic number and the minor version, unsupported,
-                    // and the tag of the first constant pool entry, unknown, so that the method table cannot be read either
+                    // and unless its method table is readable, the tag of the first constant pool entry, unknown
                     defaultImplsName.replace('.', '/') + ".class" -> bytes.also {
                         it[6] = 0x7F
                         it[7] = 0x7F
-                        it[10] = 0x7F
+                        if (!methodTable) it[10] = 0x7F
                     }
                     else -> bytes
                 }.inputStream()
             }
         }
-        val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
-
-        // when
-        val signature = introspector.resolve("com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsOverloader")
-
-        // then
-        // the JVM methods of the interface itself still tell the overload as shrunk,
-        // an override with a default body, which a subinterface can still override
-        signature sameAsKotlin """
-            // com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsOverloader [page 1/1]
-            interface DefaultImplsOverloader : DefaultImplsBase {
-                open override fun greet(times: Int): String
-            }
-        """.trimIndent()
+        return KotlinIntrospector(classLoader, scanEntireClasspath = false)
     }
 
     @Test
