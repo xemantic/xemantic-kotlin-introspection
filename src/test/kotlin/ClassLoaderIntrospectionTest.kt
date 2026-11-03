@@ -406,6 +406,27 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should list member inherited from relocated Kotlin interface of relocated Java supertype with relocated type argument`() {
+        // given
+        val dependencies = arrayOf("RelocatedGenericJavaBase.class", "RelocatedGenericInterface.class", "RelocatedEvent.class")
+        val root = isolatedTestFixturesCopy("relocatedGenericJavaBase", *dependencies, "RelocatedGenericJavaBaseImpl.class")
+        relocatedCopy(root, *dependencies, dependents = listOf("RelocatedGenericJavaBaseImpl.class"))
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.RelocatedGenericJavaBaseImpl.kg")
+
+        // then
+        // the type argument of the Kotlin interface, among the supertypes of the relocated Java class,
+        // is named by its metadata name, like the Kotlin interface itself
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.RelocatedGenericJavaBaseImpl.kg [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.isolated.RelocatedGenericInterface
+            open fun kg(value: RelocatedEvent)
+        """.trimIndent()
+    }
+
+    @Test
     fun `should list member inherited from original Java supertype when relocated one cannot be described`() {
         // given
         val shadedRoot = tempDir.resolve("relocatedJavaBaseNextToOriginal")
