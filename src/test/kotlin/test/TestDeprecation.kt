@@ -157,6 +157,24 @@ enum class DeprecatedEnum { A }
 
 fun DeprecatedEnum.enumExtension(): Int = 0
 
+// a typealias to a class nested in a deprecated class, called like AliasedNestedOfDeprecated.create(),
+// for which Kotlin reports no deprecation of the outer class, the caller never writing its name
+@Deprecated("Use DeprecationTarget")
+class DeprecatedAliasedOuter {
+    class Nested {
+        companion object {
+            fun create(): Int = 0
+        }
+    }
+}
+
+typealias AliasedNestedOfDeprecated = DeprecatedAliasedOuter.Nested
+
+// a typealias to a deprecated object, called like AliasedDeprecatedObject.member(),
+// for which Kotlin reports the deprecation of the object the typealias uses
+@Suppress("DEPRECATION")
+typealias AliasedDeprecatedObject = DeprecatedObject
+
 // a deprecated class which is protected, and a deprecated class within a protected one
 open class DeprecatedProtectedHolder {
     @Deprecated("Use DeprecationTarget")

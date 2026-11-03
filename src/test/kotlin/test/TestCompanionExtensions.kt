@@ -134,3 +134,20 @@ class DeprecatedOuterAndCompanionExtensionHolder {
 
 @Suppress("DEPRECATION")
 fun DeprecatedOuterAndCompanionExtensionHolder.Companion.of(): Int = 0
+
+// Extensions on a supertype of a companion object, called on the name of the class, like SupertypeCompanionHolder.onSupertype(),
+// for which Kotlin reports the deprecation of the companion object, like for an extension on the companion object itself
+interface CompanionSupertype
+
+class SupertypeCompanionHolder {
+    companion object : CompanionSupertype
+}
+
+class DeprecatedSupertypeCompanionHolder {
+    @Deprecated("Use the constructor")
+    companion object : CompanionSupertype
+}
+
+fun CompanionSupertype.onSupertype(): Int = 0
+
+fun <T : CompanionSupertype> T.onBoundedSupertype(): Int = 0

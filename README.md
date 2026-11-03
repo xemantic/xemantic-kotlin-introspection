@@ -96,6 +96,8 @@ com.example.AnnotationTestClass
   as Kotlin no longer calls `Foo.parse()` then,
   but not the extensions on the supertypes of the companion object, also called as `Foo.parse()`,
   not to flood the listing of the class, like with the ones on `Any`,
+  which are still resolved by the name of the class, like `com.example.Foo.parse` of `fun Parser.parse()` for `companion object : Parser`,
+  except the ones of the standard library, like for the supertypes of the class,
   while a class nested in the companion object is resolved only through it, like `com.example.Foo.Companion.Builder`,
   as Kotlin does not resolve `Foo.Builder` either.
   The deprecation of a companion object deprecated with the `WARNING` or the `ERROR` level,
@@ -107,15 +109,17 @@ com.example.AnnotationTestClass
   The deprecation of the class itself, which Kotlin reports for `Foo.parse()` too, on the name of the class the caller writes,
   is told by the header of the class when the class itself is resolved,
   and by a comment on every page of whatever is resolved by a name going through it,
-  like its members, the members and the extensions of its companion object, or its nested classes,
+  like the members and the extensions of its companion object, or its nested classes,
   one for each deprecated class the name goes through, the outermost first,
   like `// in @Deprecated("Use Bar", level = DeprecationLevel.ERROR) class Foo` for `com.example.Foo.Nested.create`,
   also for a companion object resolved by its own name, like `com.example.Foo.Companion.parse`,
   or an object, also of its extensions, like `Obj.ext()`, or of an enum class, like `Color.RED.ext()`,
   as Kotlin reports each of them, like for `Foo.Nested.create()`,
   merged with the comment telling a protected class, like `// in @Deprecated("Use Bar") protected class Outer.Foo`,
-  but, of a member resolved by its name, not on a page with only the extensions of the class called on its instance,
-  like `foo.ext()`, where Kotlin reports nothing, unlike a nested class resolved itself, which tells it on every page.
+  but, of a member resolved by its name, not on a page with only the members, and the extensions, of the class called on its instance,
+  like `foo.bar()`, or `foo.ext()`, where Kotlin reports nothing, unlike a nested class resolved itself, which tells it on every page,
+  and not for the classes enclosing the class a typealias expands to, like `Foo` for `Alias.create` of `typealias Alias = Foo.Nested`,
+  whose names the caller never writes.
   The comment of a nested class marks its uses by the qualified name, like its constructor, or its companion object,
   as Kotlin reports nothing for the nested class used only as a type, like `val nested: Foo.Nested`.
   A class deprecated as hidden is not resolved, and neither is anything within it.
