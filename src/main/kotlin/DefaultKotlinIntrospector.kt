@@ -3353,9 +3353,18 @@ internal class DefaultKotlinIntrospector(
             if (type != null && types != null) {
                 val known = types[name].orEmpty()
                 // each one reached through another path, like MutableList<String> of a Kotlin interface
-                // and MutableList<String!> of a Java one, see keptSupertypes, up to MAX_SUPERTYPE_PATHS of them
-                if (known.size < MAX_SUPERTYPE_PATHS && known.none { it.hasSameStructure(type) }) {
-                    types[name] = known + type
+                // and MutableList<String!> of a Java one, see keptSupertypes, up to MAX_SUPERTYPE_PATHS of them,
+                // one without platform type arguments replacing one with them beyond, which kotlinc would leave out
+                val reached = when {
+                    known.any { it.hasSameStructure(type) } -> null
+                    known.size < MAX_SUPERTYPE_PATHS -> known + type
+                    type.hasPlatformArguments -> null
+                    else -> known.indexOfFirst { it.hasPlatformArguments }.takeIf { it >= 0 }?.let { index ->
+                        known.toMutableList().also { it[index] = type }
+                    }
+                }
+                if (reached != null) {
+                    types[name] = reached
                     // walked again for the supertypes it gives, like MutableCollection<String>, when already walked,
                     // untyped, or with another type, or else walked with it as well, when still pending
                     if (name in supertypeNames) pending += metadataName to type
@@ -4003,15 +4012,11 @@ internal class DefaultKotlinIntrospector(
         /**
          * Whether any of the supertypes of the same class reached through different paths, the [reached] ones, see [keptSupertypes],
          * is matched by the [match] function, forgetting what is inferred, and whether what is not told was matched,
-         * see [isUntold], by the ones which are not matched.
+         * see [isUntold], by the ones which are not matched, see [retrying].
          */
-        inline fun anyReached(reached: List<KmType>, match: (supertype: KmType) -> Boolean): Boolean {
-            val inferredCount = inferredIds.size
-            val wasUntold = isUntold
-            return reached.any { supertype ->
-                isUntold = wasUntold
-                retrying(inferredCount) { match(supertype) }
-            }.also { isMatched -> if (!isMatched) isUntold = wasUntold }
+        fun anyReached(reached: List<KmType>, match: (supertype: KmType) -> Boolean): Boolean {
+            val mark = Mark()
+            return reached.any { supertype -> retrying(mark) { match(supertype) } }
         }
 
         /**
@@ -4136,18 +4141,18 @@ internal class DefaultKotlinIntrospector(
                     // or else the mutable one, see isJavaCollection, either the actual one,
                     // or the expected one, of a supertype of the type argument of the extension, see classMatches,
                     // or in an invariant position, any type between them, see matchesMutable
-                    val inferredCount = inferredIds.size
+                    val mark = Mark()
                     classMatches(expected, classifier.name, actual, actualClassifier.name, variance, isStrict) ||
                         ((actual.isJavaCollection || expected.isJavaCollection) && run {
                             val mutable = actual.mutableAlternative()
                             val expectedMutable = expected.mutableAlternative()
                             val isInvariant = variance == KmVariance.INVARIANT
-                            (mutable != null && retrying(inferredCount) { matchesMutable(expected, mutable, variance) }) ||
-                                (expectedMutable != null && retrying(inferredCount) { matchesMutable(expectedMutable, actual, variance) }) ||
-                                (mutable != null && isInvariant && retrying(inferredCount) {
+                            (mutable != null && retrying(mark) { matchesMutable(expected, mutable, variance) }) ||
+                                (expectedMutable != null && retrying(mark) { matchesMutable(expectedMutable, actual, variance) }) ||
+                                (mutable != null && isInvariant && retrying(mark) {
                                     matchesMutable(expected, mutable, KmVariance.OUT) && matchesMutable(expected, actual, KmVariance.IN)
                                 }) ||
-                                (expectedMutable != null && isInvariant && retrying(inferredCount) {
+                                (expectedMutable != null && isInvariant && retrying(mark) {
                                     matchesMutable(expectedMutable, actual, KmVariance.IN) && matchesMutable(expected, actual, KmVariance.OUT)
                                 })
                         })
@@ -4198,10 +4203,21 @@ internal class DefaultKotlinIntrospector(
             }
         }
 
-        // whether the alternative matches, forgetting what is inferred since the given count before, and when it does not
-        private inline fun retrying(inferredCount: Int, alternative: () -> Boolean): Boolean {
-            forgetInferredSince(inferredCount)
-            return alternative().also { isMatched -> if (!isMatched) forgetInferredSince(inferredCount) }
+        // what is inferred, and whether what is not told was matched, see isUntold, at a point of the matching, see retrying
+        private inner class Mark(val inferredCount: Int = inferredIds.size, val isUntold: Boolean = this@ReceiverMatcher.isUntold) {
+
+            // goes back to this point, forgetting what is inferred since, and whether what is not told was matched since
+            fun restore() {
+                forgetInferredSince(inferredCount)
+                this@ReceiverMatcher.isUntold = isUntold
+            }
+
+        }
+
+        // whether the alternative matches, going back to the given mark before, and when it does not
+        private inline fun retrying(mark: Mark, alternative: () -> Boolean): Boolean {
+            mark.restore()
+            return alternative().also { isMatched -> if (!isMatched) mark.restore() }
         }
 
         /**
@@ -4224,9 +4240,9 @@ internal class DefaultKotlinIntrospector(
                 }
                 // a Java array, like Array<(out) String!>!, either the actual one, or the expected one,
                 // is the invariant one, or else the covariant one
-                val inferredCount = inferredIds.size
+                val mark = Mark()
                 return argumentsMatch(name, expected.arguments, actual.arguments, variance, isStrict) ||
-                    retrying(inferredCount) {
+                    retrying(mark) {
                         argumentsMatch(name, expected.javaArrayArguments(), actual.javaArrayArguments(), variance, isStrict)
                     }
             }
@@ -4367,7 +4383,7 @@ internal class DefaultKotlinIntrospector(
                     val subtype = if (actual.isNullable) actual.notNullable() else actual
                     inferringBounds(id).forEach { bound ->
                         val inferredType = if (bound.isNullable) actual else subtype
-                        retrying(inferredIds.size) {
+                        retrying(Mark()) {
                             matches(bound.substituted(mapOf(id to inferredType)), inferredType, KmVariance.OUT, isStrict)
                         }
                     }
@@ -7713,6 +7729,7 @@ private fun isNullabilityMatched(expected: KmType, actual: KmType, variance: KmV
  * its type arguments, also the nested ones, as the platform types of Java, like `Comparable<Base!>`,
  * flexible from not nullable to nullable, see [isNullabilityMatched],
  * also a not nullable type argument substituted for a type parameter, like `Box<String!>` of `Box<T>` for `T` of `String`,
+ * but not an erased type argument of a raw Kotlin supertype, see [isJavaErasure],
  * but not a nullable one, like `Box<String?>` for `T` of `String?`, nor the nested type arguments of either,
  * declared by Kotlin.
  * A Java collection of the signature, like `java.util.List<T>`, read-only as kotlin-reflect tells it,
@@ -7731,7 +7748,8 @@ private fun KmType.javaSignatureType(substitution: Map<Int, KmType>): KmType = c
             type.javaSignatureType(substitution)
         }
         val argumentClassifier = argumentType.classifier
-        if (!argumentType.isNullable && argumentClassifier is KmClassifier.Class) {
+        // an erased type argument of a raw Kotlin supertype is the type kotlinc erases it to, see JAVA_ERASURE_MARKER
+        if (!argumentType.isNullable && argumentClassifier is KmClassifier.Class && !argumentType.isJavaErasure) {
             argumentType.flexibleTypeUpperBound =
                 KmFlexibleTypeUpperBound(argumentType.copy().also { it.isNullable = true }, typeFlexibilityId = null)
             if (classifier is KmClassifier.Class && argumentClassifier.name in MUTABLE_COLLECTION_TYPES) {
@@ -7899,7 +7917,12 @@ private val KmType.hasPlatformArguments: Boolean
     get() = generateSequence(this) { it.outerType }.any { type ->
         // a Java collection, a Java array, or a raw type, is a platform type as well
         type.arguments.any { it.type?.flexibleTypeUpperBound != null }
-    }
+    } || hasInexactErasure
+
+// whether this type, or one of its type arguments, also a nested one, is an erasure not told exactly, see JAVA_INEXACT_ERASURE_MARKER
+private val KmType.hasInexactErasure: Boolean
+    get() = annotations.any { it.className == JAVA_INEXACT_ERASURE_MARKER } ||
+        arguments.any { it.type?.hasInexactErasure == true } || outerType?.hasInexactErasure == true
 
 /**
  * Whether this type has the same structure as the [other] one, as told by [structureKey], without building the keys,
@@ -8100,7 +8123,8 @@ private const val COMPARABLE_CLASS_NAME = "kotlin.Comparable"
 
 // the number of distinct types of a supertype reached through different paths which are told and walked, see supertypeNames,
 // as their number can double at each level of a hierarchy, like through Kotlin and through Java,
-// the ones reached first, which the class is matched against, an extension matching only the other ones not listed
+// the ones reached first, which the class is matched against, an extension matching only the other ones not listed,
+// but the ones without platform type arguments, which replace the ones with them, see keptSupertypes
 private const val MAX_SUPERTYPE_PATHS = 16
 
 /**
