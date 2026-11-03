@@ -5034,6 +5034,175 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve member of mutable list overridden by Java class outside of JDK as inherited from it taking platform type`() {
+        // K2 takes the override as the member, taking E!, so that add(null) of a JavaOverridingList<String> compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaOverridingList.add") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaOverridingList.add [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaOverridingList
+            override fun add(arg0: E?): Boolean
+            // inherited from kotlin.collections.MutableList
+            fun add(index: Int, element: E)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve operator of mutable list overridden by Java class outside of JDK as inherited from it taking platform type`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaOverridingList.set") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaOverridingList.set [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaOverridingList
+            override operator fun set(arg0: Int, arg1: E?): E
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of mutable map overridden by Java class outside of JDK as inherited from it taking platform types`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaOverridingMap.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaOverridingMap.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaOverridingMap
+            override fun put(arg0: K?, arg1: V?): V?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of comparable overridden by Java class as inherited from it taking platform type`() {
+        // compareTo(null) of a JavaComparableBox compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaComparableBox.compareTo") should {
+            have(lines().take(3) == listOf(
+                "// com.xemantic.kotlin.introspection.test.InheritedJavaComparableBox.compareTo [page 1/1]",
+                "// inherited from com.xemantic.kotlin.introspection.test.other.JavaComparableBox",
+                "override operator fun compareTo(arg0: com.xemantic.kotlin.introspection.test.other.JavaComparableBox?): Int"
+            ))
+        }
+    }
+
+    @Test
+    fun `should resolve member of JDK class taking type parameter of its class as platform type`() {
+        // java.util.Vector is no pure implementation of MutableList for K2, see FakePureImplementationsProvider,
+        // so that addElement(null) of a Vector<String> compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaVector.addElement") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaVector.addElement [page 1/1]
+            // inherited from java.util.Vector
+            fun addElement(arg0: String?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of JDK class taking type parameter of its class given by inheriting class as platform type`() {
+        // set(null) of an AtomicReference<String> compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaAtomicReference.set") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaAtomicReference.set [page 1/1]
+            // inherited from java.util.concurrent.atomic.AtomicReference
+            fun set(arg0: String?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of mutable list overridden by JDK class which is no pure implementation of it as inherited from it`() {
+        // add(null) of a Vector<String> compiles, while the one of an ArrayList<String> does not
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaVector.add") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaVector.add [page 1/1]
+            // inherited from java.util.Vector
+            override fun add(arg0: String?): Boolean
+            override fun add(arg0: Int, arg1: String?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of pure implementation of mutable list taking type parameter of its class as platform type`() {
+        // push of java.util.LinkedList overrides the one of java.util.Deque, not a member of MutableList
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaLinkedList.push") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaLinkedList.push [page 1/1]
+            // inherited from java.util.LinkedList
+            override fun push(arg0: String?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of JDK class whose value parameter K2 enhances as not nullable`() {
+        // addFirst of java.util.LinkedList is one of PREDEFINED_FUNCTION_ENHANCEMENT_INFO_BY_SIGNATURE of the compiler,
+        // so that addFirst(null) of a LinkedList<String> does not compile, unlike push(null),
+        // the JVM-only member of MutableList standing for it
+        assumeSequencedCollections()
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaLinkedList.addFirst") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaLinkedList.addFirst [page 1/1]
+            // inherited from kotlin.collections.MutableList
+            open fun addFirst(arg0: String)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve JVM-only member of mutable list of JDK 21 overridden by Java class through bridge as override`() {
+        // the addFirst(String) of a Java subclass of java.util.AbstractList<String> overrides the addFirst(Object) of java.util.List
+        // through the bridge javac generates, which K2 sees as an override
+        assumeSequencedCollections()
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaAddFirstHolder.addFirst") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaAddFirstHolder.addFirst [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaAddFirstHolder
+            override fun addFirst(arg0: String?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve Java method taking platform type overridden by declared member next to it`() {
+        // the contains(element: String) overrides the contains(Object) of java.util.AbstractCollection, taking String! in K2
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaStringList.contains") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaStringList.contains [page 1/1]
+            override operator fun contains(element: String): Boolean
+            fun contains(element: Int): Boolean
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve Java method taking platform type overridden by Kotlin superclass`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedKotlinContainsListSub.contains") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedKotlinContainsListSub.contains [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.InheritedKotlinContainsList
+            override operator fun contains(element: String): Boolean
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member implemented by Java superclass reached also through Kotlin as open`() {
+        // contains of java.util.AbstractCollection implements the one of Collection, reached directly too,
+        // which List declares again, so that a concrete subclass need not implement it
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaCollectionDiamond.contains") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaCollectionDiamond.contains [page 1/1]
+            // inherited from kotlin.collections.List
+            open override operator fun contains(element: String): Boolean
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member implemented by Java superclass next to declared overload as open`() {
+        // only the modality is checked: the declared contains(element: String?) overrides the contains(Object)
+        // of java.util.AbstractCollection, which neither the override resolver, nor this listing, tells yet
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedNullableContainsList.contains") should {
+            have("open override operator fun contains(element: String): Boolean" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve declared override of Java override of bounded type variable of JVM-only member of mutable list once`() {
+        // the addFirst(element: E?) overrides the addFirst(Comparable) of JavaComparableFirstList,
+        // overriding the addFirst(Object) of java.util.List by its bridge, so that MutableList adds no addFirst of its own
+        assumeSequencedCollections()
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OverridingJavaComparableFirstList.addFirst") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OverridingJavaComparableFirstList.addFirst [page 1/1]
+            override fun addFirst(element: E?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve inherited override of Java override of bounded type variable of JVM-only member of mutable list once`() {
+        assumeSequencedCollections()
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OverridingJavaComparableFirstListSub.addFirst") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OverridingJavaComparableFirstListSub.addFirst [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.OverridingJavaComparableFirstList
+            override fun addFirst(element: String?)
+        """.trimIndent()
+    }
+
+    @Test
     fun `should not resolve Java method overriding JDK method which built-in type does not expose`() {
         // Kotlin calls the MutableList<T>.sort extension instead, the JDK sort of java.util.List is not a member of MutableList
         assert(resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaArrayList.sort") == null)
@@ -5065,13 +5234,14 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should not resolve method of Java superclass overridden by its Java subclass overriding member of Kotlin supertype`() {
-        // get(Object) of java.util.Dictionary, returning V, is overridden by java.util.Hashtable, overriding the get of Map
+        // get(Object) of java.util.Dictionary, returning V, is overridden by java.util.Hashtable, overriding the get of Map,
+        // which K2 takes as the member, taking K!, as java.util.Hashtable is no pure implementation of MutableMap
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.InheritedHashtable.get"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.InheritedHashtable.get [page 1/1]
-            // inherited from kotlin.collections.Map
-            operator fun get(key: K): V?
+            // inherited from java.util.Hashtable
+            override operator fun get(arg0: K?): V?
         """.trimIndent()
     }
 
@@ -5605,14 +5775,16 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should resolve member of Kotlin interface declared again by subinterface and implemented by Java superclass as open`() {
-        // contains of java.util.AbstractCollection implements the one of Collection, which List declares again
+    fun `should resolve member of Kotlin interface declared again by subinterface and implemented by Java superclass as Java member`() {
+        // contains of java.util.AbstractCollection implements the one of Collection, which List declares again,
+        // and K2 takes it as the member, taking String!, as a subclass of java.util.AbstractList<String> is reached
+        // by List only through Java classes, so that `override fun contains(element: String?)` compiles
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.InheritedJavaList.contains"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.InheritedJavaList.contains [page 1/1]
-            // inherited from kotlin.collections.List
-            open override operator fun contains(element: String): Boolean
+            // inherited from java.util.AbstractCollection
+            override operator fun contains(arg0: String?): Boolean
         """.trimIndent()
     }
 
