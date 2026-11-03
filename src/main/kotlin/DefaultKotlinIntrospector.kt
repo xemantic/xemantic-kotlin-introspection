@@ -1226,6 +1226,7 @@ internal class DefaultKotlinIntrospector(
         /**
          * The [function] as the compiler sees it on a class reaching this one through a raw supertype, see [rawSupertypeNames],
          * of the erasures of its types, see [toKmJavaFunction], of its own modality and visibility,
+         * and of the nullability of its own types, like the `V?` of an override of the `get` of `java.util.HashMap`, erased to `Any?`,
          * or `null` if it is no method of this class, like a member of a built-in type described by kotlin-reflect,
          * or a method of a JDK class, which stays matched with the members of the built-in types it overrides,
          * like the `compute` of a raw `java.util.HashMap` with the one of `MutableMap`, see [inheritedCandidates].
@@ -1237,6 +1238,11 @@ internal class DefaultKotlinIntrospector(
             method.toKmJavaFunction(typeParameters, isFinalClass = false, isErased = true).also { erased ->
                 erased.modality = function.modality
                 erased.visibility = function.visibility
+                erased.returnType.isNullable = function.returnType.isNullable
+                erased.valueParameters.zip(function.valueParameters) { erasedParameter, parameter ->
+                    erasedParameter.type.isNullable = parameter.type.isNullable
+                    parameter.varargElementType?.let { erasedParameter.varargElementType?.isNullable = it.isNullable }
+                }
             }
         }
 

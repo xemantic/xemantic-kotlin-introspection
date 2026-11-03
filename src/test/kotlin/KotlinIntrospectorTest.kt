@@ -5741,13 +5741,39 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve Java override not annotated of the nullability annotations of the generic method it overrides through a bridge`() {
-        // resolve(String) overrides the resolve(T) of JavaAnnotatedBase<String>, of another JVM descriptor, bridged by javac
+        // resolve(String) overrides the resolve(T) of JavaAnnotatedBase<String>, of another JVM descriptor, bridged by javac,
+        // while the overload resolve(Integer), which the bridge resolve(Object) does not call, takes and returns platform types
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.InheritedJavaAnnotationInheriting.resolve"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.InheritedJavaAnnotationInheriting.resolve [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.other.JavaAnnotationInheriting
+            abstract fun resolve(arg0: Int?): String
             abstract override fun resolve(arg0: String): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java override not annotated of class marked by NullMarked as not nullable whatever the overridden method tells`() {
+        // the own mark of the class wins over the @Nullable of the find of JavaAnnotatedBase
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaNullMarkedOverriding.find"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaNullMarkedOverriding.find [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNullMarkedOverriding
+            abstract override fun find(arg0: String): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should keep nullable return type of JDK method overridden by Java class reached through raw supertype`() {
+        // the V? of the get of java.util.HashMap, erased to Any?
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaRawSourceMap.get"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaRawSourceMap.get [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaRawSourceMap
+            override operator fun get(arg0: Any?): Any?
         """.trimIndent()
     }
 

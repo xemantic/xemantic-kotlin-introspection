@@ -594,3 +594,9 @@ abstract class InheritedJavaNullMarkedPackage : com.xemantic.kotlin.introspectio
 abstract class InheritedFunctionReferenceType : kotlin.reflect.KFunction1<Int, String>
 
 abstract class InheritedSuspendFunctionReferenceType : kotlin.reflect.KSuspendFunction1<Int, String>
+
+// A Java class marked by @NullMarked overriding an annotated method of a Java class not marked, not annotated itself
+abstract class InheritedJavaNullMarkedOverriding : com.xemantic.kotlin.introspection.test.other.JavaNullMarkedOverriding()
+
+// The members of a generic Java subclass of java.util.HashMap reached through its raw subclass
+abstract class InheritedJavaRawSourceMap : com.xemantic.kotlin.introspection.test.other.JavaRawSourceMapMid()
