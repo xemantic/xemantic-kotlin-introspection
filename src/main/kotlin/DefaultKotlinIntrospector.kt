@@ -2191,7 +2191,8 @@ internal class DefaultKotlinIntrospector(
         isOwnerOpenForOverrides: Boolean,
         inheritedBy: ClassKind? = null,
         typeParameters: TypeParameterScope,
-        isJvmOnlyOverride: Boolean = false
+        isJvmOnlyOverride: Boolean = false,
+        isOverridingNothing: Boolean = false
     ): List<String> {
         // a member inherited by an interface is rendered as within it, like the ones of kotlin.Any
         val isInterface = kmClass.kind == ClassKind.INTERFACE || inheritedBy == ClassKind.INTERFACE
@@ -2214,7 +2215,8 @@ internal class DefaultKotlinIntrospector(
                     deprecation = declarations.deprecation(member.declaration),
                     isOwnerOpenForOverrides = isOwnerOpenForOverrides, isInheritedByFinalClass = isInheritedByFinalClass,
                     declaration = member.declaration,
-                    isJvmOnlyOverride = isJvmOnlyOverride
+                    isJvmOnlyOverride = isJvmOnlyOverride,
+                    isOverridingNothing = isOverridingNothing
                 )
             )
         }
@@ -2368,6 +2370,13 @@ internal class DefaultKotlinIntrospector(
          * though the override resolver does not tell, see [inheritedCandidates].
          */
         var isJvmOnlyOverride: Boolean = false
+
+        /**
+         * Whether the [member], of a Java class, overrides none of the Kotlin members the override resolver tells,
+         * like the `put(@NotNull Integer)` of a Java class the `put(key: Int)` of a Kotlin interface,
+         * which the `put(int)` of its Java superclass implements, see [takesReferenceForPrimitiveOf].
+         */
+        var isOverridingNothing: Boolean = false
 
         // the function returning a type which is not nullable, which might be a platform type, see returnsPlatformType
         private val platformCandidate: KmFunction? by lazy(LazyThreadSafetyMode.NONE) {
@@ -2686,7 +2695,8 @@ internal class DefaultKotlinIntrospector(
                     isOwnerOpenForOverrides = isOpenForOverrides,
                     inheritedBy = kmClass.kind,
                     typeParameters = candidate.typeParameters,
-                    isJvmOnlyOverride = candidate.isJvmOnlyOverride
+                    isJvmOnlyOverride = candidate.isJvmOnlyOverride,
+                    isOverridingNothing = candidate.isOverridingNothing
                 )
             )
         }
@@ -2849,7 +2859,10 @@ internal class DefaultKotlinIntrospector(
             val overridden = candidate.overridden.filterTo(HashSet()) { key ->
                 candidatesByKey[key].orEmpty().none { candidate.takesReferenceForPrimitiveOf(it) }
             }
-            if (overridden.size != candidate.overridden.size) candidate.overridden = overridden
+            if (overridden.size != candidate.overridden.size) {
+                candidate.overridden = overridden
+                candidate.isOverridingNothing = overridden.isEmpty()
+            }
         }
         // the members of a JDK class reached only through a Java class of the user code lose the enhancement of their return types,
         // like the get() of java.util.function.Supplier for a subclass of a Java class implementing it without declaring it again,
@@ -6479,6 +6492,8 @@ internal class DefaultKotlinIntrospector(
      *   when the rendered one is a copy with the type arguments of an inheriting class substituted, see [inheritedMembers].
      * @param isJvmOnlyOverride whether the [function] is an override of a JVM-only member of a built-in type,
      *   which the [owner] does not tell, see [InheritedCandidate.isJvmOnlyOverride].
+     * @param isOverridingNothing whether the [function] overrides nothing, though the [owner] tells otherwise,
+     *   see [InheritedCandidate.isOverridingNothing].
      */
     @OptIn(ExperimentalContextParameters::class)
     private fun formatFunction(
@@ -6493,7 +6508,8 @@ internal class DefaultKotlinIntrospector(
         isOwnerOpenForOverrides: Boolean = isOpenForOverridesByDefault(owner?.kmClass),
         isInheritedByFinalClass: Boolean = false,
         declaration: KmFunction = function,
-        isJvmOnlyOverride: Boolean = false
+        isJvmOnlyOverride: Boolean = false,
+        isOverridingNothing: Boolean = false
     ): String = buildString {
         val typeParameters = classTypeParameters.withDeclared(function.typeParameters)
             .withStandingFor(bodyReceiver?.typeParameters.orEmpty(), bodyReceiver?.classScope ?: TypeParameterScope.EMPTY)
@@ -6505,7 +6521,7 @@ internal class DefaultKotlinIntrospector(
         +formatContextParameters(function.contextParameters, contextPackage, typeParameters)
         +formatVisibility(function.visibility)
 
-        val override = override(owner, declaration)
+        val override = override(owner, declaration)?.takeUnless { isOverridingNothing }
         +formatModalityModifiers(
             function.modality, override != null || isJvmOnlyOverride, inInterface, isOwnerOpenForOverrides, isInheritedByFinalClass
         )
