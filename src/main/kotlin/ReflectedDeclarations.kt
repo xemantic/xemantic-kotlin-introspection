@@ -357,11 +357,30 @@ internal fun KClass<*>.toKmJavaClassHeader(
                 (supertype.classifier as? KClass<*>)?.let { supertypeClass ->
                     type.classifier = KmClassifier.Class(supertypeName(supertypeClass.java))
                     objectWildcards(supertypeClass.java).forEach { path -> type.projectObjectWildcard(path) }
-                    genericSupertypes[supertypeClass.java]?.let { type.markRawTypeArguments(it) }
+                    val genericSupertype = genericSupertypes[supertypeClass.java]
+                    if (genericSupertype != null) type.markRawTypeArguments(genericSupertype) else type.eraseRawKotlinArguments(supertypeClass)
                 }
             }
         }
     }
+
+/**
+ * Erases the type arguments of this raw supertype of a Java class, when its [supertypeClass] is a Kotlin class,
+ * to the bounds of its type parameters, nullable like them, like `Any?` of `T`, as kotlinc erases them,
+ * like `Box<List<Any?>>` of the raw `ListBox`, where `interface ListBox<T> : Box<List<T>>`,
+ * unlike kotlin-reflect, which tells them as not nullable, made platform types then, see [toKmJavaClassHeader],
+ * while the ones of a not nullable bound stay platform types, matching either nullability, more than kotlinc accepts,
+ * and the ones of a Java class, like `Any!` of the raw `java.util.List`, are platform types in kotlinc too.
+ */
+private fun KmType.eraseRawKotlinArguments(supertypeClass: KClass<*>) {
+    if (!supertypeClass.java.isAnnotationPresent(Metadata::class.java)) return
+    val typeParameters = reflectedValue(default = emptyList()) { supertypeClass.typeParameters }
+    if (typeParameters.size != arguments.size) return
+    typeParameters.forEachIndexed { index, typeParameter ->
+        val type = arguments[index].type ?: return@forEachIndexed
+        if (typeParameter.upperBounds.all { it.isMarkedNullable }) type.isNullable = true
+    }
+}
 
 /**
  * Marks this type, of the [javaType], when it is a raw type, and its type arguments, also the nested ones,

@@ -3318,21 +3318,13 @@ internal class DefaultKotlinIntrospector(
      */
     private fun ClassSupertypes.pins(typeParameter: KmTypeParameter): Boolean = typeParameter.upperBounds.any { bound ->
         val classifier = bound.classifier as? KmClassifier.Class ?: return@any false
+        // any of the supertypes reached through different paths, see keptSupertypes, which take the same class as a type argument
+        val supertype = types[classReceiverIndexKey(bound)]?.first() ?: return@any false
         val declaredVariances = declaredVariances(classifier.name)
-        types[classReceiverIndexKey(bound)].orEmpty().any { supertype -> pins(typeParameter, bound, supertype, declaredVariances) }
-    }
-
-    // whether the type parameter is pinned to the class by the bound, as told by one of the supertypes of the class, see pins
-    private fun ClassSupertypes.pins(
-        typeParameter: KmTypeParameter,
-        bound: KmType,
-        supertype: KmType,
-        declaredVariances: List<KmVariance>?
-    ): Boolean {
         if (declaredVariances?.size != bound.arguments.size || supertype.arguments.size != bound.arguments.size) {
-            return false
+            return@any false
         }
-        return bound.arguments.indices.any { index ->
+        bound.arguments.indices.any { index ->
             val argument = bound.arguments[index]
             val argumentType = argument.type
             val supertypeArgument = supertype.arguments[index].type
@@ -3664,8 +3656,8 @@ internal class DefaultKotlinIntrospector(
             if (type != null && types != null) {
                 val known = types[name].orEmpty()
                 // each one reached through another path, like MutableList<String> of a Kotlin interface
-                // and MutableList<String!> of a Java one, see keptSupertypes
-                if (known.none { it.hasSameStructure(type) }) {
+                // and MutableList<String!> of a Java one, see keptSupertypes, up to MAX_SUPERTYPE_PATHS of them
+                if (known.size < MAX_SUPERTYPE_PATHS && known.none { it.hasSameStructure(type) }) {
                     types[name] = known + type
                     // walked again for the supertypes it gives, like MutableCollection<String>, when already walked,
                     // untyped, or with another type, or else walked with it as well, when still pending
@@ -3874,12 +3866,11 @@ internal class DefaultKotlinIntrospector(
     private val ClassSupertypes.isComparableToItself: Boolean
         get() {
             if (kmClass.kind == ClassKind.ENUM_CLASS) return false
-            return types[COMPARABLE_CLASS_NAME].orEmpty().any { comparable ->
-                val comparableTo = comparable.arguments.singleOrNull()?.type ?: return@any false
-                if (isSelfTypeParameter(comparableTo)) return@any true
-                val name = (comparableTo.classifier as? KmClassifier.Class)?.name ?: return@any false
-                name == kmClass.name || name.replace('/', '.') in names
-            }
+            // any of the supertypes reached through different paths, see keptSupertypes, which are comparable to the same class
+            val comparableTo = types[COMPARABLE_CLASS_NAME]?.first()?.arguments?.singleOrNull()?.type ?: return false
+            if (isSelfTypeParameter(comparableTo)) return true
+            val name = (comparableTo.classifier as? KmClassifier.Class)?.name ?: return false
+            return name == kmClass.name || name.replace('/', '.') in names
         }
 
     /**
@@ -4030,14 +4021,14 @@ internal class DefaultKotlinIntrospector(
         val inferredOtherwise = lazy(LazyThreadSafetyMode.NONE) { typeParameterIdsReferredBy(otherTypes(), typeParameters) }
         return when (val classifier = receiver.classifier) {
             is KmClassifier.Class -> {
-                // any of the supertypes reached through different paths, see keptSupertypes
-                val supertypes = types[classReceiverIndexKey(receiver)]
-                supertypes == null || supertypes.any { supertype ->
-                    ReceiverMatcher(this, typeParameters, receiverTypeParameterId = null, self = kmClass.name).let { matcher ->
-                        matcher.argumentsMatch(classifier.name, receiver.arguments, supertype.arguments, KmVariance.OUT) &&
-                            matcher.isInferred(referred, inferredOtherwise)
+                val reached = types[classReceiverIndexKey(receiver)]
+                reached == null || ReceiverMatcher(this, typeParameters, receiverTypeParameterId = null, self = kmClass.name)
+                    .let { matcher ->
+                        matcher.anyReached(reached) { supertype ->
+                            matcher.argumentsMatch(classifier.name, receiver.arguments, supertype.arguments, KmVariance.OUT) &&
+                                matcher.isInferred(referred, inferredOtherwise)
+                        }
                     }
-                }
             }
             is KmClassifier.TypeParameter -> {
                 val bounds = receiverBoundTypes(classifier.id, typeParameters)
@@ -4308,12 +4299,22 @@ internal class DefaultKotlinIntrospector(
             if (classifier.name == ANY_CLASS_NAME) return true
             val name = classReceiverIndexKey(bound)
             if (name != self.replace('/', '.') && name !in supertypes.supertypeNamesOf(self)) return false
-            // any of the supertypes reached through different paths, see keptSupertypes
             val reached = supertypes.types[name] ?: return matchesUntold(isStrict = false)
+            return anyReached(reached) { supertype -> argumentsMatch(classifier.name, bound.arguments, supertype.arguments, KmVariance.OUT) }
+        }
+
+        /**
+         * Whether any of the supertypes of the same class reached through different paths, the [reached] ones, see [keptSupertypes],
+         * is matched by the [match] function, forgetting what is inferred, and whether what is not told was matched,
+         * see [isUntold], by the ones which are not matched.
+         */
+        inline fun anyReached(reached: List<KmType>, match: (supertype: KmType) -> Boolean): Boolean {
             val inferredCount = inferredIds.size
+            val wasUntold = isUntold
             return reached.any { supertype ->
-                retrying(inferredCount) { argumentsMatch(classifier.name, bound.arguments, supertype.arguments, KmVariance.OUT) }
-            }
+                isUntold = wasUntold
+                retrying(inferredCount) { match(supertype) }
+            }.also { isMatched -> if (!isMatched) isUntold = wasUntold }
         }
 
         /**
@@ -4536,11 +4537,10 @@ internal class DefaultKotlinIntrospector(
             if (variance == KmVariance.OUT && (name == ANY_CLASS_NAME || actualName == NOTHING_CLASS_NAME)) return true
             if (variance == KmVariance.IN && (actualName == ANY_CLASS_NAME || name == NOTHING_CLASS_NAME)) return true
             // the type arguments of the supertype matched, like the String of Comparable<String> of String
-            // any of them, when reached through different paths, see keptSupertypes
+            // any of them, when reached through different paths, see anyReached
             fun supertypeMatches(subtype: KmType, supertypeName: String, match: (supertype: KmType) -> Boolean): Boolean {
                 val reached = supertypes.supertypesOf(subtype, supertypeName) ?: return matchesUntold(isStrict)
-                val inferredCount = inferredIds.size
-                return reached.any { supertype -> retrying(inferredCount) { match(supertype) } }
+                return anyReached(reached, match)
             }
             // a supertype without type arguments is matched by its name, also when its type is not told,
             // like java.io.Serializable of String, see jvmSupertypeNamesOfBuiltins, as far as the supertypes of the subtype
@@ -8418,6 +8418,11 @@ private fun kotlinPackageOf(binaryName: String, packageName: String): String =
 private const val ANY_RECEIVER_KEY = "kotlin.Any"
 
 private const val COMPARABLE_CLASS_NAME = "kotlin.Comparable"
+
+// the number of distinct types of a supertype reached through different paths which are told and walked, see supertypeNames,
+// as their number can double at each level of a hierarchy, like through Kotlin and through Java,
+// the ones reached first, which the class is matched against, an extension matching only the other ones not listed
+private const val MAX_SUPERTYPE_PATHS = 16
 
 /**
  * The JVM signatures of the members of `kotlin.Any` whose overrides the compiler reports no hidden deprecation of,

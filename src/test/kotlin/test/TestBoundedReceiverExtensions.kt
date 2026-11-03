@@ -22,6 +22,7 @@ import com.xemantic.kotlin.introspection.test.other.JavaAnyRows
 import com.xemantic.kotlin.introspection.test.other.JavaBoundedReceiverBase
 import com.xemantic.kotlin.introspection.test.other.JavaBoxBase
 import com.xemantic.kotlin.introspection.test.other.JavaComparableBase
+import com.xemantic.kotlin.introspection.test.other.JavaDoublingPaths
 import com.xemantic.kotlin.introspection.test.other.JavaFace
 import com.xemantic.kotlin.introspection.test.other.JavaFaceBase
 import com.xemantic.kotlin.introspection.test.other.JavaFlexibleListPaths
@@ -42,6 +43,7 @@ import com.xemantic.kotlin.introspection.test.other.JavaProjectedStringListRows
 import com.xemantic.kotlin.introspection.test.other.JavaProjectedWildcardSource
 import com.xemantic.kotlin.introspection.test.other.JavaRawComparableBoth
 import com.xemantic.kotlin.introspection.test.other.JavaRawGenericComparableMid
+import com.xemantic.kotlin.introspection.test.other.JavaRawListPaths
 import com.xemantic.kotlin.introspection.test.other.JavaRawMapArrayBoth
 import com.xemantic.kotlin.introspection.test.other.JavaRawMapBoth
 import com.xemantic.kotlin.introspection.test.other.JavaRawWildcardMapBoth
@@ -843,3 +845,59 @@ class BoundedReceiverJavaKotlinListPathsSource : BoundedReceiverPathsSource<Boun
 // while the one of a platform type argument, like BoundedReceiverPaths<(Mutable)List<String!>!> of JavaFlexibleListPaths,
 // is left out by kotlinc next to another one, like BoundedReceiverPaths<MutableList<String!>> of JavaStringMutableListPaths
 class BoundedReceiverJavaMutableListPaths : JavaFlexibleListPaths, JavaStringMutableListPaths
+
+// a raw Kotlin supertype of a Java one, like BoundedReceiverListPaths of JavaRawListPaths,
+// takes the bound of the Kotlin type parameter, BoundedReceiverPaths<List<Any?>>, not a platform type Any!,
+// also next to the same supertype reached through Kotlin
+interface BoundedReceiverAnyListPaths : BoundedReceiverPaths<List<Any?>>
+
+fun BoundedReceiverPaths<List<Any?>>.anyListPaths() {}
+
+fun <T : Any> BoundedReceiverPaths<List<T>>.nonNullListPaths() {}
+
+class BoundedReceiverRawListPaths : JavaRawListPaths
+
+class BoundedReceiverKotlinRawListPaths : BoundedReceiverAnyListPaths, JavaRawListPaths
+
+// a supertype reached through a number of paths doubling at each level, of distinct types,
+// like BoundedReceiverDoubling0<MutableList<MutableList<String>>>, and BoundedReceiverDoubling0<MutableList<(Mutable)List<String!>!>>,
+// walked only up to a limit, the ones walked still telling the type arguments
+interface BoundedReceiverDoubling0<T>
+
+interface BoundedReceiverDoubling1<T> : BoundedReceiverDoubling0<MutableList<T>>, JavaDoublingPaths.Doubling1<T>
+
+interface BoundedReceiverDoubling2<T> : BoundedReceiverDoubling1<MutableList<T>>, JavaDoublingPaths.Doubling2<T>
+
+interface BoundedReceiverDoubling3<T> : BoundedReceiverDoubling2<MutableList<T>>, JavaDoublingPaths.Doubling3<T>
+
+interface BoundedReceiverDoubling4<T> : BoundedReceiverDoubling3<MutableList<T>>, JavaDoublingPaths.Doubling4<T>
+
+interface BoundedReceiverDoubling5<T> : BoundedReceiverDoubling4<MutableList<T>>, JavaDoublingPaths.Doubling5<T>
+
+interface BoundedReceiverDoubling6<T> : BoundedReceiverDoubling5<MutableList<T>>, JavaDoublingPaths.Doubling6<T>
+
+interface BoundedReceiverDoubling7<T> : BoundedReceiverDoubling6<MutableList<T>>, JavaDoublingPaths.Doubling7<T>
+
+interface BoundedReceiverDoubling8<T> : BoundedReceiverDoubling7<MutableList<T>>, JavaDoublingPaths.Doubling8<T>
+
+interface BoundedReceiverDoubling9<T> : BoundedReceiverDoubling8<MutableList<T>>, JavaDoublingPaths.Doubling9<T>
+
+interface BoundedReceiverDoubling10<T> : BoundedReceiverDoubling9<MutableList<T>>, JavaDoublingPaths.Doubling10<T>
+
+interface BoundedReceiverDoubling11<T> : BoundedReceiverDoubling10<MutableList<T>>, JavaDoublingPaths.Doubling11<T>
+
+interface BoundedReceiverDoubling12<T> : BoundedReceiverDoubling11<MutableList<T>>, JavaDoublingPaths.Doubling12<T>
+
+interface BoundedReceiverDoubling13<T> : BoundedReceiverDoubling12<MutableList<T>>, JavaDoublingPaths.Doubling13<T>
+
+interface BoundedReceiverDoubling14<T> : BoundedReceiverDoubling13<MutableList<T>>, JavaDoublingPaths.Doubling14<T>
+
+interface BoundedReceiverDoubling15<T> : BoundedReceiverDoubling14<MutableList<T>>, JavaDoublingPaths.Doubling15<T>
+
+interface BoundedReceiverDoubling16<T> : BoundedReceiverDoubling15<MutableList<T>>, JavaDoublingPaths.Doubling16<T>
+
+fun BoundedReceiverDoubling0<*>.doublingPaths() {}
+
+fun BoundedReceiverDoubling0<String>.doublingStrings() {}
+
+class BoundedReceiverDoublingChain : BoundedReceiverDoubling16<String>
