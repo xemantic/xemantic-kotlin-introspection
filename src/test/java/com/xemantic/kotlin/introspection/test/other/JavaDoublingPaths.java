@@ -26,9 +26,12 @@ import java.util.List;
  * The Java interfaces passing a Java list of their type argument to the Kotlin ones,
  * like {@code BoundedReceiverDoubling0<(Mutable)List<T!>!>} of {@code Doubling1<T>},
  * next to {@code BoundedReceiverDoubling0<MutableList<T>>} of {@code BoundedReceiverDoubling1<T>} extending both,
- * doubling the supertypes reached through different paths at each level.
+ * doubling the supertypes reached through different paths at each level,
+ * down to {@code DoublingRoot<T>}, reaching {@code BoundedReceiverDoublingRows<(Mutable)List<T!>!>} only through Java.
  */
 public interface JavaDoublingPaths {
+
+    interface DoublingRoot<T> extends BoundedReceiverDoublingRows<List<T>> {}
 
     interface Doubling1<T> extends BoundedReceiverDoubling0<List<T>> {}
 

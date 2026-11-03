@@ -42,6 +42,8 @@ import com.xemantic.kotlin.introspection.test.other.JavaProjectedStringListSourc
 import com.xemantic.kotlin.introspection.test.other.JavaProjectedStringListRows
 import com.xemantic.kotlin.introspection.test.other.JavaProjectedWildcardSource
 import com.xemantic.kotlin.introspection.test.other.JavaRawComparableBoth
+import com.xemantic.kotlin.introspection.test.other.JavaRawBoundedListPaths
+import com.xemantic.kotlin.introspection.test.other.JavaRawCharSequenceListPaths
 import com.xemantic.kotlin.introspection.test.other.JavaRawGenericComparableMid
 import com.xemantic.kotlin.introspection.test.other.JavaRawListPaths
 import com.xemantic.kotlin.introspection.test.other.JavaRawMapArrayBoth
@@ -862,7 +864,11 @@ class BoundedReceiverKotlinRawListPaths : BoundedReceiverAnyListPaths, JavaRawLi
 // a supertype reached through a number of paths doubling at each level, of distinct types,
 // like BoundedReceiverDoubling0<MutableList<MutableList<String>>>, and BoundedReceiverDoubling0<MutableList<(Mutable)List<String!>!>>,
 // walked only up to a limit, the ones walked still telling the type arguments
-interface BoundedReceiverDoubling0<T>
+interface BoundedReceiverDoublingRows<T>
+
+fun BoundedReceiverDoublingRows<MutableList<MutableList<MutableList<MutableList<MutableList<MutableList<String>>>>>>>.doublingMutableRows() {}
+
+interface BoundedReceiverDoubling0<T> : JavaDoublingPaths.DoublingRoot<T>
 
 interface BoundedReceiverDoubling1<T> : BoundedReceiverDoubling0<MutableList<T>>, JavaDoublingPaths.Doubling1<T>
 
@@ -901,3 +907,73 @@ fun BoundedReceiverDoubling0<*>.doublingPaths() {}
 fun BoundedReceiverDoubling0<String>.doublingStrings() {}
 
 class BoundedReceiverDoublingChain : BoundedReceiverDoubling16<String>
+
+// also when the supertype is reached through Kotlin late, after the limit, 2^5 of them, the one of Kotlin, BoundedReceiverDoublingRows<List<…>>,
+// replacing one of the ones of Java, BoundedReceiverDoublingRows<(Mutable)List<…>!>, which kotlinc leaves out
+interface BoundedReceiverDoublingPad0 : BoundedReceiverDoublingRows<List<MutableList<MutableList<MutableList<MutableList<MutableList<String>>>>>>>
+
+interface BoundedReceiverDoublingPad1 : BoundedReceiverDoublingPad0
+
+interface BoundedReceiverDoublingPad2 : BoundedReceiverDoublingPad1
+
+interface BoundedReceiverDoublingPad3 : BoundedReceiverDoublingPad2
+
+interface BoundedReceiverDoublingPad4 : BoundedReceiverDoublingPad3
+
+interface BoundedReceiverDoublingPad5 : BoundedReceiverDoublingPad4
+
+interface BoundedReceiverDoublingPad6 : BoundedReceiverDoublingPad5
+
+interface BoundedReceiverDoublingPad7 : BoundedReceiverDoublingPad6
+
+interface BoundedReceiverDoublingPad8 : BoundedReceiverDoublingPad7
+
+interface BoundedReceiverDoublingPad9 : BoundedReceiverDoublingPad8
+
+interface BoundedReceiverDoublingPad10 : BoundedReceiverDoublingPad9
+
+interface BoundedReceiverDoublingPad11 : BoundedReceiverDoublingPad10
+
+interface BoundedReceiverDoublingPad12 : BoundedReceiverDoublingPad11
+
+interface BoundedReceiverDoublingPad13 : BoundedReceiverDoublingPad12
+
+interface BoundedReceiverDoublingPad14 : BoundedReceiverDoublingPad13
+
+interface BoundedReceiverDoublingPad15 : BoundedReceiverDoublingPad14
+
+interface BoundedReceiverDoublingPad16 : BoundedReceiverDoublingPad15
+
+interface BoundedReceiverDoublingPad17 : BoundedReceiverDoublingPad16
+
+interface BoundedReceiverDoublingPad18 : BoundedReceiverDoublingPad17
+
+interface BoundedReceiverDoublingPad19 : BoundedReceiverDoublingPad18
+
+interface BoundedReceiverDoublingPad20 : BoundedReceiverDoublingPad19
+
+interface BoundedReceiverDoublingPad21 : BoundedReceiverDoublingPad20
+
+interface BoundedReceiverDoublingPad22 : BoundedReceiverDoublingPad21
+
+interface BoundedReceiverDoublingPad23 : BoundedReceiverDoublingPad22
+
+interface BoundedReceiverDoublingPad24 : BoundedReceiverDoublingPad23
+
+class BoundedReceiverDoublingPadChain : BoundedReceiverDoubling5<String>, BoundedReceiverDoublingPad24
+
+class BoundedReceiverShortDoublingChain : BoundedReceiverDoubling5<String>
+
+// a raw Kotlin supertype of a Java one erased to a not nullable bound, like CharSequence of T : CharSequence,
+// or through the bound of a type parameter, like Any? of B : A
+interface BoundedReceiverCharSequenceListPaths<T : CharSequence> : BoundedReceiverPaths<List<T>>
+
+interface BoundedReceiverBoundedListPaths<A, B : A> : BoundedReceiverPaths<List<B>>
+
+fun BoundedReceiverPaths<List<CharSequence>>.charSequenceListPaths() {}
+
+fun BoundedReceiverPaths<List<CharSequence?>>.nullableCharSequenceListPaths() {}
+
+class BoundedReceiverRawCharSequenceListPaths : JavaRawCharSequenceListPaths
+
+class BoundedReceiverRawBoundedListPaths : JavaRawBoundedListPaths
