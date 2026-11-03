@@ -294,10 +294,10 @@ internal fun KClass<*>.toKmBuiltinClass(name: String): KmClass {
             KmConstructor().also { kmConstructor ->
                 kmConstructor.visibility = Visibility.PUBLIC
                 // a constructor infers the type arguments of the class at the call, like a function its own ones,
-                // which are never taken as not nullable, so that isJdkMember is never asked for
+                // which are never taken as not nullable, so that isNotNullClassTypeParameter is never asked for
                 constructor.parameters.withIndex().mapTo(kmConstructor.valueParameters) { (position, parameter) ->
                     parameter.toKmValueParameter(
-                        position, typeParameters, ownTypeParameters = this.typeParameters, isJdkMember = lazyOf(true)
+                        position, typeParameters, ownTypeParameters = this.typeParameters, isNotNullClassTypeParameter = lazyOf(true)
                     )
                 }
             }
@@ -520,13 +520,18 @@ internal fun KFunction<*>.toKmFunction(typeParameters: ReflectedTypeParameters):
     function.typeParameters += this.typeParameters.map { it.toKmTypeParameter(scope) }
     parameters.contextParametersTo(function.contextParameters, scope)
     function.receiverParameterType = parameters.extensionReceiverType(scope)
-    // a member of a JDK class, like `merge` of `java.util.HashMap`, takes the type parameters of its class as in Kotlin,
-    // while a member of another Java class, like the override of `merge` of a `MyMap<K, V> extends HashMap<K, V>`, takes them as `K!`
-    val isJdkMember = lazy(LazyThreadSafetyMode.NONE) {
-        reflectedValue(default = true) { javaMethod?.declaringClass?.isJdkClass ?: true }
-    }
+    // a member of a JDK class might take the type parameters of its class as in Kotlin, like `addFirst` of `java.util.List`,
+    // see isNotNullClassTypeParameter, while a member of another Java class takes them as platform types,
+    // like the override of `merge` of a `MyMap<K, V> extends HashMap<K, V>`, taking `K!`
+    val method = lazy(LazyThreadSafetyMode.NONE) { reflectedValue(default = null) { javaMethod } }
     parameters.filter { it.kind == KParameter.Kind.VALUE }.withIndex().mapTo(function.valueParameters) { (position, parameter) ->
-        parameter.toKmValueParameter(position, scope, ownTypeParameters = this.typeParameters, isJdkMember = isJdkMember)
+        val isNotNullClassTypeParameter = lazy(LazyThreadSafetyMode.NONE) {
+            method.value?.let { reflectedValue(default = true) { isNotNullClassTypeParameter(it, position) } } ?: true
+        }
+        parameter.toKmValueParameter(position, scope, ownTypeParameters = this.typeParameters, isNotNullClassTypeParameter)
+    }
+    if (method.value?.let { reflectedValue(default = false) { isComparableJavaMethod(it) } } == true) {
+        function.valueParameters.single().type.isNullable = true
     }
     function.returnType = returnType.toKmType(scope)
     enhanceDefinitelyNotNull(function)
@@ -534,6 +539,19 @@ internal fun KFunction<*>.toKmFunction(typeParameters: ReflectedTypeParameters):
     // the annotations win over the enhancements of the JDK methods overridden, like the @NotNull of a get() of a WeakReference
     reflectedValue(default = null) { javaMethod }?.let { enhanceJavaNullability(it, function) }
     return function
+}
+
+/**
+ * Whether the [method] is the `compareTo` of a Java class implementing `java.lang.Comparable`, like the one of `java.io.File`,
+ * which kotlin-reflect describes taking its type argument as not nullable, like `compareTo(other: File)`,
+ * though K2 takes it as a platform type, like `File!`, so that `compareTo(null)` compiles,
+ * unlike the one of the JVM class of a built-in type, like `compareTo(other: String)` of `java.lang.String`.
+ */
+private fun isComparableJavaMethod(method: Method): Boolean {
+    if (method.name != "compareTo" || method.parameterCount != 1 || method.parameterTypes[0].isPrimitive) return false
+    val declaringClass = method.declaringClass
+    return Comparable::class.java.isAssignableFrom(declaringClass) &&
+        declaringClass.kotlin.qualifiedName == declaringClass.canonicalName
 }
 
 /**
@@ -791,24 +809,25 @@ internal fun varargElementType(arrayType: KmType): KmType =
 /**
  * The declaration of this parameter in the Kotlin metadata, at the [position] among the value parameters,
  * of a callable declaring the [ownTypeParameters], whose type arguments are inferred at the call,
- * unlike the ones of the class, given by the receiver, and whether it is a member of a JDK class, the [isJdkMember],
- * told only when needed.
+ * unlike the ones of the class, given by the receiver, and whether its type, if a type parameter of the class,
+ * is not nullable, unlike a platform type, see [isNotNullClassTypeParameter], told only when needed.
  */
 private fun KParameter.toKmValueParameter(
     position: Int,
     scope: ReflectedTypeParameters,
     ownTypeParameters: List<KTypeParameter>,
-    isJdkMember: Lazy<Boolean>
+    isNotNullClassTypeParameter: Lazy<Boolean>
 ): KmValueParameter =
     KmValueParameter(name ?: "arg$position").also { parameter ->
         // a Java parameter of a platform type, like Any! of Object, accepts null,
         // but a vararg one, whose array is never null, and which tells the nullability of its elements below,
-        // and one of a type parameter of the class of a JDK member, like E! of `addFirst` of `java.util.List`, which accepts null
-        // only when the type argument of the receiver does, unlike for `addFirst(null)` of a `MutableList<String>`,
-        // while K2 takes the one of a member of another Java class as a platform type, like `addFirst(null)` of a Java subclass
-        // of `java.util.ArrayList<String>` overriding it, which compiles
+        // and one of a type parameter of the class of a JDK member K2 enhances, like E! of `addFirst` of `java.util.List`,
+        // which accepts null only when the type argument of the receiver does, unlike for `addFirst(null)` of a `MutableList<String>`,
+        // see isNotNullClassTypeParameter, while K2 takes the one of a member of another Java class as a platform type,
+        // like `addFirst(null)` of a Java subclass of `java.util.ArrayList<String>` overriding it, which compiles
         val classifier = type.classifier
-        val isClassTypeParameter = classifier is KTypeParameter && classifier !in ownTypeParameters && isJdkMember.value
+        val isClassTypeParameter = classifier is KTypeParameter && classifier !in ownTypeParameters &&
+            isNotNullClassTypeParameter.value
         val type = type.toKmType(scope, platformAsNullable = !isVararg && !isClassTypeParameter)
         // a raw type of Java, like the BiFunction of `merge` of a Java subclass of a raw `java.util.HashMap`,
         // which kotlin-reflect tells by the type arguments of its lower bound, like `BiFunction<Any!, Any!, Any!>`,
@@ -967,6 +986,74 @@ private fun Method.overridesAnyOf(nameAndDescriptor: String, signatures: Set<Str
  */
 internal val Class<*>.isJdkClass: Boolean
     get() = classLoader.let { it == null || it == ClassLoader.getPlatformClassLoader() }
+
+/**
+ * The JDK methods whose value parameters K2 enhances as not nullable, by their JVM signatures,
+ * like `java/util/LinkedList.addFirst(Ljava/lang/Object;)V`, and the positions of these value parameters:
+ * the ones of `PREDEFINED_FUNCTION_ENHANCEMENT_INFO_BY_SIGNATURE` of the compiler, of the classes which are not final,
+ * compared with the copy of kotlin-reflect by `ReflectedDeclarationsTest`,
+ * as kotlin-reflect applies them, though its public API still tells such a type as a platform type, like `E!`.
+ */
+internal val NOT_NULL_PARAMETER_JDK_METHODS: Map<String, Set<Int>> = mapOf(
+    "java/util/Collection.removeIf(Ljava/util/function/Predicate;)Z" to setOf(0),
+    "java/util/Iterator.forEachRemaining(Ljava/util/function/Consumer;)V" to setOf(0),
+    "java/util/LinkedHashMap.putFirst(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;" to setOf(0, 1),
+    "java/util/LinkedHashMap.putLast(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;" to setOf(0, 1),
+    "java/util/LinkedHashSet.addFirst(Ljava/lang/Object;)V" to setOf(0),
+    "java/util/LinkedHashSet.addLast(Ljava/lang/Object;)V" to setOf(0),
+    "java/util/LinkedList.addFirst(Ljava/lang/Object;)V" to setOf(0),
+    "java/util/LinkedList.addLast(Ljava/lang/Object;)V" to setOf(0),
+    "java/util/List.addFirst(Ljava/lang/Object;)V" to setOf(0),
+    "java/util/List.addLast(Ljava/lang/Object;)V" to setOf(0),
+    "java/util/List.replaceAll(Ljava/util/function/UnaryOperator;)V" to setOf(0),
+    "java/util/Map.compute(Ljava/lang/Object;Ljava/util/function/BiFunction;)Ljava/lang/Object;" to setOf(0, 1),
+    "java/util/Map.computeIfAbsent(Ljava/lang/Object;Ljava/util/function/Function;)Ljava/lang/Object;" to setOf(0, 1),
+    "java/util/Map.computeIfPresent(Ljava/lang/Object;Ljava/util/function/BiFunction;)Ljava/lang/Object;" to setOf(0, 1),
+    "java/util/Map.forEach(Ljava/util/function/BiConsumer;)V" to setOf(0),
+    "java/util/Map.merge(Ljava/lang/Object;Ljava/lang/Object;Ljava/util/function/BiFunction;)Ljava/lang/Object;" to setOf(0, 1, 2),
+    "java/util/Map.putIfAbsent(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;" to setOf(0, 1),
+    "java/util/Map.replace(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;" to setOf(0, 1),
+    "java/util/Map.replace(Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;)Z" to setOf(0, 1, 2),
+    "java/util/Map.replaceAll(Ljava/util/function/BiFunction;)V" to setOf(0),
+    "java/util/function/BiConsumer.accept(Ljava/lang/Object;Ljava/lang/Object;)V" to setOf(0, 1),
+    "java/util/function/BiFunction.apply(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;" to setOf(0, 1),
+    "java/util/function/BiPredicate.test(Ljava/lang/Object;Ljava/lang/Object;)Z" to setOf(0, 1),
+    "java/util/function/Consumer.accept(Ljava/lang/Object;)V" to setOf(0),
+    "java/util/function/Function.apply(Ljava/lang/Object;)Ljava/lang/Object;" to setOf(0),
+    "java/util/function/Predicate.test(Ljava/lang/Object;)Z" to setOf(0)
+)
+
+// the names and JVM descriptors of the methods, like `addFirst(Ljava/lang/Object;)V`, see isNotNullClassTypeParameter
+private val notNullParameterJdkMethodDescriptors: Set<String> =
+    NOT_NULL_PARAMETER_JDK_METHODS.keys.mapTo(HashSet()) { it.substringAfter('.') }
+
+/**
+ * Whether the value parameter at the [position] of the [method], of a type parameter of its class,
+ * is of the type parameter as in Kotlin, not nullable, unlike a platform type, like `E!`, accepting `null`:
+ * of a JDK method of the JVM class of a built-in type, like `addFirst` of `java.util.List`, a JVM-only member of `MutableList`,
+ * or of one which K2 enhances, see [NOT_NULL_PARAMETER_JDK_METHODS], also of a JDK method overriding it by the same JVM descriptor,
+ * like `addFirst` of `java.util.ArrayList` the one of `java.util.List`, unlike of a Java class of the user code.
+ * A JDK method overriding a member of the built-in type its class is the pure implementation of,
+ * see `FakePureImplementationsProvider` of the compiler, like `add` of `java.util.ArrayList` of `MutableList`,
+ * takes them as in Kotlin too, as kotlin-reflect tells by its types, which are no platform types then,
+ * unlike the one of another JDK class, like `add` of `java.util.Vector`, or `push` of `java.util.LinkedList`, taking `E!`,
+ * so that only a method [isConverted] from the Java method, see [toKmJavaFunction], which kotlin-reflect does not describe,
+ * is told so by its class, one of the [PURE_IMPLEMENTATIONS], and by overriding a method of a built-in type,
+ * see [overridesBuiltinJavaMethod].
+ */
+internal fun isNotNullClassTypeParameter(method: Method, position: Int, isConverted: Boolean = false): Boolean {
+    val declaringClass = method.declaringClass
+    if (!declaringClass.isJdkClass) return false
+    // like java.util.List, described as kotlin.collections.List
+    if (declaringClass.kotlin.qualifiedName != declaringClass.canonicalName) return true
+    val nameAndDescriptor = method.name + AsmType.getMethodDescriptor(method)
+    if (nameAndDescriptor in notNullParameterJdkMethodDescriptors &&
+        method.overridesAnyOf(nameAndDescriptor, NOT_NULL_PARAMETER_JDK_METHODS.filterValues { position in it }.keys)
+    ) {
+        return true
+    }
+    return isConverted && AsmType.getInternalName(declaringClass) in PURE_IMPLEMENTATIONS && overridesBuiltinJavaMethod(method)
+}
 
 /**
  * Marks the return type of the [function], converted from this one, nullable, when K2 enhances it so,
@@ -1197,13 +1284,13 @@ internal fun Method.toKmJavaFunction(typeParameters: ReflectedTypeParameters, is
             typeVariable.bounds.mapTo(typeParameter.upperBounds) { it.toKmJavaType(scope, platformAsNullable = true) }
         }
     }
-    val isJdkMember by lazy(LazyThreadSafetyMode.NONE) { reflectedValue(default = true) { declaringClass.isJdkClass } }
     parameters.withIndex().mapTo(function.valueParameters) { (position, parameter) ->
         // the name told by the class file, or else the one of its position, like arg0, as kotlin-reflect names it
         KmValueParameter(if (parameter.isNamePresent) parameter.name else "arg$position").also { valueParameter ->
             // nullable like the one kotlin-reflect describes, and star projected when raw, see toKmValueParameter
             val type = parameter.parameterizedType
-            val isClassTypeParameter = type is TypeVariable<*> && type.genericDeclaration is Class<*> && isJdkMember
+            val isClassTypeParameter = type is TypeVariable<*> && type.genericDeclaration is Class<*> &&
+                reflectedValue(default = true) { isNotNullClassTypeParameter(this, position, isConverted = true) }
             valueParameter.type = type.toKmJavaType(scope, platformAsNullable = !parameter.isVarArgs && !isClassTypeParameter)
             if (type is Class<*> && type.typeParameters.isNotEmpty()) valueParameter.type.arguments.replaceAll { KmTypeProjection.STAR }
             if (parameter.isVarArgs) {
