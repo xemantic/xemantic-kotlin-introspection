@@ -2801,7 +2801,8 @@ internal class DefaultKotlinIntrospector(
             // unless one of the Kotlin members it overrides is reached through Kotlin classes only too, see reachedThroughKotlin
             val isTakingOver = overriddenKotlin.none { it.kmClass.name in reachedThroughKotlin }
             fun isTakenOver(overridden: InheritedCandidate) = isTakingOver && candidate.acceptsNullUnlike(overridden)
-            val implemented = overriddenKotlin.filter { !candidate.refines(it, supertypeNamesOf) && !isTakenOver(it) }
+            val implementing = overriddenKotlin.filter { !candidate.refines(it, supertypeNamesOf) }
+            val implemented = implementing.filter { !isTakenOver(it) }
             // the Kotlin member stands for the Java method implementing it, like toInt() of kotlin.Number
             // for intValue() of java.util.concurrent.atomic.AtomicInteger, the nearest one, walked first,
             // which might declare it abstract again, like an abstract Java subclass of the implementing one,
@@ -2813,7 +2814,6 @@ internal class DefaultKotlinIntrospector(
             // like by a declared overload the override resolver does not tell, like `contains(element: String?)`
             val modality = candidate.member.modality
             val isJavaInterface = javaClass.kmClass.kind == ClassKind.INTERFACE
-            val implementing = overriddenKotlin.filter { !candidate.refines(it, supertypeNamesOf) }
             val redeclared = if (isJavaInterface || implementing.isEmpty()) emptyList() else kotlinCandidates.filter { redeclaring ->
                 redeclaring.kmClass.kind == ClassKind.INTERFACE && redeclaring !in implementing &&
                     overriddenClosure(redeclaring).any { it in candidate.overridden } &&
@@ -2846,20 +2846,22 @@ internal class DefaultKotlinIntrospector(
                 jvmOnly.signature == candidate.signature && !candidate.raisesVisibility(jvmOnly)
             }
             if (candidate.returnsPlatformType) standingJvmOnly.forEach { it.standsForPlatformType = true }
+            val isOverriddenBelow = lazy(LazyThreadSafetyMode.NONE) {
+                method.value != null && overriding.value != null && unlisted.value == null
+            }
+            // by a Kotlin class, unlike a JDK one, like addFirst of java.util.LinkedList the one of java.util.Deque,
+            // which the JVM-only member stands for, see standingJvmOnly, whatever else removes it,
+            // told only when a JVM-only member competes, see javaMethodSignatures
+            if (jvmOnlyCandidates.isNotEmpty() && isOverriddenBelow.value &&
+                reflectedValue(default = false) { overriding.value!!.declaringClass.isAnnotationPresent(Metadata::class.java) }
+            ) {
+                overriddenBelow += candidate
+            }
             val isRemoved = implemented.isNotEmpty() ||
                 (candidate.overridden.isEmpty() && candidate.overridesHiddenJdkMethod(exposedJdkMethods)) ||
                 standingJvmOnly.isNotEmpty() ||
                 method.value?.let { overridesHiddenJdkMethod(it) } == true ||
-                (method.value != null && overriding.value != null && unlisted.value == null).also { isOverriddenBelow ->
-                    // by a Kotlin class, unlike a JDK one, like addFirst of java.util.LinkedList the one of java.util.Deque,
-                    // which the JVM-only member stands for, see standingJvmOnly
-                    if (isOverriddenBelow && reflectedValue(default = false) {
-                            overriding.value!!.declaringClass.isAnnotationPresent(Metadata::class.java)
-                        }
-                    ) {
-                        overriddenBelow += candidate
-                    }
-                }
+                isOverriddenBelow.value
             // the Java method kept, standing for the visible override of a supertype which is not part of the API,
             // is of its modality, like final, or open of an abstract method
             if (!isRemoved && candidate.implementationModality == null) {
@@ -3005,16 +3007,15 @@ internal class DefaultKotlinIntrospector(
         fun isOverriddenAsKotlinMember(candidate: InheritedCandidate) =
             candidate.declarations is JavaClass && candidate.overridden.any { it in kotlinOverridden }
         // the declared signatures, of a Java candidate not hidden, include the ones of the untold overrides
-        val isListable = { candidate: InheritedCandidate ->
+        fun isListable(candidate: InheritedCandidate) =
             !candidate.isHidden && candidate.isApi && candidate.key !in overridden && !isOverriddenAsKotlinMember(candidate) &&
                 when (candidate.jvmMethod) {
                     null -> candidate.signature !in untoldOverrideSignatures
                     else -> !javaOverrides.overrides(candidate.jvmMethod) && candidate.signature !in declaredSignatures
                 }
-        }
         // the JVM-only members overridden by the Java candidates on the JVM, see javaMethodSignatures,
         // which are rendered as overrides then
-        val jvmOnlyOverridden = candidates.filter { candidate ->
+        val jvmOnlyOverridden = candidates.filterTo(HashSet()) { candidate ->
             candidate.declarations is BuiltinClass && candidate.jvmMethod != null && isListable(candidate) &&
                 javaMethodSignatures[candidate.jvmMethod.signature]?.onEach { it.isJvmOnlyOverride = true } != null
         }
