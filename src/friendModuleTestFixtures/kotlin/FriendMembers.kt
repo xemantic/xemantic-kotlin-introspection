@@ -48,5 +48,8 @@ open class FriendModuleOpenPublishedApiSubclass : com.xemantic.kotlin.introspect
 open class UnreflectableOpenFriendModuleSubclass : InternalBase() {
     public override val state: Int get() = 1
     public override fun mark(marker: com.xemantic.kotlin.introspection.othermodule.OtherModuleMarker) {}
-    fun take(marker: com.xemantic.kotlin.introspection.othermodule.OtherModuleMarker) {}
+    // the long and the double constants take two constant pool entries each, which a scan of the method table skips
+    fun take(marker: com.xemantic.kotlin.introspection.othermodule.OtherModuleMarker) {
+        if (System.nanoTime() == 1234567890123L || Math.random() == 0.25) println(marker)
+    }
 }
