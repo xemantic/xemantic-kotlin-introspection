@@ -5779,6 +5779,42 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve Java override of class marked by NullUnmarked of platform types`() {
+        // marked by @NullUnmarked by its class, it inherits no annotation of the find of JavaAnnotatedBase
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaNullUnmarkedOverriding.find"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaNullUnmarkedOverriding.find [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNullUnmarkedOverriding
+            abstract override fun find(arg0: String?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java override of outer class marked by NullUnmarked of platform types`() {
+        // marked by @NullUnmarked by its outer class, it inherits no annotation of the find of JavaAnnotatedBase
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaNullUnmarkedOuter.find"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaNullUnmarkedOuter.find [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNullUnmarkedOuter.Inner
+            abstract override fun find(arg0: String?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java override of package marked by NullUnmarked of platform types`() {
+        // marked by @NullUnmarked by its package, it inherits no annotation of the find of JavaAnnotatedBase
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaNullUnmarkedPackage.find"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaNullUnmarkedPackage.find [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.unmarked.JavaNullUnmarkedPackageOverriding
+            abstract override fun find(arg0: String?): String
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve Java override marked by NullUnmarked in class marked by NullMarked of platform types`() {
         // the method marked by @NullUnmarked inherits no annotation of the method it overrides
         resolver.resolve(
