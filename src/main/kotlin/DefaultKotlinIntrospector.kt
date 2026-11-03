@@ -405,6 +405,12 @@ internal class DefaultKotlinIntrospector(
             "kotlin.ULongArray" to ULongArray::class,
         )
 
+        // the JVM names of the boxed primitive types of Java, like java/lang/Integer, of the primitive types above,
+        // but the Void of Nothing, see isMergedJvmParameter
+        private val BOXED_JVM_NAMES: Set<String> = builtinTypes.values.mapNotNullTo(HashSet()) { kClass ->
+            kClass.javaPrimitiveType?.takeIf { it != Void.TYPE }?.let { AsmType.getInternalName(kClass.java) }
+        }
+
         private val mutableBuiltinTypes = builtinTypes.keys.filter {
             it.substringAfterLast('.').startsWith("Mutable")
         }.toSet()
@@ -2188,7 +2194,8 @@ internal class DefaultKotlinIntrospector(
      * - of a primitive JVM type, the other one of a Kotlin member erased from a type parameter, like `put(t: T)` of `G<Int>`
      *   with `put(key: Int)`, one intersection override through a bridge, but never one of a Java member,
      *   like `put(Integer)`, or `put(T)` of a Java class given `Integer`, nor of a JVM-only member, like `putIfAbsent` of `MutableMap`,
-     * - of arrays of reference types, as an array of a primitive type is never merged with another one,
+     * - of arrays of reference types, like `Array<IntArray>` with the `Array<T>` of `G<IntArray>`,
+     *   as an array of a primitive type is never merged with another one,
      *   like the `IntArray` of `vararg key: Int` with the `Array<out Int>` of `vararg t: T` of `G<Int>`,
      * - of reference types otherwise, like the `Object` of `put(T)` of a Java class with the `Integer` of `put(Integer)`,
      *   but a boxed type of a Java member, like `put(Integer)`, also annotated not null, with the erased one of a Kotlin member
@@ -2204,7 +2211,7 @@ internal class DefaultKotlinIntrospector(
                 !reference.isJava && reference.type.sort == AsmType.OBJECT
             }
             parameter.type.sort == AsmType.ARRAY && other.type.sort == AsmType.ARRAY ->
-                !parameter.type.elementType.isPrimitive && !other.type.elementType.isPrimitive
+                !parameter.type.componentType.isPrimitive && !other.type.componentType.isPrimitive
             else -> !parameter.isBoxedJavaAgainst(other) && !other.isBoxedJavaAgainst(parameter)
         }
     }
@@ -2378,27 +2385,42 @@ internal class DefaultKotlinIntrospector(
                     (other.signature == signature || other.notNullableSignature == notNullableSignature) &&
                     isMergedOnJvm(other))
 
-        // whether the value parameters of the JVM methods of both members are merged position by position, if both are told
+        // whether the value parameters of the JVM methods of both members are merged position by position, where both are told
         private fun isMergedOnJvm(other: InheritedCandidate): Boolean {
             val parameters = jvmParameters ?: return true
             val otherParameters = other.jvmParameters ?: return true
-            return parameters.size != otherParameters.size ||
-                parameters.indices.all { isMergedJvmParameter(parameters[it], otherParameters[it]) }
+            return parameters.size != otherParameters.size || parameters.indices.all { index ->
+                val parameter = parameters[index]
+                val otherParameter = otherParameters[index]
+                parameter == null || otherParameter == null || isMergedJvmParameter(parameter, otherParameter)
+            }
         }
 
+        // a JVM-only member is a Java method of its own, see jvmMethod, merged like the members of a Java class
+        private val isJavaMethod: Boolean get() = jvmMethod != null || declarations is JavaClass
+
         // the value parameters of the JVM method of the function, see JvmParameter, by its JVM signature,
-        // of a member of a Java class, or of a JVM-only member, or else told by the metadata, or null if the signature is unknown
-        private val jvmParameters: List<JvmParameter>? by lazy(LazyThreadSafetyMode.NONE) {
+        // of a member of a Java class, or of a JVM-only member, or else told by the metadata, or by kotlin-reflect
+        // of a member of a built-in type, like get(I) of java.util.List, or else erased from its declared types, see erasedJavaClass,
+        // each null if it cannot be told, like a declared type of a Java member which is not nullable, maybe primitive or not
+        private val jvmParameters: List<JvmParameter?>? by lazy(LazyThreadSafetyMode.NONE) {
             val function = member as? Member.Function ?: return@lazy null
-            val descriptor = (jvmMethod?.signature ?: function.declaration.signature)?.descriptor ?: return@lazy null
-            // a JVM-only member is a Java method of its own, see jvmMethod, merged like the members of a Java class
-            val isJava = jvmMethod != null || declarations is JavaClass
+            val declaration = function.declaration
             val valueParameters = function.function.valueParameters
+            val descriptor = (
+                jvmMethod?.signature ?: declaration.signature ?: (declarations as? BuiltinClass)?.jvmMethodOf(declaration)?.signature
+            )?.descriptor
             // the Continuation of a suspend function follows its value parameters, which its receivers precede
-            AsmType.getArgumentTypes(descriptor).let { if (function.function.isSuspend) it.dropLast(1) else it.toList() }
-                .takeLast(valueParameters.size)
-                .takeIf { it.size == valueParameters.size }
-                ?.zip(valueParameters) { type, parameter -> JvmParameter(type, isJava, parameter.type.isNullable) }
+            val types = descriptor?.let { AsmType.getArgumentTypes(it) }
+                ?.let { if (declaration.isSuspend) it.dropLast(1) else it.toList() }
+                ?.takeLast(valueParameters.size)
+                ?.takeIf { it.size == valueParameters.size }
+                ?: declaration.valueParameters.map { parameter ->
+                    // a primitive Java type is never nullable, unlike a boxed one, while the vararg ones are not told
+                    val type = parameter.type.takeIf { parameter.varargElementType == null && (!isJavaMethod || it.isNullable) }
+                    type?.let { erasedJavaClass(it) }?.let { AsmType.getType(it) }
+                }
+            types.zip(valueParameters) { type, parameter -> type?.let { JvmParameter(it, isJavaMethod, parameter.type.isNullable) } }
         }
 
         /**
@@ -7651,10 +7673,8 @@ private class TypeProjections(val projections: Map<Int, KmTypeProjection>) {
 // whether the JVM type is a primitive one, like int, see isMergedJvmParameter
 private val AsmType.isPrimitive: Boolean get() = sort in AsmType.BOOLEAN..AsmType.DOUBLE
 
-// the JVM names of the boxed primitive types of Java, like java/lang/Integer, see isMergedJvmParameter
-private val BOXED_JVM_NAMES: Set<String> = listOf(
-    Boolean::class, Char::class, Byte::class, Short::class, Int::class, Float::class, Long::class, Double::class
-).mapTo(HashSet()) { AsmType.getInternalName(it.javaObjectType) }
+// the type of the elements of the JVM array type, one dimension less, like int[] of int[][], unlike AsmType.elementType, int
+private val AsmType.componentType: AsmType get() = AsmType.getType(descriptor.substring(1))
 
 // the type of Any?, never modified, see TypeProjections
 private val NULLABLE_ANY_TYPE = classType("kotlin/Any", nullable = true)

@@ -84,6 +84,10 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   Probe it with a concrete class inheriting a Java implementation and a Kotlin abstract member — `does not implement abstract member` means they stay apart.
   The rule is by JVM parameter types, see `isMergedJvmParameter`.
 
+- A top-level `val` of `DefaultKotlinIntrospector.kt` must not read the companion of `DefaultKotlinIntrospector`, like `builtinTypes`:
+  the companion's initializer reads top-level vals of the same file, which are still `null` then,
+  failing far away, like an NPE in `ReceiverMatcher` — declare such a value in the companion instead.
+
 - Kotlin never passes named arguments to a Java method, even one compiled with `-parameters`, so a Java method taking parameters never shadows an extension — see `isShadowingJavaMethod`.
 
 ## Anti-patterns to avoid

@@ -4851,6 +4851,109 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve member taking array of primitive arrays merged with one taking array of type argument`() {
+        // Array<IntArray> and the Array<T> of GenericArrayPut<IntArray> are arrays of references, unlike IntArray
+        resolver.resolve("com.xemantic.kotlin.introspection.test.GenericPrimitiveArrayArrayPutJoin.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GenericPrimitiveArrayArrayPutJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.PrimitiveArrayArrayPut
+            fun put(array: Array<IntArray>): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member taking array of type argument merged with one taking array of boxed type`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.GenericBoxedArrayPutJoin.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GenericBoxedArrayPutJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.GenericArrayPut
+            fun put(array: Array<Int>): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking primitive array merged with Kotlin one`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.PrimitiveArrayJavaPutJoin.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PrimitiveArrayJavaPutJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.PrimitiveArrayPut
+            fun put(array: IntArray): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking array of boxed type merged with Kotlin one`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedArrayJavaPutJoin.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedArrayJavaPutJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.BoxedArrayPut
+            fun put(array: Array<Int>): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking primitive array next to Kotlin one taking array of type argument`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.PrimitiveArrayJavaGenericPutJoin.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PrimitiveArrayJavaGenericPutJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaPrimitiveArrayPut
+            open fun put(arg0: IntArray?): String
+            // inherited from com.xemantic.kotlin.introspection.test.GenericArrayPut
+            fun put(array: Array<Int>): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking boxed type next to built-in member taking primitive type`() {
+        // get(Integer) is another JVM method than the get(int) of java.util.List, so that a concrete subclass does not compile
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaListJoin.get") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaListJoin.get [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedMembers
+            open operator fun get(arg0: Int?): String
+            // inherited from kotlin.collections.List
+            operator fun get(index: Int): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking primitive type merged with built-in member taking primitive type`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.PrimitiveJavaListJoin.get") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PrimitiveJavaListJoin.get [page 1/1]
+            // inherited from kotlin.collections.List
+            operator fun get(index: Int): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking boxed type next to built-in member taking type argument of primitive type`() {
+        // compareTo(Integer) is another JVM method than the compareTo(Object) of java.lang.Comparable, given Int
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaComparableJoin.compareTo") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaComparableJoin.compareTo [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedMembers
+            open operator fun compareTo(arg0: Int?): Int
+            // inherited from kotlin.Comparable
+            operator fun compareTo(other: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking boxed type next to built-in member of mutable collection`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaMutableCollectionJoin.add") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaMutableCollectionJoin.add [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedMembers
+            open fun add(arg0: Int?): Boolean
+            // inherited from kotlin.collections.MutableCollection
+            fun add(element: Int): Boolean
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking boxed type next to built-in member of read-only collection`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaMutableCollectionJoin.contains") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaMutableCollectionJoin.contains [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedMembers
+            open operator fun contains(arg0: Int?): Boolean
+            // inherited from kotlin.collections.Collection
+            operator fun contains(element: Int): Boolean
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve member of Java map overriding JVM-only member with key and value of same type variable`() {
         // only the value is enhanced, the key stays V! in K2, while V & Any of the V : Comparable<V> does not compile
         resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaSelfKeyMap.merge") sameAsKotlin """

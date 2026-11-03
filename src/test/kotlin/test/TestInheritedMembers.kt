@@ -340,6 +340,42 @@ abstract class GenericMapJoin : MutableMap<Int, String>, GenericMapMembers<Int, 
 
 abstract class GenericHashMapJoin : java.util.HashMap<Int, String>(), GenericMapMembers<Int, String>
 
+abstract class BoxedJavaListJoin : com.xemantic.kotlin.introspection.test.other.JavaBoxedMembers(), List<String>
+
+abstract class BoxedJavaComparableJoin : com.xemantic.kotlin.introspection.test.other.JavaBoxedMembers(), Comparable<Int>
+
+abstract class BoxedJavaMutableCollectionJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaBoxedMembers(), MutableCollection<Int>
+
+abstract class PrimitiveJavaListJoin : com.xemantic.kotlin.introspection.test.other.JavaPrimitiveGet(), List<String>
+
+interface PrimitiveArrayPut {
+    fun put(array: IntArray): String
+}
+
+interface BoxedArrayPut {
+    fun put(array: Array<Int>): String
+}
+
+interface GenericArrayPut<T> {
+    fun put(array: Array<T>): String
+}
+
+interface PrimitiveArrayArrayPut {
+    fun put(array: Array<IntArray>): String
+}
+
+abstract class PrimitiveArrayJavaPutJoin : com.xemantic.kotlin.introspection.test.other.JavaPrimitiveArrayPut(), PrimitiveArrayPut
+
+abstract class BoxedArrayJavaPutJoin : com.xemantic.kotlin.introspection.test.other.JavaBoxedArrayPut(), BoxedArrayPut
+
+abstract class PrimitiveArrayJavaGenericPutJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaPrimitiveArrayPut(), GenericArrayPut<Int>
+
+interface GenericBoxedArrayPutJoin : GenericArrayPut<Int>, BoxedArrayPut
+
+interface GenericPrimitiveArrayArrayPutJoin : PrimitiveArrayArrayPut, GenericArrayPut<IntArray>
+
 class InheritedFromJava : com.xemantic.kotlin.introspection.test.other.JavaInheritedMid<String>()
 
 open class OpenInheritedFromJava : com.xemantic.kotlin.introspection.test.other.JavaInheritedMid<String>()
