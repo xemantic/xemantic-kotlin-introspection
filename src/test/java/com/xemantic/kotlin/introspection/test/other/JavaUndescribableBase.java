@@ -32,6 +32,8 @@ public abstract class JavaUndescribableBase<T> {
 
     protected abstract T first();
 
+    public abstract String get(int... indices);
+
     public abstract @org.jetbrains.annotations.NotNull String notNull(@org.jetbrains.annotations.NotNull String value);
 
     public abstract @org.jetbrains.annotations.Nullable String nullable(@org.jetbrains.annotations.Nullable T value);

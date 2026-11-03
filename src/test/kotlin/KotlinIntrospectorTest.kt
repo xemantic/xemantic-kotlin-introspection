@@ -3667,6 +3667,52 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should erase signature of generic method of raw Java superclass keeping its type parameter`() {
+        // the compiler sees convert(Any!, Any!): Any! of <U> U convert(Object, U), the type parameter still declared
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaRawGeneric.convert"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaRawGeneric.convert [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaRawGenericBase
+            abstract fun <U> convert(arg0: Any?, arg1: Any?): Any
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should erase parameterized types of generic method of raw Java superclass to raw types`() {
+        // the compiler sees names((MutableMap<Any?, Any?>..Map<*, *>?)): (MutableList<Any?>..List<*>?)
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaRawGeneric.names"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaRawGeneric.names [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaRawGenericBase
+            abstract fun <U : CharSequence?> names(arg0: Map<*, *>?): List<Any?>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should erase type of type variable of raw Java superclass taken as type argument to raw type`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaRawGeneric.items"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaRawGeneric.items [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaRawGenericBase
+            abstract fun items(): List<Any?>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should erase generic array of generic method of raw Java superclass`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaRawGeneric.all"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaRawGeneric.all [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaRawGenericBase
+            abstract fun <U> all(vararg arg0: Any?): Array<Any>
+        """.trimIndent()
+    }
+
+    @Test
     fun `should erase type parameters of raw Kotlin superclass of Java class to their bounds`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.JavaRawKotlinSubclass"
@@ -5462,6 +5508,41 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve invoke of function reference type supertype`() {
+        // interface KFunction1<in P1, out R> : KFunction<R>, Function1<P1, R>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedFunctionReferenceType.invoke"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedFunctionReferenceType.invoke [page 1/1]
+            // inherited from kotlin.Function1
+            operator fun invoke(p1: Int): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of KFunction of function reference type supertype`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedFunctionReferenceType.name"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedFunctionReferenceType.name [page 1/1]
+            // inherited from kotlin.reflect.KCallable
+            val name: String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve invoke of suspend function reference type supertype`() {
+        // interface KSuspendFunction1<in P1, out R> : KFunction<R>, SuspendFunction1<P1, R>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedSuspendFunctionReferenceType.invoke"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedSuspendFunctionReferenceType.invoke [page 1/1]
+            // inherited from kotlin.coroutines.SuspendFunction1
+            suspend operator fun invoke(p1: Int): String
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve member of Java superclass whose members kotlin-reflect cannot describe`() {
         // kotlin-reflect fails on all the members of JavaUndescribableBase, on the raw Enum of enumType(),
         // so that they are converted from the Java reflection
@@ -5532,13 +5613,14 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve nullable annotated array of Java superclass whose members kotlin-reflect cannot describe as of nullable elements`() {
-        // the annotation of both the declaration, and the type use, applies to the elements of the array, which K2 reads first
+        // the annotation of both the declaration, and the type use, applies to the elements of the array, which K2 reads first,
+        // as javac writes its type annotation there
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.InheritedJavaUndescribable.nullableElements"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.InheritedJavaUndescribable.nullableElements [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.other.JavaUndescribableBase
-            abstract fun nullableElements(): Array<String>
+            abstract fun nullableElements(): Array<String?>
         """.trimIndent()
     }
 
@@ -5594,6 +5676,268 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.test.InheritedNotNullWeakReference.get [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.other.JavaNotNullWeakReference
             override fun get(): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve vararg get of Java superclass whose members kotlin-reflect cannot describe as operator`() {
+        // the compiler accepts x[1, 2]
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaUndescribable.get"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaUndescribable.get [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaUndescribableBase
+            abstract operator fun get(vararg arg0: Int): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of Kotlin superclass implemented by Java class and declared abstract again by undescribable Java class as abstract`() {
+        // the size() of java.util.HashSet implements the size of Set, JavaReabstractedSizeSet declares it abstract,
+        // though kotlin-reflect cannot describe its members, like the ones of its superclass java.util.LinkedHashSet since JDK 21,
+        // rendered as within Set, neither open, nor final
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedReabstractedSizeSet.size"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedReabstractedSizeSet.size [page 1/1]
+            // inherited from kotlin.collections.Set
+            override val size: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve type variable of Java class annotated not nullable given nullable type argument as not nullable`() {
+        // T & Any, of the String? given for T
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaNotNullTypeVariable.first"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaNotNullTypeVariable.first [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNotNullTypeVariableBase
+            abstract fun first(): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve parameter of type variable of Java class annotated not nullable given nullable type argument as not nullable`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaNotNullTypeVariable.add"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaNotNullTypeVariable.add [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNotNullTypeVariableBase
+            abstract fun add(arg0: String)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java override not annotated of the nullability annotations of the method it overrides`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaAnnotationInheriting.find"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaAnnotationInheriting.find [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaAnnotationInheriting
+            abstract override fun find(arg0: String): String?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java override not annotated of the nullability annotations of the generic method it overrides through a bridge`() {
+        // resolve(String) overrides the resolve(T) of JavaAnnotatedBase<String>, of another JVM descriptor, bridged by javac
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaAnnotationInheriting.resolve"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaAnnotationInheriting.resolve [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaAnnotationInheriting
+            abstract override fun resolve(arg0: String): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java implementation not annotated of the nullability annotations of the method of Java interface it implements`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaAnnotationInheriting.label"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaAnnotationInheriting.label [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaAnnotationInheriting
+            abstract override fun label(arg0: String): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve type argument of Java method annotated nullable by type annotation as nullable`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaTypeUseNullability.names"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaTypeUseNullability.names [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypeUseNullability
+            abstract fun names(): List<String?>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve array elements of Java method annotated nullable by type annotation as nullable`() {
+        // a type annotation of String[] annotates the elements, not the array, unlike the one of String @Nullable []
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaTypeUseNullability.values"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaTypeUseNullability.values [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypeUseNullability
+            abstract fun values(): Array<String?>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve array of Java method annotated nullable by type annotation as nullable`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaTypeUseNullability.array"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaTypeUseNullability.array [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypeUseNullability
+            abstract fun array(): Array<String>?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve type argument of Java parameter annotated nullable by type annotation as nullable`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaTypeUseNullability.index"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaTypeUseNullability.index [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypeUseNullability
+            abstract fun index(arg0: Map<String, String?>?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve bound of wildcard of Java method annotated nullable by type annotation as nullable`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaTypeUseNullability.sequences"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaTypeUseNullability.sequences [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypeUseNullability
+            abstract fun sequences(): List<out CharSequence?>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve type and its type argument of Java method annotated nullable by type annotations as nullable`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaTypeUseNullability.both"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaTypeUseNullability.both [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypeUseNullability
+            abstract fun both(): List<String?>?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java parameter annotated not nullable next to the same annotation on its type argument as not nullable`() {
+        // javac writes the annotation of both targets as a declaration annotation, and as type annotations of Map.Entry,
+        // and of its type argument
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaTypeUseNullability.entry"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaTypeUseNullability.entry [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypeUseNullability
+            abstract fun entry(arg0: Map.Entry<String, String>)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve types not annotated of Java class marked by NullMarked as not nullable`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaNullMarked.label"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaNullMarked.label [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNullMarkedBase
+            abstract fun label(arg0: String): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve types annotated nullable of Java class marked by NullMarked as nullable`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaNullMarked.find"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaNullMarked.find [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNullMarkedBase
+            abstract fun find(arg0: String?): String?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve type variable of Java class marked by NullMarked as given`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaNullMarked.first"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaNullMarked.first [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNullMarkedBase
+            abstract fun first(arg0: String): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve type variable of nullable bound of Java class marked by NullMarked given nullable type argument as nullable`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaNullMarked.nullable"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaNullMarked.nullable [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNullMarkedBase
+            abstract fun nullable(arg0: String?): String?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve parameterized types not annotated of Java class marked by NullMarked as not nullable`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaNullMarked.names"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaNullMarked.names [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNullMarkedBase
+            abstract fun names(arg0: List<out String>): List<String>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve method of Java class marked by NullMarked marked by NullUnmarked of platform types`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaNullMarked.unmarked"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaNullMarked.unmarked [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNullMarkedBase
+            abstract fun unmarked(arg0: String?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of nested class of Java class marked by NullMarked marked by NullUnmarked of platform types`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaNullUnmarked.label"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaNullUnmarked.label [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNullMarkedBase.Unmarked
+            abstract fun label(arg0: String?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of nested class of Java class marked by NullMarked as not nullable`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaNullMarkedNested.label"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaNullMarkedNested.label [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNullMarkedBase.Nested
+            abstract fun label(arg0: String): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of Java class of package marked by NullMarked as not nullable`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaNullMarkedPackage.find"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaNullMarkedPackage.find [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.marked.JavaNullMarkedPackageBase
+            abstract fun find(arg0: String): String?
         """.trimIndent()
     }
 
