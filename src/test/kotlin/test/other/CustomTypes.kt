@@ -39,3 +39,9 @@ data class CustomResult(
 fun <T : Comparable<T>> T.isAtLeast(other: T): Boolean = this >= other
 
 typealias OtherPackageAlias = com.xemantic.kotlin.introspection.test.TypeAliasTarget
+
+/**
+ * An extension on Comparable of a type of another package, not listed for a class comparable to that type,
+ * unlike the one of the package of the class.
+ */
+fun Comparable<com.xemantic.kotlin.introspection.test.BoundedReceiverMoney>.otherAtLeastMoney() {}
