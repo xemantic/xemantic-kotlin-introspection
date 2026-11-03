@@ -3698,11 +3698,11 @@ internal class DefaultKotlinIntrospector(
         typeParameters: List<KmTypeParameter>,
         otherTypes: () -> List<KmType>
     ): Boolean {
+        if (receiver == null || receiver.classifier is KmClassifier.TypeAlias) return true
         // what the type parameters are inferred from, the same for each type the receiver is matched against
-        val referred = lazy(LazyThreadSafetyMode.NONE) { typeParameterIdsReferredBy(listOfNotNull(receiver), typeParameters) }
+        val referred = lazy(LazyThreadSafetyMode.NONE) { typeParameterIdsReferredBy(listOf(receiver), typeParameters) }
         val inferredOtherwise = lazy(LazyThreadSafetyMode.NONE) { typeParameterIdsReferredBy(otherTypes(), typeParameters) }
-        return when (val classifier = receiver?.classifier) {
-            null -> true
+        return when (val classifier = receiver.classifier) {
             is KmClassifier.Class -> {
                 val supertype = types[classReceiverIndexKey(receiver)]
                 supertype == null || ReceiverMatcher(this, typeParameters, receiverTypeParameterId = null, self = kmClass.name)
@@ -3731,9 +3731,10 @@ internal class DefaultKotlinIntrospector(
      */
     private fun typeParameterIdsReferredBy(types: List<KmType>, typeParameters: List<KmTypeParameter>): Set<Int> {
         val referred = HashSet<Int>()
+        val byId = typeParameters.associateBy { it.id }
         fun refer(type: KmType) {
             type.refersOnlyTo { id ->
-                if (referred.add(id)) typeParameters.find { it.id == id }?.upperBounds?.forEach(::refer)
+                if (referred.add(id)) byId[id]?.upperBounds?.forEach(::refer)
                 true
             }
         }
@@ -4308,6 +4309,7 @@ internal class DefaultKotlinIntrospector(
          * like `T` of `Comparable<T>` in a covariant position for `Comparable<*>`, which kotlinc does not infer it from,
          * unlike the same types given explicitly, or the other way round, like `T` of `List<T>` in a covariant position,
          * inferred as `Any?`, see [isInferred].
+         * A star projection is told by the instance of its type, see [STAR], from the same type given explicitly.
          */
         private fun isTrivialStarConstraint(actual: KmType, variance: KmVariance): Boolean =
             (actual === STAR.second && variance == KmVariance.IN) ||
@@ -4320,7 +4322,8 @@ internal class DefaultKotlinIntrospector(
          * in a covariant position, or an invariant one, while in a contravariant one,
          * it can be their common subtype, like `T : Number` of `I<T>` for `I<String>`, where `interface I<in T>`,
          * which still infers the other type parameters a bound refers to, if it can, like `E` of `T : List<E>`,
-         * but not a type parameter bound, like `U` of `T : U`, which is only another supertype of their common subtype,
+         * also a bound of a type parameter bound, like `E` of `U : List<E>` for `T : U`, see [inferringBounds],
+         * but not a type parameter bound itself, like `U` of `T : U`, which is only another supertype of their common subtype,
          * while the bounds referring to the type parameter itself are checked once all is inferred, see [satisfiesRecursiveBounds].
          * The bounds of a type parameter already being checked are not checked again,
          * like `T` of `T : Comparable<T>`, inferred from the type argument of `Comparable`.
@@ -4331,9 +4334,7 @@ internal class DefaultKotlinIntrospector(
             return try {
                 if (variance == KmVariance.IN) {
                     val subtype = if (actual.isNullable) actual.notNullable() else actual
-                    bounds.filter { bound ->
-                        bound.classifier !is KmClassifier.TypeParameter && !bound.refersOnlyTo { it == id || it !in typeParameters }
-                    }.forEach { bound ->
+                    inferringBounds(id).forEach { bound ->
                         val inferredType = if (bound.isNullable) actual else subtype
                         retrying(inferredIds.size) {
                             matches(bound.substituted(mapOf(id to inferredType)), inferredType, KmVariance.OUT, isStrict)
@@ -4345,6 +4346,24 @@ internal class DefaultKotlinIntrospector(
                 }
             } finally {
                 boundsChecked.remove(id)
+            }
+        }
+
+        /**
+         * The bounds of the type parameter of the given [id] inferring the other type parameters they refer to,
+         * like `List<E>` of `T : List<E>`, also the ones of a type parameter bounding it, like `List<E>` of `U : List<E>`
+         * for `T : U`, which kotlinc infers `E` of as well, but not the ones referring to the type parameter they bound,
+         * like `Comparable<A>` of `A : Comparable<A>`, see [satisfiesBounds].
+         */
+        private fun inferringBounds(id: Int, visited: MutableSet<Int> = HashSet()): List<KmType> {
+            if (!visited.add(id)) return emptyList()
+            return typeParameters[id]?.upperBounds.orEmpty().flatMap { bound ->
+                when (val classifier = bound.classifier) {
+                    is KmClassifier.TypeParameter -> inferringBounds(classifier.id, visited).filter { inferring ->
+                        inferring.refersOnlyTo { it != classifier.id }
+                    }
+                    else -> listOf(bound).filter { !it.refersOnlyTo { other -> other == id || other !in typeParameters } }
+                }
             }
         }
 

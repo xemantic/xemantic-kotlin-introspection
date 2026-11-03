@@ -751,6 +751,9 @@ fun <E, T : List<E>> BoundedReceiverConsumer<T>.consumeElementsOf(element: E) {}
 
 fun <E, T : List<E>> BoundedReceiverConsumer<List<T>>.consumeListsOf(value: T) {}
 
+// also through the bound of a type parameter bound, like E of U : List<E> for T : U
+fun <E, U : List<E>, T : U> BoundedReceiverConsumer<T>.consumeElementsThroughBound() {}
+
 fun <T : List<T>> BoundedReceiverConsumer<T>.consumeSelfList() {}
 
 class BoundedReceiverAnyConsumer : BoundedReceiverConsumer<Any>

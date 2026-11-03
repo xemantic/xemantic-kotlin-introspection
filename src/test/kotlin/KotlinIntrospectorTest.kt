@@ -7230,7 +7230,7 @@ class KotlinIntrospectorTest {
     fun `should resolve class without extension on contravariant type parameter of recursive bound unsatisfied by type argument`() {
         // T : Comparable<T> of a contravariant position is inferred as List<String>, which is not a Comparable<List<String>>,
         // unless the value parameter tells T, while T : CharSequence, or T : U, is a subtype of both,
-        // E of T : List<E> is inferred from List<String>, and T of BoundedReceiverConsumer<List<T>> from String,
+        // E of T : List<E> is inferred from List<String>, also through T : U of U : List<E>, and T of BoundedReceiverConsumer<List<T>> from String,
         // while consumeComparableOf, and consumeListsOf, can be called with a value of a type satisfying both, like Nothing
         // and consumeComparableCharSequence is listed, as the multiple bounds are not checked, unlike by kotlinc
         resolver.resolve(
@@ -7247,6 +7247,7 @@ class KotlinIntrospectorTest {
             fun <T : Comparable<T>> BoundedReceiverConsumer<T>.consumeComparableOf(value: T)
             fun <E, T : List<E>> BoundedReceiverConsumer<T>.consumeElements()
             fun <E, T : List<E>> BoundedReceiverConsumer<T>.consumeElementsOf(element: E)
+            fun <E, U : List<E>, T : U> BoundedReceiverConsumer<T>.consumeElementsThroughBound()
             fun <E, T : List<E>> BoundedReceiverConsumer<List<T>>.consumeListsOf(value: T)
         """.trimIndent()
     }
@@ -7254,7 +7255,7 @@ class KotlinIntrospectorTest {
     @Test
     fun `should resolve class with extension on contravariant type parameter of recursive bound satisfied by type argument`() {
         // String is a Comparable<String>, and a final class, which is no List<String>, satisfying T : List<T> as well,
-        // but not a List<E>, which E could be inferred from, unless the value parameter tells E
+        // but not a List<E>, which E could be inferred from, also through T : U of U : List<E>, unless the value parameter tells E
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.BoundedReceiverStringConsumer"
         ) sameAsKotlin """
@@ -7291,6 +7292,7 @@ class KotlinIntrospectorTest {
             fun <T : Comparable<T>> BoundedReceiverConsumer<T>.consumeComparableOf(value: T)
             fun <E, T : List<E>> BoundedReceiverConsumer<T>.consumeElements()
             fun <E, T : List<E>> BoundedReceiverConsumer<T>.consumeElementsOf(element: E)
+            fun <E, U : List<E>, T : U> BoundedReceiverConsumer<T>.consumeElementsThroughBound()
             fun <T> BoundedReceiverConsumer<MutableList<in T>>.consumeIntoMutable()
             fun <E, T : List<E>> BoundedReceiverConsumer<List<T>>.consumeListsOf(value: T)
         """.trimIndent()
@@ -7393,8 +7395,8 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve class with extension on type parameter of multiple contravariant positions`() {
-        // T is inferred as the intersection of String and CharSequence, which kotlinc does not check against T : Comparable<T>,
-        // while biConsumeBounded, of A bounding B, is not checked either, which kotlinc rejects for String and CharSequence
+        // T is inferred as String, a subtype of CharSequence, and a Comparable<String>, while T of multiple contravariant positions
+        // is not checked against T : Comparable<T>, nor is A bounding B of biConsumeBounded, which kotlinc rejects here
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.BoundedReceiverStringBiConsumer"
         ) sameAsKotlin """
