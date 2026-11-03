@@ -4926,6 +4926,30 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve Java member taking boxed type annotated not null below Java one implementing Kotlin one taking primitive type`() {
+        // the put(@NotNull Integer) of JavaNotNullBoxedPutBelow, of the Kotlin types of put(key: Int), overrides nothing
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NotNullBoxedJavaPutBelowPrimitive.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NotNullBoxedJavaPutBelowPrimitive.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPutBelow
+            open fun put(arg0: Int): String
+            // inherited from com.xemantic.kotlin.introspection.test.PrimitivePut
+            open fun put(key: Int): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking boxed type implementing interface inheriting Kotlin one taking primitive type`() {
+        // put(Integer) does not implement put(key: Int), which a concrete subclass still has to implement, and put(null) compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaPutBelowInterface.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaPutBelowInterface.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedPutBelowInterface
+            open fun put(arg0: Int?): String
+            // inherited from com.xemantic.kotlin.introspection.test.PrimitivePut
+            fun put(key: Int): String
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve members merged pairwise apart when not merged with each other`() {
         // the put(T) of JavaGenericPut<Integer>, put(Object) on the JVM, is merged with the put(t: T) of GenericPut<Int>,
         // which is merged with the put(key: Int) of PrimitivePut, but K2 groups the members around the one of the superclass,
@@ -4991,6 +5015,27 @@ class KotlinIntrospectorTest {
             open fun put(t: Int): String
             // inherited from com.xemantic.kotlin.introspection.test.NullablePrimitivePut
             fun put(key: Int?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking primitive type next to Kotlin one taking nullable type argument`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.PrimitiveJavaNullableGenericPutJoin.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PrimitiveJavaNullableGenericPutJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaPrimitivePut
+            open fun put(arg0: Int): String
+            // inherited from com.xemantic.kotlin.introspection.test.GenericPut
+            fun put(t: Int?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member taking function type merged with Java one taking projected function`() {
+        // Function1<? super String, ? extends Integer> is the (String) -> Int of the Kotlin member, so that the Java one implements it
+        resolver.resolve("com.xemantic.kotlin.introspection.test.ProjectedFunctionJavaTakerJoin.take") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ProjectedFunctionJavaTakerJoin.take [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.FunctionTaker
+            open fun take(function: (String) -> Int): String
         """.trimIndent()
     }
 
@@ -13745,6 +13790,16 @@ class KotlinIntrospectorTest {
         resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenPrimitiveBoxedJavaPutJoin.put") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.HiddenPrimitiveBoxedJavaPutJoin.put [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedPut
+            open fun put(arg0: Int?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking boxed type implementing interface inheriting hidden one taking primitive type`() {
+        // put(Integer) does not override the hidden put(key: Int), so that put(null) compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaPutBelowHiddenInterface.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaPutBelowHiddenInterface.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedPutBelowHiddenInterface
             open fun put(arg0: Int?): String
         """.trimIndent()
     }

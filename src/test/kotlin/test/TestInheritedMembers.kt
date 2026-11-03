@@ -380,6 +380,12 @@ abstract class PrimitiveAndBoxedJavaPut : com.xemantic.kotlin.introspection.test
 
 abstract class BoxedJavaPutBelowPrimitive : com.xemantic.kotlin.introspection.test.other.JavaBoxedPutBelow()
 
+abstract class NotNullBoxedJavaPutBelowPrimitive : com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPutBelow()
+
+interface PrimitivePutRedeclaring : PrimitivePut
+
+abstract class BoxedJavaPutBelowInterface : com.xemantic.kotlin.introspection.test.other.JavaBoxedPutBelowInterface()
+
 // the put(T) of JavaGenericPut<Integer> implements the put(t: T) of GenericPut<Int>, not the put(key: Int) of PrimitivePut,
 // though the two Kotlin members alone are merged
 abstract class GenericBoxedJavaPrimitiveGenericPutJoin :
@@ -415,6 +421,15 @@ abstract class PrimitiveJavaNullablePutJoin : com.xemantic.kotlin.introspection.
 
 abstract class PrimitiveJavaGenericNullablePutJoin :
     com.xemantic.kotlin.introspection.test.other.JavaPrimitivePut(), GenericPut<Int>, NullablePrimitivePut
+
+// the put(t: T) of GenericPut<Int?> takes Int?, which the put(int) of JavaPrimitivePut never implements
+abstract class PrimitiveJavaNullableGenericPutJoin : com.xemantic.kotlin.introspection.test.other.JavaPrimitivePut(), GenericPut<Int?>
+
+interface FunctionTaker {
+    fun take(function: (String) -> Int): String
+}
+
+abstract class ProjectedFunctionJavaTakerJoin : com.xemantic.kotlin.introspection.test.other.JavaProjectedFunctionTaker(), FunctionTaker
 
 abstract class BoxedJavaListJoin : com.xemantic.kotlin.introspection.test.other.JavaBoxedMembers(), List<String>
 
