@@ -4638,6 +4638,39 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve Java member taking boxed type argument next to Kotlin one taking primitive type`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.GenericBoxedJavaPutJoin.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GenericBoxedJavaPutJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.PrimitivePut
+            fun put(key: Int): String
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaGenericPut
+            open fun put(arg0: Int?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking boxed type annotated not null next to Kotlin one taking primitive type`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NotNullBoxedJavaPutJoin.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NotNullBoxedJavaPutJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPut
+            open fun put(arg0: Int): String
+            // inherited from com.xemantic.kotlin.introspection.test.PrimitivePut
+            fun put(key: Int): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking primitive type next to Java one taking boxed type`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.PrimitiveBoxedJavaPutJoin.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PrimitiveBoxedJavaPutJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaPrimitivePut
+            open fun put(arg0: Int): String
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedPutInterface
+            fun put(arg0: Int?): String
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve Kotlin member merged with Java override of JVM-only member taking key nullable`() {
         // the String! key of the computeIfAbsent of JavaComputingMap does not tell it apart from the String one,
         // and its String! return loses to the String, so that computeIfAbsent(null) { … } does not compile
@@ -12386,6 +12419,26 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.test.HiddenPrimitiveBoxedJavaPutJoin.put [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedPut
             open fun put(arg0: Int?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking boxed type argument next to hidden one taking primitive type`() {
+        // the put(T) of JavaGenericPut<Integer> takes Object on the JVM, unlike put(int), so that put(null) still compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenPrimitiveGenericBoxedJavaPutJoin.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenPrimitiveGenericBoxedJavaPutJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaGenericPut
+            open fun put(arg0: Int?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking boxed type annotated not null next to hidden one taking primitive type`() {
+        // put(@NotNull Integer) is rendered put(Int), though another JVM method than put(int), so that put(1) still compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenPrimitiveNotNullBoxedJavaPutJoin.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenPrimitiveNotNullBoxedJavaPutJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPut
+            open fun put(arg0: Int): String
         """.trimIndent()
     }
 

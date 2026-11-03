@@ -266,6 +266,12 @@ interface PrimitivePut {
 
 abstract class BoxedJavaPutJoin : com.xemantic.kotlin.introspection.test.other.JavaBoxedPut(), PrimitivePut
 
+abstract class GenericBoxedJavaPutJoin : com.xemantic.kotlin.introspection.test.other.JavaIntegerPut(), PrimitivePut
+
+abstract class NotNullBoxedJavaPutJoin : com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPut(), PrimitivePut
+
+abstract class PrimitiveBoxedJavaPutJoin : com.xemantic.kotlin.introspection.test.other.JavaPrimitivePut(), com.xemantic.kotlin.introspection.test.other.JavaBoxedPutInterface
+
 class InheritedFromJava : com.xemantic.kotlin.introspection.test.other.JavaInheritedMid<String>()
 
 open class OpenInheritedFromJava : com.xemantic.kotlin.introspection.test.other.JavaInheritedMid<String>()

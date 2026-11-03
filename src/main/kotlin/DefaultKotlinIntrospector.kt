@@ -2333,13 +2333,36 @@ internal class DefaultKotlinIntrospector(
         /**
          * Whether the [member] is merged with the one of the [other] candidate, competing with it,
          * as of the same kind, and of the same [signature], also regardless of the platform types of Java of their value parameters,
-         * see [notNullableSignature], or overriding the same member, declared by another supertype,
+         * see [notNullableSignature], but of a primitive JVM type where the other one takes a boxed, or another, one,
+         * see [jvmPrimitiveParameters], or overriding the same member, declared by another supertype,
          * as the members of the same supertype are its overloads.
          */
         fun isMergedWith(other: InheritedCandidate): Boolean =
             other.kmClass.name != kmClass.name && (other.member is Member.Property) == (member is Member.Property) &&
-                (other.signature == signature || other.notNullableSignature == notNullableSignature ||
-                    other.overridden.any { it in overridden })
+                (other.overridden.any { it in overridden } ||
+                    (other.signature == signature || other.notNullableSignature == notNullableSignature) &&
+                    !isJvmPrimitiveRivalry(other))
+
+        /**
+         * Whether a value parameter of the [member] is of a primitive JVM type, where the one of the [other] candidate is not,
+         * or the other way round, like the `Int` of `put(int)` and the one of a `put(@NotNull Integer)`, or of `put(T)`
+         * of a Java class given `Integer` for `T`, so that they are JVM methods of their own, which the compiler does not merge,
+         * see [jvmPrimitiveParameters].
+         */
+        private fun isJvmPrimitiveRivalry(other: InheritedCandidate): Boolean {
+            val primitives = jvmPrimitiveParameters ?: return false
+            val otherPrimitives = other.jvmPrimitiveParameters ?: return false
+            return primitives.size == otherPrimitives.size && primitives.indices.any { primitives[it] != otherPrimitives[it] }
+        }
+
+        // whether each value parameter of the function is of a primitive JVM type, by its JVM signature,
+        // of a member of a Java class, of a JVM-only member, or else told by the metadata, or null if unknown
+        private val jvmPrimitiveParameters: List<Boolean>? by lazy(LazyThreadSafetyMode.NONE) {
+            val function = (member as? Member.Function)?.declaration ?: return@lazy null
+            val descriptor = (jvmMethod?.signature ?: function.signature)?.descriptor ?: return@lazy null
+            AsmType.getArgumentTypes(descriptor).takeLast(function.valueParameters.size)
+                .map { it.sort in AsmType.BOOLEAN..AsmType.DOUBLE }
+        }
 
         /**
          * Whether the [member] overrides the one of the [other] candidate, telling it by its key,
