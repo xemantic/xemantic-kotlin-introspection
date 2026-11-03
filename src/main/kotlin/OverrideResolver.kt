@@ -1724,16 +1724,70 @@ internal class OverrideResolver(
         // paired one to one, as a JVM method of the same shape as more than one signature might be the one of any of them,
         // like of an overload next to a shrunk one
         val unknownSignatures = signatures.filter { it !in jvmMethodSet }.groupBy { methodShape(it) }
-        val names = unknownSignatures.values.mapNotNull { it.singleOrNull() }.flatMap { signature ->
+        val pairs = unknownSignatures.values.mapNotNull { it.singleOrNull() }.flatMap { signature ->
             val jvmMethod = unknownJvmMethods[methodShape(signature)]?.singleOrNull() ?: return@flatMap emptyList()
-            methodClassNames(signature).zip(methodClassNames(jvmMethod)).filter { (metadataName, jvmName) ->
-                metadataName != jvmName && metadataName.isRelocatable
-            }
-        }.uniquePairs()
-        val isAmbiguous = unknownSignatures.any { (shape, signatures) ->
+            relocatedClassNames(signature, jvmMethod)
+        }
+        val ambiguous = unknownSignatures.filter { (shape, signatures) ->
             unknownJvmMethods[shape]?.let { jvmMethods -> signatures.size > 1 || jvmMethods.size > 1 } == true
         }
-        return SignatureNames(names, isAmbiguous)
+        val prefixPairs = prefixRelocatedPairs(ambiguous.mapValues { (shape, signatures) -> signatures to unknownJvmMethods.getValue(shape) })
+        return SignatureNames((pairs + prefixPairs).uniquePairs(), isAmbiguous = ambiguous.isNotEmpty())
+    }
+
+    /**
+     * The class names of the JVM [signature] of the metadata, which the [jvmMethod] names otherwise, mapped to these names.
+     */
+    private fun relocatedClassNames(signature: String, jvmMethod: String): List<Pair<String, String>> =
+        methodClassNames(signature).zip(methodClassNames(jvmMethod)).filter { (metadataName, jvmName) ->
+            metadataName != jvmName && metadataName.isRelocatable
+        }
+
+    /**
+     * The class names of the JVM signatures of the metadata, mapped to the ones of the JVM methods of the same shape,
+     * of the [overloads], the signatures and the JVM methods by their shapes, which cannot be paired one to one,
+     * paired by the relocation of a package prefix, see [prefixRelocation], telling more of the signatures than any other one,
+     * at least two, like `lib/` to the root package, telling `on(Llib/Event;)V` as `on(LEvent;)V`
+     * and `on(Llib/sub/Event;)V` as `on(Lsub/Event;)V`, unlike `lib/` to `sub/`, or `lib/sub/` to the root package,
+     * each telling one of them, a signature, and a JVM method, paired by the prefix with more than one other not told.
+     */
+    private fun prefixRelocatedPairs(overloads: Map<String, Pair<List<String>, List<String>>>): List<Pair<String, String>> {
+        // each pair of a signature and a JVM method of its shape, whose classes differ by the same prefix relocation
+        val explained = overloads.values.flatMap { (signatures, jvmMethods) ->
+            signatures.flatMap { signature ->
+                jvmMethods.mapNotNull { jvmMethod ->
+                    val prefixes = relocatedClassNames(signature, jvmMethod).map { (metadataName, jvmName) ->
+                        prefixRelocation(metadataName, jvmName) ?: return@mapNotNull null
+                    }
+                    prefixes.distinct().singleOrNull()?.let { prefix -> Triple(prefix, signature, jvmMethod) }
+                }
+            }
+        }.groupBy({ it.first }, { it.second to it.third })
+        if (explained.isEmpty()) return emptyList()
+        val support = explained.mapValues { (_, pairs) -> pairs.distinctBy { it.first }.size }
+        val most = support.values.max()
+        if (most < 2 || support.values.count { it == most } > 1) return emptyList()
+        val pairs = explained.getValue(support.entries.first { it.value == most }.key)
+        val bySignature = pairs.groupBy { it.first }
+        val byJvmMethod = pairs.groupBy { it.second }
+        return pairs.filter { (signature, jvmMethod) -> bySignature.getValue(signature).size == 1 && byJvmMethod.getValue(jvmMethod).size == 1 }
+            .flatMap { (signature, jvmMethod) -> relocatedClassNames(signature, jvmMethod) }
+    }
+
+    /**
+     * The relocation of a package prefix naming the class of the [metadataName] by the [jvmName], from and to,
+     * like `lib/` to the root package, `""`, of `lib/sub/Event` named `sub/Event`, the trailing packages they share kept,
+     * or `null` if they differ by their simple names.
+     */
+    private fun prefixRelocation(metadataName: String, jvmName: String): Pair<String, String>? {
+        val metadataSegments = metadataName.split('/')
+        val jvmSegments = jvmName.split('/')
+        if (metadataSegments.last() != jvmSegments.last()) return null
+        var shared = 1
+        while (shared < metadataSegments.size && shared < jvmSegments.size &&
+            metadataSegments[metadataSegments.size - 1 - shared] == jvmSegments[jvmSegments.size - 1 - shared]
+        ) shared++
+        return metadataSegments.dropLast(shared).joinToString("") { "$it/" } to jvmSegments.dropLast(shared).joinToString("") { "$it/" }
     }
 
     /**
@@ -2876,9 +2930,10 @@ internal class Relocation private constructor(
     private val removedPrefix: String? = null
 ) {
 
-    // the root package, to which the other classes of the root packages are relocated too, cannot be translated back
+    // the root package, to which the other classes of the root packages are relocated too, is not translated back,
+    // as a class of the root package might not be relocated, its names only guessed, see guessedUnlocated
     private val unlocatedPackages: Map<String, String> =
-        inverse(packages.toList() + rootPackages.map { it to "" })
+        inverse(packages.toList()).let { if (rootPackages.isEmpty()) it else it - "" }
 
     private val unlocatedClasses: Map<String, String> = inverse(classes.toList())
 
@@ -2924,7 +2979,7 @@ internal class Relocation private constructor(
      * Whether the class of the [metadataName] might be the one of the [jvmName] of the same simple name, named so by this relocation:
      * either by the [jvmName] itself, or by the name it is found by, see [located],
      * or by the name the metadata would, or might, refer to it by, see [unlocated] and [guessedUnlocated],
-     * or by any other name, unless the relocation tells the one it is found by,
+     * or by any other name, unless the relocation tells the one it is found by, see [tells], not only guessed by the prefix,
      * or the one the metadata refers to the [jvmName] by.
      */
     fun mightBeRelocated(metadataName: String, jvmName: String): Boolean {
@@ -2932,7 +2987,7 @@ internal class Relocation private constructor(
         val unlocated = unlocated(jvmName)
         if (unlocated == metadataName || guessedUnlocated(jvmName) == metadataName) return true
         return unlocated == jvmName && jvmName.substringAfterLast('/') == metadataName.substringAfterLast('/') &&
-            located(metadataName) == null
+            !tells(metadataName)
     }
 
     /**
@@ -2961,6 +3016,8 @@ internal class Relocation private constructor(
     fun guessedUnlocated(locatedName: String): String? {
         if (unlocated(locatedName) != locatedName) return null
         if (excluded.isNotEmpty() && internalNameOf(locatedName) in excluded) return null
+        // never relocated
+        if (locatedName.startsWith("java/") || locatedName.startsWith("kotlin/")) return null
         val localPrefix = if (locatedName.startsWith('.')) "." else ""
         val name = locatedName.removePrefix(".")
         return localPrefix + when {

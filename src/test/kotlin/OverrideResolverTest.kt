@@ -846,6 +846,65 @@ class OverrideResolverTest {
     }
 
     @Test
+    fun `should not take overload of the same shape for shrunk override of owner relocated by prefix next to library relocated to the root package`() {
+        // given
+        // like relocated by shading from app/ to shaded/app/, and lib/ to the root package, lib/sub/ to sub/,
+        // the overloads of the owner all of the same shape, its class app/Mid implementing lib/Listener
+        val owner = kmClass("app/Owner", supertype = "app/Mid").apply {
+            functions += functionTaking("on", "lib/Event", "ext/Event")
+            functions += functionTaking("on", "ext/Event", "lib/Event")
+            functions += functionTaking("on", "lib/sub/Event", "ext/Event")
+        }
+        val resolver = overrideResolver(
+            classes = mapOf("shaded/app/Mid" to kmClass("app/Mid", supertype = "lib/Listener")),
+            classFiles = mapOf(
+                "shaded/app/Owner" to classFile(
+                    "shaded/app/Owner",
+                    listOf("on(LEvent;Lext/Event;)V", "on(Lext/Event;LEvent;)V", "on(Lsub/Event;Lext/Event;)V"),
+                    superName = "shaded/app/Mid"
+                ),
+                "shaded/app/Mid" to classFile("shaded/app/Mid", listOf(), interfaces = listOf("Listener"))
+            ),
+            unloadableClassFiles = mapOf("Listener" to classFile("Listener", listOf("on(LEvent;Lext/Event;)V"), isInterface = true))
+        )
+
+        // when
+        val overrides = owner.functions.map { resolver.isOverride(OverrideResolver.Owner(owner, "shaded/app/Owner"), it) }
+
+        // then
+        // the prefix shaded/ only guesses where lib/sub/Event is, so the JVM method taking sub/Event might be its relocated one
+        assert(overrides == listOf(true, false, false))
+    }
+
+    @Test
+    fun `should tell relocation of overloads of the same shape by the package prefix relocated for most of them`() {
+        // given
+        // like relocated by shading from app/ to shaded/app/, and lib/ to the root package, lib/sub/ to sub/,
+        // the owner implementing the Java interface app/Listener of the app, taking lib/Event
+        val owner = kmClass("app/Owner", supertype = "app/Listener").apply {
+            functions += functionTaking("on", "lib/Event")
+            functions += functionTaking("on", "lib/sub/Event")
+        }
+        val resolver = overrideResolver(
+            classFiles = mapOf(
+                "shaded/app/Owner" to classFile(
+                    "shaded/app/Owner", listOf("on(LEvent;)V", "on(Lsub/Event;)V"), interfaces = listOf("shaded/app/Listener")
+                )
+            ),
+            unloadableClassFiles = mapOf(
+                "shaded/app/Listener" to classFile("shaded/app/Listener", listOf("on(LEvent;)V"), isInterface = true)
+            )
+        )
+
+        // when
+        val overrides = owner.functions.map { resolver.isOverride(OverrideResolver.Owner(owner, "shaded/app/Owner"), it) }
+
+        // then
+        // lib/ relocated to the root package tells both JVM methods, unlike lib/ to sub/, or lib/sub/ to the root package
+        assert(overrides == listOf(true, false))
+    }
+
+    @Test
     fun `should match relocated parameter types of Java interface of the app implemented by owner which is not relocated`() {
         // given
         // like an app shading its dependencies, its own Java interface app/JavaListener taking the relocated lib/Event
@@ -1018,6 +1077,31 @@ class OverrideResolverTest {
         // then
         // Event might be app/Event or lib/Event, while Listener is told class by class
         assert(unlocated == listOf("Event", "lib/Listener"))
+    }
+
+    @Test
+    fun `should only guess names of root package and of removed prefix the metadata might refer to`() {
+        // given
+        // like an app shading its dependencies, relocating the classes of lib/ to the root package
+        val rootRelocation = checkNotNull(
+            Relocation.ofDependencies(emptyMap(), emptySet(), mapOf("lib/Listener" to "Listener"), setOf("lib"))
+        )
+        // like relocated by shading from p/app/ to app/
+        val removedPrefixRelocation = checkNotNull(Relocation.of("p/app/Owner", "app/Owner"))
+
+        // when
+        val unlocated = listOf(rootRelocation.unlocated("Event"), removedPrefixRelocation.unlocated("ext/Event"))
+        val guessed = listOf(
+            rootRelocation.guessedUnlocated("Event"),
+            rootRelocation.guessedUnlocated("Listener"),
+            removedPrefixRelocation.guessedUnlocated("ext/Event"),
+            removedPrefixRelocation.guessedUnlocated("java/lang/Object")
+        )
+
+        // then
+        // Event might be a genuine class of the root package, and ext/Event of the package ext/, while a JDK class is never relocated
+        assert(unlocated == listOf("Event", "ext/Event"))
+        assert(guessed == listOf("lib/Event", null, "p/ext/Event", null))
     }
 
     @Test
