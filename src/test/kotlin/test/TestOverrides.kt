@@ -613,6 +613,12 @@ class OtherModuleSubclass : InternalBase() {
     override fun keep() {}
 }
 
+// Like OtherModuleSubclass, left unreflectable by a test, its own state hiding the internal one, without a bridge to it
+open class UnreflectableOpenOtherModuleSubclass : InternalBase() {
+    open val state: Int get() = 1
+    fun take(marker: com.xemantic.kotlin.introspection.othermodule.OtherModuleMarker) {}
+}
+
 // A Java method taking an array of a type variable is erased to the array of its type argument
 class JavaArraySubclass : JavaArrayBase<String>() {
     override fun process(items: Array<String>) {}

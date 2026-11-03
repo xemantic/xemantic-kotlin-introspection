@@ -28,6 +28,7 @@ class FriendModuleSubclass : InternalBase() {
 
 class UnreflectableFriendModuleSubclass : InternalBase() {
     public override val state: Int get() = 1
+    public override fun mark(marker: com.xemantic.kotlin.introspection.othermodule.OtherModuleMarker) {}
     fun take(marker: com.xemantic.kotlin.introspection.othermodule.OtherModuleMarker) {}
 }
 
@@ -46,5 +47,6 @@ open class FriendModuleOpenPublishedApiSubclass : com.xemantic.kotlin.introspect
 
 open class UnreflectableOpenFriendModuleSubclass : InternalBase() {
     public override val state: Int get() = 1
+    public override fun mark(marker: com.xemantic.kotlin.introspection.othermodule.OtherModuleMarker) {}
     fun take(marker: com.xemantic.kotlin.introspection.othermodule.OtherModuleMarker) {}
 }
