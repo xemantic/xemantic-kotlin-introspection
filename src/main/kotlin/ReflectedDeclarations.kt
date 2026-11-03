@@ -1443,18 +1443,25 @@ private const val JSR305_NONNULL = "Ljavax/annotation/Nonnull;"
  * `true` of a nullable type, `false` of a not nullable one, none of a platform type:
  * of the [types] themselves, and of the [nested] ones, by the type paths of the class file, see [nestedType],
  * like `List<String?>` of `List<@Nullable String>`, or `Array<String?>` of `@Nullable String []` of a type annotation,
- * and of the types not annotated otherwise, not nullable, when [isNullMarked], see [isNullMarked].
+ * and of the types not annotated otherwise, not nullable, when [isNullMarked], see [isNullMarked],
+ * but the parameters at the [platform] positions, of platform types, where the mark and an overridden method disagree.
  */
 internal class JavaNullability(
     val types: Map<Int, Boolean>,
     val nested: Map<Int, Map<String, Boolean>>,
-    val isNullMarked: Boolean
+    val isNullMarked: Boolean,
+    val platform: Set<Int> = emptySet()
 ) {
 
     /**
      * The nullability of the return type, or `null` of a platform type, see [types].
      */
     val returnType: Boolean? get() = types[RETURN_TYPE] ?: false.takeIf { isNullMarked }
+
+    /**
+     * Whether the type at the [position], not annotated, is not nullable, as marked by `@NullMarked`, see [platform].
+     */
+    fun isMarkedNotNull(position: Int): Boolean = isNullMarked && position !in platform
 
 }
 
@@ -1469,17 +1476,19 @@ internal class JavaNullability(
 private fun enhanceJavaNullability(method: Method, function: KmFunction) {
     val nullability = javaNullabilityOf(method) ?: return
     // as annotated, or else not nullable, when marked by @NullMarked
-    fun KmType.enhance(isNullable: Boolean?) = when (isNullable) {
-        null -> if (nullability.isNullMarked) markNullable(isNullable = false) else Unit
+    fun KmType.enhance(position: Int, isNullable: Boolean?) = when (isNullable) {
+        null -> if (nullability.isMarkedNotNull(position)) markNullable(isNullable = false) else Unit
         else -> markNullable(isNullable, isDefinitelyNonNull = !isNullable)
     }
     fun enhance(position: Int, type: KmType, javaType: Class<*>, varargElementType: KmType?) {
         if (javaType.isPrimitive) return
-        type.enhance(nullability.types[position])
+        type.enhance(position, nullability.types[position])
         val nested = nullability.nested[position].orEmpty()
         nested.forEach { (path, isNullable) -> type.nestedType(path)?.markNullable(isNullable, isDefinitelyNonNull = !isNullable) }
         // the element of a vararg parameter, rendered on its own, like the `String` of `vararg values: String`
-        if (varargElementType != null && javaType.componentType?.isPrimitive == false) varargElementType.enhance(nested[ARRAY_ELEMENT])
+        if (varargElementType != null && javaType.componentType?.isPrimitive == false) {
+            varargElementType.enhance(position, nested[ARRAY_ELEMENT])
+        }
     }
     enhance(RETURN_TYPE, function.returnType, method.returnType, varargElementType = null)
     function.valueParameters.forEachIndexed { position, parameter ->
@@ -1562,20 +1571,33 @@ private class EffectiveJavaNullabilities(type: Class<*>) {
     private fun compute(method: Method, key: String): JavaNullability? {
         val own = declared.methods[key]
         val isNullMarked = own?.isNullMarked ?: isNullMarked
-        // the types not annotated of a method marked by @NullMarked are not nullable, whatever the overridden methods tell
-        val inherited = if (isNullMarked) emptyList() else overriddenJavaMethods(method).mapNotNull { javaNullabilityOf(it) }
+        // a method marked by @NullUnmarked of its own inherits no annotation, like one annotated
+        val inherited = if (own?.isNullMarked == false) emptyList() else overriddenJavaMethods(method).mapNotNull { javaNullabilityOf(it) }
         if (own?.nullability == null && inherited.isEmpty() && !isNullMarked) return null
         val types = HashMap<Int, Boolean>()
         val nested = HashMap<Int, MutableMap<String, Boolean>>()
-        // the own annotations first, then the inherited ones, of the types not annotated
-        (listOfNotNull(own?.nullability) + inherited).forEach { nullability ->
+        val platform = HashSet<Int>()
+        fun merge(nullability: JavaNullability) {
             nullability.types.forEach { (position, isNullable) -> types.putIfAbsent(position, isNullable) }
             nullability.nested.forEach { (position, paths) ->
                 val positionNested = nested.getOrPut(position) { HashMap() }
                 paths.forEach { (path, isNullable) -> positionNested.putIfAbsent(path, isNullable) }
             }
         }
-        return JavaNullability(types, nested, isNullMarked)
+        // the own annotations first, then the inherited ones, of the types not annotated,
+        // but where the method is marked by @NullMarked, whose types not annotated are not nullable, winning for the return type,
+        // while a parameter of an overridden method taking null is a platform type, which the compiler lets take null
+        own?.nullability?.let(::merge)
+        if (!isNullMarked) {
+            inherited.forEach(::merge)
+        } else {
+            inherited.forEach { nullability ->
+                nullability.types.forEach { (position, isNullable) ->
+                    if (position != RETURN_TYPE && position !in types && isNullable) platform += position
+                }
+            }
+        }
+        return JavaNullability(types, nested, isNullMarked, platform)
     }
 
 }
@@ -1592,9 +1614,19 @@ private fun overriddenJavaMethods(method: Method): List<Method> {
     val declaring = method.declaringClass
     val descriptor = AsmType.getMethodDescriptor(method)
     // the JVM descriptors of the method, and of the bridges javac generates for it, calling it, like resolve(Object) of resolve(String),
-    // not of an overload, like resolve(Integer), which a bridge resolve(Object) might take as well
-    val descriptors = javaBridges.get(declaring).filterValues { it == method.name + descriptor }
-        .keys.mapTo(hashSetOf(descriptor)) { it.removePrefix(method.name) }
+    // not of an overload, like resolve(Integer), which a bridge resolve(Object) might take as well,
+    // or else, when the class file cannot be read, of the bridges of the parameter and return types it might call
+    val bridges = javaNullabilities.get(declaring).bridges
+    val descriptors = if (bridges != null) {
+        bridges.filterValues { it == method.name + descriptor }.keys.mapTo(hashSetOf(descriptor)) { it.removePrefix(method.name) }
+    } else {
+        val parameterTypes = method.parameterTypes
+        declaring.declaredMethods.filter { bridge ->
+            bridge.isBridge && bridge.name == method.name && bridge.parameterCount == parameterTypes.size &&
+                bridge.parameterTypes.indices.all { bridge.parameterTypes[it].isAssignableFrom(parameterTypes[it]) } &&
+                bridge.returnType.isAssignableFrom(method.returnType)
+        }.mapTo(hashSetOf(descriptor)) { AsmType.getMethodDescriptor(it) }
+    }
     val overridden = ArrayList<Method>()
     val visited = HashSet<Class<*>>()
     val pending = ArrayDeque<Class<*>>()
@@ -1613,33 +1645,6 @@ private fun overriddenJavaMethods(method: Method): List<Method> {
         type.enqueueSupertypes()
     }
     return overridden
-}
-
-/**
- * The methods the bridges of a class call, by the names and the JVM descriptors of both, like `resolve(Ljava/lang/String;)…`
- * of `resolve(Ljava/lang/Object;)…`, read from its class file, once per class, see [overriddenJavaMethods].
- */
-private val javaBridges = object : ClassValue<Map<String, String>>() {
-    override fun computeValue(type: Class<*>): Map<String, String> = reflectedValue(default = emptyMap()) {
-        if (type.declaredMethods.none { it.isBridge }) return@reflectedValue emptyMap()
-        val bytes = (type.classLoader ?: ClassLoader.getSystemClassLoader()).readClassBytes(type.name) ?: return@reflectedValue emptyMap()
-        val owner = AsmType.getInternalName(type)
-        val bridges = HashMap<String, String>()
-        ClassReader(bytes).accept(object : ClassVisitor(Opcodes.ASM9) {
-            override fun visitMethod(
-                access: Int,
-                name: String,
-                descriptor: String,
-                signature: String?,
-                exceptions: Array<out String>?
-            ): MethodVisitor? = if (access and Opcodes.ACC_BRIDGE == 0) null else object : MethodVisitor(Opcodes.ASM9) {
-                override fun visitMethodInsn(opcode: Int, insnOwner: String, insnName: String, insnDescriptor: String, isInterface: Boolean) {
-                    if (insnOwner == owner && insnName == name) bridges.putIfAbsent(name + descriptor, insnName + insnDescriptor)
-                }
-            }
-        }, ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES)
-        bridges
-    }
 }
 
 /**
@@ -1669,9 +1674,14 @@ private val packageNullMarkings: MutableMap<Package, Optional<Boolean>> = Collec
 /**
  * The nullability annotations of a Java class, read from its class file, see [javaNullabilityOf]:
  * whether `@NullMarked`, `true`, or `@NullUnmarked`, `false`, tells the types not annotated of its members, see [isNullMarked],
- * and the [methods], by their names and JVM descriptors.
+ * the [methods], by their names and JVM descriptors, and the methods its [bridges] call, by the names and the JVM descriptors of both,
+ * like `resolve(Ljava/lang/String;)…` of `resolve(Ljava/lang/Object;)…`, see [overriddenJavaMethods], or `null` if not read.
  */
-private class JavaClassNullability(val isNullMarked: Boolean?, val methods: Map<String, JavaMethodNullability>)
+private class JavaClassNullability(
+    val isNullMarked: Boolean?,
+    val methods: Map<String, JavaMethodNullability>,
+    val bridges: Map<String, String>? = null
+)
 
 /**
  * The nullability annotations of a Java method, see [JavaClassNullability], of its types, the [nullability], if annotated,
@@ -1707,8 +1717,14 @@ private fun nullMarking(annotation: String): Boolean? = when (annotation) {
 private fun readJavaNullabilities(classLoader: ClassLoader?, binaryName: String): JavaClassNullability? {
     val bytes = (classLoader ?: ClassLoader.getSystemClassLoader()).readClassBytes(binaryName) ?: return null
     val nullabilities = HashMap<String, JavaMethodNullability>()
+    val bridges = HashMap<String, String>()
     var isClassNullMarked: Boolean? = null
+    var owner = ""
     ClassReader(bytes).accept(object : ClassVisitor(Opcodes.ASM9) {
+        override fun visit(version: Int, access: Int, name: String, signature: String?, superName: String?, interfaces: Array<out String>?) {
+            owner = name
+        }
+
         override fun visitAnnotation(annotation: String, visible: Boolean): AnnotationVisitor? {
             nullMarking(annotation)?.let { isClassNullMarked = it }
             return null
@@ -1728,6 +1744,13 @@ private fun readJavaNullabilities(classLoader: ClassLoader?, binaryName: String)
             val typeUses = HashMap<Pair<Int, String>, Boolean>()
             val typeUseAnnotations = HashMap<Int, MutableSet<String>>()
             var isNullMarked: Boolean? = null
+
+            // the method of the class a bridge calls, see JavaClassNullability.bridges
+            override fun visitMethodInsn(opcode: Int, insnOwner: String, insnName: String, insnDescriptor: String, isInterface: Boolean) {
+                if (access and Opcodes.ACC_BRIDGE != 0 && insnOwner == owner && insnName == name) {
+                    bridges.putIfAbsent(name + descriptor, insnName + insnDescriptor)
+                }
+            }
 
             // the nullability told by the annotation, of the javax.annotation.Nonnull told when its `when` is read
             fun <K> record(key: K, annotation: String, nullabilities: MutableMap<K, Boolean>): AnnotationVisitor? {
@@ -1795,6 +1818,6 @@ private fun readJavaNullabilities(classLoader: ClassLoader?, binaryName: String)
                 nullabilities[name + descriptor] = JavaMethodNullability(nullability, isNullMarked)
             }
         }
-    }, ClassReader.SKIP_CODE or ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES)
-    return JavaClassNullability(isClassNullMarked, nullabilities)
+    }, ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES)
+    return JavaClassNullability(isClassNullMarked, nullabilities, bridges)
 }

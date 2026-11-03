@@ -27,4 +27,8 @@ public abstract class JavaAnnotatedBase<T> {
 
     public abstract @org.jetbrains.annotations.NotNull T resolve(@org.jetbrains.annotations.NotNull T value);
 
+    public abstract @org.jetbrains.annotations.Nullable String lookup(@org.jetbrains.annotations.Nullable String key);
+
+    public abstract @org.jetbrains.annotations.Nullable String other(@org.jetbrains.annotations.NotNull String key);
+
 }
