@@ -565,3 +565,32 @@ abstract class InheritedJavaMapNullableComputeIfAbsent :
     com.xemantic.kotlin.introspection.test.other.JavaInheritingMap<String, String>(), NullableComputeIfAbsent
 
 abstract class JavaCharSequenceSubclass : java.lang.CharSequence
+
+// The generic methods of a Java class reached through a raw Java supertype, which the compiler sees erased
+abstract class InheritedJavaRawGeneric : com.xemantic.kotlin.introspection.test.other.JavaRawGenericMid()
+
+// The size() of java.util.LinkedHashSet declared abstract again by a Java subclass, whose members kotlin-reflect cannot describe
+abstract class InheritedReabstractedSizeSet : com.xemantic.kotlin.introspection.test.other.JavaReabstractedSizeSet()
+
+// A type variable of a Java class annotated not nullable, given a nullable type argument
+abstract class InheritedJavaNotNullTypeVariable : com.xemantic.kotlin.introspection.test.other.JavaNotNullTypeVariableBase<String?>()
+
+// The overrides of a Java class not annotated, inheriting the nullability annotations of the methods they override
+abstract class InheritedJavaAnnotationInheriting : com.xemantic.kotlin.introspection.test.other.JavaAnnotationInheriting()
+
+// The type arguments, and the array elements, of a Java class annotated by type annotations
+abstract class InheritedJavaTypeUseNullability : com.xemantic.kotlin.introspection.test.other.JavaTypeUseNullability()
+
+// The members of Java classes marked by @NullMarked of JSpecify, by their class, by their outer class, or by their package
+abstract class InheritedJavaNullMarked : com.xemantic.kotlin.introspection.test.other.JavaNullMarkedBase<String, String?>()
+
+abstract class InheritedJavaNullUnmarked : com.xemantic.kotlin.introspection.test.other.JavaNullMarkedBase.Unmarked()
+
+abstract class InheritedJavaNullMarkedNested : com.xemantic.kotlin.introspection.test.other.JavaNullMarkedBase.Nested()
+
+abstract class InheritedJavaNullMarkedPackage : com.xemantic.kotlin.introspection.test.marked.JavaNullMarkedPackageBase()
+
+// The invoke operator of a function reference type, and of a suspend one, named as a supertype
+abstract class InheritedFunctionReferenceType : kotlin.reflect.KFunction1<Int, String>
+
+abstract class InheritedSuspendFunctionReferenceType : kotlin.reflect.KSuspendFunction1<Int, String>
