@@ -378,6 +378,8 @@ abstract class PrimitiveKeyHashMapJoin : java.util.HashMap<Int, String>(), Primi
 
 abstract class PrimitiveAndBoxedJavaPut : com.xemantic.kotlin.introspection.test.other.JavaPrimitiveAndBoxedPut()
 
+abstract class BoxedJavaPutBelowPrimitive : com.xemantic.kotlin.introspection.test.other.JavaBoxedPutBelow()
+
 // the put(T) of JavaGenericPut<Integer> implements the put(t: T) of GenericPut<Int>, not the put(key: Int) of PrimitivePut,
 // though the two Kotlin members alone are merged
 abstract class GenericBoxedJavaPrimitiveGenericPutJoin :
@@ -403,6 +405,16 @@ abstract class BoxedJavaComparablePrimitiveJoin :
     com.xemantic.kotlin.introspection.test.other.JavaIntegerComparable(), PrimitiveCompareTo
 
 abstract class IndexedAddAllJavaListJoin : com.xemantic.kotlin.introspection.test.other.JavaIndexedAddAll(), MutableList<Int>
+
+interface NullablePrimitivePut {
+    fun put(key: Int?): String
+}
+
+// the put(int) of JavaPrimitivePut is another JVM method than put(Integer), which a concrete subclass still has to implement
+abstract class PrimitiveJavaNullablePutJoin : com.xemantic.kotlin.introspection.test.other.JavaPrimitivePut(), NullablePrimitivePut
+
+abstract class PrimitiveJavaGenericNullablePutJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaPrimitivePut(), GenericPut<Int>, NullablePrimitivePut
 
 abstract class BoxedJavaListJoin : com.xemantic.kotlin.introspection.test.other.JavaBoxedMembers(), List<String>
 
