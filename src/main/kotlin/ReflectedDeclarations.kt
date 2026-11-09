@@ -357,11 +357,78 @@ internal fun KClass<*>.toKmJavaClassHeader(
                 (supertype.classifier as? KClass<*>)?.let { supertypeClass ->
                     type.classifier = KmClassifier.Class(supertypeName(supertypeClass.java))
                     objectWildcards(supertypeClass.java).forEach { path -> type.projectObjectWildcard(path) }
-                    genericSupertypes[supertypeClass.java]?.let { type.markRawTypeArguments(it) }
+                    val genericSupertype = genericSupertypes[supertypeClass.java]
+                    if (genericSupertype != null) type.markRawTypeArguments(genericSupertype) else type.eraseRawKotlinArguments(supertypeClass)
                 }
             }
         }
     }
+
+/**
+ * Erases the type arguments of this raw supertype of a Java class, when its [supertypeClass] is a Kotlin class,
+ * to the bounds of its type parameters, as kotlinc erases them, see [rawErasure], like `Any?` of `T`,
+ * or `CharSequence` of `T : CharSequence`, like `Box<List<Any?>>` of the raw `ListBox`, where `interface ListBox<T> : Box<List<T>>`,
+ * unlike kotlin-reflect, which tells them as not nullable, made platform types then, see [JAVA_ERASURE_MARKER],
+ * or else marks them as not told exactly, see [JAVA_INEXACT_ERASURE_MARKER],
+ * while the ones of a Java class, like `Any!` of the raw `java.util.List`, are platform types in kotlinc too.
+ */
+private fun KmType.eraseRawKotlinArguments(supertypeClass: KClass<*>) {
+    if (!supertypeClass.java.isAnnotationPresent(Metadata::class.java)) return
+    val typeParameters = reflectedValue(default = null) { supertypeClass.typeParameters }
+    if (typeParameters?.size != arguments.size) return
+    typeParameters.forEachIndexed { index, typeParameter ->
+        val argument = arguments[index]
+        val type = argument.type ?: return@forEachIndexed
+        val erasure = reflectedValue(default = null) { rawErasure(typeParameter) }
+        if (erasure != null) {
+            erasure.annotations += KmAnnotation(JAVA_ERASURE_MARKER, emptyMap())
+            arguments[index] = KmTypeProjection(argument.variance, erasure)
+        } else {
+            type.annotations += KmAnnotation(JAVA_INEXACT_ERASURE_MARKER, emptyMap())
+        }
+    }
+}
+
+/**
+ * The type kotlinc erases the [typeParameter] of a raw type to, its first bound, nullable like it,
+ * through the bound of a type parameter, like `CharSequence?` of `B` of `<A : CharSequence?, B : A>`,
+ * or `null` when it is not told exactly, like of a bound taking type arguments, like `T : Comparable<T>`, also of its outer class,
+ * erased by kotlinc to a raw type, or of bounds of different nullability.
+ */
+private fun rawErasure(typeParameter: KTypeParameter, visited: Set<KTypeParameter> = emptySet()): KmType? {
+    val bounds = typeParameter.upperBounds
+    val bound = bounds.firstOrNull() ?: return null
+    if (bounds.any { it.isMarkedNullable != bound.isMarkedNullable }) return null
+    return when (val classifier = bound.classifier) {
+        // like of an inner class of a generic class, like Outer<String>.Inner, as well
+        is KClass<*> -> if (classifier.typeParameters.isNotEmpty() || bound.arguments.isNotEmpty()) null else KmType().also { type ->
+            type.classifier = KmClassifier.Class(reflectedClassName(classifier))
+            type.isNullable = bound.isMarkedNullable
+        }
+        is KTypeParameter -> if (classifier in visited) null else rawErasure(classifier, visited + typeParameter)?.also { type ->
+            if (bound.isMarkedNullable) type.isNullable = true
+        }
+        else -> null
+    }
+}
+
+/**
+ * The marker of an erased type argument of a raw Kotlin supertype of a Java class, see [eraseRawKotlinArguments], never rendered,
+ * the type kotlinc erases it to, not a platform type.
+ */
+internal const val JAVA_ERASURE_MARKER = "com/xemantic/kotlin/introspection/JavaErasure"
+
+/**
+ * Whether this type is an erased type argument of a raw Kotlin supertype, see [JAVA_ERASURE_MARKER].
+ */
+internal val KmType.isJavaErasure: Boolean get() = annotations.any { it.className == JAVA_ERASURE_MARKER }
+
+/**
+ * The marker of an erased type argument of a raw Kotlin supertype of a Java class not told exactly, see [eraseRawKotlinArguments],
+ * never rendered, a platform type, like on kotlin-reflect, its supertype reached through a Java class
+ * left out next to another one, see `keptSupertypes`.
+ */
+internal const val JAVA_INEXACT_ERASURE_MARKER = "com/xemantic/kotlin/introspection/JavaInexactErasure"
 
 /**
  * Marks this type, of the [javaType], when it is a raw type, and its type arguments, also the nested ones,
