@@ -94,6 +94,10 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 
 - A Java test fixture implementing a Kotlin member deprecated as `HIDDEN` cannot mark it `@Override`, see `JavaPrimitiveAndBoxedHiddenPut`.
 
+- A `null` call tells nothing of the member when a standard library extension accepts it, like `contains(element: T)` of `Iterable`, `remove(key, value)` or `getOrDefault` of `Map` —
+  `x.getOrDefault("", null)` compiles on a `HashMap<String, String>` subclass through the extension.
+  Probe the member only, shadowing the extension by one of the same name in the probe's own package, returning a marker type.
+
 - Kotlin never passes named arguments to a Java method, even one compiled with `-parameters`, so a Java method taking parameters never shadows an extension — see `isShadowingJavaMethod`.
 
 ## Anti-patterns to avoid
