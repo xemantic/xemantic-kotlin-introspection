@@ -126,6 +126,13 @@ interface RelocatedDefaultInterface {
 
 class RelocatedJavaBaseImpl : RelocatedJavaBase(), RelocatedDefaultInterface
 
+// tests relocate it, like shading, together with the Java class implementing it, and its type argument, but not the subclass
+interface RelocatedGenericInterface<T> {
+    fun kg(value: T) {}
+}
+
+class RelocatedGenericJavaBaseImpl : RelocatedGenericJavaBase()
+
 // tests relocate its Java interface, and the classes it takes, but not itself, and remove the JVM method of its override
 class RelocatedShrunkEventListener : RelocatedEventListener {
     override fun handle(event: RelocatedEvent) {}

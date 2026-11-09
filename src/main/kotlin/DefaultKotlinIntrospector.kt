@@ -2373,13 +2373,10 @@ internal class DefaultKotlinIntrospector(
             }
             val substitution = supertypeSubstitution(superKmClass, supertype)
             // the supertypes of a Java class, described by kotlin-reflect by their JVM names, which might be relocated,
-            // are named by the names the metadata refers to them by, like the ones of the raw Java supertypes above
+            // are named by the names the metadata refers to them by, like the ones of the raw Java supertypes above,
+            // and so are their type arguments, substituted for the type parameters of a Kotlin supertype
             val superSupertypes = if (superDeclarations !is JavaClass) superKmClass.supertypes else {
-                superKmClass.supertypes.map { type ->
-                    val jvmName = (type.classifier as? KmClassifier.Class)?.name ?: return@map type
-                    val metadataName = unlocatedName(declarations, jvmName)
-                    if (metadataName == jvmName) type else type.copy().also { it.classifier = KmClassifier.Class(metadataName) }
-                }
+                superKmClass.supertypes.map { it.unlocated(declarations) }
             }
             directSupertypes[name] = superSupertypes.classNames()
             pending += superSupertypes.map { it.substituted(substitution) }
@@ -2777,6 +2774,23 @@ internal class DefaultKotlinIntrospector(
      */
     private fun unlocatedName(declarations: ClassDeclarations, jvmName: String): String =
         declarations.overrideOwner?.let { overrideResolver.unlocatedName(it, jvmName) } ?: jvmName
+
+    /**
+     * This type, of a Java class described by kotlin-reflect, with its classifier, and the ones of its type arguments,
+     * named by the names the Kotlin metadata refers to them by, see [unlocatedName], or this very type, if none is relocated.
+     */
+    private fun KmType.unlocated(declarations: ClassDeclarations): KmType {
+        val jvmName = (classifier as? KmClassifier.Class)?.name
+        val metadataName = jvmName?.let { unlocatedName(declarations, it) }
+        val unlocatedArguments = arguments.map { argument ->
+            val type = argument.type ?: return@map argument
+            type.unlocated(declarations).takeIf { it !== type }?.let { KmTypeProjection(argument.variance, it) } ?: argument
+        }
+        if (metadataName == jvmName && unlocatedArguments.indices.all { unlocatedArguments[it] === arguments[it] }) return this
+        return copy(arguments = unlocatedArguments).also { type ->
+            if (metadataName != null && metadataName != jvmName) type.classifier = KmClassifier.Class(metadataName)
+        }
+    }
 
     /**
      * The declarations of the supertype named like `java/util/ArrayList`, whose members a class inherits, see [inheritedMembers]:
