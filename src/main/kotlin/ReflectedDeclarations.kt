@@ -255,9 +255,35 @@ internal class ReflectedTypeParameters(private val ids: Map<String, Int>) {
         fun classTypeParameters(typeParameters: List<KmTypeParameter>): ReflectedTypeParameters =
             ReflectedTypeParameters(typeParameters.associate { it.name to it.id })
 
+        /**
+         * The type parameters of a Java class, see [classTypeParameters], after the ones of its outer classes,
+         * if it is an inner class, named [outerNames], see [outerTypeParameterNames], numbered from 0, from the outermost one,
+         * as for the outer classes themselves, shadowed by the ones of the class of the same names.
+         */
+        fun javaClassTypeParameters(outerNames: List<String>, typeParameters: List<KmTypeParameter>): ReflectedTypeParameters =
+            ReflectedTypeParameters(
+                outerNames.withIndex().associate { (id, name) -> name to id } + typeParameters.associate { it.name to it.id }
+            )
+
     }
 
 }
+
+/**
+ * The names of the type parameters of the outer classes of this Java class, if it is an inner class,
+ * like `T` of `Outer<T>.Inner`, the outermost first, which its members might refer to, see [toKmJavaClassHeader].
+ */
+internal fun Class<*>.outerTypeParameterNames(): List<String> = reflectedValue(default = emptyList()) {
+    // a member class of an interface is static, so is a nested enum, record or interface
+    val outer = declaringClass?.takeUnless { Modifier.isStatic(modifiers) || isInterface } ?: return@reflectedValue emptyList()
+    outer.outerTypeParameterNames() + outer.typeParameters.map { it.name }
+}
+
+/**
+ * Whether this Java class is an inner class, a member class which is not static, see [outerTypeParameterNames].
+ */
+private fun Class<*>.isInnerClass(): Boolean =
+    reflectedValue(default = false) { declaringClass != null && !Modifier.isStatic(modifiers) && !isInterface }
 
 /**
  * The declaration of this built-in type in the Kotlin metadata, named like `kotlin/String`, as kotlin-reflect describes it,
@@ -353,7 +379,7 @@ internal fun KClass<*>.toKmJavaClassHeader(
     objectWildcards: (supertype: Class<*>) -> Set<List<Int>> = { emptySet() },
     supertypeName: (Class<*>) -> String
 ): KmClass =
-    toKmClassHeader(name) { typeParameters ->
+    toKmClassHeader(name, outerTypeParameterNames = java.outerTypeParameterNames(), isInner = java.isInnerClass()) { typeParameters ->
         val genericSupertypes = (listOfNotNull(java.genericSuperclass) + java.genericInterfaces)
             .filterIsInstance<ParameterizedType>()
             .associateBy { it.rawType }
@@ -482,11 +508,18 @@ private fun KmType.projectObjectWildcard(path: List<Int>) {
 
 /**
  * The declaration of this class in the Kotlin metadata, named [name], without its members and constructors,
- * of its [supertypes], given the type parameters of the class.
+ * of its [supertypes], given the type parameters of the class,
+ * numbered after the [outerTypeParameterNames] of an inner Java class, see [ReflectedTypeParameters.javaClassTypeParameters].
  */
-private fun KClass<*>.toKmClassHeader(name: String, supertypes: (ReflectedTypeParameters) -> List<KmType>): KmClass {
+private fun KClass<*>.toKmClassHeader(
+    name: String,
+    outerTypeParameterNames: List<String> = emptyList(),
+    isInner: Boolean = false,
+    supertypes: (ReflectedTypeParameters) -> List<KmType>
+): KmClass {
     val kmClass = KmClass()
     kmClass.name = name
+    kmClass.isInner = isInner
     kmClass.kind = if (java.isInterface) ClassKind.INTERFACE else ClassKind.CLASS
     kmClass.visibility = Visibility.PUBLIC
     kmClass.modality = when {
@@ -494,10 +527,10 @@ private fun KClass<*>.toKmClassHeader(name: String, supertypes: (ReflectedTypePa
         isOpen -> Modality.OPEN
         else -> Modality.FINAL
     }
-    this.typeParameters.mapIndexedTo(kmClass.typeParameters) { id, typeParameter ->
-        KmTypeParameter(typeParameter.name, id, typeParameter.variance.toKmVariance())
+    this.typeParameters.mapIndexedTo(kmClass.typeParameters) { index, typeParameter ->
+        KmTypeParameter(typeParameter.name, outerTypeParameterNames.size + index, typeParameter.variance.toKmVariance())
     }
-    val typeParameters = ReflectedTypeParameters.classTypeParameters(kmClass.typeParameters)
+    val typeParameters = ReflectedTypeParameters.javaClassTypeParameters(outerTypeParameterNames, kmClass.typeParameters)
     this.typeParameters.zip(kmClass.typeParameters) { typeParameter, kmTypeParameter ->
         // like the implicit Any! bound of a Java type parameter, which admits nullable type arguments, see [toKmTypeParameter]
         typeParameter.upperBounds.mapTo(kmTypeParameter.upperBounds) { it.toKmType(typeParameters, platformAsNullable = true) }

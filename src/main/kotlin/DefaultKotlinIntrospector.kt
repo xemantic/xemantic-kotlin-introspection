@@ -32,8 +32,13 @@ import java.io.File
 import java.io.IOException
 import java.lang.reflect.AnnotatedElement
 import java.lang.reflect.Field
+import java.lang.reflect.GenericArrayType
 import java.lang.reflect.Method
 import java.lang.reflect.Modifier
+import java.lang.reflect.ParameterizedType
+import java.lang.reflect.TypeVariable
+import java.lang.reflect.Type as JavaType
+import java.lang.reflect.WildcardType
 import java.net.URI
 import java.net.URL
 import java.net.URLClassLoader
@@ -1141,16 +1146,12 @@ internal class DefaultKotlinIntrospector(
      * so that its members are inherited like the ones of a Kotlin supertype, see [inheritedMembers],
      * and told deprecated like the members of a built-in type, see [builtinDeprecation].
      * It is not a class of the API, as a Java class is not rendered.
-     *
-     * @param areFunctionsReflected whether kotlin-reflect tells the functions of the class,
-     *   as it might fail on all of them at once, see [reflectedJavaClass].
      */
     private inner class JavaClass(
         override val clazz: Class<*>,
         override val kmClass: KmClass,
         private val functions: Map<KmFunction, JavaFunction>,
-        private val properties: Map<KmProperty, JavaProperty>,
-        val areFunctionsReflected: Boolean = true
+        private val properties: Map<KmProperty, JavaProperty>
     ) : ClassDeclarations {
 
         override val classDeprecation: Deprecation? get() = null
@@ -1377,7 +1378,9 @@ internal class DefaultKotlinIntrospector(
         val isBuiltin = reflectedValue(default = false) { kClass.qualifiedName != clazz.canonicalName }
         val isJavaViewed = isBuiltin && clazz.name in JAVA_VIEWED_BUILTIN_INTERFACES
         val kmClass = kClass.toKmJavaClassHeader(kotlinClassName(clazz), supertypeName = ::javaSupertypeMetadataName)
-        val typeParameters = ReflectedTypeParameters.classTypeParameters(kmClass.typeParameters)
+        // the type parameters of the outer classes of an inner class, which its members might refer to, like T of Outer<T>.Inner
+        val outerTypeParameterNames = clazz.outerTypeParameterNames()
+        val typeParameters = ReflectedTypeParameters.javaClassTypeParameters(outerTypeParameterNames, kmClass.typeParameters)
         // kotlin-reflect tells no visibility of a protected Java member, which is also visible within its package
         fun Visibility.orProtected(modifiers: Int?): Visibility =
             if (this == Visibility.LOCAL && modifiers != null && Modifier.isProtected(modifiers)) Visibility.PROTECTED else this
@@ -1424,7 +1427,10 @@ internal class DefaultKotlinIntrospector(
         }
         // the type variables of the Java class by their positions, named otherwise by the built-in type, like E of T
         val javaTypeParameters by lazy(LazyThreadSafetyMode.NONE) {
-            ReflectedTypeParameters(clazz.typeParameters.map { it.name }.zip(kmClass.typeParameters.map { it.id }).toMap())
+            ReflectedTypeParameters(
+                outerTypeParameterNames.withIndex().associate { (id, name) -> name to id } +
+                    clazz.typeParameters.map { it.name }.zip(kmClass.typeParameters.map { it.id }).toMap()
+            )
         }
         // the ones Kotlin hides of the built-in type are seen of the Java interface, like isEmpty() of java.lang.CharSequence
         val javaMembers by lazy(LazyThreadSafetyMode.NONE) { javaMembersOf(clazz, isKeepingHidden = isJavaViewed) }
@@ -1458,7 +1464,7 @@ internal class DefaultKotlinIntrospector(
                 }
             }
         }
-        JavaClass(clazz, kmClass, functions, properties, areFunctionsReflected = reflectedFunctions != null)
+        JavaClass(clazz, kmClass, functions, properties)
     }
 
     /**
@@ -2060,6 +2066,11 @@ internal class DefaultKotlinIntrospector(
         fun substituted(substitution: Map<Int, KmType>, names: Map<Int, String>): Member
 
         /**
+         * This member with each of its types given by the [type].
+         */
+        fun withTypes(type: (KmType) -> KmType): Member
+
+        /**
          * @param declaration the [property] as declared, unless it is rendered with substituted type arguments.
          */
         class Property(val property: KmProperty, val declaration: KmProperty = property) : Member {
@@ -2085,6 +2096,8 @@ internal class DefaultKotlinIntrospector(
 
             override fun substituted(substitution: Map<Int, KmType>, names: Map<Int, String>): Member =
                 Property(property.substituted(substitution, names), declaration)
+
+            override fun withTypes(type: (KmType) -> KmType): Member = Property(property.withTypes(type), declaration)
 
         }
 
@@ -2114,6 +2127,8 @@ internal class DefaultKotlinIntrospector(
 
             override fun substituted(substitution: Map<Int, KmType>, names: Map<Int, String>): Member =
                 Function(function.substituted(substitution, names), declaration)
+
+            override fun withTypes(type: (KmType) -> KmType): Member = Function(function.withTypes(type), declaration)
 
         }
 
@@ -2279,6 +2294,9 @@ internal class DefaultKotlinIntrospector(
      * which is inherited, unless a member of another supertype overrides it, see [inheritedMembers],
      * rendered with the type arguments of the inheriting class substituted, see [Member.substituted].
      *
+     * @param name the name the inheriting class, or its supertypes, refer to the [kmClass] by,
+     *   like the name the Kotlin metadata refers to a relocated Java class by, whose [kmClass] is named by its JVM name,
+     *   see [inheritedName].
      * @param key the key of the member, see [memberKey].
      * @param overridden the keys of the members of the supertypes of the [kmClass] which the [member] overrides.
      * @param signature the signature of the [member] as rendered, see [Member.signature],
@@ -2303,6 +2321,7 @@ internal class DefaultKotlinIntrospector(
      *   of a JVM-only member of a built-in type, see [BuiltinClass], or of a member of a Java class, see [JavaClass].
      */
     private inner class InheritedCandidate(
+        val name: String,
         val kmClass: KmClass,
         val declarations: ClassDeclarations,
         val member: Member,
@@ -2317,6 +2336,13 @@ internal class DefaultKotlinIntrospector(
     ) {
 
         val notNullableSignature: String by notNullableSignature
+
+        /**
+         * The name of the class declaring the [member], like `com/example/Base`: the [name] of a Java class,
+         * whose [kmClass] is named by its JVM name, or else the name of the [kmClass], of its metadata,
+         * like of a Kotlin class reached by its relocated name, never translated back from the root package.
+         */
+        val className: String get() = if (declarations is JavaClass) name else kmClass.name
 
         /**
          * The keys of the members the [member] overrides, but the ones of the Kotlin members a Java method does not override
@@ -2498,7 +2524,7 @@ internal class DefaultKotlinIntrospector(
          * as the members of the same supertype are its overloads.
          */
         fun isMergedWith(other: InheritedCandidate): Boolean =
-            other.kmClass.name != kmClass.name && (other.member is Member.Property) == (member is Member.Property) &&
+            other.className != className && (other.member is Member.Property) == (member is Member.Property) &&
                 (other.overridden.any { it in overridden } ||
                     (other.signature == signature || isJavaRivalry(other) && other.notNullableSignature == notNullableSignature) &&
                     isMergedOnJvm(other))
@@ -2748,13 +2774,13 @@ internal class DefaultKotlinIntrospector(
         fun Class<*>.isNameable() = generateSequence(this) { it.enclosingClass }.all { Modifier.isPublic(it.modifiers) }
         val declaring = (candidate.declarations as? JavaClass)?.clazz
             ?.takeUnless { reflectedValue(default = true) { it.isNameable() } }
-            ?: return candidate.kmClass.name.replace('/', '.')
+            ?: return candidate.className.replace('/', '.')
         val nearest = reflectedValue(default = null) {
             generateSequence(superclass.value) { it.superclass }
                 .takeWhile { it != declaring }
                 .lastOrNull { it.isNameable() && declaring.isAssignableFrom(it) }
         }
-        return (nearest?.let { kotlinClassName(it) } ?: candidate.kmClass.name).replace('/', '.')
+        return (nearest?.let { kotlinClassName(it) } ?: candidate.className).replace('/', '.')
     }
 
     /**
@@ -2786,6 +2812,10 @@ internal class DefaultKotlinIntrospector(
         val javaClasses = HashSet<String>()
         // the names of the classes reached through a raw supertype, see JavaClass.rawSupertypeNames
         val rawlyReached = HashSet<String>()
+        // whether the classes the inheriting class refers to might be relocated, so that the types are translated back, see unlocated
+        val isRelocated by lazy(LazyThreadSafetyMode.NONE) {
+            declarations.overrideOwner?.let { overrideResolver.isRelocated(it) } == true
+        }
         fun collect(name: String, supertype: KmType) {
             val foundName = inheritedName(declarations, name)
             val superDeclarations = inheritedDeclarations(foundName)
@@ -2793,13 +2823,13 @@ internal class DefaultKotlinIntrospector(
             if (superDeclarations == null || superKmClass == null) {
                 // named by the names the metadata refers to them by, like the supertypes of a Kotlin class,
                 // so that a class reached also from a Kotlin supertype is not walked again under its relocated name
-                val javaSupertypes = rawJavaSupertypes(foundName) { jvmName -> unlocatedName(declarations, jvmName) }
+                val javaSupertypes = rawJavaSupertypes(foundName) { it.unlocated(declarations) }
                 javaClasses += name
                 directSupertypes[name] = javaSupertypes.classNames()
                 pending += javaSupertypes
                 return
             }
-            val substitution = supertypeSubstitution(superKmClass, supertype)
+            val substitution = supertypeSubstitution(superKmClass, supertype, declarations)
             // the supertypes of a Java class, described by kotlin-reflect by their JVM names, which might be relocated,
             // are named by the names the metadata refers to them by, like the ones of the raw Java supertypes above,
             // and so are their type arguments, substituted for the type parameters of a Kotlin supertype
@@ -2841,6 +2871,10 @@ internal class DefaultKotlinIntrospector(
             val typeParameters = typeParameterScopeOf(superKmClass, superDeclarations) + inheritingScope
             // the members of a Java class reached through a raw supertype are seen erased, see JavaClass.erasedFunctionOf
             val isReachedRaw = superDeclarations is JavaClass && name in rawlyReached
+            // the types of a member of a Java class, named by their JVM names, which might be relocated,
+            // are named by the names the metadata refers to them by, like the supertypes of the class above
+            fun Member.unlocated(): Member =
+                if (superDeclarations !is JavaClass || !isRelocated) this else withTypes { it.unlocated(declarations) }
             apiMembers.forEach { apiMember ->
                 val declared = apiMember.member
                 val overridden = (superDeclarations as? JavaClass)?.overriddenMembers(declared)
@@ -2849,10 +2883,11 @@ internal class DefaultKotlinIntrospector(
                     (superDeclarations as JavaClass).erasedFunctionOf(declared.declaration)
                 }
                 val member = (erased?.let { Member.Function(it, (declared as Member.Function).declaration) } ?: declared)
+                    .unlocated()
                     .substituted(substitution, inheritingNames)
                 val signature = member.signature(inheritingNames)
                 candidates += InheritedCandidate(
-                    superKmClass, superDeclarations, member, declared.key(superKmClass), overridden,
+                    name, superKmClass, superDeclarations, member, declared.key(superKmClass), overridden,
                     signature = signature,
                     notNullableSignature = lazy(LazyThreadSafetyMode.NONE) {
                         val function = (erased ?: (declared as? Member.Function)?.declaration)?.withNotNullableParameters()
@@ -2860,7 +2895,9 @@ internal class DefaultKotlinIntrospector(
                         val invariant = if (superDeclarations !is JavaClass) function else {
                             function?.withValueParameterTypes { type -> type.withoutRedundantProjections() }
                         }
-                        invariant?.let { Member.Function(it).substituted(substitution, inheritingNames).signature(inheritingNames) }
+                        invariant?.let {
+                            Member.Function(it).unlocated().substituted(substitution, inheritingNames).signature(inheritingNames)
+                        }
                             ?: signature
                     },
                     typeParameters = typeParameters,
@@ -2908,8 +2945,8 @@ internal class DefaultKotlinIntrospector(
         // like the get() of java.util.function.Supplier for a subclass of a Java class implementing it without declaring it again,
         // unless reached also directly, or through the JDK, or a Kotlin class not overriding them, whatever the order of the supertypes
         if (userJavaClasses.isNotEmpty()) {
-            val candidatesByName = candidates.groupBy { it.kmClass.name }
-            candidates.filter { it.declarations is JavaClass && it.kmClass.name !in userJavaClasses }.forEach { candidate ->
+            val candidatesByName = candidates.groupBy { it.name }
+            candidates.filter { it.declarations is JavaClass && it.name !in userJavaClasses }.forEach { candidate ->
                 val keepingEnhancement = HashSet<String>()
                 val reached = ArrayDeque(directSupertypes[kmClass.name].orEmpty())
                 while (reached.isNotEmpty()) {
@@ -2919,13 +2956,17 @@ internal class DefaultKotlinIntrospector(
                         reached += directSupertypes[name].orEmpty()
                     }
                 }
-                candidate.isEnhancementLost = candidate.kmClass.name !in keepingEnhancement
+                candidate.isEnhancementLost = candidate.name !in keepingEnhancement
             }
         }
-        // the supertypes of the return types compared, see compareSpecificity, walked once per class
+        // the supertypes of the return types compared, see compareSpecificity, walked once per class,
+        // named by their metadata names, like the types of the members of a relocated Java class, see unlocated,
+        // but found by their located names, like the supertypes of the class, see inheritedName
         val supertypeNames = HashMap<String, Set<String>>()
         val supertypeNamesOf = { name: String ->
-            supertypeNames.getOrPut(name) { supertypeNames(name, kmClassOf = { builtinClasses[it] ?: loadKmClass(it) }) }
+            supertypeNames.getOrPut(name) {
+                supertypeNames(name, kmClassOf = { builtinClasses[it] ?: loadKmClass(inheritedName(declarations, it)) })
+            }
         }
         // a Java method overriding a member of a Kotlin supertype, like get of java.util.ArrayList, is not inherited,
         // the Kotlin member is, unless the Java method refines it, or K2 takes it over, see above, and neither is one overriding
@@ -2976,7 +3017,7 @@ internal class DefaultKotlinIntrospector(
             // the Java method K2 takes as the member, of a platform type which the overridden Kotlin member does not accept,
             // like add(null) of a Java subclass of java.util.ArrayList<String>, is inherited in its place,
             // unless one of the Kotlin members it overrides is reached through Kotlin classes only too, see reachedThroughKotlin
-            val isTakingOver = overriddenKotlin.none { it.kmClass.name in reachedThroughKotlin }
+            val isTakingOver = overriddenKotlin.none { it.name in reachedThroughKotlin }
             fun isTakenOver(overridden: InheritedCandidate) = isTakingOver && candidate.acceptsNullUnlike(overridden)
             val implementing = overriddenKotlin.filter { !candidate.refines(it, supertypeNamesOf) }
             // a Kotlin member deprecated as hidden, like put(key: Int), does not hide the Java method implementing it, like put(int),
@@ -3162,7 +3203,7 @@ internal class DefaultKotlinIntrospector(
         // in place of the ones it overrides, see acceptsNullUnlike, which the override resolver does not tell,
         // like the `contains(element: String)` of a subclass of java.util.AbstractList<String> the `contains(Object)` of
         // java.util.AbstractCollection, unlike the members of the Kotlin supertypes reached through it, which it takes over
-        val kotlinOverridden = overriding.filter { it.declarations !is JavaClass && it.kmClass.name in reachedThroughKotlin }
+        val kotlinOverridden = overriding.filter { it.declarations !is JavaClass && it.name in reachedThroughKotlin }
             .flatMapTo(HashSet()) { it.overridden }
         // the signatures of the declared members, collected only when there are Java candidates, which they override
         // when of the same signature as rendered, with the type arguments of the supertypes substituted,
@@ -3263,7 +3304,7 @@ internal class DefaultKotlinIntrospector(
                 candidate.jvmMethod != null && !candidate.isHidden && candidate.isApi && candidate !in survivors &&
                     javaOverrides.overrides(candidate.jvmMethod)
             }
-            val ordered = (survivors + overriddenOnJvm).sortedBy { directIndices[it.kmClass.name] ?: Int.MAX_VALUE }
+            val ordered = (survivors + overriddenOnJvm).sortedBy { directIndices[it.name] ?: Int.MAX_VALUE }
             val groups = IdentityHashMap<InheritedCandidate, InheritedCandidate>()
             ordered.forEach { first ->
                 if (first in groups) return@forEach
@@ -3296,7 +3337,7 @@ internal class DefaultKotlinIntrospector(
         // declared by an interface of an intermediate class, of `abstract class Square : Shape, SquareBase()`,
         // while the compiler picks the abstract one of Shape, the first direct supertype
         if (candidates.none { it.isHidden }) return listed(notOverridden)
-        val candidatesByClass = candidates.groupBy { it.kmClass.name }
+        val candidatesByClass = candidates.groupBy { it.name }
         val contributions = HashMap<Pair<String, InheritedCandidate>, List<InheritedCandidate>>()
         // the members merged with the listed candidate which the class named name contributes to its subclasses:
         // its own one, or the hidden one overriding it, or else the one picked of the ones its direct supertypes contribute,
@@ -3436,8 +3477,10 @@ internal class DefaultKotlinIntrospector(
      * but none for a type parameter whose type argument is not given, like of a raw Java supertype,
      * or refers to a type parameter which is not in scope of the inheriting class, see [inheritingTypeParameterId],
      * like a type parameter of a raw Java supertype, which is left as declared.
+     * The outer classes are found like the supertypes of the class of the [declarations], see [inheritedName],
+     * as they might be relocated with it, like by shading.
      */
-    private fun supertypeSubstitution(kmClass: KmClass, supertype: KmType): Map<Int, KmType> = buildMap {
+    private fun supertypeSubstitution(kmClass: KmClass, supertype: KmType, declarations: ClassDeclarations): Map<Int, KmType> = buildMap {
         var declaration: KmClass? = kmClass
         var type: KmType? = supertype
         while (declaration != null && type != null) {
@@ -3447,7 +3490,8 @@ internal class DefaultKotlinIntrospector(
                     ?.let { put(typeParameter.id, it) }
             }
             if (!declaration.isInner) break
-            declaration = classDeclarations(declaration.name.substringBeforeLast('.'))?.kmClass
+            // like a Java class, see JavaClass
+            declaration = inheritedDeclarations(inheritedName(declarations, declaration.name.substringBeforeLast('.')))?.kmClass
             type = type.outerType
         }
     }
@@ -3456,16 +3500,17 @@ internal class DefaultKotlinIntrospector(
      * The name the supertype of the [metadataName], of the class of the [declarations], or of its supertypes, is found by,
      * see [inheritedDeclarations]: its located name, when relocated with the class, or as a dependency of it, like by shading,
      * see [OverrideResolver.locatedName], or else the [metadataName], if the class of the located name cannot be described,
-     * or kotlin-reflect does not tell its functions, see [JavaClass.areFunctionsReflected],
      * like when collecting the members the class might override, see [OverrideResolver.locatedName],
      * but the located name of a class which neither can be described, unless absent from the classpath,
      * so that its supertypes are walked through from its class file, see [rawJavaSupertypes].
      */
     private fun inheritedName(declarations: ClassDeclarations, metadataName: String): String {
         val located = declarations.overrideOwner?.let { overrideResolver.locatedName(it, metadataName) } ?: return metadataName
-        // kotlin-reflect might not tell the functions of a relocated Java class, like of one implementing a relocated Kotlin interface
+        // the functions of a relocated Java class which kotlin-reflect does not tell, like of one implementing a relocated Kotlin interface,
+        // are converted from the Java reflection, see reflectedJavaClass, so that its members are the ones of the class extended,
+        // not the ones of an original class next to it, which might be of another version
         return when {
-            inheritedDeclarations(located)?.let { it !is JavaClass || it.areFunctionsReflected } == true -> located
+            inheritedDeclarations(located) != null -> located
             inheritedDeclarations(metadataName) != null || isAbsent(located) -> metadataName
             else -> located
         }
@@ -3479,8 +3524,9 @@ internal class DefaultKotlinIntrospector(
         declarations.overrideOwner?.let { overrideResolver.unlocatedName(it, jvmName) } ?: jvmName
 
     /**
-     * This type, of a Java class described by kotlin-reflect, with its classifier, and the ones of its type arguments,
-     * named by the names the Kotlin metadata refers to them by, see [unlocatedName], or this very type, if none is relocated.
+     * This type, of a Java class described by kotlin-reflect, see [JavaClass], with its classifier,
+     * and the ones of its type arguments, and of its outer type, named by the names the Kotlin metadata refers to them by,
+     * see [unlocatedName], or this very type, if none is relocated.
      */
     private fun KmType.unlocated(declarations: ClassDeclarations): KmType {
         val jvmName = (classifier as? KmClassifier.Class)?.name
@@ -3489,8 +3535,11 @@ internal class DefaultKotlinIntrospector(
             val type = argument.type ?: return@map argument
             type.unlocated(declarations).takeIf { it !== type }?.let { KmTypeProjection(argument.variance, it) } ?: argument
         }
-        if (metadataName == jvmName && unlocatedArguments.indices.all { unlocatedArguments[it] === arguments[it] }) return this
-        return copy(arguments = unlocatedArguments).also { type ->
+        val unlocatedOuter = outerType?.unlocated(declarations)
+        if (metadataName == jvmName && unlocatedOuter === outerType &&
+            unlocatedArguments.indices.all { unlocatedArguments[it] === arguments[it] }
+        ) return this
+        return copy(arguments = unlocatedArguments, outerType = unlocatedOuter).also { type ->
             if (metadataName != null && metadataName != jvmName) type.classifier = KmClassifier.Class(metadataName)
         }
     }
@@ -3521,17 +3570,41 @@ internal class DefaultKotlinIntrospector(
     /**
      * The direct supertypes of the Java class named like `com/example/Base`, whose members cannot be described,
      * see [inheritedDeclarations], as raw types, without their type arguments, mapped to the built-in types:
-     * the ones of its JVM class, if loaded, see [javaSupertypeNames],
+     * the ones of its JVM class, if loaded, named like [javaSupertypeNames] does,
+     * but with the type arguments of a generic one which does not refer to a type variable, see [concreteJavaSupertype],
+     * like `Outer<Event>.Inner` of a Java class kotlin-reflect cannot describe, like a relocated one,
      * or else the ones its class file declares, see [OverrideResolver.unloadableJavaSupertypeNames],
-     * named by the [named] of their names.
+     * given by the [named] of these types.
      */
-    private fun rawJavaSupertypes(name: String, named: (String) -> String = { it }): List<KmType> {
-        val names = if (findClassByMetadataName(name)?.clazz != null) {
-            javaSupertypeNames(name).map { (_, metadataName) -> metadataName }
-        } else {
-            overrideResolver.unloadableJavaSupertypeNames(name)
+    private fun rawJavaSupertypes(name: String, named: (KmType) -> KmType): List<KmType> {
+        val javaClass = findClassByMetadataName(name)?.clazz
+            ?: return overrideResolver.unloadableJavaSupertypeNames(name).map { named(classType(it)) }
+        val genericSupertypes = reflectedValue(default = emptyList()) {
+            listOfNotNull(javaClass.genericSuperclass) + javaClass.genericInterfaces
+        }.filterIsInstance<ParameterizedType>()
+        return javaSupertypeClasses(javaClass).map { (supertype, metadataName) ->
+            val generic = genericSupertypes.firstOrNull { it.rawType == supertype }?.let { concreteJavaSupertype(it, metadataName) }
+            named(generic ?: classType(metadataName))
         }
-        return names.map { classType(named(it)) }
+    }
+
+    /**
+     * The [genericSupertype] of a Java class, named [metadataName], converted from the Java reflection, see [toKmJavaType],
+     * or `null` if it refers to a type variable, like of the Java class, which is not substituted when walked through,
+     * see [rawJavaSupertypes], or one of its classes cannot be reflected.
+     */
+    private fun concreteJavaSupertype(genericSupertype: ParameterizedType, metadataName: String): KmType? {
+        fun JavaType.refersToTypeVariable(): Boolean = when (this) {
+            is TypeVariable<*> -> true
+            is ParameterizedType -> actualTypeArguments.any { it.refersToTypeVariable() } || ownerType?.refersToTypeVariable() == true
+            is GenericArrayType -> genericComponentType.refersToTypeVariable()
+            is WildcardType -> (upperBounds + lowerBounds).any { it.refersToTypeVariable() }
+            else -> false
+        }
+        return reflectedValue(default = null) {
+            if (genericSupertype.refersToTypeVariable()) return@reflectedValue null
+            genericSupertype.toKmJavaType(ReflectedTypeParameters(emptyMap())).also { it.classifier = KmClassifier.Class(metadataName) }
+        }
     }
 
     /**
@@ -4241,14 +4314,16 @@ internal class DefaultKotlinIntrospector(
      */
     private fun javaSupertypeNames(metadataName: String): List<Pair<String, String>> {
         val javaClass = findClassByMetadataName(metadataName)?.clazz ?: return emptyList()
+        return javaSupertypeClasses(javaClass).map { (_, supertypeMetadataName) -> supertypeMetadataName.replace('/', '.') to supertypeMetadataName }
+    }
+
+    /**
+     * The direct supertypes of the [javaClass], with their metadata names, see [javaSupertypeMetadataName],
+     * each one reflected on its own, not to lose the others when one of them cannot be reflected.
+     */
+    private fun javaSupertypeClasses(javaClass: Class<*>): List<Pair<Class<*>, String>> {
         val supertypes = reflectedValue(default = emptyList()) { listOfNotNull(javaClass.superclass) + javaClass.interfaces }
-        // each one on its own, not to lose the others when one of them cannot be reflected
-        return supertypes.mapNotNull { supertype ->
-            reflectedValue(default = null) {
-                val supertypeMetadataName = javaSupertypeMetadataName(supertype)
-                supertypeMetadataName.replace('/', '.') to supertypeMetadataName
-            }
-        }
+        return supertypes.mapNotNull { supertype -> reflectedValue(default = null) { supertype to javaSupertypeMetadataName(supertype) } }
     }
 
     /**
