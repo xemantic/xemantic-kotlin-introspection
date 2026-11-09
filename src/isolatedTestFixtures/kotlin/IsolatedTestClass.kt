@@ -148,3 +148,22 @@ class RelocatedInnerOuter<T> {
 }
 
 class RelocatedJavaInnerImpl(outer: RelocatedInnerOuter<RelocatedEvent>) : RelocatedJavaInner(outer)
+
+// tests relocate them, like shading, together with the Java classes refining the return type, but not their subclasses
+open class RelocatedProduct
+
+class RelocatedProdSub : RelocatedProduct()
+
+interface RelocatedProd {
+    fun make(): RelocatedProduct
+}
+
+abstract class RelocatedProdBase : RelocatedProd
+
+abstract class RelocatedJavaProdImpl : RelocatedJavaProd()
+
+abstract class RelocatedJavaProdKImpl : RelocatedJavaProdK()
+
+abstract class RelocatedJavaOuterInnerImpl(outer: RelocatedJavaOuter<RelocatedEvent>) : RelocatedJavaOuterInner(outer)
+
+abstract class RelocatedSubEventJavaBaseImpl : RelocatedSubEventJavaBase()

@@ -22,7 +22,9 @@ import com.xemantic.kotlin.introspection.friendmodule.FriendModuleSubclass
 import com.xemantic.kotlin.introspection.othermodule.InternalBase
 import com.xemantic.kotlin.introspection.test.TestClass
 import com.xemantic.kotlin.test.assert
+import com.xemantic.kotlin.test.have
 import com.xemantic.kotlin.test.sameAs
+import com.xemantic.kotlin.test.should
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.io.TempDir
 import org.objectweb.asm.ClassReader
@@ -558,6 +560,120 @@ class ClassLoaderIntrospectionTest {
         """.trimIndent()
     }
 
+    @Test
+    fun `should list member refining return type of relocated Kotlin supertype through relocated Java class`() {
+        // given
+        val dependencies = arrayOf(
+            "RelocatedProduct.class", "RelocatedProdSub.class", "RelocatedProd.class", "RelocatedProdBase.class",
+            "RelocatedJavaProd.class", "RelocatedJavaProdK.class"
+        )
+        val dependents = arrayOf("RelocatedJavaProdImpl.class", "RelocatedJavaProdKImpl.class")
+        val root = isolatedTestFixturesCopy("relocatedJavaProd", *dependencies, *dependents)
+        relocatedCopy(root, *dependencies, dependents = dependents.toList())
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.RelocatedJavaProdImpl.make")
+        val signatureThroughClass = introspector.resolve("com.xemantic.kotlin.introspection.isolated.RelocatedJavaProdKImpl.make")
+
+        // then
+        // the return types are compared by the classes found by their relocated names, though named by their metadata names
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.RelocatedJavaProdImpl.make [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.isolated.RelocatedJavaProd
+            override fun make(): RelocatedProdSub
+        """.trimIndent()
+        // only the Java method refining the return type is listed, though not told as an override,
+        // as the relocated Java class does not find the Kotlin interface of its relocated superclass by its metadata name
+        signatureThroughClass should {
+            have(this!!.lines().drop(1) == listOf(
+                "// inherited from com.xemantic.kotlin.introspection.isolated.RelocatedJavaProdK",
+                "open fun make(): RelocatedProdSub"
+            ))
+        }
+    }
+
+    @Test
+    fun `should list member inherited from Kotlin interface of Java class relocated to the root package by its metadata name`() {
+        // given
+        val dependencies = arrayOf("RelocatedGenericJavaBase.class", "RelocatedGenericInterface.class", "RelocatedEvent.class")
+        val root = isolatedTestFixturesCopy("rootGenericJavaBase", *dependencies, "RelocatedGenericJavaBaseImpl.class")
+        relocatedCopy(root, *dependencies, dependents = listOf("RelocatedGenericJavaBaseImpl.class"), toRootPackage = true)
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.RelocatedGenericJavaBaseImpl.kg")
+
+        // then
+        // the Kotlin interface is named by its metadata, though reached by its relocated name, never translated back from the root package
+        signature should {
+            have(this!!.lines()[1] == "// inherited from com.xemantic.kotlin.introspection.isolated.RelocatedGenericInterface")
+        }
+    }
+
+    @Test
+    fun `should list member inherited through Java class from inner class of generic Java outer class`() {
+        // given
+        val classLoader = URLClassLoader(isolatedTestFixtures.map { it.toURI().toURL() }.toTypedArray(), javaClass.classLoader)
+        val introspector = KotlinIntrospector(classLoader)
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.RelocatedJavaOuterInnerImpl.ko")
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.RelocatedJavaOuterInnerImpl.ko [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.isolated.RelocatedJavaOuter.Inner
+            open fun ko(arg0: RelocatedEvent?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should list member inherited through relocated Java class from inner class of relocated generic Java outer class`() {
+        // given
+        val dependencies = arrayOf(
+            "RelocatedJavaOuter.class", "RelocatedJavaOuter\$Inner.class", "RelocatedJavaOuterInner.class", "RelocatedEvent.class"
+        )
+        val root = isolatedTestFixturesCopy("relocatedJavaOuter", *dependencies, "RelocatedJavaOuterInnerImpl.class")
+        relocatedCopy(root, *dependencies, dependents = listOf("RelocatedJavaOuterInnerImpl.class"))
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.RelocatedJavaOuterInnerImpl.ko")
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.RelocatedJavaOuterInnerImpl.ko [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.isolated.RelocatedJavaOuter.Inner
+            open fun ko(arg0: RelocatedEvent?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should list member inherited from Java supertype relocated to the root package next to the original one of the same version`() {
+        // given
+        val shadedRoot = tempDir.resolve("rootSubEventJavaBase")
+        relocatedCopy(
+            shadedRoot, "RelocatedSubEventJavaBase.class", "sub/RelocatedEvent.class",
+            dependents = listOf("RelocatedSubEventJavaBaseImpl.class"), toRootPackage = true
+        )
+        val root = isolatedTestFixturesCopy("originalSubEventJavaBase", "RelocatedSubEventJavaBaseImpl.class")
+        val introspector = KotlinIntrospector(
+            URLClassLoader(arrayOf(shadedRoot.toUri().toURL(), root.toUri().toURL()), javaClass.classLoader)
+        )
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.RelocatedSubEventJavaBaseImpl.js")
+
+        // then
+        // the original class, declaring the same members, names the types like the metadata, which the root package does not tell
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.RelocatedSubEventJavaBaseImpl.js [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.isolated.RelocatedSubEventJavaBase
+            open fun js(arg0: com.xemantic.kotlin.introspection.isolated.sub.RelocatedEvent?)
+        """.trimIndent()
+    }
+
     /**
      * The class bytes with the methods named [methodName] renamed to [newName].
      */
@@ -786,16 +902,18 @@ class ClassLoaderIntrospectionTest {
      *
      * @param dependents the class files which are not relocated themselves, but depend on the relocated ones,
      *   like the classes of an app shading its dependencies, copied to the [root] directory with their references rewritten.
+     * @param toRootPackage whether the classes are relocated to the root package instead, without the [prefix].
      */
     private fun relocatedCopy(
         root: Path,
         vararg fileNames: String,
         prefix: String = "shaded/",
-        dependents: List<String> = emptyList()
+        dependents: List<String> = emptyList(),
+        toRootPackage: Boolean = false
     ) {
         val relocatedNames = fileNames.associate {
             val name = "com/xemantic/kotlin/introspection/isolated/${it.removeSuffix(".class")}"
-            name to "$prefix$name"
+            name to if (toRootPackage) name.substringAfterLast('/') else "$prefix$name"
         }
         dependents.forEach { fileName ->
             val original = isolatedTestFixtures
@@ -809,7 +927,7 @@ class ClassLoaderIntrospectionTest {
             val original = isolatedTestFixtures
                 .map { it.resolve("com/xemantic/kotlin/introspection/isolated/$fileName") }
                 .single { it.exists() }
-            val relocatedName = "${prefix}com/xemantic/kotlin/introspection/isolated/${fileName.removeSuffix(".class")}"
+            val relocatedName = relocatedNames.getValue("com/xemantic/kotlin/introspection/isolated/${fileName.removeSuffix(".class")}")
             val relocated = root.resolve("$relocatedName.class")
             relocated.parent.createDirectories()
             relocated.writeBytes(withRelocatedNames(original.readBytes(), relocatedNames::get))

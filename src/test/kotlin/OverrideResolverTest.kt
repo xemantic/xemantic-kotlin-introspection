@@ -967,6 +967,70 @@ class OverrideResolverTest {
     }
 
     @Test
+    fun `should not take overload taking class of subpackage relocated to the root package for override of relocated Java supertype`() {
+        // given
+        // like an app shading its dependencies, relocating p/lib/sub/ to the root package, the rest of p/lib/ to p/app/shaded/p/lib/,
+        // the owner implementing the relocated Java interface p/lib/JListener
+        val owner = kmClass("p/app/Owner", supertype = "p/lib/JListener").apply {
+            functions += functionTaking("on", "p/ext/Event", "p/lib/Event")
+            functions += functionTaking("on", "p/ext/Event", "p/lib/sub/Event")
+        }
+        val resolver = overrideResolver(
+            classFiles = mapOf(
+                "p/app/Owner" to classFile(
+                    "p/app/Owner",
+                    listOf("on(Lp/ext/Event;Lp/app/shaded/p/lib/Event;)V", "on(Lp/ext/Event;LEvent;)V"),
+                    interfaces = listOf("p/app/shaded/p/lib/JListener")
+                )
+            ),
+            unloadableClassFiles = mapOf(
+                "p/app/shaded/p/lib/JListener" to classFile(
+                    "p/app/shaded/p/lib/JListener", listOf("on(Lp/ext/Event;Lp/app/shaded/p/lib/Event;)V"), isInterface = true
+                )
+            )
+        )
+
+        // when
+        val overrides = owner.functions.map { resolver.isOverride(OverrideResolver.Owner(owner), it) }
+
+        // then
+        assert(overrides == listOf(true, false))
+    }
+
+    @Test
+    fun `should not take overload taking class of subpackage relocated to the root package for override of relocated Java supertype of indirect supertype`() {
+        // given
+        // like above, through the class p/app/Mid of the app, whose class file tells p/lib/ relocated to p/app/shaded/p/lib/
+        val owner = kmClass("p/app/Owner", supertype = "p/app/Mid").apply {
+            functions += functionTaking("on", "p/ext/Event", "p/lib/Event")
+            functions += functionTaking("on", "p/ext/Event", "p/lib/sub/Event")
+        }
+        val resolver = overrideResolver(
+            classes = mapOf("p/app/Mid" to kmClass("p/app/Mid", supertype = "p/lib/JListener")),
+            classFiles = mapOf(
+                "p/app/Owner" to classFile(
+                    "p/app/Owner",
+                    listOf("on(Lp/ext/Event;Lp/app/shaded/p/lib/Event;)V", "on(Lp/ext/Event;LEvent;)V"),
+                    superName = "p/app/Mid"
+                ),
+                "p/app/Mid" to classFile("p/app/Mid", listOf(), interfaces = listOf("p/app/shaded/p/lib/JListener"))
+            ),
+            unloadableClassFiles = mapOf(
+                "p/app/shaded/p/lib/JListener" to classFile(
+                    "p/app/shaded/p/lib/JListener", listOf("on(Lp/ext/Event;Lp/app/shaded/p/lib/Event;)V"), isInterface = true
+                )
+            )
+        )
+
+        // when
+        val overrides = owner.functions.map { resolver.isOverride(OverrideResolver.Owner(owner), it) }
+
+        // then
+        // the JVM method the class file of p/app/Mid explains is paired first, leaving the other one paired with p/lib/sub/Event
+        assert(overrides == listOf(true, false))
+    }
+
+    @Test
     fun `should find relocated Java supertype of package whose other classes are relocated to the root package`() {
         // given
         // like an app shading its dependencies, relocating lib/ to app/shaded/lib/, except for lib/Event relocated to the root package
