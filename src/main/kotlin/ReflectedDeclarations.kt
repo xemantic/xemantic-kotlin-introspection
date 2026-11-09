@@ -641,7 +641,13 @@ private fun platformPositions(method: Method): Set<Int> {
         return emptySet()
     }
     val descriptors = jvmDescriptorsOf(method)
-    val overridden = matched.filter { it.declaringClass.isKotlinClass && AsmType.getMethodDescriptor(it) in descriptors }
+    val (overriding, notOverriding) = matched.filter { it.declaringClass.isKotlinClass }
+        .partition { AsmType.getMethodDescriptor(it) in descriptors }
+    // but the ones a Kotlin subclass declares again, which the method does not override, and which hides them from it,
+    // like the put(t: T) of GenericPut<Integer> of put(Integer), declared again as put(t: Int) of IntPut : GenericPut<Int>
+    val overridden = overriding.filter { inherited ->
+        notOverriding.none { it.declaringClass != inherited.declaringClass && inherited.declaringClass.isAssignableFrom(it.declaringClass) }
+    }
     return references.filterTo(HashSet()) { position ->
         overridden.all { inherited ->
             val type = inherited.genericParameterTypes.getOrNull(position) as? TypeVariable<*>

@@ -452,6 +452,23 @@ abstract class PrimitiveAndNotNullBoxedJavaPut : com.xemantic.kotlin.introspecti
 
 abstract class NotNullBoxedJavaPutOverPrimitive : com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPutOverPrimitive()
 
+interface IntGenericPutRedeclaring : GenericPut<Int> {
+    override fun put(t: Int): String
+}
+
+abstract class RedeclaredGenericJavaPut : com.xemantic.kotlin.introspection.test.other.JavaRedeclaredGenericPutImplementation()
+
+abstract class NullablePrimitiveRedeclaredGenericJavaPutJoin :
+    NullablePrimitivePut, com.xemantic.kotlin.introspection.test.other.JavaRedeclaredGenericPutImplementation()
+
+interface MutableListPut {
+    fun put(list: MutableList<String>): String
+}
+
+// the List<String> given for the T of put(T) is no (Mutable)List<String!>!, so that the two are not merged
+abstract class StringListGenericJavaMutableListPutJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaGenericPut<List<String>>(), MutableListPut
+
 interface GenericGetOrDefault<K, V> {
     fun getOrDefault(key: K, defaultValue: V): V
 }

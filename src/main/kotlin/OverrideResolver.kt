@@ -280,6 +280,7 @@ internal class OverrideResolver(
      * @param resolveOwnerJvmMethod tells whether the owner class declares a JVM method, as a name followed by a descriptor,
      *   when its JVM methods can be neither read nor reflected, see [declaresResolvedJvmMethod],
      *   the outcome not final after a transient failure.
+     * @param kotlinSupertypes the names of the supertypes of each Kotlin class walked, by its name, see [isSubclass].
      */
     private class Overridables(
         val relocation: Relocation?,
@@ -288,8 +289,24 @@ internal class OverrideResolver(
         val properties: Map<String, List<Overridable>>,
         val hiddenPlatformFunctions: Map<String, List<Overridable>>,
         private val readOwnerJvmMethods: FinalOnce<OwnerJvmMethods?>,
+        val kotlinSupertypes: Map<String, List<String>> = emptyMap(),
         private val resolveOwnerJvmMethod: (String) -> TransientFailures.Outcome<Boolean?>
     ) {
+
+        /**
+         * Whether the Kotlin class of the [name] is a subclass of the one of the [supertypeName], as walked, see [kotlinSupertypes].
+         */
+        fun isSubclass(name: String, supertypeName: String): Boolean {
+            val visited = HashSet<String>()
+            val pending = ArrayDeque(kotlinSupertypes[name].orEmpty())
+            while (pending.isNotEmpty()) {
+                val supertype = pending.removeFirst()
+                if (supertype == supertypeName) return true
+                if (visited.add(supertype)) pending += kotlinSupertypes[supertype].orEmpty()
+            }
+            return false
+        }
+
         val ownerJvmMethods: Set<String>? get() = readOwnerJvmMethods.value?.methods
 
         /**
@@ -297,7 +314,8 @@ internal class OverrideResolver(
          * like from its class file read only after they are collected, see [collectOverridables].
          */
         fun withOwnerJvmMethods(readOwnerJvmMethods: FinalOnce<OwnerJvmMethods?>): Overridables = Overridables(
-            relocation, substitution, functions, properties, hiddenPlatformFunctions, readOwnerJvmMethods, resolveOwnerJvmMethod
+            relocation, substitution, functions, properties, hiddenPlatformFunctions, readOwnerJvmMethods, kotlinSupertypes,
+            resolveOwnerJvmMethod
         )
 
         /**
@@ -481,7 +499,7 @@ internal class OverrideResolver(
         val overridables = overridables(owner)
         val candidates = overridables.functions[function.name] ?: return null
         val signature = overridables.signature(function, jvmDescriptor)
-        val matching = candidates.filter { it.matches(signature) && it.primitivesMatch(signature) }
+        val matching = overridables.ofPrimitives(candidates.filter { it.matches(signature) }, signature)
         val overridden = matching.asSequence().filter { overridables.isVisible(it, owner.kmClass, function.modality) }
             .ifEmpty {
                 val evidence = matching.ifEmpty { overridables.shrinkableJava(function.name) }
@@ -499,8 +517,7 @@ internal class OverrideResolver(
     /**
      * The types of a function checked for overriding, resolved in the context of its class,
      * whose [relocation] tells the names the classes of the types are found by, see [variancesMatch].
-     */
-    /**
+     *
      * @param jvmPrimitives whether each parameter of a Java method is of a primitive type on the JVM, see [primitivesMatch].
      */
     private class FunctionSignature(
@@ -614,10 +631,8 @@ internal class OverrideResolver(
         val overridables = overridables(owner)
         val candidates = overridables.functions[function.name] ?: return emptySet()
         val signature = overridables.signature(function, jvmDescriptor)
-        val overridden = candidates.filter {
-            it.key != null && it.matches(signature) && it.primitivesMatch(signature) &&
-                overridables.isVisible(it, owner.kmClass, function.modality)
-        }
+        val overridden = overridables.ofPrimitives(candidates.filter { it.key != null && it.matches(signature) }, signature)
+            .filter { overridables.isVisible(it, owner.kmClass, function.modality) }
         // an unknown type matches any type, so a sibling overload, which is not overridden, might be matched too,
         // like for the inheritedDefaultValues, the ones matching on the known types are taken, if there are any
         val matchingKnownTypes = if (overridden.size <= 1) overridden else overridden.filter {
@@ -642,11 +657,25 @@ internal class OverrideResolver(
         val overridables = overridables(owner)
         val candidates = overridables.functions[function.name] ?: return emptySet()
         val signature = overridables.signature(function, jvmDescriptor)
-        return candidates.filter {
-            it.javaKey != null && it.matches(signature) && it.primitivesMatch(signature) &&
-                overridables.isVisible(it, owner.kmClass, function.modality)
-        }
+        return overridables.ofPrimitives(candidates.filter { it.matches(signature) }, signature)
+            .filter { it.javaKey != null && overridables.isVisible(it, owner.kmClass, function.modality) }
             .mapTo(HashSet()) { it.javaKey!! }
+    }
+
+    /**
+     * The [matching] members of the primitive types of a Java method on the JVM, see [primitivesMatch],
+     * but the ones a Kotlin subclass declares again, of other primitive types, which the Java method does not override,
+     * and which hides them from it, like the `put(t: T)` of `GenericPut<Integer>`, taking `Object`, of `put(Integer)`,
+     * when `IntPut : GenericPut<Int>` declares it again as `override fun put(t: Int)`, taking `int`.
+     */
+    private fun Overridables.ofPrimitives(matching: List<Overridable>, signature: FunctionSignature): List<Overridable> {
+        val (kept, other) = matching.partition { it.primitivesMatch(signature) }
+        if (other.isEmpty()) return kept
+        val redeclaring = other.mapNotNull { it.key?.substringBefore('#') }
+        return kept.filter { overridable ->
+            val name = overridable.key?.substringBefore('#') ?: return@filter true
+            redeclaring.none { isSubclass(it, name) }
+        }
     }
 
     /**
@@ -982,6 +1011,7 @@ internal class OverrideResolver(
         pending += ClassType("kotlin/Any")
         // a class is never its own supertype, which matters for Any itself
         val visited = mutableSetOf(ownerClass.name)
+        val kotlinSupertypes = HashMap<String, List<String>>()
 
         while (pending.isNotEmpty()) {
             val supertype = pending.removeFirst()
@@ -1010,6 +1040,7 @@ internal class OverrideResolver(
 
             declaration.kotlin?.let { kmClass ->
                 if (foundName.isRelocatable) supertypeClasses += foundName to kmClass
+                kotlinSupertypes[kmClass.name] = kmClass.supertypes.mapNotNull { (it.classifier as? KmClassifier.Class)?.name }
                 val substitution = supertypeSubstitution(relocation, kmClass, supertype)
                 val isSameModuleName = kmClass.moduleName == ownerClass.moduleName
                 // the JVM name of an internal member is mangled with the module name, sanitized like by the compiler,
@@ -1099,7 +1130,7 @@ internal class OverrideResolver(
         val ownerName = owner.name
         val overridables = Overridables(
             relocation, ownerSubstitution, functions, properties, hiddenPlatformFunctions,
-            ownerJvmMethods(owner, relocation, ownerRelocation.classFile)
+            ownerJvmMethods(owner, relocation, ownerRelocation.classFile), kotlinSupertypes
         ) { jvmMethod ->
             val failureCount = transientFailures.count()
             // the descriptors of the metadata are not relocated, unlike the ones of a relocated class

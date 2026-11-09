@@ -5335,6 +5335,44 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve Java member taking boxed type next to its own one implementing Kotlin one declared again`() {
+        // put(int) implements the put(t: Int) of IntGenericPutRedeclaring, while put(Integer) overrides nothing for K2,
+        // as the put(t: T) of GenericPut<Int> is hidden from it by the one declared again, so that put(null) calls it
+        resolver.resolve("com.xemantic.kotlin.introspection.test.RedeclaredGenericJavaPut.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.RedeclaredGenericJavaPut.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaRedeclaredGenericPutImplementation
+            open fun put(arg0: Int?): String
+            // inherited from com.xemantic.kotlin.introspection.test.IntGenericPutRedeclaring
+            open override fun put(t: Int): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member taking nullable type implemented by Java member overriding nothing`() {
+        // the put(Integer) of JavaRedeclaredGenericPutImplementation implements put(key: Int?), so that a concrete subclass compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NullablePrimitiveRedeclaredGenericJavaPutJoin.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NullablePrimitiveRedeclaredGenericJavaPutJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.NullablePrimitivePut
+            open fun put(key: Int?): String
+            // inherited from com.xemantic.kotlin.introspection.test.IntGenericPutRedeclaring
+            open override fun put(t: Int): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member taking mutable collection apart from Java one of type argument of read-only collection`() {
+        // the List<String> given for the T of put(T) is no MutableList<String>, so that put(list: MutableList<String>) stays abstract,
+        // and put(null) calls the Java put(T)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.StringListGenericJavaMutableListPutJoin.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.StringListGenericJavaMutableListPutJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaGenericPut
+            open fun put(arg0: List<String>?): String
+            // inherited from com.xemantic.kotlin.introspection.test.MutableListPut
+            fun put(list: MutableList<String>): String
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve Kotlin member implemented by default member of interface of superclass`() {
         // java.util.TreeMap does not override the default getOrDefault of java.util.Map, which still implements the Kotlin one,
         // so that a concrete subclass compiles
@@ -15007,6 +15045,28 @@ class KotlinIntrospectorTest {
             // inherited from com.xemantic.kotlin.introspection.test.other.JavaPrimitiveAndBoxedHiddenPut
             override fun put(arg0: Int): String
             open fun put(arg0: Int?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java override of generic member next to hidden one picked of the Kotlin ones grouped with it`() {
+        // K2 groups the hidden put(key: Int) of HiddenPrimitivePut with the put(t: T) of GenericPut<Int>, picking the former,
+        // apart from the put(Integer) of JavaIntegerPutOverride, which overrides the put(T) of JavaGenericPut, so that put(1) calls it
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OverridingGenericBoxedJavaHiddenGenericPutJoin.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OverridingGenericBoxedJavaHiddenGenericPutJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaIntegerPutOverride
+            override fun put(arg0: Int?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking boxed type annotated not null below one implementing member grouped with hidden one`() {
+        // the hidden put(key: Int) of HiddenPrimitivePut is picked of the ones grouped with the put(key: Int) of PrimitivePut,
+        // so that put(1) calls the put(@NotNull Integer) of JavaNotNullBoxedPutBelow
+        resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenPrimitiveNotNullBoxedJavaPutBelowJoin.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenPrimitiveNotNullBoxedJavaPutBelowJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPutBelow
+            open fun put(arg0: Int): String
         """.trimIndent()
     }
 
