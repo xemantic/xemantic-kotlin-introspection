@@ -297,6 +297,11 @@ internal fun KmFunction.withNotNullableParameters(): KmFunction = copy(
 internal fun KmFunction.withValueParameterTypes(type: (KmType) -> KmType): KmFunction = copy(valueParameterType = type)
 
 /**
+ * This function with each of its types given by the [type].
+ */
+internal fun KmFunction.withTypes(type: (KmType) -> KmType): KmFunction = copy(type)
+
+/**
  * This function of the [modality], like an abstract member implemented by a Java class.
  */
 internal fun KmFunction.withModality(modality: Modality): KmFunction = copy().also { it.modality = modality }
@@ -344,6 +349,11 @@ internal fun KmProperty.substituted(substitution: Map<Int, KmType>, names: Map<I
         property.typeParameters.renameApartFrom(types, names)
     }
 }
+
+/**
+ * This property with each of its types given by the [type].
+ */
+internal fun KmProperty.withTypes(type: (KmType) -> KmType): KmProperty = copy(type)
 
 /**
  * This property of the [modality], like an abstract member implemented by a Java class.

@@ -861,6 +861,112 @@ class OverrideResolverTest {
     }
 
     @Test
+    fun `should tell override of relocated Java supertype of Java class of the app by the overload left of the same shape`() {
+        // given
+        // like an app shading its dependencies, relocating p/lib/Event to the root package, the rest of p/lib/ to p/app/shaded/p/lib/,
+        // its Java class p/app/Mid, without metadata, implementing the relocated Java interface p/lib/Listener,
+        // the overloads of the owner all of the same shape, the package prefix telling only the ones taking p/lib/Event
+        val owner = kmClass("p/app/Owner", supertype = "p/app/Mid").apply {
+            functions += functionTaking("on", "p/lib/Event", "p/ext/Event")
+            functions += functionTaking("on", "p/ext/Event", "p/lib/Event")
+            functions += functionTaking("on", "p/lib/sub/Event", "p/ext/Event")
+        }
+        val mid = classFile("p/app/Mid", listOf(), interfaces = listOf("p/app/shaded/p/lib/Listener"))
+        val resolver = overrideResolver(
+            classFiles = mapOf(
+                "p/app/Owner" to classFile(
+                    "p/app/Owner",
+                    listOf(
+                        "on(LEvent;Lp/ext/Event;)V",
+                        "on(Lp/ext/Event;LEvent;)V",
+                        "on(Lp/app/shaded/p/lib/sub/Event;Lp/ext/Event;)V"
+                    ),
+                    superName = "p/app/Mid"
+                ),
+                "p/app/Mid" to mid
+            ),
+            unloadableClassFiles = mapOf(
+                "p/app/Mid" to mid,
+                "p/app/shaded/p/lib/Listener" to classFile(
+                    "p/app/shaded/p/lib/Listener", listOf("on(Lp/app/shaded/p/lib/sub/Event;Lp/ext/Event;)V"), isInterface = true
+                )
+            )
+        )
+
+        // when
+        val overrides = owner.functions.map { resolver.isOverride(OverrideResolver.Owner(owner), it) }
+
+        // then
+        // the only signature, and the only JVM method, of their shape left unpaired by the package prefix are paired,
+        // telling p/lib/sub/ relocated to p/app/shaded/p/lib/sub/, which no supertype of metadata could tell
+        assert(overrides == listOf(false, false, true))
+    }
+
+    @Test
+    fun `should tell relocated Java supertype of indirect supertype by its class file when overloads of the same shape do not tell it`() {
+        // given
+        // like above, through the Kotlin class p/app/Mid, the package prefix pairing every overload,
+        // but telling only p/lib/Event relocated to the root package, not where p/lib/Listener is, with only the shaded jar
+        val owner = kmClass("p/app/Owner", supertype = "p/app/Mid").apply {
+            functions += functionTaking("on", "p/lib/Event", "p/ext/Event")
+            functions += functionTaking("on", "p/ext/Event", "p/lib/Event")
+        }
+        val resolver = overrideResolver(
+            classes = mapOf("p/app/Mid" to kmClass("p/app/Mid", supertype = "p/lib/Listener")),
+            classFiles = mapOf(
+                "p/app/Owner" to classFile(
+                    "p/app/Owner", listOf("on(LEvent;Lp/ext/Event;)V", "on(Lp/ext/Event;LEvent;)V"), superName = "p/app/Mid"
+                ),
+                "p/app/Mid" to classFile("p/app/Mid", listOf(), interfaces = listOf("p/app/shaded/p/lib/Listener"))
+            ),
+            unloadableClassFiles = mapOf(
+                "p/app/shaded/p/lib/Listener" to classFile(
+                    "p/app/shaded/p/lib/Listener", listOf("on(LEvent;Lp/ext/Event;)V"), isInterface = true
+                )
+            )
+        )
+
+        // when
+        val overrides = owner.functions.map { resolver.isOverride(OverrideResolver.Owner(owner), it) }
+
+        // then
+        // the supertype missing still, the class file of p/app/Mid tells p/lib/ relocated to p/app/shaded/p/lib/
+        assert(overrides == listOf(true, false))
+    }
+
+    @Test
+    fun `should tell relocation of overloads of the same shape taking also classes relocated with the owner by the package prefix`() {
+        // given
+        // like relocated by shading from app/ to shaded/app/, and lib/ to the root package,
+        // the owner implementing the Java interface app/Listener of the app,
+        // the overloads of the same shape taking both a class of the app, and one of the library
+        val owner = kmClass("app/Owner", supertype = "app/Listener").apply {
+            functions += functionTaking("on", "app/Event", "lib/Event")
+            functions += functionTaking("on", "lib/Event", "app/Event")
+        }
+        val resolver = overrideResolver(
+            classFiles = mapOf(
+                "shaded/app/Owner" to classFile(
+                    "shaded/app/Owner",
+                    listOf("on(Lshaded/app/Event;LEvent;)V", "on(LEvent;Lshaded/app/Event;)V"),
+                    interfaces = listOf("shaded/app/Listener")
+                )
+            ),
+            unloadableClassFiles = mapOf(
+                "shaded/app/Listener" to classFile("shaded/app/Listener", listOf("on(Lshaded/app/Event;LEvent;)V"), isInterface = true),
+                "app/Listener" to classFile("app/Listener", listOf("on(Lapp/Event;Llib/Event;)V"), isInterface = true)
+            )
+        )
+
+        // when
+        val overrides = owner.functions.map { resolver.isOverride(OverrideResolver.Owner(owner, "shaded/app/Owner"), it) }
+
+        // then
+        // the relocation of the owner explains shaded/app/Event, leaving lib/ relocated to the root package to tell
+        assert(overrides == listOf(true, false))
+    }
+
+    @Test
     fun `should find relocated Java supertype of package whose other classes are relocated to the root package`() {
         // given
         // like an app shading its dependencies, relocating lib/ to app/shaded/lib/, except for lib/Event relocated to the root package

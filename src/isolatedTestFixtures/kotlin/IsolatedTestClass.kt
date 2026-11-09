@@ -138,3 +138,13 @@ class RelocatedShrunkEventListener : RelocatedEventListener {
     override fun handle(event: RelocatedEvent) {}
     fun handle(event: com.xemantic.kotlin.introspection.isolated.sub.RelocatedEvent) {}
 }
+
+// tests relocate it, like shading, together with the Java class extending its inner class, and its type argument,
+// but not the subclass of the Java class
+class RelocatedInnerOuter<T> {
+    open inner class Inner {
+        fun ko(value: T) {}
+    }
+}
+
+class RelocatedJavaInnerImpl(outer: RelocatedInnerOuter<RelocatedEvent>) : RelocatedJavaInner(outer)
