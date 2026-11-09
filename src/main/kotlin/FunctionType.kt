@@ -91,13 +91,14 @@ internal fun KmType.withSuspendFunctionTypeClass(): KmType {
 
 /**
  * The declaration of the function type class of the metadata [name], like `kotlin/Function1`,
- * or `kotlin/coroutines/SuspendFunction1`, see [FunctionTypeClass], which no class file declares,
- * or `null` if it is not one, like a function reference type, a class of its own:
+ * or `kotlin/coroutines/SuspendFunction1`, or of the function reference type, like `kotlin/reflect/KFunction1`,
+ * see [FunctionTypeClass], which no class file declares, or `null` if it is not one:
  * `interface Function1<in P1, out R> : Function<R>`, declaring `operator fun invoke(p1: P1): R`,
- * which a class of such a supertype inherits, like `abstract class Handler : (Int) -> String`.
+ * which a class of such a supertype inherits, like `abstract class Handler : (Int) -> String`,
+ * and `interface KFunction1<in P1, out R> : KFunction<R>, Function1<P1, R>`, inheriting it from its function type class.
  */
 internal fun functionTypeClassDeclaration(name: String): KmClass? {
-    val functionTypeClass = FunctionTypeClass.of(name.replace('/', '.'))?.takeUnless { it.kind.isReference } ?: return null
+    val functionTypeClass = FunctionTypeClass.of(name.replace('/', '.')) ?: return null
     val arity = functionTypeClass.arity
     return KmClass().also { kmClass ->
         kmClass.name = name
@@ -106,8 +107,15 @@ internal fun functionTypeClassDeclaration(name: String): KmClass? {
         kmClass.visibility = Visibility.PUBLIC
         (1..arity).mapTo(kmClass.typeParameters) { KmTypeParameter("P$it", it - 1, KmVariance.IN) }
         kmClass.typeParameters += KmTypeParameter("R", arity, KmVariance.OUT)
-        kmClass.supertypes += classType(FUNCTION_CLASS_NAME.replace('.', '/')).also {
+        val kind = functionTypeClass.kind
+        kmClass.supertypes += classType((if (kind.isReference) KFUNCTION_CLASS_NAME else FUNCTION_CLASS_NAME).replace('.', '/')).also {
             it.arguments += KmTypeProjection(KmVariance.INVARIANT, typeParameterType(arity))
+        }
+        if (kind.isReference) {
+            kmClass.supertypes += classType(kind.functionTypeKind.metadataName(arity)).also { type ->
+                (0..arity).mapTo(type.arguments) { KmTypeProjection(KmVariance.INVARIANT, typeParameterType(it)) }
+            }
+            return@also
         }
         kmClass.functions += KmFunction("invoke").also { invoke ->
             invoke.visibility = Visibility.PUBLIC
