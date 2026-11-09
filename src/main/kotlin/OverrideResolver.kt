@@ -171,7 +171,7 @@ internal class OverrideResolver(
      */
     private data class TypeParameterType(
         val key: String,
-        val nullable: Boolean,
+        val nullable: Boolean?,
         val erasure: String?,
         val unlocatedErasure: String? = null
     ) : MemberType
@@ -250,6 +250,9 @@ internal class OverrideResolver(
      * @param declaresDefaultValues the indices of the value parameters declaring a default value,
      *   which only a Kotlin function can.
      * @param key the key of a member of a Kotlin supertype, see [memberKey], telling which one is overridden.
+     * @param javaKey the key of a Java method, see [javaMemberKey], telling which one is overridden, and its primitive types.
+     * @param primitives whether each value parameter of a member of a Kotlin supertype is of a primitive type on the JVM,
+     *   see [jvmPrimitives], or `null` if not told, see [primitivesMatch].
      */
     private class Overridable(
         val contexts: List<MemberType> = emptyList(),
@@ -261,7 +264,8 @@ internal class OverrideResolver(
         val visibility: MemberVisibility = MemberVisibility.Visible,
         val declaresDefaultValues: Set<Int> = emptySet(),
         val key: String? = null,
-        val javaKey: String? = null
+        val javaKey: String? = null,
+        val primitives: List<Boolean>? = null
     )
 
     /**
@@ -458,25 +462,26 @@ internal class OverrideResolver(
      * The override of a supertype function by the [function], or `null` if it overrides none.
      * The whole supertype hierarchy is matched, so that the declaration of an inherited default value is found
      * also through intermediate overrides.
+     * The [function] of a Java method of the [jvmDescriptor] is matched like a Java method, see [overriddenMembers].
      */
-    fun override(owner: Owner, function: KmFunction): FunctionOverride? =
-        override(owner, function, withDefaultValues = true)
+    fun override(owner: Owner, function: KmFunction, jvmDescriptor: String? = null): FunctionOverride? =
+        override(owner, function, jvmDescriptor, withDefaultValues = true)
 
     /**
      * Whether the [function] overrides a supertype function, like [override], without matching all of them.
      */
-    fun isOverride(owner: Owner, function: KmFunction): Boolean =
-        override(owner, function, withDefaultValues = false) != null
+    fun isOverride(owner: Owner, function: KmFunction, jvmDescriptor: String? = null): Boolean =
+        override(owner, function, jvmDescriptor, withDefaultValues = false) != null
 
     /**
      * @param withDefaultValues whether to match all the overridden functions for their inherited default values,
      *   otherwise the first one tells that the [function] is an override, without default values.
      */
-    private fun override(owner: Owner, function: KmFunction, withDefaultValues: Boolean): FunctionOverride? {
+    private fun override(owner: Owner, function: KmFunction, jvmDescriptor: String?, withDefaultValues: Boolean): FunctionOverride? {
         val overridables = overridables(owner)
         val candidates = overridables.functions[function.name] ?: return null
-        val signature = overridables.signature(function)
-        val matching = candidates.filter { it.matches(signature) }
+        val signature = overridables.signature(function, jvmDescriptor)
+        val matching = candidates.filter { it.matches(signature) && it.primitivesMatch(signature) }
         val overridden = matching.asSequence().filter { overridables.isVisible(it, owner.kmClass, function.modality) }
             .ifEmpty {
                 val evidence = matching.ifEmpty { overridables.shrinkableJava(function.name) }
@@ -495,25 +500,45 @@ internal class OverrideResolver(
      * The types of a function checked for overriding, resolved in the context of its class,
      * whose [relocation] tells the names the classes of the types are found by, see [variancesMatch].
      */
+    /**
+     * @param jvmPrimitives whether each parameter of a Java method is of a primitive type on the JVM, see [primitivesMatch].
+     */
     private class FunctionSignature(
         val contexts: List<MemberType>,
         val receiver: MemberType?,
         val parameters: List<MemberType>,
         val typeParameterCount: Int,
         val isSuspend: Boolean,
-        val relocation: Relocation?
+        val relocation: Relocation?,
+        val jvmPrimitives: List<Boolean>? = null
     )
 
-    private fun Overridables.signature(function: KmFunction): FunctionSignature {
+    /**
+     * The signature of the [function], of the platform types of Java, see [platform], when it is the one of a Java method
+     * of the [jvmDescriptor], telling the primitive types of its parameters on the JVM, see [primitivesMatch].
+     */
+    private fun Overridables.signature(function: KmFunction, jvmDescriptor: String? = null): FunctionSignature {
         val typeParameters = memberTypeParameters(function.typeParameters)
+        fun type(type: KmType) = kotlinType(type, substitution, typeParameters).let { if (jvmDescriptor != null) it.platform() else it }
         return FunctionSignature(
-            contexts = function.contextParameters.map { kotlinType(it.type, substitution, typeParameters) },
-            receiver = function.receiverParameterType?.let { kotlinType(it, substitution, typeParameters) },
-            parameters = function.valueParameters.map { kotlinType(it.type, substitution, typeParameters) },
+            contexts = function.contextParameters.map { type(it.type) },
+            receiver = function.receiverParameterType?.let { type(it) },
+            parameters = function.valueParameters.map { type(it.type) },
             typeParameterCount = function.typeParameters.size,
             isSuspend = function.isSuspend,
-            relocation = relocation
+            relocation = relocation,
+            jvmPrimitives = jvmDescriptor?.let { jvmPrimitives(it) }
         )
+    }
+
+    /**
+     * This type of a Java method as a platform type of Java, of either nullability, also its type arguments,
+     * like the `E!` of the `add(E)` of a subclass of `java.util.ArrayList<E>`, or the `(Mutable)List<String!>!` of `List<String>`.
+     */
+    private fun MemberType.platform(): MemberType = when (this) {
+        is ClassType -> copy(nullable = null, arguments = arguments.map { TypeArgument(it.variance, it.type.platform()) })
+        is TypeParameterType -> copy(nullable = null)
+        UnknownType -> this
     }
 
     private fun Overridable.matches(signature: FunctionSignature, onlyKnownTypes: Boolean = false): Boolean = matches(
@@ -579,13 +604,19 @@ internal class OverrideResolver(
      * The keys, see [memberKey], of the functions of the Kotlin supertypes of the [owner] which its [function] overrides,
      * or would override, if it is not declared as an override, along the whole supertype hierarchy,
      * the ones matching on the known types, if there are any, see [inheritedDefaultValues].
+     * The [function] of a Java method of the [jvmDescriptor] takes the platform types of Java, see [platform],
+     * matched regardless of their nullability, like the `E!` of the `add(E)` of a subclass of `java.util.ArrayList<E>`,
+     * and overrides only the functions of the same primitive types on the JVM, which the Kotlin types do not tell,
+     * like the `Int` of both `int` and `Integer`, so that neither `put(Integer)` overrides `put(key: Int)`,
+     * nor `put(int)` the `put(t: T)` of `GenericPut<Integer>`, taking `Object`, see [primitivesMatch].
      */
-    fun overriddenMembers(owner: Owner, function: KmFunction): Set<String> {
+    fun overriddenMembers(owner: Owner, function: KmFunction, jvmDescriptor: String? = null): Set<String> {
         val overridables = overridables(owner)
         val candidates = overridables.functions[function.name] ?: return emptySet()
-        val signature = overridables.signature(function)
+        val signature = overridables.signature(function, jvmDescriptor)
         val overridden = candidates.filter {
-            it.key != null && it.matches(signature) && overridables.isVisible(it, owner.kmClass, function.modality)
+            it.key != null && it.matches(signature) && it.primitivesMatch(signature) &&
+                overridables.isVisible(it, owner.kmClass, function.modality)
         }
         // an unknown type matches any type, so a sibling overload, which is not overridden, might be matched too,
         // like for the inheritedDefaultValues, the ones matching on the known types are taken, if there are any
@@ -603,27 +634,31 @@ internal class OverrideResolver(
      * which an override declares either way, like `PrintStream` or `PrintStream?` of `PrintStream!`,
      * and with the type arguments of the supertypes substituted, like `Consumer<in String>` of `Consumer<? super T>`
      * of `java.lang.Iterable<T>`, implemented as `Iterable<String>`,
-     * and, of a [function] of a Java class of the [jvmDescriptor], by the primitive types on the JVM,
+     * and, of a [function] of a Java method of the [jvmDescriptor], by the primitive types on the JVM,
      * which the Kotlin types do not tell, like the `Int` of both `int` and `@NotNull Integer`,
-     * so that `put(int, Integer)` does not override `put(Integer, Integer)`.
+     * so that `put(int, Integer)` does not override `put(Integer, Integer)`, see [overriddenMembers].
      */
     fun overriddenJavaMembers(owner: Owner, function: KmFunction, jvmDescriptor: String? = null): Set<String> {
         val overridables = overridables(owner)
         val candidates = overridables.functions[function.name] ?: return emptySet()
-        val signature = overridables.signature(function)
-        val primitives = jvmDescriptor?.let(::primitivesOfDescriptor)
-        fun primitivesMatch(javaKey: String) = primitives == null ||
-            primitivesOfDescriptor("(" + javaKey.substringAfter('#').substringAfter('(')).let { it.size != primitives.size || it == primitives }
+        val signature = overridables.signature(function, jvmDescriptor)
         return candidates.filter {
-            it.javaKey != null && it.matches(signature) && overridables.isVisible(it, owner.kmClass, function.modality) &&
-                primitivesMatch(it.javaKey)
+            it.javaKey != null && it.matches(signature) && it.primitivesMatch(signature) &&
+                overridables.isVisible(it, owner.kmClass, function.modality)
         }
             .mapTo(HashSet()) { it.javaKey!! }
     }
 
-    // whether each parameter of the JVM method descriptor is of a primitive type, see overriddenJavaMembers
-    private fun primitivesOfDescriptor(descriptor: String): List<Boolean> =
-        AsmType.getArgumentTypes(descriptor).map { it.sort in AsmType.BOOLEAN..AsmType.DOUBLE }
+    /**
+     * Whether the parameters of this member are of the primitive types on the JVM of the ones of a Java method,
+     * the [FunctionSignature.jvmPrimitives], position by position, the value parameters of a Kotlin member matched with the last ones,
+     * or the [signature] is not of a Java method, or the primitive types of this member are not told.
+     */
+    private fun Overridable.primitivesMatch(signature: FunctionSignature): Boolean {
+        val javaPrimitives = signature.jvmPrimitives ?: return true
+        val primitives = primitives ?: javaKey?.let { jvmPrimitives(it.substring(it.indexOf('(', it.indexOf('#')))) } ?: return true
+        return primitives.size <= javaPrimitives.size && javaPrimitives.takeLast(primitives.size) == primitives
+    }
 
     /**
      * The keys of the properties of the Kotlin supertypes of the [owner] which its [property] overrides,
@@ -1009,7 +1044,8 @@ internal class OverrideResolver(
                         declaresDefaultValues = function.valueParameters.indices.filter {
                             function.valueParameters[it].declaresDefaultValue
                         }.toSet(),
-                        key = memberKey(kmClass, function)
+                        key = memberKey(kmClass, function),
+                        primitives = jvmPrimitives(function)
                     )
                 }
                 kmClass.properties.filter { it.visibility.isOverridable }.forEach { property ->
@@ -1551,7 +1587,8 @@ internal class OverrideResolver(
                     }
                 }
         }
-        a is TypeParameterType && b is TypeParameterType -> a.key == b.key && a.nullable == b.nullable
+        a is TypeParameterType && b is TypeParameterType ->
+            a.key == b.key && (a.nullable == null || b.nullable == null || a.nullable == b.nullable)
         else -> false
     }
 
@@ -2102,7 +2139,8 @@ internal class OverrideResolver(
             visibility = visibility,
             declaresDefaultValues = declaresDefaultValues,
             key = key,
-            javaKey = javaKey
+            javaKey = javaKey,
+            primitives = primitives
         )
     }
 
@@ -2970,6 +3008,34 @@ internal fun kotlinClassName(packageName: String, name: String): String =
  * like `java.lang.Throwable#printStackTrace(Ljava/io/PrintStream;)V`, see [OverrideResolver.overriddenJavaMembers].
  */
 internal fun javaMemberKey(className: String, name: String, descriptor: String): String = "$className#$name$descriptor"
+
+/**
+ * Whether this JVM type is a primitive one, like `int`, see [jvmPrimitives].
+ */
+internal val AsmType.isPrimitive: Boolean get() = sort in AsmType.BOOLEAN..AsmType.DOUBLE
+
+/**
+ * Whether each parameter of the JVM method [descriptor] is of a primitive type, see [OverrideResolver.overriddenMembers].
+ */
+internal fun jvmPrimitives(descriptor: String): List<Boolean> = AsmType.getArgumentTypes(descriptor).map { it.isPrimitive }
+
+/**
+ * Whether each value parameter of the Kotlin [function] is of a primitive type on the JVM, as told by its JVM signature,
+ * but its continuation, if suspend, or else by its types, a not nullable class type of a primitive one, like `Int`,
+ * of a built-in type, which has no JVM signature, see [OverrideResolver.overriddenMembers].
+ */
+internal fun jvmPrimitives(function: KmFunction): List<Boolean> {
+    val count = function.valueParameters.size
+    val primitives = function.signature?.descriptor?.let { jvmPrimitives(it) }?.let { if (function.isSuspend) it.dropLast(1) else it }
+    return primitives?.takeIf { it.size >= count }?.takeLast(count) ?: function.valueParameters.map { parameter ->
+        val name = (parameter.type.classifier as? KmClassifier.Class)?.name
+        parameter.varargElementType == null && !parameter.type.isNullable && name in PRIMITIVE_CLASS_NAMES
+    }
+}
+
+// the built-in types of the primitive types on the JVM, see jvmPrimitives
+private val PRIMITIVE_CLASS_NAMES: Set<String> =
+    listOf("Boolean", "Byte", "Short", "Char", "Int", "Long", "Float", "Double").mapTo(HashSet()) { "kotlin/$it" }
 
 /**
  * The key of a [function] of the [owner] class, like `kotlin/collections/List#context() fun get(kotlin/Int)`,

@@ -1178,14 +1178,16 @@ internal class DefaultKotlinIntrospector(
         /**
          * The keys of the members of the Kotlin supertypes which the [member] of this class overrides,
          * see [OverrideResolver.overriddenMembers], regardless of the nullability of the platform types of Java,
-         * like `E!`, of its value parameters, see [JavaFunction.notNullable].
+         * like `E!`, of its value parameters, but by the primitive types of its JVM method, see [jvmDescriptorOf].
          */
-        fun overriddenMembers(member: Member): Set<String> {
-            val overridden = member.overridden(overrideResolver, overrideOwner)
-            if (member !is Member.Function) return overridden
-            val notNullable = functions[member.declaration]?.notNullable ?: return overridden
-            return overridden + overrideResolver.overriddenMembers(overrideOwner, notNullable)
-        }
+        fun overriddenMembers(member: Member): Set<String> =
+            member.overridden(overrideResolver, overrideOwner, (member as? Member.Function)?.let { jvmDescriptorOf(it.declaration) })
+
+        /**
+         * The JVM descriptor of the Java method of the [function], telling the overrides of the function by its primitive types,
+         * see [OverrideResolver.overriddenMembers], or `null` if it cannot be reflected.
+         */
+        fun jvmDescriptorOf(function: KmFunction): String? = jvmMethodOf(function)?.signature?.descriptor
 
         /**
          * The JVM method of the [function], telling its overrides, see [inheritedMembers].
@@ -1262,9 +1264,9 @@ internal class DefaultKotlinIntrospector(
      * or converted from the Java [method], see [toKmJavaFunction], when kotlin-reflect cannot describe it,
      * whose value parameters of the platform types of Java, like `E!`, accepting `null`, are nullable, see [toKmFunction],
      * while a Kotlin override declares them either way, like `equals(other: Any?)`, or `add(element: E)`,
-     * so that its overrides are matched also with these parameters [notNullable], see [withNotNullableParameters].
+     * so that its overrides are matched regardless of their nullability, see [JavaClass.overriddenMembers].
      */
-    private class JavaFunction(val kFunction: KFunction<*>?, private val javaMethod: Method?, val notNullable: KmFunction) {
+    private class JavaFunction(val kFunction: KFunction<*>?, private val javaMethod: Method?) {
 
         /**
          * The Java method of the function, the one it is converted from, see [toKmJavaFunction],
@@ -1405,7 +1407,7 @@ internal class DefaultKotlinIntrospector(
                         }
                 }?.let { kmFunction ->
                     kmClass.functions += kmFunction
-                    functions[kmFunction] = JavaFunction(function, javaMethod = null, kmFunction.withNotNullableParameters())
+                    functions[kmFunction] = JavaFunction(function, javaMethod = null)
                 }
             }
         val properties = IdentityHashMap<KmProperty, JavaProperty>()
@@ -1447,7 +1449,7 @@ internal class DefaultKotlinIntrospector(
                         .also { it.visibility = it.visibility.orProtected(method.modifiers) }
                 }?.let { kmFunction ->
                     kmClass.functions += kmFunction
-                    functions[kmFunction] = JavaFunction(kFunction = null, method, kmFunction.withNotNullableParameters())
+                    functions[kmFunction] = JavaFunction(kFunction = null, method)
                 }
             }
         }
@@ -2043,9 +2045,9 @@ internal class DefaultKotlinIntrospector(
 
         /**
          * The keys of the members of the supertypes of the [owner] which this member of it overrides,
-         * see [OverrideResolver.overriddenMembers].
+         * see [OverrideResolver.overriddenMembers], a function of a Java method of the [jvmDescriptor], if told.
          */
-        fun overridden(overrideResolver: OverrideResolver, owner: OverrideResolver.Owner?): Set<String>
+        fun overridden(overrideResolver: OverrideResolver, owner: OverrideResolver.Owner?, jvmDescriptor: String? = null): Set<String>
 
         /**
          * Whether this member of the [owner] is an override, see [OverrideResolver.isOverride].
@@ -2085,8 +2087,11 @@ internal class DefaultKotlinIntrospector(
 
             override fun key(owner: KmClass): String = memberKey(owner, declaration)
 
-            override fun overridden(overrideResolver: OverrideResolver, owner: OverrideResolver.Owner?): Set<String> =
-                owner?.let { overrideResolver.overriddenMembers(it, declaration) }.orEmpty()
+            override fun overridden(
+                overrideResolver: OverrideResolver,
+                owner: OverrideResolver.Owner?,
+                jvmDescriptor: String?
+            ): Set<String> = owner?.let { overrideResolver.overriddenMembers(it, declaration) }.orEmpty()
 
             override fun isOverride(overrideResolver: OverrideResolver, owner: OverrideResolver.Owner?): Boolean =
                 owner != null && overrideResolver.isOverride(owner, declaration)
@@ -2116,8 +2121,11 @@ internal class DefaultKotlinIntrospector(
 
             override fun key(owner: KmClass): String = memberKey(owner, declaration)
 
-            override fun overridden(overrideResolver: OverrideResolver, owner: OverrideResolver.Owner?): Set<String> =
-                owner?.let { overrideResolver.overriddenMembers(it, declaration) }.orEmpty()
+            override fun overridden(
+                overrideResolver: OverrideResolver,
+                owner: OverrideResolver.Owner?,
+                jvmDescriptor: String?
+            ): Set<String> = owner?.let { overrideResolver.overriddenMembers(it, declaration, jvmDescriptor) }.orEmpty()
 
             override fun isOverride(overrideResolver: OverrideResolver, owner: OverrideResolver.Owner?): Boolean =
                 owner != null && overrideResolver.isOverride(owner, declaration)
@@ -2211,8 +2219,7 @@ internal class DefaultKotlinIntrospector(
         isOwnerOpenForOverrides: Boolean,
         inheritedBy: ClassKind? = null,
         typeParameters: TypeParameterScope,
-        isJvmOnlyOverride: Boolean = false,
-        isOverridingNothing: Boolean = false
+        isJvmOnlyOverride: Boolean = false
     ): List<String> {
         // a member inherited by an interface is rendered as within it, like the ones of kotlin.Any
         val isInterface = kmClass.kind == ClassKind.INTERFACE || inheritedBy == ClassKind.INTERFACE
@@ -2236,7 +2243,7 @@ internal class DefaultKotlinIntrospector(
                     isOwnerOpenForOverrides = isOwnerOpenForOverrides, isInheritedByFinalClass = isInheritedByFinalClass,
                     declaration = member.declaration,
                     isJvmOnlyOverride = isJvmOnlyOverride,
-                    isOverridingNothing = isOverridingNothing
+                    jvmDescriptor = (declarations as? JavaClass)?.jvmDescriptorOf(member.declaration)
                 )
             )
         }
@@ -2301,12 +2308,16 @@ internal class DefaultKotlinIntrospector(
      * @param overridden the keys of the members of the supertypes of the [kmClass] which the [member] overrides.
      * @param signature the signature of the [member] as rendered, see [Member.signature],
      *   the same for the members of the same signature of unrelated supertypes.
-     * @param notNullableSignature the [signature] of the [member] with its value parameters not nullable, see [withNotNullableParameters],
+     * @param rivalrySignatures the [signature] of the [member] as the compiler compares it with the one of a member of a Java class,
+     *   see [isMergedWith], with the types of its value parameters not nullable, also their type arguments, see [rivalryVariants],
      *   like the platform types of Java, like the `K!` of `computeIfAbsent` of a Java subclass of `java.util.HashMap<K, V>`,
      *   of the same signature for the compiler as a Kotlin member taking `K`, or `K?`, also of mixed nullability,
-     *   like `take(first: String, second: String?)` and the `take(String, String)` of Java, see [isMergedWith],
-     *   and of a member of a Java class with its redundant projections invariant, see [withoutRedundantProjections],
+     *   like `take(first: String, second: String?)` and the `take(String, String)` of Java,
+     *   or `take(list: List<String?>)` and the `take(List<String>)` of Java,
+     *   and with their redundant projections invariant, see [withoutRedundantProjections],
      *   like the `Collection<out Int>` of a `Collection<? extends Integer>`, the `Collection<Int>` of a Kotlin member,
+     *   of a member of a Java class either for each of its collection types, read-only or mutable,
+     *   like the `MutableList<out Int>` of a Kotlin member, the `List<? extends Integer>` of Java, unlike `MutableList<Int>`,
      *   told only when needed, while a boxed parameter, like the `Int?` of `java.lang.Integer`, which becomes `Int`,
      *   is told apart from a primitive one by its JVM type, see [isMergedJvmParameter].
      * @param typeParameters the type parameters the [member] refers to, the not nullable ones, see [TypeParameterScope],
@@ -2328,14 +2339,14 @@ internal class DefaultKotlinIntrospector(
         val key: String,
         overridden: Set<String>,
         val signature: String,
-        notNullableSignature: Lazy<String>,
+        rivalrySignatures: Lazy<Set<String>>,
         val typeParameters: TypeParameterScope,
         val isHidden: Boolean,
         val jvmMethod: JvmMethod?,
         val isApi: Boolean
     ) {
 
-        val notNullableSignature: String by notNullableSignature
+        val rivalrySignatures: Set<String> by rivalrySignatures
 
         /**
          * The name of the class declaring the [member], like `com/example/Base`: the [name] of a Java class,
@@ -2345,10 +2356,9 @@ internal class DefaultKotlinIntrospector(
         val className: String get() = if (declarations is JavaClass) name else kmClass.name
 
         /**
-         * The keys of the members the [member] overrides, but the ones of the Kotlin members a Java method does not override
-         * on the JVM, see [takesReferenceForPrimitiveOf], dropped once the candidates are collected, see [inheritedCandidates].
+         * The keys of the members the [member] overrides, of a Java method by its primitive types, see [JavaClass.overriddenMembers].
          */
-        var overridden: Set<String> = overridden
+        val overridden: Set<String> = overridden
 
         /**
          * Whether the [member], of a JDK class, is inherited only through a Java class of the user code,
@@ -2401,15 +2411,6 @@ internal class DefaultKotlinIntrospector(
          * though the override resolver does not tell, see [inheritedCandidates].
          */
         var isJvmOnlyOverride: Boolean = false
-
-        /**
-         * Whether the [member], of a Java class, overrides none of the Kotlin members the override resolver tells,
-         * like the `put(@NotNull Integer)` of a Java class the `put(key: Int)` of a Kotlin interface,
-         * which the `put(int)` of its Java superclass implements, see [takesReferenceForPrimitiveOf],
-         * nor a Java method, see [overridesJavaMember], like the `put(int, Integer)` of a Java class
-         * the `put(Integer, Integer)` of its Java interface, see [overridesJavaMemberOnlyByKotlinTypes].
-         */
-        var isOverridingNothing: Boolean = false
 
         // the function returning a type which is not nullable, which might be a platform type, see returnsPlatformType
         private val platformCandidate: KmFunction? by lazy(LazyThreadSafetyMode.NONE) {
@@ -2477,7 +2478,7 @@ internal class DefaultKotlinIntrospector(
         fun overridesHiddenJdkMethod(exposedJdkMethods: Set<String>): Boolean {
             val function = (member as? Member.Function)?.declaration ?: return false
             val owner = declarations.overrideOwner ?: return false
-            return overrideResolver.overriddenJavaMembers(owner, function).any { key ->
+            return overrideResolver.overriddenJavaMembers(owner, function, javaDescriptor).any { key ->
                 overrideResolver.builtinNameOfJavaClass(key.substringBefore('#')) != null && key !in exposedJdkMethods
             }
         }
@@ -2517,7 +2518,7 @@ internal class DefaultKotlinIntrospector(
         /**
          * Whether the [member] is merged with the one of the [other] candidate, competing with it,
          * as of the same kind, and of the same [signature], also regardless of the nullability of their value parameters,
-         * see [notNullableSignature], when one of them is a member of a Java class, taking the platform types of Java,
+         * see [rivalrySignatures], when one of them is a member of a Java class, taking the platform types of Java,
          * as two Kotlin members differing by it clash on the JVM,
          * unless their value parameters are of JVM types the compiler keeps apart, see [isMergedJvmParameter],
          * or overriding the same member, declared by another supertype,
@@ -2526,7 +2527,7 @@ internal class DefaultKotlinIntrospector(
         fun isMergedWith(other: InheritedCandidate): Boolean =
             other.className != className && (other.member is Member.Property) == (member is Member.Property) &&
                 (other.overridden.any { it in overridden } ||
-                    (other.signature == signature || isJavaRivalry(other) && other.notNullableSignature == notNullableSignature) &&
+                    (other.signature == signature || isJavaRivalry(other) && other.rivalrySignatures.any { it in rivalrySignatures }) &&
                     isMergedOnJvm(other))
 
         // whether one of the members is a member of a Java class, see isMergedWith
@@ -2544,7 +2545,8 @@ internal class DefaultKotlinIntrospector(
         }
 
         // a JVM-only member is a Java method of its own, see jvmMethod, merged like the members of a Java class,
-        // and so is a member standing for the method of the Java class implementing it, see implementingJvmMethod
+        // and so is a member standing for the method of the Java class implementing it, see implementingJvmMethod,
+        // told while the Java candidates are walked, see inheritedCandidates, which asks isMergedWith only afterwards
         private val jvmParameters: List<JvmParameter?>?
             get() = if (implementingJvmMethod == null) declaredJvmParameters else implementingJvmParameters
 
@@ -2585,18 +2587,19 @@ internal class DefaultKotlinIntrospector(
         }
 
         /**
-         * Whether the [member], of a Java class, takes a reference type, like `Integer`, where the [member] of the [kotlin] candidate,
-         * a Kotlin one, which the override resolver matches regardless of the nullability, takes a primitive type on the JVM,
-         * like the `put(key: Int)` of a Kotlin interface, which it does not override then, as the `put(int)` declared next to it does.
+         * Whether the [member], of a Java class, is of the same signature as the one of the [other] candidate, also of a Java class,
+         * or standing for the method of the Java class implementing it, see [implementingJvmMethod],
+         * though taking boxed types where the [other] one takes primitive types on the JVM, never the other way round,
+         * like the `put(@NotNull Integer)` next to `put(int)`, both `put(Int)` in Kotlin, which calls the latter, see [inheritedCandidates].
          */
-        fun takesReferenceForPrimitiveOf(kotlin: InheritedCandidate): Boolean {
+        fun isShadowedBy(other: InheritedCandidate): Boolean {
+            if (jvmMethod == null || (other.jvmMethod ?: other.implementingJvmMethod) == null || other.signature != signature) return false
             val parameters = declaredJvmParameters ?: return false
-            val kotlinParameters = kotlin.declaredJvmParameters ?: return false
-            return parameters.size == kotlinParameters.size && parameters.indices.any { index ->
-                val parameter = parameters[index]
-                val kotlinParameter = kotlinParameters[index]
-                parameter != null && kotlinParameter != null && kotlinParameter.type.isPrimitive && !parameter.type.isPrimitive
-            }
+            val otherParameters = other.jvmParameters ?: return false
+            if (parameters.size != otherParameters.size) return false
+            val primitives = parameters.map { it?.type?.isPrimitive == true }
+            val otherPrimitives = otherParameters.map { it?.type?.isPrimitive == true }
+            return primitives != otherPrimitives && primitives.indices.none { primitives[it] && !otherPrimitives[it] }
         }
 
         /**
@@ -2614,20 +2617,6 @@ internal class DefaultKotlinIntrospector(
                     jvmMethod.signature == (member as? Member.Function)?.declaration?.signature
             } == true
 
-        /**
-         * Whether the [member] overrides a Java method, see [OverrideResolver.overriddenJavaMembers],
-         * like the `put(Integer)` of a Java class the one of its Java interface, of the same primitive JVM types, see [javaDescriptor].
-         */
-        val overridesJavaMember: Boolean get() = overriddenJavaMembers.isNotEmpty()
-
-        /**
-         * Whether the override resolver matches the [member], of a Java class, with Java methods only regardless of the primitive types,
-         * like the `put(int, Integer)` of a Java class with the `put(Integer, Integer)` of its Java interface, which it does not override.
-         */
-        val overridesJavaMemberOnlyByKotlinTypes: Boolean
-            get() = javaDescriptor?.let { descriptor -> AsmType.getArgumentTypes(descriptor).any { it.isPrimitive } } == true &&
-                overriddenJavaMembers.isEmpty() && overriddenJavaMembersByKotlinTypes.isNotEmpty()
-
         // the JVM descriptor of the member of a Java class, telling its primitive types, see OverrideResolver.overriddenJavaMembers
         private val javaDescriptor: String? get() = jvmMethod?.signature?.descriptor?.takeIf { declarations is JavaClass }
 
@@ -2636,14 +2625,6 @@ internal class DefaultKotlinIntrospector(
             val function = (member as? Member.Function)?.declaration
             val owner = declarations.overrideOwner
             if (function == null || owner == null) emptySet() else overrideResolver.overriddenJavaMembers(owner, function, javaDescriptor)
-        }
-
-        // the keys of the JVM methods the override resolver matches by the Kotlin types of the member,
-        // see overridesJavaMemberOnlyByKotlinTypes
-        private val overriddenJavaMembersByKotlinTypes: Set<String> by lazy(LazyThreadSafetyMode.NONE) {
-            val function = (member as? Member.Function)?.declaration
-            val owner = declarations.overrideOwner
-            if (function == null || owner == null) emptySet() else overrideResolver.overriddenJavaMembers(owner, function)
         }
 
     }
@@ -2755,8 +2736,7 @@ internal class DefaultKotlinIntrospector(
                     isOwnerOpenForOverrides = isOpenForOverrides,
                     inheritedBy = kmClass.kind,
                     typeParameters = candidate.typeParameters,
-                    isJvmOnlyOverride = candidate.isJvmOnlyOverride,
-                    isOverridingNothing = candidate.isOverridingNothing
+                    isJvmOnlyOverride = candidate.isJvmOnlyOverride
                 )
             )
         }
@@ -2816,6 +2796,8 @@ internal class DefaultKotlinIntrospector(
         val isRelocated by lazy(LazyThreadSafetyMode.NONE) {
             declarations.overrideOwner?.let { overrideResolver.isRelocated(it) } == true
         }
+        // the names of the supertypes walked which are classes, not interfaces, see reachedThroughSuperclass
+        val classNames = HashSet<String>()
         fun collect(name: String, supertype: KmType) {
             val foundName = inheritedName(declarations, name)
             val superDeclarations = inheritedDeclarations(foundName)
@@ -2837,6 +2819,7 @@ internal class DefaultKotlinIntrospector(
                 superKmClass.supertypes.map { it.unlocated(declarations) }
             }
             directSupertypes[name] = superSupertypes.classNames()
+            if (superKmClass.kind != ClassKind.INTERFACE) classNames += name
             pending += superSupertypes.map { it.substituted(substitution) }
             // the supertypes of a class reached through a raw supertype are raw too, like the raw ones of a Java class
             if (superDeclarations is JavaClass) {
@@ -2889,16 +2872,11 @@ internal class DefaultKotlinIntrospector(
                 candidates += InheritedCandidate(
                     name, superKmClass, superDeclarations, member, declared.key(superKmClass), overridden,
                     signature = signature,
-                    notNullableSignature = lazy(LazyThreadSafetyMode.NONE) {
-                        val function = (erased ?: (declared as? Member.Function)?.declaration)?.withNotNullableParameters()
-                        // like the Collection<out Int> of a Collection<? extends Integer> of Java
-                        val invariant = if (superDeclarations !is JavaClass) function else {
-                            function?.withValueParameterTypes { type -> type.withoutRedundantProjections() }
-                        }
-                        invariant?.let {
-                            Member.Function(it).unlocated().substituted(substitution, inheritingNames).signature(inheritingNames)
-                        }
-                            ?: signature
+                    rivalrySignatures = lazy(LazyThreadSafetyMode.NONE) {
+                        (erased ?: (declared as? Member.Function)?.declaration)?.let { function ->
+                            val substituted = Member.Function(function).unlocated().substituted(substitution, inheritingNames) as Member.Function
+                            rivalrySignatures(substituted.function, isJava = superDeclarations is JavaClass, inheritingNames)
+                        } ?: setOf(signature)
                     },
                     typeParameters = typeParameters,
                     isHidden = apiMember.isHidden,
@@ -2922,25 +2900,6 @@ internal class DefaultKotlinIntrospector(
             if (visited.add(name)) collect(name, supertype)
         }
         if (kmClass.name != ANY_CLASS_NAME) collect(ANY_CLASS_NAME, classType(ANY_CLASS_NAME))
-        // a Java method taking a boxed type, like put(Integer), never overrides a Kotlin member taking a primitive type there,
-        // like put(key: Int), which the override resolver matches regardless of the nullability, see takesReferenceForPrimitiveOf
-        val candidatesByKey by lazy(LazyThreadSafetyMode.NONE) { candidates.groupBy { it.key } }
-        // and neither does a Java method a Java one of other primitive types, like put(int, Integer) the put(Integer, Integer)
-        // of a Java interface, which the override resolver matches by the Kotlin types, see overridesJavaMemberOnlyByKotlinTypes
-        candidates.forEach { candidate ->
-            if (candidate.declarations !is JavaClass) return@forEach
-            if (candidate.overridden.isEmpty()) {
-                if (candidate.overridesJavaMemberOnlyByKotlinTypes) candidate.isOverridingNothing = true
-                return@forEach
-            }
-            val overridden = candidate.overridden.filterTo(HashSet()) { key ->
-                candidatesByKey[key].orEmpty().none { candidate.takesReferenceForPrimitiveOf(it) }
-            }
-            if (overridden.size != candidate.overridden.size) {
-                candidate.overridden = overridden
-                candidate.isOverridingNothing = overridden.isEmpty() && !candidate.overridesJavaMember
-            }
-        }
         // the members of a JDK class reached only through a Java class of the user code lose the enhancement of their return types,
         // like the get() of java.util.function.Supplier for a subclass of a Java class implementing it without declaring it again,
         // unless reached also directly, or through the JDK, or a Kotlin class not overriding them, whatever the order of the supertypes
@@ -3183,13 +3142,13 @@ internal class DefaultKotlinIntrospector(
             candidates.filter { it.declarations !is BuiltinClass }.forEach { candidate ->
                 (candidate.member as? Member.Function)?.let { function ->
                     val jvmDescriptor = candidate.jvmMethod?.signature?.descriptor?.takeIf { candidate.declarations is JavaClass }
-                    overrides.collect(candidate.declarations.overrideOwner, function.declaration, jvmDescriptor)
+                    overrides.collect(candidate.declarations.overrideOwner, function.declaration, jvmDescriptor, candidate.key)
                 }
             }
         }
         if (hasJavaCandidates) collectJavaOverrides(hiddenJavaOverrides, hiddenCandidates)
         fun isOverriddenByHidden(candidate: InheritedCandidate): Boolean = candidate.key in overriddenByHidden ||
-            candidate.jvmMethod?.let { hiddenJavaOverrides.overrides(it) } == true
+            candidate.jvmMethod?.let { hiddenJavaOverrides.overrides(it, candidate.overridden) } == true
         // the visible members of the other supertypes overriding the members below them, and the Java members,
         // but the ones of the supertypes which are not part of the API, which override nothing, see InheritedCandidate.isApi,
         // and the ones overridden by a hidden one in turn, which stand for the members they override only on the supertype
@@ -3216,10 +3175,12 @@ internal class DefaultKotlinIntrospector(
         val owner = declarations.overrideOwner
         // also a hidden one, hiding the member it overrides, which cannot be called on the class either
         apiMembersIncludingHidden(kmClass, declarations, memberName, scope).map { it.member }.forEach { member ->
+            // the members of a Java class resolved directly, by the primitive types of their JVM methods, see JavaClass.overriddenMembers
+            val jvmDescriptor = (member as? Member.Function)?.let { (declarations as? JavaClass)?.jvmDescriptorOf(it.declaration) }
             if (member is Member.Function && hasJavaCandidates) {
-                javaOverrides.collect(owner, member.declaration)
+                javaOverrides.collect(owner, member.declaration, jvmDescriptor)
             }
-            val keys = member.overridden(overrideResolver, owner)
+            val keys = member.overridden(overrideResolver, owner, jvmDescriptor)
             overridden += keys
             kotlinOverridden += keys
             val isUntoldOverride = keys.isEmpty() && member.isOverride(overrideResolver, owner)
@@ -3254,7 +3215,8 @@ internal class DefaultKotlinIntrospector(
             !candidate.isHidden && candidate.isApi && candidate.key !in overridden && !isOverriddenAsKotlinMember(candidate) &&
                 when (candidate.jvmMethod) {
                     null -> candidate.signature !in untoldOverrideSignatures
-                    else -> !javaOverrides.overrides(candidate.jvmMethod) && candidate.signature !in declaredSignatures
+                    else -> !javaOverrides.overrides(candidate.jvmMethod, candidate.overridden) &&
+                        candidate.signature !in declaredSignatures
                 }
         // the JVM-only members overridden by the Java candidates on the JVM, see javaMethodSignatures,
         // which are rendered as overrides then
@@ -3287,6 +3249,17 @@ internal class DefaultKotlinIntrospector(
                 }
             }
         }
+        // the names of the supertypes reached through the superclass of the kmClass, like java.util.Map through java.util.TreeMap,
+        // whose members of a body, like the default getOrDefault of Map, the superclass inherits as implementations, see listed
+        val reachedThroughSuperclass by lazy(LazyThreadSafetyMode.NONE) {
+            val reached = HashSet<String>()
+            val pending = ArrayDeque(directSupertypes[kmClass.name].orEmpty().filter { it in classNames }.take(1))
+            while (pending.isNotEmpty()) {
+                val name = pending.removeFirst()
+                if (reached.add(name)) pending += directSupertypes[name].orEmpty()
+            }
+            reached
+        }
         // the compiler groups the members merged with the first one, in the order of the direct supertypes contributing them,
         // like the K2 intersection of the members of the supertypes, then with the first one left, and so on,
         // so that the members merged with one member only, but not with each other, stay apart,
@@ -3295,21 +3268,27 @@ internal class DefaultKotlinIntrospector(
         // for `abstract class Join : JGenOfInteger(), PrimitivePut, GenericPut<Int>`, unlike for `interface Join : GenericPut<Int>, …`
         // each group listing its members of the most specific return type, see wins, which stand for the implementation
         // of a class merged with them, see InheritedCandidate.implementationModality, while the member of an interface implements none,
+        // unless one of a body inherited by the superclass, like the default getOrDefault of java.util.Map by java.util.TreeMap,
         // also grouping the Java methods, and the JVM-only members, which a member of the same JVM signature overrides,
         // see javaOverrides, so that they are not listed, though they still implement it, when of a class,
         // like the put(Object) of JGen<Integer>, or the putIfAbsent of java.util.HashMap, see InheritedCandidate.implementingClass,
         // the putIfAbsent(key: K, value: V) of a Kotlin interface given Int and String
-        fun listed(survivors: List<InheritedCandidate>): List<InheritedCandidate> {
-            val overriddenOnJvm = candidates.filter { candidate ->
-                candidate.jvmMethod != null && !candidate.isHidden && candidate.isApi && candidate !in survivors &&
-                    javaOverrides.overrides(candidate.jvmMethod)
-            }
-            val ordered = (survivors + overriddenOnJvm).sortedBy { directIndices[it.name] ?: Int.MAX_VALUE }
+        // the first member of the group of each one, see listed, of the members in the order of the direct supertypes contributing them
+        fun groupedAroundFirst(ordered: List<InheritedCandidate>): IdentityHashMap<InheritedCandidate, InheritedCandidate> {
             val groups = IdentityHashMap<InheritedCandidate, InheritedCandidate>()
             ordered.forEach { first ->
                 if (first in groups) return@forEach
                 ordered.filter { it === first || (it !in groups && first.isMergedWith(it)) }.forEach { groups[it] = first }
             }
+            return groups
+        }
+        fun listed(survivors: List<InheritedCandidate>): List<InheritedCandidate> {
+            val overriddenOnJvm = candidates.filter { candidate ->
+                candidate.jvmMethod != null && !candidate.isHidden && candidate.isApi && candidate !in survivors &&
+                    javaOverrides.overrides(candidate.jvmMethod, candidate.overridden)
+            }
+            val ordered = (survivors + overriddenOnJvm).sortedBy { directIndices[it.name] ?: Int.MAX_VALUE }
+            val groups = groupedAroundFirst(ordered)
             val listed = survivors.filterIndexed { index, candidate ->
                 survivors.withIndex().none { (rivalIndex, rival) ->
                     rivalIndex != index && groups[rival] === groups[candidate] && wins(rival, rivalIndex, candidate, index)
@@ -3321,12 +3300,16 @@ internal class DefaultKotlinIntrospector(
                         when {
                             it.implementingClass != null -> it.implementationModality
                             it.kmClass.kind != ClassKind.INTERFACE -> it.implementationModality ?: it.member.modality
+                            // the member of an interface of a body inherited by the superclass, also implementing it
+                            it.member.modality == Modality.OPEN && it.name in reachedThroughSuperclass -> Modality.OPEN
                             else -> null
                         }
                     }
                 }?.let { candidate.implementationModality = it }
             }
-            return listed
+            // of the Java methods of the same signature, like put(int) and put(@NotNull Integer), both put(Int), K2 calls the one
+            // taking the primitive types, which a Kotlin override overrides, see InheritedCandidate.isShadowedBy
+            return listed.filter { candidate -> listed.none { it !== candidate && candidate.isShadowedBy(it) } }
         }
         // the compiler merges the members which the direct supertypes contribute, each its own, or the one it inherits,
         // also a hidden one overridden by another direct supertype, and picks the one of the most specific return type,
@@ -3342,6 +3325,9 @@ internal class DefaultKotlinIntrospector(
         // the members merged with the listed candidate which the class named name contributes to its subclasses:
         // its own one, or the hidden one overriding it, or else the one picked of the ones its direct supertypes contribute,
         // in the order of declaration, like the hidden f() of Left for `interface Join : Left, Right`, also when Right overrides it,
+        // grouped around the first one like the listed ones, see listed, so that a member merged with the candidate,
+        // but not with the first one of its group, stays apart, like the hidden put(key: Int) of HiddenPut
+        // for `abstract class Join : JGenOfInteger(), HiddenPut, GenericPut<Int>`, whose put(Object) is grouped with put(t: T),
         // or none, or all of them, when none can be picked, as some cannot be compared
         fun contribution(name: String, candidate: InheritedCandidate): List<InheritedCandidate> =
             contributions.getOrPut(name to candidate) {
@@ -3349,7 +3335,11 @@ internal class DefaultKotlinIntrospector(
                     .filter { it === candidate || it.isMergedWith(candidate) || it.overrides(candidate) }
                     .ifEmpty {
                         val picks = directSupertypes[name].orEmpty().map { contribution(it, candidate) }
-                        picks.firstOrNull { it.size > 1 } ?: picks.flatten().distinct()
+                        picks.firstOrNull { it.size > 1 } ?: picks.flatten().distinct().let { contributed ->
+                            val groups = groupedAroundFirst(contributed)
+                            val group = groups[candidate] ?: contributed.firstOrNull { it.isMergedWith(candidate) }?.let { groups[it] }
+                            contributed.filter { groups[it] === group }
+                        }
                     }
                 winner(merged)?.let { listOf(it) } ?: merged
             }
@@ -3367,10 +3357,59 @@ internal class DefaultKotlinIntrospector(
     }
 
     /**
+     * The signatures of the [function], see [Member.signature], as the compiler compares them with the ones of a member of a Java class,
+     * see [InheritedCandidate.rivalrySignatures], of the variants of the types of its value parameters, see [rivalryVariants],
+     * of a function of a Java class, the [isJava] one, or else of the one variant of them,
+     * the type parameters of the inheriting class named by the [names], by their ids.
+     */
+    private fun rivalrySignatures(function: KmFunction, isJava: Boolean, names: Map<Int, String>): Set<String> {
+        val combinations = function.valueParameters.fold(listOf(emptyList<KmType>())) { combinations, parameter ->
+            val variants = parameter.type.rivalryVariants(isJava)
+            combinations.flatMap { combination -> variants.map { combination + it } }.take(MAX_RIVALRY_VARIANTS)
+        }
+        return combinations.mapTo(HashSet()) { types ->
+            // by the types themselves, not to replace the element type of a vararg parameter
+            val replacements = IdentityHashMap<KmType, KmType>()
+            function.valueParameters.forEachIndexed { index, parameter -> replacements[parameter.type] = types[index] }
+            Member.Function(function.withValueParameterTypes { replacements[it] ?: it }).signature(names)
+        }
+    }
+
+    /**
+     * The variants of this type of a value parameter as the compiler compares it with the one of a member of a Java class,
+     * see [rivalrySignatures], not nullable, also its type arguments, nor definitely not nullable,
+     * with its redundant projections invariant, see [withoutRedundantProjections],
+     * and of a member of a Java class, the [isJava] one, of either its read-only or its mutable collection type,
+     * and of its type arguments, see [MUTABLE_COLLECTION_TYPES], as the `List<String>` of Java is `(Mutable)List<String!>!` of K2,
+     * at most [MAX_RIVALRY_VARIANTS] of them.
+     */
+    private fun KmType.rivalryVariants(isJava: Boolean): List<KmType> {
+        val argumentVariants = arguments.fold(listOf(emptyList<KmTypeProjection>())) { combinations, projection ->
+            val variants = projection.type?.rivalryVariants(isJava)?.map { KmTypeProjection(projection.variance, it) }
+                ?: listOf(projection)
+            combinations.flatMap { combination -> variants.map { combination + it } }.take(MAX_RIVALRY_VARIANTS)
+        }
+        val name = (classifier as? KmClassifier.Class)?.name
+        val readOnlyName = name?.let { READ_ONLY_COLLECTION_TYPES[it] } ?: name
+        val classifiers = if (!isJava || readOnlyName == null || readOnlyName !in MUTABLE_COLLECTION_TYPES) listOf(classifier) else {
+            listOf(KmClassifier.Class(readOnlyName), KmClassifier.Class(MUTABLE_COLLECTION_TYPES.getValue(readOnlyName)))
+        }
+        return classifiers.flatMap { classifier ->
+            argumentVariants.map { arguments ->
+                copy(arguments = arguments).also {
+                    it.classifier = classifier
+                    it.isNullable = false
+                    it.isDefinitelyNonNull = false
+                }.withoutRedundantProjections()
+            }
+        }.take(MAX_RIVALRY_VARIANTS)
+    }
+
+    /**
      * This type with the projections of its type arguments, also nested, which the variance of their type parameters
      * makes redundant, made invariant, like the `Collection<out Int>` of a `Collection<? extends Integer>` of Java,
      * the `Collection<Int>` of a Kotlin member for the compiler, as `Collection` is covariant,
-     * or this very type, if it has none, see [InheritedCandidate.notNullableSignature].
+     * or this very type, if it has none, see [InheritedCandidate.rivalrySignatures].
      */
     private fun KmType.withoutRedundantProjections(): KmType {
         val name = (classifier as? KmClassifier.Class)?.name ?: return this
@@ -3438,20 +3477,25 @@ internal class DefaultKotlinIntrospector(
 
         val members = HashSet<String>()
 
-        val signatures = HashSet<JvmMethodSignature>()
+        // the keys of the overriding functions by their JVM signatures, null when not told, like of a declared function
+        val signatures = HashMap<JvmMethodSignature, MutableSet<String?>>()
 
         /**
-         * Collect the JVM methods which the [function] of the [owner] overrides, by its JVM signature too.
+         * Collect the JVM methods which the [function] of the [owner] overrides, by its JVM signature too,
+         * the [function] of the [key], if told, see [overrides].
          */
-        fun collect(owner: OverrideResolver.Owner?, function: KmFunction, jvmDescriptor: String? = null) {
+        fun collect(owner: OverrideResolver.Owner?, function: KmFunction, jvmDescriptor: String? = null, key: String? = null) {
             owner?.let { members += overrideResolver.overriddenJavaMembers(it, function, jvmDescriptor) }
-            function.signature?.let { signatures += it }
+            function.signature?.let { signatures.getOrPut(it) { HashSet() } += key }
         }
 
         /**
-         * Whether the [method] is overridden, as one of the [members], or of the same JVM signature as one of the overriding functions.
+         * Whether the [method] is overridden, as one of the [members], or of the same JVM signature as one of the overriding functions,
+         * but the ones of the keys the [method] overrides in turn, the [overridden], like the `put(t: T)` of a Kotlin interface
+         * the `put(Object)` of a Java class implementing it, see [InheritedCandidate.overrides].
          */
-        fun overrides(method: JvmMethod): Boolean = method.key in members || method.signature in signatures
+        fun overrides(method: JvmMethod, overridden: Set<String> = emptySet()): Boolean =
+            method.key in members || signatures[method.signature]?.any { it == null || it !in overridden } == true
 
     }
 
@@ -7025,8 +7069,8 @@ internal class DefaultKotlinIntrospector(
      *   when the rendered one is a copy with the type arguments of an inheriting class substituted, see [inheritedMembers].
      * @param isJvmOnlyOverride whether the [function] is an override of a JVM-only member of a built-in type,
      *   which the [owner] does not tell, see [InheritedCandidate.isJvmOnlyOverride].
-     * @param isOverridingNothing whether the [function] overrides nothing, though the [owner] tells otherwise,
-     *   see [InheritedCandidate.isOverridingNothing].
+     * @param jvmDescriptor the JVM descriptor of the Java method of the [function], if it is one,
+     *   telling its overrides by its primitive types, see [OverrideResolver.overriddenMembers].
      */
     @OptIn(ExperimentalContextParameters::class)
     private fun formatFunction(
@@ -7042,7 +7086,7 @@ internal class DefaultKotlinIntrospector(
         isInheritedByFinalClass: Boolean = false,
         declaration: KmFunction = function,
         isJvmOnlyOverride: Boolean = false,
-        isOverridingNothing: Boolean = false
+        jvmDescriptor: String? = null
     ): String = buildString {
         val typeParameters = classTypeParameters.withDeclared(function.typeParameters)
             .withStandingFor(bodyReceiver?.typeParameters.orEmpty(), bodyReceiver?.classScope ?: TypeParameterScope.EMPTY)
@@ -7054,7 +7098,7 @@ internal class DefaultKotlinIntrospector(
         +formatContextParameters(function.contextParameters, contextPackage, typeParameters)
         +formatVisibility(function.visibility)
 
-        val override = override(owner, declaration)?.takeUnless { isOverridingNothing }
+        val override = override(owner, declaration, jvmDescriptor)
         +formatModalityModifiers(
             function.modality, override != null || isJvmOnlyOverride, inInterface, isOwnerOpenForOverrides, isInheritedByFinalClass
         )
@@ -7537,8 +7581,11 @@ internal class DefaultKotlinIntrospector(
     /**
      * The override of a supertype function by the [function], or `null` if it is not an override.
      */
-    private fun override(owner: OverrideResolver.Owner?, function: KmFunction): OverrideResolver.FunctionOverride? =
-        owner?.let { overrideResolver.override(it, function) }
+    private fun override(
+        owner: OverrideResolver.Owner?,
+        function: KmFunction,
+        jvmDescriptor: String? = null
+    ): OverrideResolver.FunctionOverride? = owner?.let { overrideResolver.override(it, function, jvmDescriptor) }
 
     private fun isOverride(owner: OverrideResolver.Owner?, property: KmProperty): Boolean =
         owner != null && overrideResolver.isOverride(owner, property)
@@ -8919,8 +8966,12 @@ private class TypeProjections(val projections: Map<Int, KmTypeProjection>) {
     val projected: Set<Int> = projections.filterValues { it.type == null || it.variance != KmVariance.INVARIANT }.keys
 }
 
-// whether the JVM type is a primitive one, like int, see isMergedJvmParameter
-private val AsmType.isPrimitive: Boolean get() = sort in AsmType.BOOLEAN..AsmType.DOUBLE
+// the read-only collection types of the mutable ones, like kotlin/collections/List of kotlin/collections/MutableList, see rivalryVariants
+private val READ_ONLY_COLLECTION_TYPES: Map<String, String> = MUTABLE_COLLECTION_TYPES.entries.associate { (readOnly, mutable) -> mutable to readOnly }
+
+// the most variants of the types of the value parameters of a member compared with a member of a Java class, see rivalryVariants,
+// as each collection type of a Java member doubles them, like a Map<String, List<String>> of four
+private const val MAX_RIVALRY_VARIANTS = 64
 
 // whether the JVM array type is one of a primitive type, like int[], unlike int[][], see isMergedJvmParameter
 private val AsmType.isPrimitiveArray: Boolean get() = dimensions == 1 && elementType.isPrimitive

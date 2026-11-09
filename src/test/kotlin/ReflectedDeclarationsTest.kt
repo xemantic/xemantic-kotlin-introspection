@@ -23,7 +23,9 @@ import com.xemantic.kotlin.introspection.test.GenericInnerTypes
 import com.xemantic.kotlin.introspection.test.KeywordMembersSample
 import com.xemantic.kotlin.introspection.test.NonGenericInnerTypes
 import com.xemantic.kotlin.introspection.test.ReflectedValueParametersSample
+import com.xemantic.kotlin.introspection.test.other.JavaBoxedTriplePut
 import com.xemantic.kotlin.introspection.test.other.JavaConvertedShapes
+import com.xemantic.kotlin.introspection.test.other.JavaGenericPutImplementation
 import com.xemantic.kotlin.introspection.test.other.JavaLabelBase
 import com.xemantic.kotlin.introspection.test.other.JavaNullableMergeMap
 import com.xemantic.kotlin.introspection.test.other.JavaUnnamedParameters
@@ -438,6 +440,47 @@ class ReflectedDeclarationsTest {
 
         // then
         assert(type.isNullable && (type.classifier as? KmClassifier.TypeParameter)?.id == 0)
+    }
+
+    @Test
+    fun `should render all parameters of Java member overriding no Kotlin one it is taken for as nullable`() {
+        // given - kotlin-reflect takes put(Integer, String, Integer) for an override of put(a: Int, b: String, c: Int),
+        // taking (int, String, int) on the JVM, so that it overrides nothing, and put(null, null, null) compiles
+        val put = JavaBoxedTriplePut::class.memberFunctions.single { function ->
+            function.name == "put" && function.javaMethod?.parameterTypes?.first() == Int::class.javaObjectType
+        }
+
+        // when
+        val nullable = put.toKmFunction(ReflectedTypeParameters.classTypeParameters(emptyList())).valueParameters.map { it.type.isNullable }
+
+        // then
+        assert(nullable == listOf(true, true, true))
+    }
+
+    @Test
+    fun `should keep parameters of Java member implementing Kotlin one not nullable`() {
+        // given - put(int, String, int) implements put(a: Int, b: String, c: Int), taking String as declared there
+        val put = JavaBoxedTriplePut::class.memberFunctions.single { function ->
+            function.name == "put" && function.javaMethod?.parameterTypes?.first() == Int::class.javaPrimitiveType
+        }
+
+        // when
+        val nullable = put.toKmFunction(ReflectedTypeParameters.classTypeParameters(emptyList())).valueParameters.map { it.type.isNullable }
+
+        // then
+        assert(nullable == listOf(false, false, false))
+    }
+
+    @Test
+    fun `should render parameter of Java member implementing Kotlin one of type argument given by Java as nullable`() {
+        // given - the Integer of GenericPut<Integer> is Int! in K2, so that put(null) compiles
+        val put = JavaGenericPutImplementation::class.memberFunctions.single { it.name == "put" }
+
+        // when
+        val type = put.toKmFunction(ReflectedTypeParameters.classTypeParameters(emptyList())).valueParameters.single().type
+
+        // then
+        assert(type.isNullable)
     }
 
     @Test

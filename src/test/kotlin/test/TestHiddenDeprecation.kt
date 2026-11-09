@@ -838,6 +838,10 @@ interface HiddenPrimitiveGenericPutJoin : HiddenPrimitivePut, GenericPut<Int>
 
 abstract class PrimitiveAndBoxedJavaHiddenPut : com.xemantic.kotlin.introspection.test.other.JavaPrimitiveAndBoxedHiddenPut()
 
+// the hidden put(key: Int) of HiddenPrimitivePut, between the two, hides neither of the others
+abstract class GenericBoxedJavaHiddenGenericPutJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaIntegerPut(), HiddenPrimitivePut, GenericPut<Int>
+
 interface HiddenPrimitivePutRedeclaring : HiddenPrimitivePut
 
 abstract class BoxedJavaPutBelowHiddenInterface : com.xemantic.kotlin.introspection.test.other.JavaBoxedPutBelowHiddenInterface()

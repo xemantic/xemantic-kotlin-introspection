@@ -283,15 +283,6 @@ internal fun KmFunction.substituted(substitution: Map<Int, KmType>, names: Map<I
 }
 
 /**
- * This function with the nullable types of its value parameters not nullable,
- * like the platform types of Java, rendered as nullable, see [toKmFunction], which a Kotlin override declares not nullable,
- * telling the members of the Kotlin supertypes it overrides, see [OverrideResolver.overriddenMembers].
- */
-internal fun KmFunction.withNotNullableParameters(): KmFunction = copy(
-    valueParameterType = { type -> if (type.isNullable) type.notNullable() else type }
-)
-
-/**
  * This function with the types of its value parameters given by the [type].
  */
 internal fun KmFunction.withValueParameterTypes(type: (KmType) -> KmType): KmFunction = copy(valueParameterType = type)
