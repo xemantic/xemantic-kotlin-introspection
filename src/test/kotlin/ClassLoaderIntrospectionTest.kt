@@ -2798,10 +2798,17 @@ class ClassLoaderIntrospectionTest {
     /**
      * An introspector of the isolated test fixtures without the class `Absent`,
      * whose class loader loads every class, but serves the class files of the [unreadableClasses]
-     * with an unsupported major version, like a class file too new for ASM.
+     * with an unsupported major version, like a class file too new for ASM,
+     * and of an unknown constant pool entry, unless their [methodTables] are readable.
+     *
+     * @param methodTables whether the constant pools, the supertypes and the method tables of the class files can still be read,
+     *   like of a class file only too new to be parsed.
      */
-    private fun introspectorWithUnreadableClassFiles(vararg unreadableClasses: String): KotlinIntrospector {
-        val root = isolatedTestFixturesCopy("unreadable", "Absent.class")
+    private fun introspectorWithUnreadableClassFiles(
+        vararg unreadableClasses: String,
+        methodTables: Boolean = true
+    ): KotlinIntrospector {
+        val root = isolatedTestFixturesCopy("unreadable" + (if (methodTables) "" else "-constant-pools"), "Absent.class")
         val unreadableResources = unreadableClasses.map { it.replace('.', '/') + ".class" }.toSet()
         val classLoader = object : URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader) {
             override fun getResourceAsStream(name: String): InputStream? {
@@ -2811,6 +2818,8 @@ class ClassLoaderIntrospectionTest {
                     // the major version, following the magic number and the minor version
                     bytes[6] = 0x7F
                     bytes[7] = 0x7F
+                    // the tag of the first constant pool entry, following the constant pool count
+                    if (!methodTables) bytes[10] = 0x7F
                     bytes.inputStream()
                 } else stream
             }
@@ -3543,10 +3552,40 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
-    fun `should resolve class whose Java superclass can be neither reflected nor parsed`() {
+    fun `should mark overrides of Java superclass which can be neither reflected nor parsed by its method table`() {
         // given
         val introspector = introspectorWithUnreadableClassFiles(
             "com.xemantic.kotlin.introspection.isolated.AbsentJavaBase"
+        )
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.AbsentJavaSubclass"
+        )
+
+        // then
+        // the methods of the superclass, with their generic signatures, are read from the class file too new to be parsed
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.AbsentJavaSubclass [page 1/1]
+            class AbsentJavaSubclass : AbsentJavaBase<String> {
+                override fun process(item: String)
+                fun process(item: Int)
+                override fun run()
+                fun run(times: Int)
+                fun prim(x: Int?)
+                override fun <S : String> bounded(x: S)
+                fun <S : Number> bounded(x: S)
+                override fun take(nested: DollarHolder.`Dollar${'$'}Nested`)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class whose Java superclass can be neither reflected nor read`() {
+        // given
+        val introspector = introspectorWithUnreadableClassFiles(
+            "com.xemantic.kotlin.introspection.isolated.AbsentJavaBase",
+            methodTables = false
         )
 
         // when
