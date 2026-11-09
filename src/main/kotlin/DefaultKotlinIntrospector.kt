@@ -1294,6 +1294,11 @@ internal class DefaultKotlinIntrospector(
      * or `null`: one of its superclasses declaring a method of the same name and parameter types,
      * which kotlin-reflect might describe as another member, like the `size()` of `java.util.Hashtable`,
      * seen in Kotlin as the `size` of `Map`, overriding the abstract one of `java.util.Dictionary`,
+     * but the one of a class which does not implement the interface declaring the [method] only merges with it
+     * in a Kotlin subclass implementing both, like the `size()` of `java.util.HashSet` with the one of an unrelated Java interface,
+     * which stays abstract in Kotlin, unlike in a Java subclass implementing both,
+     * unless the method of the interface returns a type of the nullability its annotations tell, see [javaNullabilityOf],
+     * which K2 picks of the merged ones, like the `@Nullable String get()` of an interface over the `String get()` of a superclass,
      * or, of a public [method], the one resolved on the [inheriting] class being declared by a subtype of its class,
      * as a JVM class, whose superclasses can be told, tells it, unlike the Kotlin view of its methods.
      * Neither a bridge, like the one javac generates in a public class for a public method of its package-private superclass,
@@ -1305,8 +1310,16 @@ internal class DefaultKotlinIntrospector(
         val parameterTypes = method.parameterTypes
         fun Method.overrides() = !isBridge && !Modifier.isPrivate(modifiers) && !Modifier.isStatic(modifiers) &&
             name == method.name && this.parameterTypes.contentEquals(parameterTypes)
+        // the method of a superclass not implementing the interface declaring the method is merged with it, not overriding it,
+        // by a Kotlin class, implementing both, but implements it in a Java class between them, implementing the interface,
+        // unless the method of the interface returns a type its nullability annotations tell, which K2 picks among the merged ones
+        var isImplementedByJava = false
+        val isMerged = lazy(LazyThreadSafetyMode.NONE) { !method.returnType.isPrimitive && javaNullabilityOf(method)?.returnType != null }
         generateSequence(inheriting.superclass) { it.superclass }.takeWhile { it != declaring }.firstNotNullOfOrNull { superclass ->
-            superclass.declaredMethods.firstOrNull { it.overrides() }
+            val isImplementing = declaring.isAssignableFrom(superclass)
+            if (isImplementing && !superclass.isAnnotationPresent(Metadata::class.java)) isImplementedByJava = true
+            superclass.takeIf { isImplementing || (isImplementedByJava && !isMerged.value) }
+                ?.declaredMethods?.firstOrNull { it.overrides() }
         } ?: if (!Modifier.isPublic(method.modifiers)) null else inheriting.getMethod(method.name, *parameterTypes).takeIf {
             it.overrides() && it.declaringClass != declaring && declaring.isAssignableFrom(it.declaringClass)
         }
@@ -2924,10 +2937,14 @@ internal class DefaultKotlinIntrospector(
             directSupertypes[name] = superSupertypes.classNames()
             if (superKmClass.kind != ClassKind.INTERFACE) classNames += name
             pending += superSupertypes.map { it.substituted(substitution) }
-            // the supertypes of a class reached through a raw supertype are raw too, like the raw ones of a Java class
+            // the supertypes of a class reached through a raw supertype are raw too, like the raw ones of a Java class,
+            // also of a Kotlin class reached raw, like the Java superclass of `KotlinMid<T> : JavaBase<T>()`
+            // of a raw `class Sub extends KotlinMid`
             if (superDeclarations is JavaClass) {
                 val rawSupertypeNames = superDeclarations.rawSupertypeNames.mapTo(HashSet()) { unlocatedName(declarations, it) }
                 superSupertypes.classNames().filterTo(rawlyReached) { name in rawlyReached || it in rawSupertypeNames }
+            } else if (name in rawlyReached) {
+                rawlyReached += superSupertypes.classNames()
             }
             if (superDeclarations is JavaClass) javaClasses += name
             if (superDeclarations is JavaClass && !reflectedValue(default = true) { superDeclarations.clazz.isJdkClass }) {
@@ -3426,11 +3443,18 @@ internal class DefaultKotlinIntrospector(
         }
         val notOverridden = candidates.filter { isListable(it) && it !in jvmOnlyOverridden }
         // whether the member a wins over the merged member b, of a less specific return type, see compareReturnType,
-        // or else declared later
+        // or else the method of a Java class over the one of a Java interface, which it implements in Kotlin,
+        // whatever the order of the supertypes, or else the one walked first
+        fun isJavaClassMember(candidate: InheritedCandidate) =
+            candidate.declarations is JavaClass && candidate.kmClass.kind != ClassKind.INTERFACE
         fun wins(a: InheritedCandidate, aIndex: Int, b: InheritedCandidate, bIndex: Int): Boolean =
             when (val specificity = a.compareReturnType(b, supertypeNamesOf)) {
                 null -> false
-                0 -> aIndex < bIndex
+                0 -> when {
+                    a.declarations is JavaClass && b.declarations is JavaClass && isJavaClassMember(a) != isJavaClassMember(b) ->
+                        isJavaClassMember(a)
+                    else -> aIndex < bIndex
+                }
                 else -> specificity > 0
             }
         // the member winning over all the others, or none, when some cannot be compared

@@ -843,3 +843,68 @@ abstract class InheritedJavaBiFunctionDiamond :
 // java.util.function.Consumer reached alike, whose accept returns no platform type, so that K2 takes the first one
 abstract class InheritedJavaConsumerDiamond :
     com.xemantic.kotlin.introspection.test.other.JavaTypeConsumer<String>, java.util.function.Consumer<String>
+
+// The bounds of the type parameters of the methods of Java classes, marked by @NullMarked, or annotated not nullable
+abstract class InheritedJavaNullMarkedBounds : com.xemantic.kotlin.introspection.test.other.JavaNullMarkedBounds()
+
+abstract class InheritedJavaNotNullBounds : com.xemantic.kotlin.introspection.test.other.JavaNotNullBounds()
+
+// The overrides of a Java class not marked, inheriting the types of a Java class marked by @NullMarked, also through another one
+abstract class InheritedJavaNullMarkedBaseOverriding : com.xemantic.kotlin.introspection.test.other.JavaNullMarkedBaseOverriding()
+
+abstract class InheritedJavaNullMarkedBaseOverridingDown :
+    com.xemantic.kotlin.introspection.test.other.JavaNullMarkedBaseOverridingDown()
+
+// The overrides of a Java class marked by @NullMarked, inheriting the type variable annotated not nullable, given a nullable type argument
+abstract class InheritedJavaNullMarkedTypeVariableOverriding :
+    com.xemantic.kotlin.introspection.test.other.JavaNullMarkedTypeVariableOverriding<String?>()
+
+// The overrides of Java classes annotated otherwise than the methods they override, of platform types then
+abstract class InheritedJavaConflictingOverriding : com.xemantic.kotlin.introspection.test.other.JavaConflictingOverriding()
+
+abstract class InheritedJavaNullMarkedConflictingOverriding :
+    com.xemantic.kotlin.introspection.test.other.JavaNullMarkedConflictingOverriding()
+
+// The override of a Java class not annotated, of the methods of its supertypes annotated otherwise
+abstract class InheritedJavaDisagreeingOverriding : com.xemantic.kotlin.introspection.test.other.JavaDisagreeingOverriding()
+
+// The get() of a Java superclass, merged with the one of a Java interface annotated nullable through the bridge of a Java class
+abstract class InheritedJavaBridgedGet : com.xemantic.kotlin.introspection.test.other.JavaBridgedGet()
+
+// A Kotlin class extending a generic Java class, reached raw through a Java subclass, see JavaRawThroughKotlinMid
+abstract class KotlinRawThroughBase<T> : com.xemantic.kotlin.introspection.test.other.JavaRawThroughKotlinBase<T>()
+
+abstract class InheritedJavaRawThroughKotlin : com.xemantic.kotlin.introspection.test.other.JavaRawThroughKotlinMid()
+
+// The size() of a Java interface, which the size of Set, implemented by java.util.HashSet, does not implement
+abstract class InheritedJavaSizeFaceSet : java.util.HashSet<String>(), com.xemantic.kotlin.introspection.test.other.JavaSizeFace
+
+// The vararg contains, and compareTo, of a Java subclass of java.util.LinkedHashSet, whose members kotlin-reflect cannot describe
+abstract class InheritedJavaVarargContainsSet : com.xemantic.kotlin.introspection.test.other.JavaVarargContainsSet()
+
+// The overrides of type variables given by Java classes not marked, of a type variable of a Java class marked by @NullMarked,
+// passed through by a generic subclass, or given a type argument annotated nullable,
+// and of a Java class marked by @NullUnmarked in between, which inherit no mark
+abstract class InheritedJavaGenericPassing : com.xemantic.kotlin.introspection.test.other.JavaGenericPassing<String?>()
+
+abstract class InheritedJavaGenericPassingBottom : com.xemantic.kotlin.introspection.test.other.JavaGenericPassingBottom()
+
+abstract class InheritedJavaNullableArgumentPassing : com.xemantic.kotlin.introspection.test.other.JavaNullableArgumentPassing()
+
+abstract class InheritedJavaNullUnmarkedMidBottom : com.xemantic.kotlin.introspection.test.other.JavaNullUnmarkedMidBottom()
+
+// The methods marked by @NullMarked of a Java class not marked, and their override
+abstract class InheritedJavaMethodNullMarked : com.xemantic.kotlin.introspection.test.other.JavaMethodNullMarked<String>()
+
+abstract class InheritedJavaMethodNullMarkedOverriding : com.xemantic.kotlin.introspection.test.other.JavaMethodNullMarkedOverriding()
+
+// A Java subclass of java.util.HashSet implementing JavaSizeFace, whose size() implements the one of the interface
+abstract class InheritedJavaSizeFaceHashSet : com.xemantic.kotlin.introspection.test.other.JavaSizeFaceHashSet()
+
+// The overrides of the type variable of a Java class marked by @NullMarked, given through the type variables
+// of Java classes not marked, which inherit platform types, and given directly, which inherits the mark
+abstract class InheritedJavaPassingMidOverriding : com.xemantic.kotlin.introspection.test.other.JavaPassingMidOverriding()
+
+abstract class InheritedJavaPassingMid2Overriding : com.xemantic.kotlin.introspection.test.other.JavaPassingMid2Overriding()
+
+abstract class InheritedJavaPassingDirect : com.xemantic.kotlin.introspection.test.other.JavaPassingDirect()
