@@ -35,7 +35,12 @@ import java.lang.reflect.Type
 import java.lang.reflect.TypeVariable
 import java.lang.reflect.WildcardType
 import java.lang.reflect.Array as JavaArray
+import java.util.Collections
+import java.util.Optional
+import java.util.WeakHashMap
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.jvm.functions.FunctionN
+import kotlin.jvm.optionals.getOrNull
 import kotlin.metadata.*
 import kotlin.metadata.jvm.annotations
 import kotlin.reflect.KCallable
@@ -294,10 +299,10 @@ internal fun KClass<*>.toKmBuiltinClass(name: String): KmClass {
             KmConstructor().also { kmConstructor ->
                 kmConstructor.visibility = Visibility.PUBLIC
                 // a constructor infers the type arguments of the class at the call, like a function its own ones,
-                // which are never taken as not nullable, so that isJdkMember is never asked for
+                // which are never taken as not nullable, so that isNotNullClassTypeParameter is never asked for
                 constructor.parameters.withIndex().mapTo(kmConstructor.valueParameters) { (position, parameter) ->
                     parameter.toKmValueParameter(
-                        position, typeParameters, ownTypeParameters = this.typeParameters, isJdkMember = lazyOf(true)
+                        position, typeParameters, ownTypeParameters = this.typeParameters, isNotNullClassTypeParameter = lazyOf(true)
                     )
                 }
             }
@@ -520,20 +525,91 @@ internal fun KFunction<*>.toKmFunction(typeParameters: ReflectedTypeParameters):
     function.typeParameters += this.typeParameters.map { it.toKmTypeParameter(scope) }
     parameters.contextParametersTo(function.contextParameters, scope)
     function.receiverParameterType = parameters.extensionReceiverType(scope)
-    // a member of a JDK class, like `merge` of `java.util.HashMap`, takes the type parameters of its class as in Kotlin,
-    // while a member of another Java class, like the override of `merge` of a `MyMap<K, V> extends HashMap<K, V>`, takes them as `K!`
-    val isJdkMember = lazy(LazyThreadSafetyMode.NONE) {
-        reflectedValue(default = true) { javaMethod?.declaringClass?.isJdkClass ?: true }
-    }
+    // a member of a JDK class might take the type parameters of its class as in Kotlin, like `addFirst` of `java.util.List`,
+    // see isNotNullClassTypeParameter, while a member of another Java class takes them as platform types,
+    // like the override of `merge` of a `MyMap<K, V> extends HashMap<K, V>`, taking `K!`
+    val method = lazy(LazyThreadSafetyMode.NONE) { reflectedValue(default = null) { javaMethod } }
     parameters.filter { it.kind == KParameter.Kind.VALUE }.withIndex().mapTo(function.valueParameters) { (position, parameter) ->
-        parameter.toKmValueParameter(position, scope, ownTypeParameters = this.typeParameters, isJdkMember = isJdkMember)
+        val isNotNullClassTypeParameter = lazy(LazyThreadSafetyMode.NONE) {
+            method.value?.let { reflectedValue(default = true) { isNotNullClassTypeParameter(it, position) } } ?: true
+        }
+        parameter.toKmValueParameter(position, scope, ownTypeParameters = this.typeParameters, isNotNullClassTypeParameter)
+    }
+    if (method.value?.let { reflectedValue(default = false) { isComparableJavaMethod(it) } } == true) {
+        function.valueParameters.single().type.isNullable = true
+    }
+    method.value?.let { javaMethod ->
+        function.valueParameters.forEachIndexed { position, parameter ->
+            if (reflectedValue(default = false) { isBoxedNextToPrimitive(javaMethod, position) }) parameter.type.isNullable = true
+        }
     }
     function.returnType = returnType.toKmType(scope)
     enhanceDefinitelyNotNull(function)
     enhanceNullableReturn(function)
     // the annotations win over the enhancements of the JDK methods overridden, like the @NotNull of a get() of a WeakReference
-    reflectedValue(default = null) { javaMethod }?.let { enhanceJavaNullability(it, function) }
+    method.value?.let { enhanceJavaNullability(it, function) }
     return function
+}
+
+/**
+ * Whether the [method] is the `compareTo` of a Java class implementing `java.lang.Comparable`, like the one of `java.io.File`,
+ * which kotlin-reflect describes taking its type argument as not nullable, like `compareTo(other: File)`,
+ * though K2 takes it as a platform type, like `File!`, so that `compareTo(null)` compiles,
+ * unlike the one of the JVM class of a built-in type, like `compareTo(other: String)` of `java.lang.String`.
+ */
+private fun isComparableJavaMethod(method: Method): Boolean {
+    if (method.name != "compareTo" || method.parameterCount != 1 || method.parameterTypes[0].isPrimitive) return false
+    val declaringClass = method.declaringClass
+    return Comparable::class.java.isAssignableFrom(declaringClass) &&
+        declaringClass.kotlin.qualifiedName == declaringClass.canonicalName
+}
+
+/**
+ * Whether the value parameter of the [method] at the [position] is of a boxed type, like `Integer`,
+ * while its class, not of the JDK, declares or inherits the overload of the primitive type there,
+ * or of the primitive types at the positions of all its boxed ones, like `put(int)` next to `put(Integer)`,
+ * or `put(int, int)` next to `put(Integer, Integer)`, also the `put(key: Int)` of a Kotlin interface, deprecated as hidden or not,
+ * which kotlin-reflect takes as overridden by the boxed one, describing it as not nullable, like `put(arg0: Int)`,
+ * though only the one of the primitive type overrides it on the JVM, so that K2 takes the boxed one as a platform type,
+ * like `Int!`, and `put(null)` compiles.
+ */
+private fun isBoxedNextToPrimitive(method: Method, position: Int): Boolean {
+    val declaringClass = method.declaringClass
+    if (declaringClass.isJdkClass) return false
+    val parameterTypes = method.parameterTypes
+    val primitive = parameterTypes.getOrNull(position)?.kotlin?.javaPrimitiveType?.takeIf { it != parameterTypes[position] }
+        ?: return false
+    // the overload of the primitive type at this position only, or at the position of each boxed type
+    val primitiveTypes = parameterTypes.copyOf().also { it[position] = primitive }
+    val allPrimitiveTypes = parameterTypes.map { it.kotlin.javaPrimitiveType ?: it }
+    val methods = overridableMethods.get(declaringClass)
+    return listOf(primitiveTypes.toList(), allPrimitiveTypes).any { types ->
+        method.name + AsmType.getMethodDescriptor(AsmType.VOID_TYPE, *types.map(AsmType::getType).toTypedArray()) in methods
+    }
+}
+
+/**
+ * The instance methods a method of a class might be an overload of, see [isBoxedNextToPrimitive], by their names
+ * followed by their parameter types, as a JVM method descriptor returning `void`, like `put(I)V`:
+ * the ones the class declares, the ones of its superclasses, but the private ones, and the public ones of its interfaces,
+ * also the synthetic ones of the members of a Kotlin interface deprecated as hidden, computed once per class,
+ * the ones of the class still told when the ones of its supertypes cannot be reflected, like on a broken classpath.
+ */
+private val overridableMethods = object : ClassValue<Set<String>>() {
+    override fun computeValue(type: Class<*>): Set<String> {
+        fun Method.key() = name + AsmType.getMethodDescriptor(AsmType.VOID_TYPE, *AsmType.getArgumentTypes(this))
+        fun Method.isOverridable() = !Modifier.isStatic(modifiers) && !Modifier.isPrivate(modifiers)
+        val keys = HashSet<String>()
+        fun collect(methods: () -> Array<Method>) = reflectedValue(default = Unit) {
+            methods().forEach { if (it.isOverridable()) keys += it.key() }
+        }
+        collect { type.declaredMethods }
+        reflectedValue(default = Unit) {
+            generateSequence(type.superclass) { it.superclass }.forEach { superclass -> collect { superclass.declaredMethods } }
+        }
+        collect { type.methods }
+        return keys
+    }
 }
 
 /**
@@ -791,24 +867,25 @@ internal fun varargElementType(arrayType: KmType): KmType =
 /**
  * The declaration of this parameter in the Kotlin metadata, at the [position] among the value parameters,
  * of a callable declaring the [ownTypeParameters], whose type arguments are inferred at the call,
- * unlike the ones of the class, given by the receiver, and whether it is a member of a JDK class, the [isJdkMember],
- * told only when needed.
+ * unlike the ones of the class, given by the receiver, and whether its type, if a type parameter of the class,
+ * is not nullable, unlike a platform type, see [isNotNullClassTypeParameter], told only when needed.
  */
 private fun KParameter.toKmValueParameter(
     position: Int,
     scope: ReflectedTypeParameters,
     ownTypeParameters: List<KTypeParameter>,
-    isJdkMember: Lazy<Boolean>
+    isNotNullClassTypeParameter: Lazy<Boolean>
 ): KmValueParameter =
     KmValueParameter(name ?: "arg$position").also { parameter ->
         // a Java parameter of a platform type, like Any! of Object, accepts null,
         // but a vararg one, whose array is never null, and which tells the nullability of its elements below,
-        // and one of a type parameter of the class of a JDK member, like E! of `addFirst` of `java.util.List`, which accepts null
-        // only when the type argument of the receiver does, unlike for `addFirst(null)` of a `MutableList<String>`,
-        // while K2 takes the one of a member of another Java class as a platform type, like `addFirst(null)` of a Java subclass
-        // of `java.util.ArrayList<String>` overriding it, which compiles
+        // and one of a type parameter of the class of a JDK member K2 enhances, like E! of `addFirst` of `java.util.List`,
+        // which accepts null only when the type argument of the receiver does, unlike for `addFirst(null)` of a `MutableList<String>`,
+        // see isNotNullClassTypeParameter, while K2 takes the one of a member of another Java class as a platform type,
+        // like `addFirst(null)` of a Java subclass of `java.util.ArrayList<String>` overriding it, which compiles
         val classifier = type.classifier
-        val isClassTypeParameter = classifier is KTypeParameter && classifier !in ownTypeParameters && isJdkMember.value
+        val isClassTypeParameter = classifier is KTypeParameter && classifier !in ownTypeParameters &&
+            isNotNullClassTypeParameter.value
         val type = type.toKmType(scope, platformAsNullable = !isVararg && !isClassTypeParameter)
         // a raw type of Java, like the BiFunction of `merge` of a Java subclass of a raw `java.util.HashMap`,
         // which kotlin-reflect tells by the type arguments of its lower bound, like `BiFunction<Any!, Any!, Any!>`,
@@ -969,6 +1046,81 @@ internal val Class<*>.isJdkClass: Boolean
     get() = classLoader.let { it == null || it == ClassLoader.getPlatformClassLoader() }
 
 /**
+ * The JDK methods whose value parameters K2 enhances as not nullable, by their JVM signatures,
+ * like `java/util/LinkedList.addFirst(Ljava/lang/Object;)V`, and the positions of these value parameters:
+ * the ones of `PREDEFINED_FUNCTION_ENHANCEMENT_INFO_BY_SIGNATURE` of the compiler, of the classes which are not final,
+ * compared with the copy of kotlin-reflect by `ReflectedDeclarationsTest`,
+ * as kotlin-reflect applies them, though its public API still tells such a type as a platform type, like `E!`.
+ */
+internal val NOT_NULL_PARAMETER_JDK_METHODS: Map<String, Set<Int>> = mapOf(
+    "java/util/Collection.removeIf(Ljava/util/function/Predicate;)Z" to setOf(0),
+    "java/util/Iterator.forEachRemaining(Ljava/util/function/Consumer;)V" to setOf(0),
+    "java/util/LinkedHashMap.putFirst(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;" to setOf(0, 1),
+    "java/util/LinkedHashMap.putLast(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;" to setOf(0, 1),
+    "java/util/LinkedHashSet.addFirst(Ljava/lang/Object;)V" to setOf(0),
+    "java/util/LinkedHashSet.addLast(Ljava/lang/Object;)V" to setOf(0),
+    "java/util/LinkedList.addFirst(Ljava/lang/Object;)V" to setOf(0),
+    "java/util/LinkedList.addLast(Ljava/lang/Object;)V" to setOf(0),
+    "java/util/List.addFirst(Ljava/lang/Object;)V" to setOf(0),
+    "java/util/List.addLast(Ljava/lang/Object;)V" to setOf(0),
+    "java/util/List.replaceAll(Ljava/util/function/UnaryOperator;)V" to setOf(0),
+    "java/util/Map.compute(Ljava/lang/Object;Ljava/util/function/BiFunction;)Ljava/lang/Object;" to setOf(0, 1),
+    "java/util/Map.computeIfAbsent(Ljava/lang/Object;Ljava/util/function/Function;)Ljava/lang/Object;" to setOf(0, 1),
+    "java/util/Map.computeIfPresent(Ljava/lang/Object;Ljava/util/function/BiFunction;)Ljava/lang/Object;" to setOf(0, 1),
+    "java/util/Map.forEach(Ljava/util/function/BiConsumer;)V" to setOf(0),
+    "java/util/Map.merge(Ljava/lang/Object;Ljava/lang/Object;Ljava/util/function/BiFunction;)Ljava/lang/Object;" to setOf(0, 1, 2),
+    "java/util/Map.putIfAbsent(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;" to setOf(0, 1),
+    "java/util/Map.replace(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;" to setOf(0, 1),
+    "java/util/Map.replace(Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;)Z" to setOf(0, 1, 2),
+    "java/util/Map.replaceAll(Ljava/util/function/BiFunction;)V" to setOf(0),
+    "java/util/function/BiConsumer.accept(Ljava/lang/Object;Ljava/lang/Object;)V" to setOf(0, 1),
+    "java/util/function/BiFunction.apply(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;" to setOf(0, 1),
+    "java/util/function/BiPredicate.test(Ljava/lang/Object;Ljava/lang/Object;)Z" to setOf(0, 1),
+    "java/util/function/Consumer.accept(Ljava/lang/Object;)V" to setOf(0),
+    "java/util/function/Function.apply(Ljava/lang/Object;)Ljava/lang/Object;" to setOf(0),
+    "java/util/function/Predicate.test(Ljava/lang/Object;)Z" to setOf(0)
+)
+
+// telling most methods apart without computing their JVM descriptors, see isNotNullClassTypeParameter
+private val notNullParameterJdkMethodNames: Set<String> =
+    NOT_NULL_PARAMETER_JDK_METHODS.keys.mapTo(HashSet()) { it.substringAfter('.').substringBefore('(') }
+
+// the JVM signatures of NOT_NULL_PARAMETER_JDK_METHODS by the names and JVM descriptors of the methods,
+// like `addFirst(Ljava/lang/Object;)V`, and by the positions of their value parameters, see isNotNullClassTypeParameter
+private val notNullParameterJdkMethodSignatures: Map<String, Map<Int, Set<String>>> =
+    NOT_NULL_PARAMETER_JDK_METHODS.entries.groupBy { it.key.substringAfter('.') }.mapValues { (_, entries) ->
+        entries.flatMap { (signature, positions) -> positions.map { it to signature } }
+            .groupBy({ it.first }, { it.second }).mapValues { it.value.toSet() }
+    }
+
+/**
+ * Whether the value parameter at the [position] of the [method], of a type parameter of its class,
+ * is of the type parameter as in Kotlin, not nullable, unlike a platform type, like `E!`, accepting `null`:
+ * of a JDK method of the JVM class of a built-in type, like `addFirst` of `java.util.List`, a JVM-only member of `MutableList`,
+ * or of one which K2 enhances, see [NOT_NULL_PARAMETER_JDK_METHODS], also of a JDK method overriding it by the same JVM descriptor,
+ * like `addFirst` of `java.util.ArrayList` the one of `java.util.List`, unlike of a Java class of the user code.
+ * A JDK method overriding a member of the built-in type its class is the pure implementation of,
+ * see `FakePureImplementationsProvider` of the compiler, like `add` of `java.util.ArrayList` of `MutableList`,
+ * takes them as in Kotlin too, as kotlin-reflect tells by its types, which are no platform types then,
+ * unlike the one of another JDK class, like `add` of `java.util.Vector`, or `push` of `java.util.LinkedList`, taking `E!`,
+ * so that only a method [isConverted] from the Java method, see [toKmJavaFunction], which kotlin-reflect does not describe,
+ * is told so by its class, one of the [PURE_IMPLEMENTATIONS], and by overriding a method of a built-in type,
+ * see [overridesBuiltinJavaMethod].
+ */
+internal fun isNotNullClassTypeParameter(method: Method, position: Int, isConverted: Boolean = false): Boolean {
+    val declaringClass = method.declaringClass
+    if (!declaringClass.isJdkClass) return false
+    // like java.util.List, described as kotlin.collections.List
+    if (declaringClass.kotlin.qualifiedName != declaringClass.canonicalName) return true
+    if (method.name in notNullParameterJdkMethodNames) {
+        val nameAndDescriptor = method.name + AsmType.getMethodDescriptor(method)
+        val signatures = notNullParameterJdkMethodSignatures[nameAndDescriptor]?.get(position)
+        if (signatures != null && method.overridesAnyOf(nameAndDescriptor, signatures)) return true
+    }
+    return isConverted && AsmType.getInternalName(declaringClass) in PURE_IMPLEMENTATIONS && overridesBuiltinJavaMethod(method)
+}
+
+/**
  * Marks the return type of the [function], converted from this one, nullable, when K2 enhances it so,
  * see [NULLABLE_RETURN_JDK_METHODS], also of a method overriding the JDK one, see [isNullableReturnJdkMethod],
  * unlike the platform type kotlin-reflect tells, rendered as not nullable,
@@ -1015,7 +1167,7 @@ internal fun KFunction<*>.returnsPlatformType(isEnhancementLost: Boolean): Boole
 
 /**
  * Whether this Java method returns a platform type of Java, see [KFunction.returnsPlatformType],
- * any type but a primitive one, or one told by the nullability annotations, see [javaNullabilityOf].
+ * any type but a primitive one, or one told by the nullability annotations, or by `@NullMarked`, see [javaNullabilityOf].
  */
 internal fun Method.returnsPlatformType(isEnhancementLost: Boolean): Boolean {
     if (returnType.isPrimitive || javaNullabilityOf(this)?.returnType != null) return false
@@ -1180,8 +1332,15 @@ private fun KVariance.toKmVariance(): KmVariance = when (this) {
  * nullable, or not, as the nullability annotations tell, see [enhanceJavaNullability],
  * and enhanced like the ones of the JDK methods it describes, see [enhanceDefinitelyNotNull], and [enhanceNullableReturn].
  * An open method of a final class, the [isFinalClass], is final, see [finalIn].
+ * Of a class reached through a raw supertype, [isErased], its types are the erasures, as the compiler sees them,
+ * like `convert(Any!, Any!): Any!` of `<U> U convert(Object, U)`, of raw types, like `List<Any?>`, see [toKmJavaType],
+ * while its type parameters are still declared.
  */
-internal fun Method.toKmJavaFunction(typeParameters: ReflectedTypeParameters, isFinalClass: Boolean): KmFunction {
+internal fun Method.toKmJavaFunction(
+    typeParameters: ReflectedTypeParameters,
+    isFinalClass: Boolean,
+    isErased: Boolean = false
+): KmFunction {
     val scope = typeParameters.withOwnNamed(this.typeParameters.map { it.name })
     val function = KmFunction(name)
     function.visibility = javaVisibility(modifiers)
@@ -1197,13 +1356,13 @@ internal fun Method.toKmJavaFunction(typeParameters: ReflectedTypeParameters, is
             typeVariable.bounds.mapTo(typeParameter.upperBounds) { it.toKmJavaType(scope, platformAsNullable = true) }
         }
     }
-    val isJdkMember by lazy(LazyThreadSafetyMode.NONE) { reflectedValue(default = true) { declaringClass.isJdkClass } }
     parameters.withIndex().mapTo(function.valueParameters) { (position, parameter) ->
         // the name told by the class file, or else the one of its position, like arg0, as kotlin-reflect names it
         KmValueParameter(if (parameter.isNamePresent) parameter.name else "arg$position").also { valueParameter ->
             // nullable like the one kotlin-reflect describes, and star projected when raw, see toKmValueParameter
-            val type = parameter.parameterizedType
-            val isClassTypeParameter = type is TypeVariable<*> && type.genericDeclaration is Class<*> && isJdkMember
+            val type = if (isErased) parameter.type else parameter.parameterizedType
+            val isClassTypeParameter = type is TypeVariable<*> && type.genericDeclaration is Class<*> &&
+                reflectedValue(default = true) { isNotNullClassTypeParameter(this, position, isConverted = true) }
             valueParameter.type = type.toKmJavaType(scope, platformAsNullable = !parameter.isVarArgs && !isClassTypeParameter)
             if (type is Class<*> && type.typeParameters.isNotEmpty()) valueParameter.type.arguments.replaceAll { KmTypeProjection.STAR }
             if (parameter.isVarArgs) {
@@ -1220,7 +1379,7 @@ internal fun Method.toKmJavaFunction(typeParameters: ReflectedTypeParameters, is
             }
         }
     }
-    function.returnType = genericReturnType.toKmJavaType(scope)
+    function.returnType = (if (isErased) returnType else genericReturnType).toKmJavaType(scope)
     enhanceDefinitelyNotNull(this, function)
     enhanceNullableReturn(this, function)
     enhanceJavaNullability(this, function)
@@ -1239,7 +1398,8 @@ private fun isJavaOperator(method: Method): Boolean {
     val isValueOnly = !method.isVarArgs
     return when (method.name) {
         "invoke" -> true
-        "get" -> count >= 1 && isValueOnly
+        // a vararg one too, like `get(int...)`, called like `x[1, 2]`
+        "get" -> count >= 1
         "set" -> count >= 2 && isValueOnly
         "contains", "hasNext" -> count == (if (method.name == "contains") 1 else 0) && returnType == java.lang.Boolean.TYPE
         "compareTo" -> count == 1 && returnType == Integer.TYPE
@@ -1398,63 +1558,296 @@ private val NOT_NULL_ANNOTATIONS: Set<String> = setOf(
 private const val JSR305_NONNULL = "Ljavax/annotation/Nonnull;"
 
 /**
- * The nullability of the types of a Java method told by its annotations, see [NULLABLE_ANNOTATIONS],
- * of its [returnType], and of its [parameters], by their positions, `true` of a nullable type, `false` of a not nullable one,
- * none of a platform type.
+ * The nullability of the types of a Java method, of its return type, at the [RETURN_TYPE] position, and of its parameters,
+ * by their positions, told by its annotations, see [NULLABLE_ANNOTATIONS], or inherited from the methods it overrides,
+ * `true` of a nullable type, `false` of a not nullable one, none of a platform type:
+ * of the [types] themselves, and of the [nested] ones, by the type paths of the class file, see [nestedType],
+ * like `List<String?>` of `List<@Nullable String>`, or `Array<String?>` of `@Nullable String []` of a type annotation,
+ * and of the types not annotated otherwise, not nullable, when [isNullMarked], see [nullMarking],
+ * but the parameters at the [platform] positions, of platform types, where the mark and an overridden method disagree.
  */
-internal class JavaNullability(val returnType: Boolean?, val parameters: Map<Int, Boolean>)
+internal class JavaNullability(
+    val types: Map<Int, Boolean>,
+    val nested: Map<Int, Map<String, Boolean>>,
+    val isNullMarked: Boolean,
+    val platform: Set<Int> = emptySet()
+) {
+
+    /**
+     * The nullability of the return type, or `null` of a platform type, see [types].
+     */
+    val returnType: Boolean? get() = types[RETURN_TYPE] ?: false.takeIf { isNullMarked }
+
+    /**
+     * Whether the type at the [position], not annotated, is not nullable, as marked by `@NullMarked`, see [platform].
+     */
+    fun isMarkedNotNull(position: Int): Boolean = isNullMarked && position !in platform
+
+}
 
 /**
  * Marks the types of the [function], converted from the [method], nullable, or not, as its nullability annotations tell,
  * see [javaNullabilityOf], which kotlin-reflect, reading the annotations retained at runtime only, does not tell of most,
  * like of `@org.jetbrains.annotations.NotNull`, retained in the class file only, which the compiler reads,
  * winning over the enhancements of the JDK methods it overrides, see [enhanceNullableReturn].
+ * A type variable annotated not nullable is definitely not nullable, like `T & Any`, not nullable whatever is given for it,
+ * while one not annotated of a method marked by `@NullMarked` stays as given, like `T`, see [nullMarking].
  */
 private fun enhanceJavaNullability(method: Method, function: KmFunction) {
     val nullability = javaNullabilityOf(method) ?: return
-    nullability.returnType?.let { if (!method.returnType.isPrimitive) function.returnType.markNullable(it) }
-    nullability.parameters.forEach { (position, isNullable) ->
-        val parameter = function.valueParameters.getOrNull(position) ?: return@forEach
-        if (!method.parameterTypes[position].isPrimitive) parameter.type.markNullable(isNullable)
+    // as annotated, or else not nullable, when marked by @NullMarked
+    fun KmType.enhance(position: Int, isNullable: Boolean?) = when (isNullable) {
+        null -> if (nullability.isMarkedNotNull(position)) markNullable(isNullable = false) else Unit
+        else -> markNullable(isNullable, isDefinitelyNonNull = !isNullable)
+    }
+    fun enhance(position: Int, type: KmType, javaType: Class<*>, varargElementType: KmType?) {
+        if (javaType.isPrimitive) return
+        type.enhance(position, nullability.types[position])
+        val nested = nullability.nested[position].orEmpty()
+        nested.forEach { (path, isNullable) -> type.nestedType(path)?.markNullable(isNullable, isDefinitelyNonNull = !isNullable) }
+        // the element of a vararg parameter, rendered on its own, like the `String` of `vararg values: String`
+        if (varargElementType != null && javaType.componentType?.isPrimitive == false) {
+            varargElementType.enhance(position, nested[ARRAY_ELEMENT])
+        }
+    }
+    enhance(RETURN_TYPE, function.returnType, method.returnType, varargElementType = null)
+    function.valueParameters.forEachIndexed { position, parameter ->
+        val javaType = method.parameterTypes.getOrNull(position) ?: return@forEachIndexed
+        enhance(position, parameter.type, javaType, parameter.varargElementType)
     }
 }
 
-// a nullable type is never definitely not nullable, like the V & Any of the Map methods, see enhanceDefinitelyNotNull
-private fun KmType.markNullable(isNullable: Boolean) {
+// a nullable type is never definitely not nullable, like the V & Any of the Map methods, see enhanceDefinitelyNotNull,
+// and only a type parameter is, when told so
+private fun KmType.markNullable(isNullable: Boolean, isDefinitelyNonNull: Boolean = false) {
     this.isNullable = isNullable
-    if (isNullable) isDefinitelyNonNull = false
+    if (isNullable) {
+        this.isDefinitelyNonNull = false
+    } else if (isDefinitelyNonNull && classifier is KmClassifier.TypeParameter) {
+        this.isDefinitelyNonNull = true
+    }
+}
+
+/**
+ * The type nested in this one at the type [path] of the class file, see [TypePath], or `null` if this type does not tell it:
+ * a type argument, like `0;`, an array element, `[`, the bound of a wildcard, `*`, the projection of which is its type already,
+ * but within an inner class, `.`, of the type arguments of the outer classes kept in its outer type, see [toKmJavaType].
+ */
+private fun KmType.nestedType(path: String): KmType? {
+    var type: KmType = this
+    var index = 0
+    while (index < path.length) {
+        when (val step = path[index]) {
+            '[' -> type = type.takeIf { (it.classifier as? KmClassifier.Class)?.name == "kotlin/Array" }?.arguments?.singleOrNull()?.type
+                ?: return null
+            '*' -> {}
+            in '0'..'9' -> {
+                val end = path.indexOf(';', index)
+                type = type.arguments.getOrNull(path.substring(index, end).toInt())?.type ?: return null
+                index = end
+            }
+            else -> return null
+        }
+        index++
+    }
+    return type
 }
 
 /**
  * The nullability of the [method] told by its annotations, see [JavaNullability], or `null` if none is annotated,
+ * and it is not marked by `@NullMarked`, see [nullMarking],
  * read from the class file, as the annotations which the compiler reads, like `@org.jetbrains.annotations.NotNull`,
- * are mostly not retained at runtime: the type annotations of the types themselves, like `@org.jspecify.annotations.Nullable String`,
- * not of their type arguments, nor of the elements of an array, and the declaration annotations,
+ * are mostly not retained at runtime: the type annotations, of the types themselves, like `@org.jspecify.annotations.Nullable String`,
+ * of their type arguments, and of the elements of an array, and the declaration annotations,
  * but the ones applying to a type annotated by them too, like `@org.jetbrains.annotations.Nullable String[]`,
- * of both targets, which the compiler applies to the elements of the array.
+ * of both targets, which the compiler applies to the elements of the array, as javac writes the type annotation there.
+ * The types not annotated take the annotations of the methods the [method] overrides, like the compiler does,
+ * of the same JVM descriptor, or of the one of a bridge of the class declaring it, like `resolve(Object)` of `resolve(String)`
+ * overriding the `resolve(T)` of `Base<String>`.
  */
-internal fun javaNullabilityOf(method: Method): JavaNullability? {
+internal fun javaNullabilityOf(method: Method): JavaNullability? = reflectedValue(default = null) {
     val declaring = method.declaringClass
-    if (declaring.isJdkClass) return null
-    return javaNullabilities.get(declaring).ifEmpty { return null }[method.name + AsmType.getMethodDescriptor(method)]
+    // the types of a Kotlin class are told by its metadata, its JVM parameters including its context parameters, and its receiver
+    if (declaring.isJdkClass || declaring.isAnnotationPresent(Metadata::class.java)) return@reflectedValue null
+    effectiveJavaNullabilities.get(declaring).of(method)
 }
 
 /**
- * The nullabilities of the methods of a class, by their names and JVM descriptors, see [javaNullabilityOf],
- * read once per class.
+ * The nullabilities of the methods of a class, also the inherited ones, see [javaNullabilityOf], each computed once, when needed.
  */
-private val javaNullabilities = object : ClassValue<Map<String, JavaNullability>>() {
-    override fun computeValue(type: Class<*>): Map<String, JavaNullability> =
-        reflectedValue(default = emptyMap()) { readJavaNullabilities(type) }
+private class EffectiveJavaNullabilities(type: Class<*>) {
+
+    private val declared = javaNullabilities.get(type)
+
+    private val nullMarking by lazy(LazyThreadSafetyMode.PUBLICATION) { nullMarking(type) }
+
+    private val nullabilities = ConcurrentHashMap<String, Optional<JavaNullability>>()
+
+    fun of(method: Method): JavaNullability? {
+        val key = method.name + AsmType.getMethodDescriptor(method)
+        return nullabilities.computeIfAbsent(key) { Optional.ofNullable(compute(method, key)) }.getOrNull()
+    }
+
+    private fun compute(method: Method, key: String): JavaNullability? {
+        val own = declared.methods[key]
+        val marking = own?.isNullMarked ?: nullMarking
+        val isNullMarked = marking == true
+        // a method marked by @NullUnmarked, of its own, or by its class, an outer class, or its package, inherits no annotation,
+        // like one annotated, unlike one marked by neither
+        val inherited = if (marking == false) emptyList() else overriddenJavaMethods(method).mapNotNull { javaNullabilityOf(it) }
+        if (own?.nullability == null && inherited.isEmpty() && !isNullMarked) return null
+        val types = HashMap<Int, Boolean>()
+        val nested = HashMap<Int, MutableMap<String, Boolean>>()
+        val platform = HashSet<Int>()
+        fun merge(nullability: JavaNullability) {
+            nullability.types.forEach { (position, isNullable) -> types.putIfAbsent(position, isNullable) }
+            nullability.nested.forEach { (position, paths) ->
+                val positionNested = nested.getOrPut(position) { HashMap() }
+                paths.forEach { (path, isNullable) -> positionNested.putIfAbsent(path, isNullable) }
+            }
+        }
+        // the own annotations first, then the inherited ones, of the types not annotated,
+        // but where the method is marked by @NullMarked, whose types not annotated are not nullable, winning for the return type,
+        // while a parameter of an overridden method taking null is a platform type, which the compiler lets take null
+        own?.nullability?.let(::merge)
+        if (!isNullMarked) {
+            inherited.forEach(::merge)
+        } else {
+            inherited.forEach { nullability ->
+                nullability.types.forEach { (position, isNullable) ->
+                    if (position != RETURN_TYPE && position !in types && isNullable) platform += position
+                }
+            }
+        }
+        return JavaNullability(types, nested, isNullMarked, platform)
+    }
+
+}
+
+private val effectiveJavaNullabilities = object : ClassValue<EffectiveJavaNullabilities>() {
+    override fun computeValue(type: Class<*>): EffectiveJavaNullabilities = EffectiveJavaNullabilities(type)
+}
+
+/**
+ * The methods of the Java classes of the user code which the [method] overrides, see [javaNullabilityOf],
+ * of the supertypes of its class, nearest first, the superclasses before the interfaces.
+ */
+private fun overriddenJavaMethods(method: Method): List<Method> {
+    val declaring = method.declaringClass
+    val descriptor = AsmType.getMethodDescriptor(method)
+    // the JVM descriptors of the method, and of the bridges javac generates for it, calling it, like resolve(Object) of resolve(String),
+    // not of an overload, like resolve(Integer), which a bridge resolve(Object) might take as well,
+    // or else, when the class file cannot be read, of the bridges of the parameter and return types it might call
+    val bridges = javaNullabilities.get(declaring).bridges
+    val descriptors = if (bridges != null) {
+        bridges.filterValues { it == method.name + descriptor }.keys.mapTo(hashSetOf(descriptor)) { it.removePrefix(method.name) }
+    } else {
+        val parameterTypes = method.parameterTypes
+        declaring.declaredMethods.filter { bridge ->
+            bridge.isBridge && bridge.name == method.name && bridge.parameterCount == parameterTypes.size &&
+                bridge.parameterTypes.indices.all { bridge.parameterTypes[it].isAssignableFrom(parameterTypes[it]) } &&
+                bridge.returnType.isAssignableFrom(method.returnType)
+        }.mapTo(hashSetOf(descriptor)) { AsmType.getMethodDescriptor(it) }
+    }
+    val overridden = ArrayList<Method>()
+    val visited = HashSet<Class<*>>()
+    val pending = ArrayDeque<Class<*>>()
+    fun Class<*>.enqueueSupertypes() {
+        superclass?.let { pending += it }
+        pending += interfaces
+    }
+    declaring.enqueueSupertypes()
+    while (pending.isNotEmpty()) {
+        val type = pending.removeFirst()
+        if (!visited.add(type) || type.isJdkClass) continue
+        type.declaredMethods.filterTo(overridden) {
+            !it.isSynthetic && !Modifier.isStatic(it.modifiers) && !Modifier.isPrivate(it.modifiers) &&
+                it.name == method.name && AsmType.getMethodDescriptor(it) in descriptors
+        }
+        type.enqueueSupertypes()
+    }
+    return overridden
+}
+
+/**
+ * Whether the types not annotated of the Java [type] are not nullable, `true`, as the compiler reads `@NullMarked` of JSpecify,
+ * or of platform types, `false`, of `@NullUnmarked`, inheriting no annotation of the methods they override, see [javaNullabilityOf],
+ * as the class itself, or the nearest one of its outer classes, or its package, tells it, see [JavaClassNullability.isNullMarked],
+ * or `null` if none does, while a method might tell otherwise, see [JavaMethodNullability.isNullMarked].
+ */
+private fun nullMarking(type: Class<*>): Boolean? = reflectedValue(default = null) {
+    generateSequence(type) { it.enclosingClass }.firstNotNullOfOrNull { javaNullabilities.get(it).isNullMarked }
+        ?: type.`package`?.let { javaPackage ->
+            packageNullMarkings.getOrPut(javaPackage) { Optional.ofNullable(packageNullMarking(type.classLoader, javaPackage.name)) }
+                .getOrNull()
+        }
+}
+
+/**
+ * Whether the package of the [name], of the [classLoader], is marked by `@NullMarked`, or by `@NullUnmarked`, see [nullMarking],
+ * as told by the class file of its `package-info`, if any.
+ */
+private fun packageNullMarking(classLoader: ClassLoader?, name: String): Boolean? =
+    if (name.isEmpty()) null else readJavaNullabilities(classLoader, "$name.package-info")?.isNullMarked
+
+// the packages read once each, see packageNullMarking, weakly, like their class loaders, which keep them
+private val packageNullMarkings: MutableMap<Package, Optional<Boolean>> = Collections.synchronizedMap(WeakHashMap())
+
+/**
+ * The nullability annotations of a Java class, read from its class file, see [javaNullabilityOf]:
+ * whether `@NullMarked`, `true`, or `@NullUnmarked`, `false`, tells the types not annotated of its members, see [nullMarking],
+ * the [methods], by their names and JVM descriptors, and the methods its [bridges] call, by the names and the JVM descriptors of both,
+ * like `resolve(Ljava/lang/String;)…` of `resolve(Ljava/lang/Object;)…`, see [overriddenJavaMethods], or `null` if not read.
+ */
+private class JavaClassNullability(
+    val isNullMarked: Boolean?,
+    val methods: Map<String, JavaMethodNullability>,
+    val bridges: Map<String, String>? = null
+)
+
+/**
+ * The nullability annotations of a Java method, see [JavaClassNullability], of its types, the [nullability], if annotated,
+ * and whether `@NullMarked`, or `@NullUnmarked`, marks it, see [nullMarking].
+ */
+private class JavaMethodNullability(val nullability: JavaNullability?, val isNullMarked: Boolean?)
+
+/**
+ * The nullability annotations of the classes, read once per class, see [JavaClassNullability].
+ */
+private val javaNullabilities = object : ClassValue<JavaClassNullability>() {
+    override fun computeValue(type: Class<*>): JavaClassNullability =
+        reflectedValue(default = null) { readJavaNullabilities(type.classLoader, type.name) } ?: JavaClassNullability(null, emptyMap())
 }
 
 // the position of the return type among the annotated types of a method, see readJavaNullabilities
 private const val RETURN_TYPE = -1
 
-private fun readJavaNullabilities(type: Class<*>): Map<String, JavaNullability> {
-    val bytes = (type.classLoader ?: ClassLoader.getSystemClassLoader()).readClassBytes(type.name) ?: return emptyMap()
-    val nullabilities = HashMap<String, JavaNullability>()
+// the type path of the element of an array, see nestedType
+private const val ARRAY_ELEMENT = "["
+
+// the annotations of JSpecify marking the types not annotated as not nullable, or not, see isNullMarked
+private const val NULL_MARKED = "Lorg/jspecify/annotations/NullMarked;"
+
+private const val NULL_UNMARKED = "Lorg/jspecify/annotations/NullUnmarked;"
+
+private fun nullMarking(annotation: String): Boolean? = when (annotation) {
+    NULL_MARKED -> true
+    NULL_UNMARKED -> false
+    else -> null
+}
+
+private fun readJavaNullabilities(classLoader: ClassLoader?, binaryName: String): JavaClassNullability? {
+    val bytes = (classLoader ?: ClassLoader.getSystemClassLoader()).readClassBytes(binaryName) ?: return null
+    val nullabilities = HashMap<String, JavaMethodNullability>()
+    var isClassNullMarked: Boolean? = null
+    var hasBridges = false
     ClassReader(bytes).accept(object : ClassVisitor(Opcodes.ASM9) {
+
+        override fun visitAnnotation(annotation: String, visible: Boolean): AnnotationVisitor? {
+            nullMarking(annotation)?.let { isClassNullMarked = it }
+            return null
+        }
+
         override fun visitMethod(
             access: Int,
             name: String,
@@ -1462,25 +1855,28 @@ private fun readJavaNullabilities(type: Class<*>): Map<String, JavaNullability> 
             signature: String?,
             exceptions: Array<out String>?
         ): MethodVisitor = object : MethodVisitor(Opcodes.ASM9) {
-            // by the positions of the types, the return type first, see RETURN_TYPE
-            val declared = HashMap<Int, Pair<String, Boolean>>()
-            val typeUses = HashMap<Int, Boolean>()
+            // by the positions of the types, the return type first, see RETURN_TYPE, and the descriptors of their annotations
+            val declared = HashMap<Int, Boolean>()
+            val declaredAnnotations = HashMap<Int, String>()
+            // by the positions of the types, and their type paths, see nestedType, the empty one of the type itself
+            val typeUses = HashMap<Pair<Int, String>, Boolean>()
             val typeUseAnnotations = HashMap<Int, MutableSet<String>>()
+            var isNullMarked: Boolean? = null
+
+            init {
+                if (access and Opcodes.ACC_BRIDGE != 0) hasBridges = true
+            }
 
             // the nullability told by the annotation, of the javax.annotation.Nonnull told when its `when` is read
-            fun record(position: Int, annotation: String, nullabilities: MutableMap<Int, Boolean>?): AnnotationVisitor? {
+            fun <K> record(key: K, annotation: String, nullabilities: MutableMap<K, Boolean>): AnnotationVisitor? {
                 val isNullable = when (annotation) {
                     in NULLABLE_ANNOTATIONS -> true
                     in NOT_NULL_ANNOTATIONS -> false
                     else -> return null
                 }
                 // the one recorded before, restored when javax.annotation.Nonnull tells nothing, of an UNKNOWN `when`
-                val previousType = nullabilities?.get(position)
-                val previousDeclared = declared[position]
-                fun put(isNullable: Boolean) {
-                    if (nullabilities != null) nullabilities[position] = isNullable else declared[position] = annotation to isNullable
-                }
-                put(isNullable)
+                val previous = nullabilities[key]
+                nullabilities[key] = isNullable
                 if (annotation != JSR305_NONNULL) return null
                 return object : AnnotationVisitor(Opcodes.ASM9) {
                     override fun visitEnum(name: String?, descriptor: String?, value: String?) {
@@ -1488,22 +1884,25 @@ private fun readJavaNullabilities(type: Class<*>): Map<String, JavaNullability> 
                         when (value) {
                             "ALWAYS" -> {}
                             // nullable, like the compiler reads it
-                            "MAYBE", "NEVER" -> put(isNullable = true)
-                            else -> if (nullabilities != null) {
-                                if (previousType != null) nullabilities[position] = previousType else nullabilities.remove(position)
-                            } else {
-                                if (previousDeclared != null) declared[position] = previousDeclared else declared.remove(position)
-                            }
+                            "MAYBE", "NEVER" -> nullabilities[key] = true
+                            else -> if (previous != null) nullabilities[key] = previous else nullabilities.remove(key)
                         }
                     }
                 }
             }
 
-            override fun visitAnnotation(annotation: String, visible: Boolean): AnnotationVisitor? =
-                record(RETURN_TYPE, annotation, nullabilities = null)
+            fun recordDeclared(position: Int, annotation: String): AnnotationVisitor? {
+                if (annotation in NULLABLE_ANNOTATIONS || annotation in NOT_NULL_ANNOTATIONS) declaredAnnotations[position] = annotation
+                return record(position, annotation, declared)
+            }
+
+            override fun visitAnnotation(annotation: String, visible: Boolean): AnnotationVisitor? {
+                nullMarking(annotation)?.let { isNullMarked = it }
+                return recordDeclared(RETURN_TYPE, annotation)
+            }
 
             override fun visitParameterAnnotation(parameter: Int, annotation: String, visible: Boolean): AnnotationVisitor? =
-                record(parameter, annotation, nullabilities = null)
+                recordDeclared(parameter, annotation)
 
             override fun visitTypeAnnotation(typeRef: Int, typePath: TypePath?, annotation: String, visible: Boolean): AnnotationVisitor? {
                 val reference = TypeReference(typeRef)
@@ -1512,22 +1911,53 @@ private fun readJavaNullabilities(type: Class<*>): Map<String, JavaNullability> 
                     TypeReference.METHOD_FORMAL_PARAMETER -> reference.formalParameterIndex
                     else -> return null
                 }
-                typeUseAnnotations.getOrPut(position) { HashSet() } += annotation
-                // the annotation of the type itself, not of a type argument, nor of an array element
-                return if (typePath == null) record(position, annotation, typeUses) else null
+                val path = typePath?.toString().orEmpty()
+                // where javac writes the type annotation of an annotation of both targets, see visitEnd:
+                // the type itself, or the element of an array, like the String of `@Nullable String[]`
+                if (path.all { it == '[' }) typeUseAnnotations.getOrPut(position) { HashSet() } += annotation
+                return record(position to path, annotation, typeUses)
             }
 
             override fun visitEnd() {
                 val types = HashMap<Int, Boolean>()
-                declared.forEach { (position, annotated) ->
-                    val (annotation, isNullable) = annotated
-                    if (typeUseAnnotations[position]?.contains(annotation) != true) types[position] = isNullable
+                declared.forEach { (position, isNullable) ->
+                    if (typeUseAnnotations[position]?.contains(declaredAnnotations[position]) != true) types[position] = isNullable
                 }
-                types += typeUses
-                if (types.isEmpty()) return
-                nullabilities[name + descriptor] = JavaNullability(types[RETURN_TYPE], types.filterKeys { it != RETURN_TYPE })
+                val nested = HashMap<Int, MutableMap<String, Boolean>>()
+                typeUses.forEach { (key, isNullable) ->
+                    val (position, path) = key
+                    if (path.isEmpty()) types[position] = isNullable else nested.getOrPut(position) { HashMap() }[path] = isNullable
+                }
+                if (types.isEmpty() && nested.isEmpty() && isNullMarked == null) return
+                val nullability = if (types.isEmpty() && nested.isEmpty()) null else JavaNullability(types, nested, isNullMarked = false)
+                nullabilities[name + descriptor] = JavaMethodNullability(nullability, isNullMarked)
             }
         }
     }, ClassReader.SKIP_CODE or ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES)
-    return nullabilities
+    val bridges = if (!hasBridges) emptyMap() else reflectedValue(default = null) { readJavaBridges(bytes) }
+    return JavaClassNullability(isClassNullMarked, nullabilities, bridges)
+}
+
+/**
+ * The methods the bridges of the class of the [bytes] call, see [JavaClassNullability.bridges], read in a pass of their own,
+ * the only one reading the code, so that a class file whose code cannot be read still tells its annotations.
+ */
+private fun readJavaBridges(bytes: ByteArray): Map<String, String> {
+    val bridges = HashMap<String, String>()
+    val reader = ClassReader(bytes)
+    val owner = reader.className
+    reader.accept(object : ClassVisitor(Opcodes.ASM9) {
+        override fun visitMethod(
+            access: Int,
+            name: String,
+            descriptor: String,
+            signature: String?,
+            exceptions: Array<out String>?
+        ): MethodVisitor? = if (access and Opcodes.ACC_BRIDGE == 0) null else object : MethodVisitor(Opcodes.ASM9) {
+            override fun visitMethodInsn(opcode: Int, insnOwner: String, insnName: String, insnDescriptor: String, isInterface: Boolean) {
+                if (insnOwner == owner && insnName == name) bridges.putIfAbsent(name + descriptor, insnName + insnDescriptor)
+            }
+        }
+    }, ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES)
+    return bridges
 }

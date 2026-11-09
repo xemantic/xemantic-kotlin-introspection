@@ -253,6 +253,39 @@ class InheritedJavaComparableFirstList<E : Comparable<E>> : com.xemantic.kotlin.
 
 class InheritedJavaStringFirstList : com.xemantic.kotlin.introspection.test.other.JavaStringFirstList()
 
+class InheritedJavaOverridingList<E> : com.xemantic.kotlin.introspection.test.other.JavaOverridingList<E>()
+
+class InheritedJavaOverridingMap<K, V> : com.xemantic.kotlin.introspection.test.other.JavaOverridingMap<K, V>()
+
+class InheritedJavaComparableBox : com.xemantic.kotlin.introspection.test.other.JavaComparableBox()
+
+abstract class InheritedJavaAddFirstHolder : com.xemantic.kotlin.introspection.test.other.JavaAddFirstHolder()
+
+class InheritedJavaVector : java.util.Vector<String>()
+
+class InheritedJavaLinkedList : java.util.LinkedList<String>()
+
+class InheritedJavaAtomicReference : java.util.concurrent.atomic.AtomicReference<String>()
+
+abstract class InheritedKotlinContainsList : java.util.AbstractList<String>() {
+    override fun contains(element: String): Boolean = false
+}
+
+abstract class InheritedKotlinContainsListSub : InheritedKotlinContainsList()
+
+abstract class InheritedJavaCollectionDiamond : java.util.AbstractList<String>(), Collection<String>
+
+open class OverridingJavaComparableFirstList<E : Comparable<E>> :
+    com.xemantic.kotlin.introspection.test.other.JavaComparableFirstList<E>() {
+    override fun addFirst(element: E?) {}
+}
+
+class OverridingJavaComparableFirstListSub : OverridingJavaComparableFirstList<String>()
+
+abstract class InheritedNullableContainsList : java.util.AbstractList<String>() {
+    override fun contains(element: String?): Boolean = true
+}
+
 interface MergedComputeIfAbsent : MutableMap<String, String> {
     override fun computeIfAbsent(key: String, mappingFunction: java.util.function.Function<in String, out String>): String
 }
@@ -339,6 +372,78 @@ interface GenericMapMembers<K, V> {
 abstract class GenericMapJoin : MutableMap<Int, String>, GenericMapMembers<Int, String>
 
 abstract class GenericHashMapJoin : java.util.HashMap<Int, String>(), GenericMapMembers<Int, String>
+
+// the getOrDefault and remove of java.util.HashMap are Java methods taking Object, apart from the ones taking int
+abstract class PrimitiveKeyHashMapJoin : java.util.HashMap<Int, String>(), PrimitiveKeyMapMembers
+
+abstract class PrimitiveAndBoxedJavaPut : com.xemantic.kotlin.introspection.test.other.JavaPrimitiveAndBoxedPut()
+
+abstract class BoxedJavaPutBelowPrimitive : com.xemantic.kotlin.introspection.test.other.JavaBoxedPutBelow()
+
+abstract class NotNullBoxedJavaPutBelowPrimitive : com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPutBelow()
+
+interface DefaultedPrimitivePut {
+    fun put(key: Int = 0): String
+}
+
+abstract class BoxedJavaPutInterfaceImplementation : com.xemantic.kotlin.introspection.test.other.JavaBoxedPutInterfaceImplementation()
+
+interface PrimitivePairPut {
+    fun put(a: Int, b: Int): String
+}
+
+abstract class BoxedPairJavaPut : com.xemantic.kotlin.introspection.test.other.JavaBoxedPairPut()
+
+abstract class MixedPairJavaPut : com.xemantic.kotlin.introspection.test.other.JavaMixedPairPut()
+
+interface PrimitivePutRedeclaring : PrimitivePut
+
+abstract class BoxedJavaPutBelowInterface : com.xemantic.kotlin.introspection.test.other.JavaBoxedPutBelowInterface()
+
+// the put(T) of JavaGenericPut<Integer> implements the put(t: T) of GenericPut<Int>, not the put(key: Int) of PrimitivePut,
+// though the two Kotlin members alone are merged
+abstract class GenericBoxedJavaPrimitiveGenericPutJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaIntegerPut(), PrimitivePut, GenericPut<Int>
+
+interface MixedNullabilityTaker {
+    fun take(first: String, second: String?): String
+}
+
+interface NotNullableTaker {
+    fun take(first: String, second: String): String
+}
+
+abstract class MixedNullabilityJavaTakerJoin : com.xemantic.kotlin.introspection.test.other.JavaTwoStringTaker(), MixedNullabilityTaker
+
+abstract class NotNullableJavaTakerJoin : com.xemantic.kotlin.introspection.test.other.JavaTwoStringTaker(), NotNullableTaker
+
+interface PrimitiveCompareTo {
+    fun compareTo(other: Int): Int
+}
+
+abstract class BoxedJavaComparablePrimitiveJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaIntegerComparable(), PrimitiveCompareTo
+
+abstract class IndexedAddAllJavaListJoin : com.xemantic.kotlin.introspection.test.other.JavaIndexedAddAll(), MutableList<Int>
+
+interface NullablePrimitivePut {
+    fun put(key: Int?): String
+}
+
+// the put(int) of JavaPrimitivePut is another JVM method than put(Integer), which a concrete subclass still has to implement
+abstract class PrimitiveJavaNullablePutJoin : com.xemantic.kotlin.introspection.test.other.JavaPrimitivePut(), NullablePrimitivePut
+
+abstract class PrimitiveJavaGenericNullablePutJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaPrimitivePut(), GenericPut<Int>, NullablePrimitivePut
+
+// the put(t: T) of GenericPut<Int?> takes Int?, which the put(int) of JavaPrimitivePut never implements
+abstract class PrimitiveJavaNullableGenericPutJoin : com.xemantic.kotlin.introspection.test.other.JavaPrimitivePut(), GenericPut<Int?>
+
+interface FunctionTaker {
+    fun take(function: (String) -> Int): String
+}
+
+abstract class ProjectedFunctionJavaTakerJoin : com.xemantic.kotlin.introspection.test.other.JavaProjectedFunctionTaker(), FunctionTaker
 
 abstract class BoxedJavaListJoin : com.xemantic.kotlin.introspection.test.other.JavaBoxedMembers(), List<String>
 
@@ -532,3 +637,45 @@ abstract class InheritedJavaMapNullableComputeIfAbsent :
     com.xemantic.kotlin.introspection.test.other.JavaInheritingMap<String, String>(), NullableComputeIfAbsent
 
 abstract class JavaCharSequenceSubclass : java.lang.CharSequence
+
+// The generic methods of a Java class reached through a raw Java supertype, which the compiler sees erased
+abstract class InheritedJavaRawGeneric : com.xemantic.kotlin.introspection.test.other.JavaRawGenericMid()
+
+// The size() of java.util.LinkedHashSet declared abstract again by a Java subclass, whose members kotlin-reflect cannot describe
+abstract class InheritedReabstractedSizeSet : com.xemantic.kotlin.introspection.test.other.JavaReabstractedSizeSet()
+
+// A type variable of a Java class annotated not nullable, given a nullable type argument
+abstract class InheritedJavaNotNullTypeVariable : com.xemantic.kotlin.introspection.test.other.JavaNotNullTypeVariableBase<String?>()
+
+// The overrides of a Java class not annotated, inheriting the nullability annotations of the methods they override
+abstract class InheritedJavaAnnotationInheriting : com.xemantic.kotlin.introspection.test.other.JavaAnnotationInheriting()
+
+// The type arguments, and the array elements, of a Java class annotated by type annotations
+abstract class InheritedJavaTypeUseNullability : com.xemantic.kotlin.introspection.test.other.JavaTypeUseNullability()
+
+// The members of Java classes marked by @NullMarked of JSpecify, by their class, by their outer class, or by their package
+abstract class InheritedJavaNullMarked : com.xemantic.kotlin.introspection.test.other.JavaNullMarkedBase<String, String?>()
+
+abstract class InheritedJavaNullUnmarked : com.xemantic.kotlin.introspection.test.other.JavaNullMarkedBase.Unmarked()
+
+abstract class InheritedJavaNullMarkedNested : com.xemantic.kotlin.introspection.test.other.JavaNullMarkedBase.Nested()
+
+abstract class InheritedJavaNullMarkedPackage : com.xemantic.kotlin.introspection.test.marked.JavaNullMarkedPackageBase()
+
+// The invoke operator of a function reference type, and of a suspend one, named as a supertype
+abstract class InheritedFunctionReferenceType : kotlin.reflect.KFunction1<Int, String>
+
+abstract class InheritedSuspendFunctionReferenceType : kotlin.reflect.KSuspendFunction1<Int, String>
+
+// A Java class marked by @NullMarked overriding an annotated method of a Java class not marked, not annotated itself
+abstract class InheritedJavaNullMarkedOverriding : com.xemantic.kotlin.introspection.test.other.JavaNullMarkedOverriding()
+
+// The members of a generic Java subclass of java.util.HashMap reached through its raw subclass
+abstract class InheritedJavaRawSourceMap : com.xemantic.kotlin.introspection.test.other.JavaRawSourceMapMid()
+
+// Java classes marked by @NullUnmarked, by their class, by their outer class, or by their package, overriding annotated methods
+abstract class InheritedJavaNullUnmarkedOverriding : com.xemantic.kotlin.introspection.test.other.JavaNullUnmarkedOverriding()
+
+abstract class InheritedJavaNullUnmarkedOuter : com.xemantic.kotlin.introspection.test.other.JavaNullUnmarkedOuter.Inner()
+
+abstract class InheritedJavaNullUnmarkedPackage : com.xemantic.kotlin.introspection.test.unmarked.JavaNullUnmarkedPackageOverriding()
