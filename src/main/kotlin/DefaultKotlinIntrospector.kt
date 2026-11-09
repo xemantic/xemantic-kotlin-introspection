@@ -4709,6 +4709,18 @@ internal class DefaultKotlinIntrospector(
             val fixable = typeParameters.keys.filter { id ->
                 !hasLowerConstraint(id, otherwise, HashSet()) && (id in upperTypes || inferred[id].isNullOrEmpty())
             }
+            // when the order kotlinc fixes them in is not certain, any of the orders satisfying the bounds, see fixingSatisfiesBounds
+            return retrying(Mark()) { fixingSatisfiesBounds(fixable, upperTypes, isBoundingLast = false) } ||
+                retrying(Mark()) { fixingSatisfiesBounds(fixable, upperTypes, isBoundingLast = true) }
+        }
+
+        /**
+         * Whether the [fixable] type parameters satisfy their bounds, fixed one by one, see [satisfiesRecursiveBounds],
+         * and, when [isBoundingLast], the ones bounding other ones not fixed yet only after them, also when bounding fixed ones,
+         * like `A` of `<A : Comparable<A>, B : A, C : A> I<B, C, A>`, for `I<String, Int, Any>`,
+         * which kotlinc infers as `String`, of `B`, `C` inferred as `Nothing` then.
+         */
+        private fun fixingSatisfiesBounds(fixable: List<Int>, upperTypes: Map<Int, List<KmType>>, isBoundingLast: Boolean): Boolean {
             val fixed = LinkedHashMap<Int, List<KmType>>()
             val fixedAsBounded = HashSet<Int>()
             val notFixed = HashSet<Int>()
@@ -4724,7 +4736,14 @@ internal class DefaultKotlinIntrospector(
             }
             while (true) {
                 val unfixed = fixable.filter { id -> id !in fixed && id !in notFixed }
-                val next = unfixed.firstOrNull { id -> fixed.keys.any { id in typeParameters.getValue(it).boundingTypeParameterIds() } }
+                fun isBounding(id: Int) = unfixed.count { id in typeParameters.getValue(it).boundingTypeParameterIds() } > 1
+                val next = unfixed.firstOrNull { id ->
+                    (!isBoundingLast || unfixed.none { id in typeParameters.getValue(it).boundingTypeParameterIds() }) &&
+                        fixed.keys.any { id in typeParameters.getValue(it).boundingTypeParameterIds() }
+                }
+                    ?: unfixed.firstOrNull { id ->
+                        (!isBoundingLast || !isBounding(id)) && upperTypes[id].orEmpty().any { !it.isTriviallyAny }
+                    }
                     ?: unfixed.firstOrNull { id -> upperTypes[id].orEmpty().any { !it.isTriviallyAny } }
                     ?: unfixed.firstOrNull { it in upperTypes }
                     ?: break
@@ -4817,13 +4836,17 @@ internal class DefaultKotlinIntrospector(
                     boundingParameter.upperBounds.map { it.substituted(substitution) }.filterTo(types) { it.refersToNoTypeParameter() }
                 } else {
                     types += upperTypes[boundingId].orEmpty()
-                    boundingParameter.upperBounds.filterTo(types) { it.refersToNoTypeParameter() }
+                    boundingParameter.upperBounds.map { it.substituted(substitution) }.filterTo(types) { it.refersToNoTypeParameter() }
                 }
                 bounding += boundingParameter.boundingTypeParameterIds()
             }
-            // the classes of the bounds referring to the type parameter only covariantly, like List of T : List<T>, count as well
-            val covariantlySelfReferring = typeParameter.upperBounds.filter { it.isSelfReferringOnlyIn(id, KmVariance.OUT) }
-            if (isEmptyIntersection(types + covariantlySelfReferring)) return null
+            // the classes of the bounds referring to the type parameter only covariantly, like List of T : List<T>, count as well,
+            // and of the ones referring only to other type parameters not fixed yet, like Comparable of T : Comparable<B>
+            val referring = typeParameter.upperBounds.filter { bound ->
+                bound.classifier is KmClassifier.Class &&
+                    (bound.isSelfReferringOnlyIn(id, KmVariance.OUT) || bound.refersOnlyTo { it != id })
+            }
+            if (isEmptyIntersection(types + referring)) return null
             if (types.any { !it.isNullable }) isNotNullable = true
             val intersected = if (isNotNullable) types.map { if (it.isNullable) it.notNullable() else it } else types
             // a supertype of another one tells nothing more, the first of the same ones kept
@@ -5343,11 +5366,38 @@ internal class DefaultKotlinIntrospector(
                                 retrying(Mark()) {
                                     matches(bound.substituted(mapOf(id to supertype)), supertype, KmVariance.OUT, isStrict)
                                 }
-                            }
+                            } ||
+                            canBeWidened(bound, id, actual, variance)
                     }
                 }
             } finally {
                 boundsChecked.remove(id)
+            }
+        }
+
+        /**
+         * Whether a supertype of the [actual] type, a type parameter is inferred from in a covariant position of the given [variance],
+         * can satisfy the [bound] referring to it only covariantly, which kotlinc can widen the type arguments of,
+         * like `List<SL1>` of `List<SL2>` for `T : List<T>`, where `interface SL1 : List<SL1>`, and `interface SL2 : SL1`,
+         * unless the actual type is nullable, and the bound is not, or its class is no subclass of the one of the bound,
+         * or its supertype of the class of the bound takes a type argument for the type parameter,
+         * which no subtype of the bound can be a supertype of,
+         * like `String` of `List<String>`, as no supertype of `String` is a `List`, leniently not checked any further.
+         */
+        private fun canBeWidened(bound: KmType, id: Int, actual: KmType, variance: KmVariance): Boolean {
+            if (variance != KmVariance.OUT || !bound.isSelfReferringOnlyIn(id, KmVariance.OUT)) return false
+            if (actual.isNullable && !bound.isNullable) return false
+            val name = (bound.classifier as? KmClassifier.Class)?.name ?: return true
+            val actualName = (actual.classifier as? KmClassifier.Class)?.name ?: return true
+            if (actualName == NOTHING_CLASS_NAME) return true
+            if (!supertypes.isSubclass(actualName, name)) return false
+            val reached = if (actualName == name) listOf(actual) else supertypes.supertypesOf(actual, name) ?: return true
+            return reached.any { supertype ->
+                supertype.arguments.size != bound.arguments.size || bound.arguments.indices.all { index ->
+                    val isSelf = (bound.arguments[index].type?.classifier as? KmClassifier.TypeParameter)?.id == id
+                    val argumentName = (supertype.arguments[index].type?.classifier as? KmClassifier.Class)?.name
+                    !isSelf || argumentName == null || argumentName == NOTHING_CLASS_NAME || supertypes.isSubclass(argumentName, name)
+                }
             }
         }
 
@@ -5368,14 +5418,15 @@ internal class DefaultKotlinIntrospector(
         /**
          * This bound of the type parameter of the given [id] with the type kotlinc infers the type parameter as substituted for it,
          * paired with that type: the [actual] one it is inferred from in a position of the given [variance],
-         * but `Nothing?` in a covariant one, for which kotlinc infers it as the bound with `Nothing?` substituted,
+         * but `Nothing?` in a covariant one, for which kotlinc infers it as the nullable bound with `Nothing?` substituted,
          * like `Comparable<Nothing?>?` of `T : Comparable<T>?`, which is no `Comparable<Comparable<Nothing?>?>?`,
          * unlike `List<Nothing?>?` of `T : List<T>?`.
          */
         private fun KmType.selfSubstituted(id: Int, actual: KmType, variance: KmVariance): Pair<KmType, KmType> {
             if (refersOnlyTo { it != id }) return this to actual
             val isNullableNothing = actual.isNullable && (actual.classifier as? KmClassifier.Class)?.name == NOTHING_CLASS_NAME
-            val inferredType = if (isNullableNothing && variance == KmVariance.OUT) substituted(mapOf(id to actual)) else actual
+            val isBoundOfNullableNothing = isNullableNothing && isNullable && variance == KmVariance.OUT
+            val inferredType = if (isBoundOfNullableNothing) substituted(mapOf(id to actual)) else actual
             return substituted(mapOf(id to inferredType)) to inferredType
         }
 

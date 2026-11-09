@@ -905,6 +905,32 @@ class BoundedReceiverMutableSelfListProducer : BoundedReceiverProducer<MutableLi
 // but not of a nullable one, which a nullable supertype is the only supertype of
 class BoundedReceiverNullableMutableSelfListProducer : BoundedReceiverProducer<MutableList<BoundedReceiverSelfList>?>
 
+// or of a supertype of a type argument, which kotlinc can widen it to, like List<BoundedReceiverSelfList>
+// of List<BoundedReceiverSubSelfList>, which only a subtype of List can be, unlike List<String>
+interface BoundedReceiverSubSelfList : BoundedReceiverSelfList
+
+class BoundedReceiverSubSelfListsProducer : BoundedReceiverProducer<List<BoundedReceiverSubSelfList>>
+
+// a recursive bound of a type parameter of a covariant position, not nullable, which Nothing? does not satisfy
+interface BoundedReceiverOutlet<out T>
+
+fun <T : List<T?>> BoundedReceiverOutlet<T>.outletNullableSelfList() {}
+
+class BoundedReceiverNullableNothingOutlet : BoundedReceiverOutlet<Nothing?>
+
+// a type parameter bounding multiple ones, which kotlinc may fix after them, like A of B : A, and C : A, as String of B,
+// C inferred as Nothing, the intersection of Int and String, then, or bounded by a type of a type parameter fixed after it,
+// like T : Comparable<B>, not checked
+interface BoundedReceiverTripleSink<in A, in B, in C>
+
+fun <A : Comparable<A>, B : A, C : A> BoundedReceiverTripleSink<B, C, A>.tripleUnder() {}
+
+fun <A : Comparable<A>, T : Comparable<B>, B : A> BoundedReceiverTripleSink<T, A, B>.tripleComparableOfLater() {}
+
+class BoundedReceiverStringIntAnyTripleSink : BoundedReceiverTripleSink<String, Int, Any>
+
+class BoundedReceiverPlainAnyAnyTripleSink : BoundedReceiverTripleSink<BoundedReceiverPlain, Any, Any>
+
 // a supertype reached both through Kotlin and through Java, of type arguments which are not platform types themselves,
 // like BoundedReceiverPaths<List<String!>> of JavaStringListPaths, unlike its nested String!,
 // is kept by kotlinc next to BoundedReceiverPaths<List<String>> of Kotlin, an extension matching either of them accepted

@@ -9283,6 +9283,48 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve class with extension on covariant type parameter of recursive bound satisfied by widened type argument`() {
+        // T of T : List<T> is inferred as List<BoundedReceiverSelfList>, a supertype of List<BoundedReceiverSubSelfList>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverSubSelfListsProducer"
+        ) should {
+            have("fun <T : List<T>> BoundedReceiverProducer<T>.produceSelfList()" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve class without extension on covariant type parameter of not nullable recursive bound for nullable Nothing`() {
+        // T of T : List<T?> cannot be inferred from Nothing?, as it is not nullable
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverNullableNothingOutlet"
+        ) should {
+            have("fun <T : List<T?>> BoundedReceiverOutlet<T>.outletNullableSelfList()" !in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve class with extension on type parameter bounding multiple ones fixed after them`() {
+        // A, inferred as String after B, makes C Nothing, the intersection of Int and String, which kotlinc accepts
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverStringIntAnyTripleSink"
+        ) should {
+            have("fun <A : Comparable<A>, B : A, C : A> BoundedReceiverTripleSink<B, C, A>.tripleUnder()" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve class with extension on type parameter bounded by type of type parameter fixed after it`() {
+        // T : Comparable<B> refers to B, which kotlinc fixes after T, not checked
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverPlainAnyAnyTripleSink"
+        ) should {
+            have(
+                "fun <A : Comparable<A>, T : Comparable<B>, B : A> BoundedReceiverTripleSink<T, A, B>.tripleComparableOfLater()" in lines()
+            )
+        }
+    }
+
+    @Test
     fun `should resolve class without extension on type parameter constrained only by Nothing`() {
         // Nothing is a List<T>, and a List<E>, of any T, and E, which kotlinc cannot infer then,
         // unless the expected type of the call tells it, like of produceFirst returning T?,
