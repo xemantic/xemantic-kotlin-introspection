@@ -19,11 +19,7 @@
 package com.xemantic.kotlin.introspection
 
 import kotlin.jvm.functions.FunctionN
-import kotlin.metadata.KmAnnotation
-import kotlin.metadata.KmAnnotationArgument
-import kotlin.metadata.KmClassifier
-import kotlin.metadata.KmType
-import kotlin.metadata.isSuspend
+import kotlin.metadata.*
 import kotlin.metadata.jvm.annotations
 import kotlin.reflect.KClass
 import kotlin.reflect.KType
@@ -77,6 +73,53 @@ internal fun KmType.decodeRuntimeFunctionType(): RuntimeFunctionType? {
     ) return null
     val returnType = continuation.arguments.singleOrNull()?.type ?: return null
     return RuntimeFunctionType(isSuspend = true, arguments.take(arity - 1), returnType)
+}
+
+/**
+ * This type, but of a suspend function type, stored as the function type of one more runtime parameter, the continuation,
+ * like `Function2<Int, Continuation<String>, Any?>` of `suspend (Int) -> String`, see [decodeRuntimeFunctionType],
+ * as the type of its own function type class, like `SuspendFunction1<Int, String>`, see [FunctionTypeClass],
+ * declaring the suspend `invoke` operator, which a class of such a supertype inherits.
+ */
+internal fun KmType.withSuspendFunctionTypeClass(): KmType {
+    if (!isSuspend) return this
+    val functionType = decodeRuntimeFunctionType()?.takeIf { it.isSuspend } ?: return this
+    return classType(FunctionTypeKind.SUSPEND_FUNCTION.metadataName(functionType.parameters.size)).also { type ->
+        (functionType.parameters + functionType.returnType).mapTo(type.arguments) { KmTypeProjection(KmVariance.INVARIANT, it) }
+    }
+}
+
+/**
+ * The declaration of the function type class of the metadata [name], like `kotlin/Function1`,
+ * or `kotlin/coroutines/SuspendFunction1`, see [FunctionTypeClass], which no class file declares,
+ * or `null` if it is not one, like a function reference type, a class of its own:
+ * `interface Function1<in P1, out R> : Function<R>`, declaring `operator fun invoke(p1: P1): R`,
+ * which a class of such a supertype inherits, like `abstract class Handler : (Int) -> String`.
+ */
+internal fun functionTypeClassDeclaration(name: String): KmClass? {
+    val functionTypeClass = FunctionTypeClass.of(name.replace('/', '.'))?.takeUnless { it.kind.isReference } ?: return null
+    val arity = functionTypeClass.arity
+    return KmClass().also { kmClass ->
+        kmClass.name = name
+        kmClass.kind = ClassKind.INTERFACE
+        kmClass.modality = Modality.ABSTRACT
+        kmClass.visibility = Visibility.PUBLIC
+        (1..arity).mapTo(kmClass.typeParameters) { KmTypeParameter("P$it", it - 1, KmVariance.IN) }
+        kmClass.typeParameters += KmTypeParameter("R", arity, KmVariance.OUT)
+        kmClass.supertypes += classType(FUNCTION_CLASS_NAME.replace('.', '/')).also {
+            it.arguments += KmTypeProjection(KmVariance.INVARIANT, typeParameterType(arity))
+        }
+        kmClass.functions += KmFunction("invoke").also { invoke ->
+            invoke.visibility = Visibility.PUBLIC
+            invoke.modality = Modality.ABSTRACT
+            invoke.isOperator = true
+            invoke.isSuspend = functionTypeClass.kind.isSuspend
+            (1..arity).mapTo(invoke.valueParameters) { position ->
+                KmValueParameter("p$position").also { it.type = typeParameterType(position - 1) }
+            }
+            invoke.returnType = typeParameterType(arity)
+        }
+    }
 }
 
 /**
