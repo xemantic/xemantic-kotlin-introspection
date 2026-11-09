@@ -1190,6 +1190,174 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve extension of supertype of companion object next to member of other parameter names`() {
+        // UnshadowingCompanionHolder.named(y = 1) calls the extension
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.UnshadowingCompanionHolder.named"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.UnshadowingCompanionHolder.named [page 1/1]
+            companion object : UnshadowedSupertype {
+                fun named(x: Int): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun UnshadowedSupertype.named(y: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension of supertype of companion object with default argument next to member`() {
+        // UnshadowingCompanionHolder.defaulted() calls the extension
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.UnshadowingCompanionHolder.defaulted"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.UnshadowingCompanionHolder.defaulted [page 1/1]
+            companion object : UnshadowedSupertype {
+                fun defaulted(x: Int): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun UnshadowedSupertype.defaulted(x: Int = …): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension of supertype of companion object next to member with context parameter`() {
+        // UnshadowingCompanionHolder.contextual() calls the extension outside the context of the member
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.UnshadowingCompanionHolder.contextual"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.UnshadowingCompanionHolder.contextual [page 1/1]
+            companion object : UnshadowedSupertype {
+                context(text: String) fun contextual(): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun UnshadowedSupertype.contextual(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve operator extension of supertype of companion object next to member not operator`() {
+        // UnshadowingCompanionHolder + 1 calls the extension
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.UnshadowingCompanionHolder.plus"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.UnshadowingCompanionHolder.plus [page 1/1]
+            companion object : UnshadowedSupertype {
+                fun plus(other: Int): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            operator fun UnshadowedSupertype.plus(other: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve infix extension of supertype of companion object next to member not infix`() {
+        // UnshadowingCompanionHolder inf 1 calls the extension
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.UnshadowingCompanionHolder.inf"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.UnshadowingCompanionHolder.inf [page 1/1]
+            companion object : UnshadowedSupertype {
+                fun inf(other: Int): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            infix fun UnshadowedSupertype.inf(other: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension of supertype of companion object next to member of bounded type parameter`() {
+        // UnshadowingCompanionHolder.bounded("s") calls the extension, as String is not a Number
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.UnshadowingCompanionHolder.bounded"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.UnshadowingCompanionHolder.bounded [page 1/1]
+            companion object : UnshadowedSupertype {
+                fun <T : Number> bounded(value: T): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun <T> UnshadowedSupertype.bounded(value: T): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension of supertype of companion object next to vararg member`() {
+        // UnshadowingCompanionHolder.varargMember(x = 1) calls the extension
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.UnshadowingCompanionHolder.varargMember"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.UnshadowingCompanionHolder.varargMember [page 1/1]
+            companion object : UnshadowedSupertype {
+                fun varargMember(vararg x: Int): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun UnshadowedSupertype.varargMember(x: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension of supertype of companion object next to member deprecated as hidden`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.UnshadowingCompanionHolder.hiddenMember") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.UnshadowingCompanionHolder.hiddenMember [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            fun UnshadowedSupertype.hiddenMember(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve extension of supertype of companion object on nullable receiver shadowed by its member`() {
+        // UnshadowingCompanionHolder.nullableReceiver() calls the member, as the name of an object is never null
+        resolver.resolve("com.xemantic.kotlin.introspection.test.UnshadowingCompanionHolder.nullableReceiver") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.UnshadowingCompanionHolder.nullableReceiver [page 1/1]
+            companion object : UnshadowedSupertype {
+                fun nullableReceiver(): Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve operator extension of supertype of object next to member not operator`() {
+        // UnshadowingObject() calls the extension
+        resolver.resolve("com.xemantic.kotlin.introspection.test.UnshadowingObject.invoke") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.UnshadowingObject.invoke [page 1/1]
+            fun invoke(): Int
+            // from com.xemantic.kotlin.introspection.test
+            operator fun UnshadowedSupertype.invoke(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension of object next to member of other parameter names`() {
+        // UnshadowingObject.named(y = 1) calls the extension
+        resolver.resolve("com.xemantic.kotlin.introspection.test.UnshadowingObject.named") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.UnshadowingObject.named [page 1/1]
+            fun named(x: Int): Int
+            // from com.xemantic.kotlin.introspection.test
+            fun UnshadowingObject.named(y: Int): Int
+            fun UnshadowedSupertype.named(y: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension of object next to inherited JVM-only method taking parameters`() {
+        // JvmOnlyUnshadowingObject.sort(c = naturalOrder()) calls the extension, as Kotlin passes no named argument to a Java method
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JvmOnlyUnshadowingObject.sort") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JvmOnlyUnshadowingObject.sort [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            fun JvmOnlyUnshadowingObject.sort(c: java.util.Comparator<in String>): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve extension of object shadowed by inherited member`() {
+        // ShadowingInheritingObject.inherited() calls the member
+        resolver.resolve("com.xemantic.kotlin.introspection.test.ShadowingInheritingObject.inherited") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ShadowingInheritingObject.inherited [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.ShadowingObjectBase
+            fun inherited(): Int
+        """.trimIndent()
+    }
+
+    @Test
     fun `should not list extension of companion object shadowed by its member`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.ShadowingCompanionHolder"

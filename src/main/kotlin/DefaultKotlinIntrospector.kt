@@ -597,7 +597,7 @@ internal class DefaultKotlinIntrospector(
                     if (memberName != null) {
                         resolveMember(kmClass, apiClass, className, foundClass, memberName, aliasedClass = aliasedClass)
                     } else {
-                        formatClass(kmClass, apiClass, className, foundClass, aliasedClass = aliasedClass)
+                        formatClass(kmClass, apiClass, className, foundClass)
                     }
                 }
 
@@ -3677,11 +3677,14 @@ internal class DefaultKotlinIntrospector(
         // the companion object looked up only when one of them is called on it
         val unshadowedByMembers = when {
             kmClass.kind == ClassKind.OBJECT || kmClass.kind == ClassKind.COMPANION_OBJECT ->
-                unshadowed.withoutShadowedByMembers({ true }) { name -> publicMembersNamed(kmClass, declarations, name, apiClass) }
+                unshadowed.withoutShadowedByMembers(kmClass.name, { true }) { name ->
+                    publicMembersNamed(kmClass, declarations, name, apiClass)
+                }
             companion != null -> {
                 val companionName = "${kmClass.name}.${companion.name}"
                 val apiCompanion by lazy(LazyThreadSafetyMode.NONE) { apiCompanionOf(kmClass, declarations, apiClass) }
-                unshadowed.withoutShadowedByMembers({ (it?.classifier as? KmClassifier.Class)?.name == companionName }) { name ->
+                val isOnCompanion = { receiver: KmType? -> (receiver?.classifier as? KmClassifier.Class)?.name == companionName }
+                unshadowed.withoutShadowedByMembers(companionName, isOnCompanion) { name ->
                     apiCompanion?.let { publicMembersNamed(it.kmClass, it.foundClass, name, it.apiClass) }.orEmpty()
                 }
             }
@@ -3697,10 +3700,13 @@ internal class DefaultKotlinIntrospector(
      * shadowed by a member of the object, given by [membersNamed] their name, which Kotlin calls instead,
      * reporting an extension on the object itself as shadowed by the member:
      * an extension property by a member property of the same name, and an extension function by a member function
-     * accepting each of its parameter types, see [MemberCallSignature.shadows], also when the receiver is nullable,
-     * as the name of an object is never `null`, unless the extension hides the members, see [IndexedExtension.hidesMembers].
+     * called the same way, see [shadowsOnObject], unless the extension hides the members, see [IndexedExtension.hidesMembers].
+     *
+     * @param objectName the name of the object, like `com/example/Foo.Companion`, which the type parameter of the receiver
+     *   of an extension stands for.
      */
     private fun ListedExtensions.withoutShadowedByMembers(
+        objectName: String,
         isCalledOnObject: (receiver: KmType?) -> Boolean,
         membersNamed: (name: String) -> List<Member>
     ): ListedExtensions {
@@ -3709,9 +3715,8 @@ internal class DefaultKotlinIntrospector(
         if (functions.isEmpty() && properties.isEmpty()) return this
         val members = (functions.map { it.function.name } + properties.map { it.property.name }).toSet().associateWith(membersNamed)
         val shadowedFunctions = functions.filterTo(HashSet()) { extension ->
-            val signature = callSignature(extension.function, emptyMap())
-            members.getValue(signature.name).any { member ->
-                member is Member.Function && memberCallSignature(member.function, emptyMap()).shadows(signature)
+            members.getValue(extension.function.name).any { member ->
+                member is Member.Function && member.function.shadowsOnObject(extension.function, objectName)
             }
         }
         val shadowedProperties = properties.filterTo(HashSet()) { extension ->
@@ -3727,13 +3732,15 @@ internal class DefaultKotlinIntrospector(
      * The public members named [name] of the [kmClass], declared, see [apiMembersNamed], and inherited, see [inheritedCandidates],
      * which shadow an extension called on it, see [withoutShadowedByMembers],
      * unlike a protected one, as Kotlin calls the extension where the member cannot be used,
-     * a member extension, and a method of a Java supertype taking parameters, see [isShadowingJavaMethod].
+     * a member extension, and a method taking parameters of a Java supertype, or a JVM-only one of a built-in supertype,
+     * see [isShadowingJavaMethod], like [inheritedFunctionsNamed].
      */
     private fun publicMembersNamed(kmClass: KmClass, declarations: ClassDeclarations, name: String, apiClass: ApiClass): List<Member> =
         (apiMembersNamed(kmClass, declarations, name, apiClass) +
             inheritedCandidates(kmClass, declarations, name, apiClass, hidingExtensions = mutableListOf()).mapNotNull { candidate ->
                 candidate.member.takeUnless {
-                    candidate.declarations is JavaClass && (it as? Member.Function)?.function?.isShadowingJavaMethod == false
+                    (candidate.declarations is JavaClass || (candidate.declarations is BuiltinClass && candidate.jvmMethod != null)) &&
+                        (it as? Member.Function)?.function?.isShadowingJavaMethod == false
                 }
             }
         ).filter { member ->
@@ -3909,7 +3916,8 @@ internal class DefaultKotlinIntrospector(
      *   unlike for the class resolved directly, whose header tells its own visibility and deprecation.
      * @param isBuiltin whether the class is a built-in type, or its companion object, never deprecated, nor looked up.
      * @param aliasedClass the class a typealias the declarations are resolved through expands to, like `com/example/Foo.Nested`,
-     *   the [kmClass] itself, like for `Alias.create` of `typealias Alias = Foo.Nested`, or one enclosing it.
+     *   the [kmClass] itself, like for `Alias.create` of `typealias Alias = Foo.Nested`,
+     *   as nothing within a class nested in it, nor its companion object, is resolved through the typealias, see [resolveTypeAlias].
      */
     private fun enclosingContext(
         kmClass: KmClass,
@@ -5426,15 +5434,13 @@ internal class DefaultKotlinIntrospector(
      *
      * @param apiClass the [kmClass] as a class of the API.
      * @param isBuiltin whether the class is a built-in type, or its companion object.
-     * @param aliasedClass the class a typealias the class is resolved through expands to, see [enclosingContext].
      */
     private fun formatClass(
         kmClass: KmClass,
         apiClass: ApiClass,
         className: String,
         foundClass: ClassDeclarations,
-        isBuiltin: Boolean = false,
-        aliasedClass: String? = null
+        isBuiltin: Boolean = false
     ): ClassListing {
         val clazz = foundClass.clazz
         val isEnum = kmClass.kind == ClassKind.ENUM_CLASS
@@ -5548,7 +5554,7 @@ internal class DefaultKotlinIntrospector(
 
         // the parameters are the only members of an annotation class, listed without its extensions
         if (annotationParameters != null) {
-            return ClassListing.of(header, context = enclosingContext(kmClass, apiClass, foundClass, includingClass = false, isBuiltin, aliasedClass))
+            return ClassListing.of(header, context = enclosingContext(kmClass, apiClass, foundClass, includingClass = false, isBuiltin))
         }
 
         // The companion object, unless it is not part of the API, with its members which are
@@ -5656,7 +5662,7 @@ internal class DefaultKotlinIntrospector(
 
         return ClassListing.of(
             header = header,
-            context = enclosingContext(kmClass, apiClass, foundClass, includingClass = false, isBuiltin, aliasedClass),
+            context = enclosingContext(kmClass, apiClass, foundClass, includingClass = false, isBuiltin),
             isEnum = isEnum,
             enumEntryNames = if (isEnum) kmClass.kmEnumEntries.map { escapeIdentifier(it.name) } else emptyList(),
             members = members,
@@ -8224,7 +8230,7 @@ private fun List<ListingItem.Extension>.renderLines(): List<String> = buildList 
  *
  * @param isDeprecated whether the class is deprecated, which Kotlin reports on its name the caller writes,
  *   also when calling an extension on it, see [ListingItem.Extension.isCalledOnClassName],
- *   unlike a class told only as protected, which does not matter to an extension.
+ *   while a class told only as protected matters to an extension only when called on its name too, see [lineOn].
  * @param protectedLine the comment telling the outermost protected class without its deprecation,
  *   like `// in protected class Outer.Foo`, or `null` if the class is not the outermost protected one.
  */
@@ -8415,12 +8421,31 @@ private val KmFunction.pinnableReceiverTypeParameter: KmTypeParameter?
  * and it is an operator, or infix, if the [function] is, as only then it is called the same way,
  * also when it is suspend, called then also outside a coroutine, failing to compile.
  */
-@OptIn(ExperimentalContextParameters::class)
 private fun KmFunction.shadows(function: KmFunction, className: String): Boolean {
     val receiver = function.receiverParameterType ?: return false
     val receiverTypeParameter = receiver.classifier as? KmClassifier.TypeParameter ?: return false
-    return !receiver.isNullable &&
-        function.valueParameters.none { it.declaresDefaultValue || it.varargElementType != null } &&
+    return !receiver.isNullable && isCalledLike(function, receiverTypeParameter.id, className)
+}
+
+/**
+ * Whether this member function of the object named [objectName], like `com/example/Foo.Companion`,
+ * is called instead of the [extension] called on the name of the object, see `withoutShadowedByMembers`,
+ * like `fun shadow()` of `companion object : Bar` instead of `fun Bar.shadow()` for `Foo.shadow()`,
+ * by the rule of [shadows], where the type parameter of the receiver of the [extension], if any, stands for the object,
+ * also when the receiver is nullable, as the name of an object is never `null`.
+ */
+private fun KmFunction.shadowsOnObject(extension: KmFunction, objectName: String): Boolean {
+    val receiverTypeParameterId = (extension.receiverParameterType?.classifier as? KmClassifier.TypeParameter)?.id ?: -1
+    return isCalledLike(extension, receiverTypeParameterId, objectName)
+}
+
+/**
+ * Whether this function is called like the extension [function], see [shadows],
+ * where the type parameter of the [receiverTypeParameterId] stands for the class named [className], see [isSameType].
+ */
+@OptIn(ExperimentalContextParameters::class)
+private fun KmFunction.isCalledLike(function: KmFunction, receiverTypeParameterId: Int, className: String): Boolean =
+    function.valueParameters.none { it.declaresDefaultValue || it.varargElementType != null } &&
         typeParameters.isEmpty() && contextParameters.isEmpty() &&
         (isOperator || !function.isOperator) &&
         (isInfix || !function.isInfix) &&
@@ -8428,9 +8453,8 @@ private fun KmFunction.shadows(function: KmFunction, className: String): Boolean
         valueParameters.zip(function.valueParameters).all { (parameter, shadowedParameter) ->
             parameter.name == shadowedParameter.name &&
                 parameter.varargElementType == null &&
-                isSameType(shadowedParameter.type, parameter.type, receiverTypeParameter.id, className)
+                isSameType(shadowedParameter.type, parameter.type, receiverTypeParameterId, className)
         }
-}
 
 /**
  * Whether this function, a Java method, can shadow an extension, see [shadows]: only when it takes no value parameter,

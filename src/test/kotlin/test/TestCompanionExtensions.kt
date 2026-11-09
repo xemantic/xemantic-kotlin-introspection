@@ -165,12 +165,13 @@ class DeprecatedSharedSupertypeCompanionHolder : CompanionSupertype {
     companion object : CompanionSupertype
 }
 
-// called as ProtectedSupertypeCompanionHolder.onSupertype() only within its subclasses
+// called as ProtectedSupertypeCompanionHolder.onSupertype() only within its subclasses, as elsewhere,
+// while kotlinc 2.4.21 compiles it, it fails with an IllegalAccessError of the protected companion object field
 open class ProtectedSupertypeCompanionHolder {
     protected companion object : CompanionSupertype
 }
 
-// called as ProtectedOuterSupertypeCompanionHolder.Inner.onSupertype() only within its subclasses
+// called as ProtectedOuterSupertypeCompanionHolder.Inner.onSupertype() only within its subclasses, which kotlinc checks
 open class ProtectedOuterSupertypeCompanionHolder {
     protected class Inner {
         companion object : CompanionSupertype
@@ -218,3 +219,74 @@ class ShadowingCompanionHolder {
 fun ShadowingCompanionHolder.Companion.shadowed(): Int = 1
 
 fun ShadowingCompanionHolder.Companion.shadowed(value: Int): Int = value
+
+// members of a companion object, or of an object, next to the extensions of the same name on their supertype,
+// which kotlinc still calls, as the member cannot be called the same way: by the names of the parameters of the extension,
+// like UnshadowingCompanionHolder.named(y = 1), without the default argument, outside the context of the member,
+// as an operator, or infix, with an argument the bound of the type parameter of the member does not accept,
+// or with a named argument of a vararg parameter, like UnshadowingCompanionHolder.varargMember(x = 1),
+// or when the member is deprecated as hidden
+interface UnshadowedSupertype
+
+class UnshadowingCompanionHolder {
+    companion object : UnshadowedSupertype {
+        fun named(x: Int): Int = x
+        fun defaulted(x: Int): Int = x
+        context(text: String) fun contextual(): Int = text.length
+        fun plus(other: Int): Int = other
+        fun inf(other: Int): Int = other
+        fun <T : Number> bounded(value: T): Int = value.toInt()
+        fun varargMember(vararg x: Int): Int = x.size
+        @Deprecated("Gone", level = DeprecationLevel.HIDDEN)
+        fun hiddenMember(): Int = 0
+        fun nullableReceiver(): Int = 0
+    }
+}
+
+fun UnshadowedSupertype.named(y: Int): Int = y
+
+fun UnshadowedSupertype.defaulted(x: Int = 0): Int = x
+
+fun UnshadowedSupertype.contextual(): Int = 1
+
+operator fun UnshadowedSupertype.plus(other: Int): Int = other
+
+infix fun UnshadowedSupertype.inf(other: Int): Int = other
+
+fun <T> UnshadowedSupertype.bounded(value: T): Int = 1
+
+fun UnshadowedSupertype.varargMember(x: Int): Int = x
+
+fun UnshadowedSupertype.hiddenMember(): Int = 1
+
+// called as UnshadowingCompanionHolder.nullableReceiver(), where the member wins, as the name of an object is never null
+fun UnshadowedSupertype?.nullableReceiver(): Int = 1
+
+// UnshadowingObject() calls the operator extension, not the member, and UnshadowingObject.named(y = 1) the extension
+object UnshadowingObject : UnshadowedSupertype {
+    fun invoke(): Int = 0
+    fun named(x: Int): Int = x
+}
+
+operator fun UnshadowedSupertype.invoke(): Int = 1
+
+fun UnshadowingObject.named(y: Int): Int = y
+
+// a JVM-only method taking parameters inherited by an object, never called with named arguments,
+// like JvmOnlyUnshadowingObject.sort(c = naturalOrder()), which calls the extension
+object JvmOnlyUnshadowingObject : AbstractList<String>() {
+    override val size: Int get() = 0
+    override fun get(index: Int): String = throw IndexOutOfBoundsException()
+}
+
+fun JvmOnlyUnshadowingObject.sort(c: Comparator<in String>): Int = 1
+
+// an inherited member of an object, called instead of the extension on the object, like ShadowingInheritingObject.inherited()
+open class ShadowingObjectBase {
+    fun inherited(): Int = 0
+}
+
+object ShadowingInheritingObject : ShadowingObjectBase()
+
+@Suppress("EXTENSION_SHADOWED_BY_MEMBER")
+fun ShadowingInheritingObject.inherited(): Int = 1

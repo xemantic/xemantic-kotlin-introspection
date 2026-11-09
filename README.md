@@ -102,7 +102,9 @@ com.example.AnnotationTestClass
   while the ones of a companion object within a protected class are told by the comment of the protected class,
   like its members,
   and neither the extensions on the companion object, nor the ones on its supertypes,
-  shadowed by a member of the companion object of the same signature, which Kotlin calls instead, are listed or resolved,
+  shadowed by a member of the companion object called the same way, which Kotlin calls instead, are listed or resolved,
+  like `fun shadow()` for `fun Parser.shadow()`, while `fun shadow(x: Int)` does not shadow `fun Parser.shadow(y: Int)`,
+  called as `Foo.shadow(y = 1)`,
   while a class nested in the companion object is resolved only through it, like `com.example.Foo.Companion.Builder`,
   as Kotlin does not resolve `Foo.Builder` either.
   The deprecation of a companion object deprecated with the `WARNING` or the `ERROR` level,
