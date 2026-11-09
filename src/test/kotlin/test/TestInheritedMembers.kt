@@ -737,3 +737,18 @@ abstract class JavaImplementingInternalSub : com.xemantic.kotlin.introspection.t
 class JavaImplementingInternalConcrete : JavaImplementingInternalSub()
 
 abstract class JavaImplementingInternalFaceFirstSub : NearestClassFace, com.xemantic.kotlin.introspection.test.other.JavaImplementingInternal()
+
+// and the method of a Java class implementing the member of an internal interface, alone, or next to an unrelated interface,
+// so that a subclass of JavaImplementingInternalInterfaceSub, or of JavaImplementingInternalInterfaceFaceSub, need not override f()
+internal interface NearestClassInternalFace {
+    fun f(): Int
+}
+
+abstract class JavaImplementingInternalInterfaceSub : com.xemantic.kotlin.introspection.test.other.JavaImplementingInternalInterface()
+
+class JavaImplementingInternalInterfaceConcrete : JavaImplementingInternalInterfaceSub()
+
+abstract class JavaImplementingInternalInterfaceFaceSub :
+    NearestClassFace, com.xemantic.kotlin.introspection.test.other.JavaImplementingInternalInterface()
+
+class JavaImplementingInternalInterfaceFaceConcrete : JavaImplementingInternalInterfaceFaceSub()

@@ -14087,6 +14087,29 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve member of Java class implementing member of internal interface as open`() {
+        // the method of the Java class overrides the member of the internal interface, not the other way round
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaImplementingInternalInterfaceSub.f"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaImplementingInternalInterfaceSub.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaImplementingInternalInterface
+            override fun f(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of interface implemented by Java class implementing member of internal interface as open`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaImplementingInternalInterfaceFaceSub.f"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaImplementingInternalInterfaceFaceSub.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.NearestClassFace
+            open fun f(): Int
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve member implemented by Java class overridden as final by internal subclass as final`() {
         // the final override of the internal class wins over the implementation of java.util.concurrent.atomic.AtomicInteger above it
         resolver.resolve(
