@@ -1103,16 +1103,106 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should not resolve extension of supertype of protected companion object as class member`() {
-        // ProtectedSupertypeCompanionHolder.onSupertype() compiles only within its subclasses
+        // ProtectedSupertypeCompanionHolder.onSupertype() runs only within its subclasses, while kotlinc 2.4.21 compiles it anywhere,
+        // failing elsewhere with an IllegalAccessError of the protected companion object field
         assert(resolver.resolve("com.xemantic.kotlin.introspection.test.ProtectedSupertypeCompanionHolder.onSupertype") == null)
     }
 
     @Test
-    fun `should not resolve extension of supertype of companion object of protected class as class member`() {
-        // ProtectedOuterSupertypeCompanionHolder.Inner.onSupertype() compiles only within its subclasses
-        assert(
-            resolver.resolve("com.xemantic.kotlin.introspection.test.ProtectedOuterSupertypeCompanionHolder.Inner.onSupertype") == null
-        )
+    fun `should resolve extension of supertype of companion object of protected class as class member within its context`() {
+        // ProtectedOuterSupertypeCompanionHolder.Inner.onSupertype() compiles only within the subclasses of the outer class,
+        // like a member of the companion object called so
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ProtectedOuterSupertypeCompanionHolder.Inner.onSupertype"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ProtectedOuterSupertypeCompanionHolder.Inner.onSupertype [page 1/1]
+            // in protected class ProtectedOuterSupertypeCompanionHolder.Inner
+            // from com.xemantic.kotlin.introspection.test
+            fun CompanionSupertype.onSupertype(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension of supertype of protected companion object within its context`() {
+        // ProtectedSupertypeCompanionHolder.Companion.onSupertype() compiles only within the subclasses of the outer class
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ProtectedSupertypeCompanionHolder.Companion.onSupertype"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ProtectedSupertypeCompanionHolder.Companion.onSupertype [page 1/1]
+            // in protected companion object ProtectedSupertypeCompanionHolder.Companion
+            // from com.xemantic.kotlin.introspection.test
+            fun CompanionSupertype.onSupertype(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve extension of supertype of companion object shadowed by its member as class member`() {
+        // ShadowingSupertypeCompanionHolder.shadowed() calls the member, while shadowed(1) calls the extension
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ShadowingSupertypeCompanionHolder.shadowed"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ShadowingSupertypeCompanionHolder.shadowed [page 1/1]
+            companion object : ShadowedCompanionSupertype {
+                fun shadowed(): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun ShadowedCompanionSupertype.shadowed(value: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve extension property of supertype of companion object shadowed by its member as class member`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ShadowingSupertypeCompanionHolder.shadowedProperty"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ShadowingSupertypeCompanionHolder.shadowedProperty [page 1/1]
+            companion object : ShadowedCompanionSupertype {
+                val shadowedProperty: Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve extension of companion object shadowed by its member as class member`() {
+        // kotlinc reports fun ShadowingCompanionHolder.Companion.shadowed() as shadowed by the member
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ShadowingCompanionHolder.shadowed"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ShadowingCompanionHolder.shadowed [page 1/1]
+            companion object {
+                fun shadowed(): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun ShadowingCompanionHolder.Companion.shadowed(value: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve extension of companion object shadowed by its member as companion object member`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ShadowingCompanionHolder.Companion.shadowed"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ShadowingCompanionHolder.Companion.shadowed [page 1/1]
+            fun shadowed(): Int
+            // from com.xemantic.kotlin.introspection.test
+            fun ShadowingCompanionHolder.Companion.shadowed(value: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not list extension of companion object shadowed by its member`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ShadowingCompanionHolder"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ShadowingCompanionHolder [page 1/1]
+            class ShadowingCompanionHolder {
+                companion object {
+                    fun shadowed(): Int
+                }
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun ShadowingCompanionHolder.Companion.shadowed(value: Int): Int
+        """.trimIndent()
     }
 
     @Test
@@ -14580,6 +14670,44 @@ class KotlinIntrospectorTest {
     fun `should not resolve member of typealias with type arguments`() {
         // the members of the expanded class would be rendered without the type arguments of the typealias substituted
         assert(resolver.resolve("com.xemantic.kotlin.introspection.test.GenericAlias.size") == null)
+    }
+
+    @Test
+    fun `should resolve member of companion object of class nested in typealias`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.AliasOfNested.companionValue") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.AliasOfNested.companionValue [page 1/1]
+            companion object {
+                val companionValue: Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve nested class through typealias`() {
+        // kotlinc rejects AliasOfNested.Deeper as an unresolved reference, also as a type
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.AliasOfNested.Deeper") == null)
+    }
+
+    @Test
+    fun `should not resolve member of nested class through typealias`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.AliasOfNested.Deeper.deeperValue") == null)
+    }
+
+    @Test
+    fun `should not resolve companion object by its name through typealias`() {
+        // kotlinc rejects AliasOfNested.Companion as an unresolved reference, while AliasOfNested.companionValue compiles
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.AliasOfNested.Companion") == null)
+    }
+
+    @Test
+    fun `should not resolve member of companion object named through typealias`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.AliasOfNested.Companion.companionValue") == null)
+    }
+
+    @Test
+    fun `should not resolve member of class nested in class of typealias`() {
+        // kotlinc rejects AliasOfOuter.Nested as an unresolved reference
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.AliasOfOuter.Nested.companionValue") == null)
     }
 
     @Test

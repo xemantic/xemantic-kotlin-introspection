@@ -189,3 +189,32 @@ class DeprecatedMarkedCompanionHolder : InstanceMarker {
 fun <T : InstanceMarker> T.describeBounded(): Int = 0
 
 fun <T : CompanionSupertype> T.describeBounded(): Int = 1
+
+// members of the companion object, called instead of the extensions of the same signature on its supertype,
+// like ShadowingSupertypeCompanionHolder.shadowed(), while an overload of another signature is still called
+interface ShadowedCompanionSupertype
+
+class ShadowingSupertypeCompanionHolder {
+    companion object : ShadowedCompanionSupertype {
+        fun shadowed(): Int = 0
+        val shadowedProperty: Int = 0
+    }
+}
+
+fun ShadowedCompanionSupertype.shadowed(): Int = 1
+
+fun ShadowedCompanionSupertype.shadowed(value: Int): Int = value
+
+val ShadowedCompanionSupertype.shadowedProperty: Int get() = 1
+
+// and of the extension on the companion object itself, which kotlinc reports as shadowed by the member
+class ShadowingCompanionHolder {
+    companion object {
+        fun shadowed(): Int = 0
+    }
+}
+
+@Suppress("EXTENSION_SHADOWED_BY_MEMBER")
+fun ShadowingCompanionHolder.Companion.shadowed(): Int = 1
+
+fun ShadowingCompanionHolder.Companion.shadowed(value: Int): Int = value
