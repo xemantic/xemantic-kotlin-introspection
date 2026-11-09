@@ -9156,12 +9156,15 @@ class KotlinIntrospectorTest {
     @Test
     fun `should resolve class without extensions on type parameter of multiple contravariant positions inferred as unsatisfying type`() {
         // T is inferred as List<String>, the intersection of List<String> and Collection<String>, no Comparable<List<String>>,
-        // and A bounding B as Collection<String>, no Comparable<Collection<String>>, nor as List<String>, fixed after B
+        // and A bounding B as Collection<String>, no Comparable<Collection<String>>,
+        // while A bounding both B and C is not checked, unlike by kotlinc
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.BoundedReceiverListCollectionBiConsumer"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.BoundedReceiverListCollectionBiConsumer [page 1/1]
             class BoundedReceiverListCollectionBiConsumer : BoundedReceiverBiConsumer<List<String>, Collection<String>>
+            // from com.xemantic.kotlin.introspection.test
+            fun <A : Comparable<A>, B : A, C : A> BoundedReceiverBiConsumer<B, C>.biConsumeUnder()
         """.trimIndent()
     }
 
@@ -9200,8 +9203,8 @@ class KotlinIntrospectorTest {
     @Test
     fun `should resolve class with extensions on type parameters bounded by type of another one or bounding multiple ones`() {
         // T of T : List<U> is inferred as the intersection of String and List<CharSequence>, Nothing, which kotlinc accepts,
-        // A, bounding B and C, as String, the type of B declared first, unlike CharSequence, of C declared first,
-        // and U, which only the bound of T constrains, by its bound, Comparable<T>
+        // and U, which only the bound of T constrains, by its bound, Comparable<T>,
+        // while A, bounding B and C, is not checked, also when kotlinc infers it as CharSequence, of C declared first, unlike by kotlinc
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.BoundedReceiverStringCharSequencePairSink"
         ) sameAsKotlin """
@@ -9211,6 +9214,7 @@ class KotlinIntrospectorTest {
             fun <U, T : List<U>> BoundedReceiverPairSink<T, U>.sinkListOf()
             fun <T : Comparable<U>, U : Comparable<T>> BoundedReceiverPairSink<T, Nothing>.sinkMutuallyComparable()
             fun <B : A, C : A, A : Comparable<A>> BoundedReceiverPairSink<B, C>.sinkUnderLast()
+            fun <C : A, B : A, A : Comparable<A>> BoundedReceiverPairSink<B, C>.sinkUnderLastMirrored()
         """.trimIndent()
     }
 
@@ -9309,6 +9313,16 @@ class KotlinIntrospectorTest {
             "com.xemantic.kotlin.introspection.test.BoundedReceiverStringIntAnyTripleSink"
         ) should {
             have("fun <A : Comparable<A>, B : A, C : A> BoundedReceiverTripleSink<B, C, A>.tripleUnder()" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve class with extension on type parameter bounding multiple ones not checked`() {
+        // A bounds both B and C, which kotlinc accepts here, whose order of fixing them is not modelled
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverComparableIntAnyTripleSink"
+        ) should {
+            have("fun <B : A, A : Comparable<A>, C : A> BoundedReceiverTripleSink<B, C, A>.tripleUnderMiddle()" in lines())
         }
     }
 

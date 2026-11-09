@@ -833,12 +833,12 @@ class BoundedReceiverPlainAnyBiConsumer : BoundedReceiverBiConsumer<BoundedRecei
 // Any? constrains a type parameter of a contravariant position trivially, inferred after the other ones
 class BoundedReceiverStringNullableAnyBiConsumer : BoundedReceiverBiConsumer<String?, Any?>
 
-// a type parameter bounding multiple ones, inferred as the type of the first one fixed, which the other one is a subtype of then
+// a type parameter bounding multiple ones, which kotlinc infers as the type of the first one fixed, not checked
 fun <A : Comparable<A>, B : A, C : A> BoundedReceiverBiConsumer<B, C>.biConsumeUnder() {}
 
 // a pair of contravariant positions, a type parameter bounded by a type of another one, which is part of its intersection,
 // like List<CharSequence> of T : List<U> for U inferred as CharSequence, or bounding multiple ones,
-// inferred as the type of the first one declared of them, wherever it is declared itself
+// which kotlinc infers as the type of the first one declared of them, wherever it is declared itself, not checked
 interface BoundedReceiverPairSink<in A, in B>
 
 fun <U, T : List<U>> BoundedReceiverPairSink<T, U>.sinkListOf() {}
@@ -930,6 +930,11 @@ fun <A : Comparable<A>, T : Comparable<B>, B : A> BoundedReceiverTripleSink<T, A
 class BoundedReceiverStringIntAnyTripleSink : BoundedReceiverTripleSink<String, Int, Any>
 
 class BoundedReceiverPlainAnyAnyTripleSink : BoundedReceiverTripleSink<BoundedReceiverPlain, Any, Any>
+
+// a type parameter bounding multiple ones, like A of B : A, and C : A, which kotlinc fixes in an order not modelled, not checked
+fun <B : A, A : Comparable<A>, C : A> BoundedReceiverTripleSink<B, C, A>.tripleUnderMiddle() {}
+
+class BoundedReceiverComparableIntAnyTripleSink : BoundedReceiverTripleSink<Comparable<String>, Int, Any>
 
 // a supertype reached both through Kotlin and through Java, of type arguments which are not platform types themselves,
 // like BoundedReceiverPaths<List<String!>> of JavaStringListPaths, unlike its nested String!,

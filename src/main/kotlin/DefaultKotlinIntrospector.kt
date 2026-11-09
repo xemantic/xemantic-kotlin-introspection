@@ -4630,6 +4630,27 @@ internal class DefaultKotlinIntrospector(
         // whether the bounds of a type parameter of a contravariant position are inferring, see typesInferredFromBounds
         private var isInferringFromBounds = false
 
+        // the ids of the type parameters bounding each type parameter, also through others, like B, and A, of C for C : B, B : A
+        private val boundingClosures by lazy(LazyThreadSafetyMode.NONE) {
+            this.typeParameters.keys.associateWith { id ->
+                val closure = HashSet<Int>()
+                val pending = ArrayDeque(this.typeParameters.getValue(id).boundingTypeParameterIds())
+                while (pending.isNotEmpty()) {
+                    val next = pending.removeFirst()
+                    if (closure.add(next)) pending += this.typeParameters[next]?.boundingTypeParameterIds().orEmpty()
+                }
+                closure
+            }
+        }
+
+        // whether a type parameter bounds multiple other ones inferred from types, also through others,
+        // like A of B : A, and C : A, or of C : B, B : A, for I<B, C>, or I<C, B>,
+        // whose order of fixing kotlinc decides in ways not modelled, leniently not checked, see satisfiesRecursiveBounds
+        private fun hasTypeParameterBoundingMultipleInferredOnes(): Boolean {
+            val inferredClosures = boundingClosures.filterKeys { !inferred[it].isNullOrEmpty() }.values
+            return typeParameters.keys.any { id -> inferredClosures.count { id in it } > 1 }
+        }
+
         // whether a bound refers to a type parameter of the extension, like T : Comparable<T>, see satisfiesRecursiveBounds
         private val hasBoundsReferringToTypeParameters by lazy(LazyThreadSafetyMode.NONE) {
             this.typeParameters.values.any { typeParameter -> typeParameter.upperBounds.any { !it.refersToNoTypeParameter() } }
@@ -4692,11 +4713,12 @@ internal class DefaultKotlinIntrospector(
          * An intersection no type is a subtype of, like of the final `Int` and of `CharSequence`, see [isEmptyIntersection],
          * is `Nothing` for kotlinc, which accepts the call then, even when another type parameter does not satisfy its bound,
          * like `A` of `<A : Comparable<A>, B : A> Cc<B, A>` for `Cc<Plain, Any>` of a final class `Plain`.
-         * Not checked, like any other contravariant bound, is a type parameter bounding multiple ones
-         * fixed as types none of which is a supertype of all the other ones, or as intersections of multiple types.
+         * Not checked, like any other contravariant bound, are the type parameters of an extension
+         * with a type parameter bounding multiple other ones inferred from types, see [hasTypeParameterBoundingMultipleInferredOnes],
+         * or bounding ones fixed as intersections of multiple types.
          */
         private fun satisfiesRecursiveBounds(inferredOtherwise: () -> Set<Int>): Boolean {
-            if (!hasBoundsReferringToTypeParameters) return true
+            if (!hasBoundsReferringToTypeParameters || hasTypeParameterBoundingMultipleInferredOnes()) return true
             val upperTypes = HashMap<Int, List<KmType>>()
             inferred.forEach { (id, types) ->
                 val upper = types.filter { (type, variance) -> variance == KmVariance.IN && type !in typesInferredFromBounds }
