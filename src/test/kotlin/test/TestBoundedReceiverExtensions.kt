@@ -717,3 +717,94 @@ fun BoundedReceiverJdkSink<JavaStringList>.sinkJavaStringList() {}
 // a class comparable through a raw Java supertype, to the erasure of its type argument, the raw JavaGenericComparable,
 // told by its name only, not listing the extensions on Comparable of its package, which kotlinc does not accept
 class BoundedReceiverRawGenericComparable : JavaRawGenericComparableMid()
+
+// a type parameter of a contravariant position, inferred by kotlinc as the type argument when its bound refers to a type parameter,
+// like T : Comparable<T>, or E of T : List<E>, unlike T : CharSequence, which a subtype of both satisfies
+interface BoundedReceiverConsumer<in T>
+
+fun <T : Comparable<T>> BoundedReceiverConsumer<T>.consumeComparable() {}
+
+fun <T : CharSequence> BoundedReceiverConsumer<T>.consumeCharSequence() {}
+
+fun <E, T : List<E>> BoundedReceiverConsumer<T>.consumeElements() {}
+
+// a type parameter constrained only by a star projection, which kotlinc cannot infer, unless a value parameter tells it
+fun <T : CharSequence> BoundedReceiverConsumer<List<T>>.consumeCharSequences() {}
+
+fun <T : CharSequence> BoundedReceiverConsumer<List<T>>.consumeCharSequencesOf(value: T) {}
+
+class BoundedReceiverListConsumer : BoundedReceiverConsumer<List<String>>
+
+class BoundedReceiverStarListConsumer : BoundedReceiverConsumer<List<*>>
+
+class BoundedReceiverStringConsumer : BoundedReceiverConsumer<String>
+
+// unless something else constrains the type parameter, like a value parameter, or a bound which is not recursive,
+// like T : U, also through the bound of a value parameter, like E of T : List<E> for value: T,
+// while a bound referring to the type parameter only covariantly, like T : List<T>, is satisfied by a final class,
+// like Int, but not by Any
+fun <T : Comparable<T>> BoundedReceiverConsumer<T>.consumeComparableOf(value: T) {}
+
+fun <T : U, U : CharSequence> BoundedReceiverConsumer<T>.consumeBoundedByTypeParameter() {}
+
+fun <E, T : List<E>> BoundedReceiverConsumer<T>.consumeElementsOf(element: E) {}
+
+fun <E, T : List<E>> BoundedReceiverConsumer<List<T>>.consumeListsOf(value: T) {}
+
+// also through the bound of a type parameter bound, like E of U : List<E> for T : U
+fun <E, U : List<E>, T : U> BoundedReceiverConsumer<T>.consumeElementsThroughBound() {}
+
+fun <T : List<T>> BoundedReceiverConsumer<T>.consumeSelfList() {}
+
+class BoundedReceiverAnyConsumer : BoundedReceiverConsumer<Any>
+
+class BoundedReceiverIntConsumer : BoundedReceiverConsumer<Int>
+
+// a type parameter in a projection contradicting the type parameter of a supertype, like T of List<in T>,
+// the supertype of MutableList<in T>, which kotlinc infers, not told, like by a star projection
+fun <T> BoundedReceiverConsumer<MutableList<in T>>.consumeIntoMutable() {}
+
+class BoundedReceiverNullableAnyListConsumer : BoundedReceiverConsumer<List<Any?>>
+
+// a type parameter kotlinc infers as an intersection type, not checked against its recursive bound, like by kotlinc,
+// of multiple bounds, which a final class satisfies by Nothing, like Int, which is no CharSequence
+fun <T> BoundedReceiverConsumer<T>.consumeComparableCharSequence() where T : Comparable<T>, T : CharSequence {}
+
+class BoundedReceiverPlain
+
+class BoundedReceiverPlainConsumer : BoundedReceiverConsumer<BoundedReceiverPlain>
+
+// of multiple contravariant positions, or of the bound of another type parameter, like A of B : A
+interface BoundedReceiverBiConsumer<in A, in B>
+
+fun <T : Comparable<T>> BoundedReceiverBiConsumer<T, T>.biConsumeComparable() {}
+
+fun <A : Comparable<A>, B : A> BoundedReceiverBiConsumer<B, A>.biConsumeBounded() {}
+
+class BoundedReceiverStringBiConsumer : BoundedReceiverBiConsumer<String, CharSequence>
+
+class BoundedReceiverIntStringBiConsumer : BoundedReceiverBiConsumer<Int, String>
+
+// or a covariant position of the same type parameter, which it is inferred from instead, also through a bound, like B : A
+interface BoundedReceiverMixed<out A, in B>
+
+fun <T : Comparable<T>> BoundedReceiverMixed<T, T>.mixComparable() {}
+
+fun <A : Comparable<A>, B : A> BoundedReceiverMixed<B, A>.mixBounded() {}
+
+class BoundedReceiverStringMixed : BoundedReceiverMixed<String, CharSequence>
+
+class BoundedReceiverListMixed : BoundedReceiverMixed<List<String>, Any>
+
+// a type parameter constrained only by Nothing, which kotlinc cannot infer, unless the expected type of the call tells it
+interface BoundedReceiverProducer<out T>
+
+fun <T> BoundedReceiverProducer<T>.produce() {}
+
+fun <T> BoundedReceiverProducer<List<T>>.produceList() {}
+
+fun <T> BoundedReceiverProducer<List<T>>.produceFirst(): T? = null
+
+fun <E, T : List<E>> BoundedReceiverProducer<T>.produceElements() {}
+
+class BoundedReceiverNothingProducer : BoundedReceiverProducer<Nothing>
