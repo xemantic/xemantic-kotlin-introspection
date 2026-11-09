@@ -2314,6 +2314,19 @@ internal class DefaultKotlinIntrospector(
     }
 
     /**
+     * A class of a supertype, named [name], reached from the inheriting class by the [path] of the positions
+     * among the direct supertypes of each class, passing a Java class giving platform type arguments, or not, [isPlatform],
+     * see [inheritedCandidates].
+     */
+    private class Reach(val name: String, val path: List<Int>, val isPlatform: Boolean)
+
+    /**
+     * The member contributed by a direct supertype, reached by the [reach], which [takesPlatformTypes],
+     * or [returnsPlatformType], see [inheritedCandidates].
+     */
+    private class Contribution(val reach: Reach, val takesPlatformTypes: Boolean, val returnsPlatformType: Boolean)
+
+    /**
      * A [member] named like the one looked up, declared by a supertype, the [kmClass] of the [declarations],
      * which is inherited, unless a member of another supertype overrides it, see [inheritedMembers],
      * rendered with the type arguments of the inheriting class substituted, see [Member.substituted].
@@ -2348,19 +2361,6 @@ internal class DefaultKotlinIntrospector(
      * @param jvmMethod the JVM method of the [member], see [JvmMethod],
      *   of a JVM-only member of a built-in type, see [BuiltinClass], or of a member of a Java class, see [JavaClass].
      */
-    /**
-     * A class of a supertype, named [name], reached from the inheriting class by the [path] of the positions
-     * among the direct supertypes of each class, passing a Java class giving platform type arguments, or not, [isPlatform],
-     * see [inheritedCandidates].
-     */
-    private class Reach(val name: String, val path: List<Int>, val isPlatform: Boolean)
-
-    /**
-     * The member contributed by a direct supertype, reached by the [reach], which [takesPlatformTypes],
-     * or [returnsPlatformType], see [inheritedCandidates].
-     */
-    private class Contribution(val reach: Reach, val takesPlatformTypes: Boolean, val returnsPlatformType: Boolean)
-
     private inner class InheritedCandidate(
         val name: String,
         val kmClass: KmClass,
@@ -2595,7 +2595,7 @@ internal class DefaultKotlinIntrospector(
 
         /**
          * Whether the [member], of a Java class, is of the same signature as the [jvmOnly] member of a built-in type,
-         * see [BuiltinClass.jvmOnlyFunctions], which stands for it then, see [inheritedCandidates],
+         * see [BuiltinClass.jvmOnlyFunctions], which stands for it, see [inheritedCandidates],
          * or, of a JDK class, of the same JVM method name and descriptor, and of the same signature regardless of nullability,
          * see [rivalrySignatures], like the `computeIfAbsent(K!, …)` of `java.util.Hashtable`, taking platform types,
          * see [isNotNullClassTypeParameter], the one of `MutableMap` taking `K`,
@@ -3101,9 +3101,15 @@ internal class DefaultKotlinIntrospector(
             return name
         }
         // the member of a Java class, which takes the type arguments of its class as platform types,
-        // when reached through a platform giver, like the add(E) of java.util.ArrayList for a subclass of a Java subclass of it
+        // when reached through a platform giver, like the add(E) of java.util.ArrayList for a subclass of a Java subclass of it,
+        // picked like the Kotlin members below, the first one not returning a platform type, like the apply of
+        // java.util.function.Function for `X : JavaFunction<String>, Function<String, String>`, returning String! through
+        // the Java `JavaFunction<T> extends Function<T, T>`, so that apply(null) does not compile, unlike accept(null)
+        // of java.util.function.Consumer, returning Unit, for `Y : JavaConsumer<String>, Consumer<String>`
         candidates.filter { it.declarations is JavaClass && it.classTypeParameterPositions.isNotEmpty() }.forEach { candidate ->
-            candidate.takesPlatformTypes = reaches(setOf(candidate.name)).firstOrNull()?.isPlatform == true
+            val reached = reaches(setOf(candidate.name))
+            val picked = reached.firstOrNull { !it.isPlatform || !candidate.returnsClassTypeParameter } ?: reached.firstOrNull()
+            candidate.takesPlatformTypes = picked?.isPlatform == true
         }
         // the compiler merges a Kotlin member with the Java methods overriding it, or a member it overrides,
         // and with itself reached through other supertypes, of other type arguments, each contributed by a direct supertype,
@@ -3224,9 +3230,12 @@ internal class DefaultKotlinIntrospector(
             // the JVM-only members standing for the Java method, which does not inherit the enhancement of its return type,
             // if a Java method of the user code, like the computeIfAbsent of a Java subclass of java.util.HashMap,
             // all of them alike, like the spliterator() of Iterable, Collection, and Set, of a Java subclass of java.util.HashSet,
-            // not to change which one of them is listed
+            // not to change which one of them is listed, also of the same JVM descriptor, see standsFor, when the compiler picks
+            // the JVM-only member, see keepsKotlinTypes, like the computeIfAbsent of MutableMap for a subclass of java.util.Hashtable
+            // and MutableMap, while the JDK method taking platform types is listed otherwise, like putIfAbsent of java.util.Properties
             val standingJvmOnly = jvmOnlyCandidates.filter { jvmOnly ->
-                candidate.standsFor(jvmOnly) && !candidate.raisesVisibility(jvmOnly)
+                candidate.standsFor(jvmOnly) && (jvmOnly.signature == candidate.signature || jvmOnly.keepsKotlinTypes) &&
+                    !candidate.raisesVisibility(jvmOnly)
             }
             if (candidate.returnsPlatformType) standingJvmOnly.forEach { it.standsForPlatformType = true }
             // of the modality of the method of the Java class, which implements them, like the putIfAbsent of java.util.HashMap

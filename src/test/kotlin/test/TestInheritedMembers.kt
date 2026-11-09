@@ -831,3 +831,15 @@ abstract class InheritedJavaComparableArrayList : com.xemantic.kotlin.introspect
 // A Java subclass of java.util.LinkedHashSet, whose own add kotlin-reflect cannot describe
 abstract class InheritedJavaLinkedHashSetSubclass :
     com.xemantic.kotlin.introspection.test.other.JavaLinkedHashSetSubclass<String>()
+
+// java.util.function.Function reached first through a Java interface giving it platform type arguments, and then directly,
+// whose apply K2 takes of the second one, not returning a platform type
+abstract class InheritedJavaFunctionDiamond :
+    com.xemantic.kotlin.introspection.test.other.JavaSameTypeFunction<String>, java.util.function.Function<String, String>
+
+abstract class InheritedJavaBiFunctionDiamond :
+    com.xemantic.kotlin.introspection.test.other.JavaSameTypeBiFunction<String>, java.util.function.BiFunction<String, String, String>
+
+// java.util.function.Consumer reached alike, whose accept returns no platform type, so that K2 takes the first one
+abstract class InheritedJavaConsumerDiamond :
+    com.xemantic.kotlin.introspection.test.other.JavaTypeConsumer<String>, java.util.function.Consumer<String>

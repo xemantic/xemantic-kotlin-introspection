@@ -4883,13 +4883,13 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should resolve inherited JVM-only member of mutable map taking value definitely not nullable of type parameter bounded not nullable`() {
-        // V & Any of a V : Any does not compile, while the key is K!, as java.util.Hashtable gives the type arguments of MutableMap
+    fun `should resolve inherited member of mutable map taking value definitely not nullable of type parameter bounded not nullable`() {
+        // V & Any of a V : Any does not compile, while the key of the merge of java.util.Hashtable is K!, see isNotNullClassTypeParameter
         assumeNoParameterNames(MERGE_METHOD)
         resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedHashtable.merge") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.InheritedHashtable.merge [page 1/1]
-            // inherited from kotlin.collections.MutableMap
-            open fun merge(arg0: K?, arg1: V, arg2: java.util.function.BiFunction<in V, in V, out V?>): V?
+            // inherited from java.util.Hashtable
+            override fun merge(arg0: K?, arg1: V, arg2: java.util.function.BiFunction<in V, in V, out V?>): V?
         """.trimIndent()
     }
 
@@ -5942,13 +5942,13 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should resolve JVM-only member of mutable map reached through JDK class which is no pure implementation as taking platform type`() {
+    fun `should resolve override of JDK method by JDK class which is no pure implementation of mutable map as taking platform type`() {
         // java.util.Hashtable gives MutableMap<String!, String!>, and its compute does not inherit the enhancement
         // of the one of java.util.Map, so that compute(null, …) compiles, unlike for a java.util.HashMap
         resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedStringHashtable.compute") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.InheritedStringHashtable.compute [page 1/1]
-            // inherited from kotlin.collections.MutableMap
-            open fun compute(arg0: String?, arg1: java.util.function.BiFunction<in String, in String?, out String?>): String?
+            // inherited from java.util.Hashtable
+            override fun compute(arg0: String?, arg1: java.util.function.BiFunction<in String, in String?, out String?>): String?
         """.trimIndent()
     }
 
@@ -5984,6 +5984,37 @@ class KotlinIntrospectorTest {
             // inherited from java.util.ArrayList
             override fun add(arg0: String?): Boolean
             override fun add(arg0: Int, arg1: String?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member reached first through Java interface returning platform type as reached directly`() {
+        // the apply of java.util.function.Function returns String! through the Java interface, which gives Function<String!, String!>,
+        // so that K2 picks the one of Function<String, String>, the second direct supertype, and apply(null) does not compile
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaFunctionDiamond.apply") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaFunctionDiamond.apply [page 1/1]
+            // inherited from java.util.function.Function
+            fun apply(arg0: String): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member of two parameters reached first through Java interface returning platform type as reached directly`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaBiFunctionDiamond.apply") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaBiFunctionDiamond.apply [page 1/1]
+            // inherited from java.util.function.BiFunction
+            fun apply(arg0: String, arg1: String): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member reached first through Java interface returning no platform type as taking platform type`() {
+        // the accept of java.util.function.Consumer returns Unit, so that K2 picks the one of the first direct supertype,
+        // the Java interface, which gives Consumer<String!>, and accept(null) compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaConsumerDiamond.accept") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaConsumerDiamond.accept [page 1/1]
+            // inherited from java.util.function.Consumer
+            fun accept(arg0: String?)
         """.trimIndent()
     }
 
