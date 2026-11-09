@@ -4526,13 +4526,23 @@ internal class DefaultKotlinIntrospector(
                 val known = types[name].orEmpty()
                 // each one reached through another path, like MutableList<String> of a Kotlin interface
                 // and MutableList<String!> of a Java one, see keptSupertypes, up to MAX_SUPERTYPE_PATHS of them,
-                // one without platform type arguments replacing one with them beyond, which kotlinc would leave out
+                // and beyond, one covering others of the same kind replacing them, see coversType, a covered one adding nothing,
+                // or else one without platform type arguments replacing one with them, which kotlinc would leave out
                 val reached = when {
                     known.any { it.hasSameStructure(type) } -> null
                     known.size < MAX_SUPERTYPE_PATHS -> known + type
-                    type.hasPlatformArguments -> null
-                    else -> known.indexOfFirst { it.hasPlatformArguments }.takeIf { it >= 0 }?.let { index ->
-                        known.toMutableList().also { it[index] = type }
+                    else -> {
+                        val isPlatform = type.hasPlatformArguments
+                        val sameKind = known.filter { it.hasPlatformArguments == isPlatform }
+                        val covered = sameKind.filter { type.coversType(it) }
+                        when {
+                            sameKind.any { it.coversType(type) } -> null
+                            covered.isNotEmpty() -> known.filter { it !in covered } + type
+                            isPlatform -> null
+                            else -> known.indexOfFirst { it.hasPlatformArguments }.takeIf { it >= 0 }?.let { index ->
+                                known.toMutableList().also { it[index] = type }
+                            }
+                        }
                     }
                 }
                 if (reached != null) {
@@ -4902,18 +4912,17 @@ internal class DefaultKotlinIntrospector(
         return when (val classifier = receiver.classifier) {
             is KmClassifier.Class -> {
                 val reached = types[classReceiverIndexKey(receiver)]
-                reached == null || ReceiverMatcher(this, typeParameters, receiverTypeParameterId = null, self = kmClass.name)
-                    .let { matcher ->
-                        matcher.anyReached(reached) { supertype ->
-                            matcher.argumentsMatch(classifier.name, receiver.arguments, supertype.arguments, KmVariance.OUT) &&
-                                matcher.isInferred(referred, inferredOtherwise)
-                        }
+                reached == null || matchesThroughAnyPaths(typeParameters, receiverTypeParameterId = null, self = kmClass.name) {
+                    anyReached(reached) { supertype ->
+                        argumentsMatch(classifier.name, receiver.arguments, supertype.arguments, KmVariance.OUT) &&
+                            isInferred(referred, inferredOtherwise)
                     }
+                }
             }
             is KmClassifier.TypeParameter -> {
                 val bounds = receiverBoundTypes(classifier.id, typeParameters)
-                fun isSatisfiedBy(self: String) = ReceiverMatcher(this, typeParameters, classifier.id, self).let { matcher ->
-                    bounds.all { matcher.isSupertype(it) } && matcher.isInferred(referred, inferredOtherwise)
+                fun isSatisfiedBy(self: String) = matchesThroughAnyPaths(typeParameters, classifier.id, self) {
+                    bounds.all { isSupertype(it) } && isInferred(referred, inferredOtherwise)
                 }
                 isSatisfiedBy(kmClass.name) || bounds
                     .flatMap { bound -> types[classReceiverIndexKey(bound)].orEmpty().flatMap { it.arguments } }
@@ -4922,6 +4931,59 @@ internal class DefaultKotlinIntrospector(
             }
             is KmClassifier.TypeAlias -> true
         }
+    }
+
+    /**
+     * Whether the [match] of a [ReceiverMatcher], created for the [typeParameters], the [receiverTypeParameterId] and the [self] class,
+     * is matched through any of the supertypes reached through different paths, see [ReceiverMatcher.anyReached],
+     * at each place it matches them, also when the one matched first fails what follows,
+     * like the other bound of `fun <E, P> P.f() where P : Box<List<E>>, P : Inv<E>`, or the other type argument
+     * of `fun <E> Two<Box<List<E>>, E>.f()`, which kotlinc checks against each kept supertype, see [keptSupertypes]:
+     * matched again, choosing the supertypes one by one, see [PathChoices], up to [MAX_PATH_CHOICE_MATCHES] times,
+     * and not matched beyond, like when matching the first ones only.
+     */
+    private fun ClassSupertypes.matchesThroughAnyPaths(
+        typeParameters: List<KmTypeParameter>,
+        receiverTypeParameterId: Int?,
+        self: String,
+        match: ReceiverMatcher.() -> Boolean
+    ): Boolean {
+        // first matching the first supertype matched at each place, which tells the most
+        val first = ReceiverMatcher(this, typeParameters, receiverTypeParameterId, self)
+        if (first.match()) return true
+        if (!first.hasPathChoices) return false
+        var forced = emptyList<Int>()
+        repeat(MAX_PATH_CHOICE_MATCHES) {
+            val choices = PathChoices(forced)
+            if (ReceiverMatcher(this, typeParameters, receiverTypeParameterId, self, choices).match()) return true
+            forced = choices.next() ?: return false
+        }
+        return false
+    }
+
+    /**
+     * The supertypes chosen at each place a [ReceiverMatcher] matches the supertypes reached through different paths,
+     * see [ReceiverMatcher.anyReached], in the order of the places, the [forced] ones first, and the first one beyond,
+     * which tell the next choices, see [next], depth first, as the places following a choice depend on it.
+     */
+    private class PathChoices(private val forced: List<Int>) {
+
+        private val chosen = ArrayList<Int>()
+
+        private val counts = ArrayList<Int>()
+
+        // the index of the supertype chosen at the next place, of the given count of the supertypes
+        fun choose(count: Int): Int = (forced.getOrNull(chosen.size) ?: 0).also { index ->
+            chosen += index
+            counts += count
+        }
+
+        // the choices to force next, the next supertype at the last place which has one, or null if none has
+        fun next(): List<Int>? {
+            val place = chosen.indices.lastOrNull { chosen[it] + 1 < counts[it] } ?: return null
+            return chosen.subList(0, place) + (chosen[place] + 1)
+        }
+
     }
 
     /**
@@ -5056,7 +5118,8 @@ internal class DefaultKotlinIntrospector(
         private val supertypes: ClassSupertypes,
         typeParameters: List<KmTypeParameter>,
         private val receiverTypeParameterId: Int?,
-        private val self: String
+        private val self: String,
+        private val pathChoices: PathChoices? = null
     ) {
 
         private val typeParameters = typeParameters.associateBy { it.id }
@@ -5438,12 +5501,24 @@ internal class DefaultKotlinIntrospector(
         /**
          * Whether any of the supertypes of the same class reached through different paths, the [reached] ones, see [keptSupertypes],
          * is matched by the [match] function, forgetting what is inferred, and whether what is not told was matched,
-         * see [isUntold], by the ones which are not matched, see [retrying].
+         * see [isUntold], by the ones which are not matched, see [retrying],
+         * or else only the one of the [pathChoices], when matched again through each of them, see [matchesThroughAnyPaths].
          */
         fun anyReached(reached: List<KmType>, match: (supertype: KmType) -> Boolean): Boolean {
             val mark = Mark()
-            return reached.any { supertype -> retrying(mark) { match(supertype) } }
+            if (reached.size > 1) hasPathChoices = true
+            // the one chosen, when matched again through any paths, see matchesThroughAnyPaths
+            val choices = pathChoices?.takeIf { reached.size > 1 }
+                ?: return reached.any { supertype -> retrying(mark) { match(supertype) } }
+            return retrying(mark) { match(reached[choices.choose(reached.size)]) }
         }
+
+        /**
+         * Whether the supertypes of the same class reached through different paths were matched, see [anyReached],
+         * which another choice of them could match otherwise, see [matchesThroughAnyPaths].
+         */
+        var hasPathChoices = false
+            private set
 
         /**
          * Whether the [expected] type arguments of the class of the given [metadataName] match the [actual] ones,
@@ -5597,11 +5672,14 @@ internal class DefaultKotlinIntrospector(
          * The type a type parameter of the [expected] type is inferred from, the [actual] type in a position of the given
          * [variance], without the nullability of a nullable type parameter, like `String` of `String?` for `T?`
          * in a covariant position, while it can be `String?` in a contravariant one, and either in an invariant one,
-         * like the platform type `String!`, or `null` if a not nullable type cannot be a nullable type parameter,
+         * like the platform type `String!`, also made nullable, like `String!` substituted for `T?`,
+         * or `null` if a not nullable type cannot be a nullable type parameter,
          * like `String` for `T?` in a contravariant, or an invariant position.
          */
         private fun inferredFrom(expected: KmType, actual: KmType, variance: KmVariance): KmType? = when {
-            !expected.isNullable || actual.flexibleTypeUpperBound != null -> actual
+            !expected.isNullable -> actual
+            // a platform type made nullable, like String! substituted for T of W<T?>, infers T? as String!, not nullable
+            actual.flexibleTypeUpperBound != null -> if (actual.isNullable) actual.copy().also { it.isNullable = false } else actual
             !actual.isNullable -> actual.takeIf { variance == KmVariance.OUT }
             variance == KmVariance.IN -> actual
             else -> actual.copy().also { type ->
@@ -9289,11 +9367,12 @@ private fun KmVariance.compose(inner: KmVariance): KmVariance = when {
  * Whether the nullability of the [expected] type matches the one of the [actual] type in a position of the [variance],
  * like a nullable one in a covariant position, which is a supertype of the not nullable one,
  * while a platform type of Java matches either, also an expected one, like a type a type parameter is inferred from,
- * see `ReceiverMatcher.infer`.
+ * see `ReceiverMatcher.infer`, unless made nullable, like `W<String!>!` substituted for `T` of `W<T?>`, which is `W<String!>?`.
  */
 private fun isNullabilityMatched(expected: KmType, actual: KmType, variance: KmVariance): Boolean = when {
     // a platform type of Java, see javaSignatureType
-    actual.flexibleTypeUpperBound != null || expected.flexibleTypeUpperBound != null -> true
+    (actual.flexibleTypeUpperBound != null && !actual.isNullable) ||
+        (expected.flexibleTypeUpperBound != null && !expected.isNullable) -> true
     variance == KmVariance.INVARIANT -> expected.isNullable == actual.isNullable
     variance == KmVariance.OUT -> expected.isNullable || !actual.isNullable
     else -> actual.isNullable || !expected.isNullable
@@ -9323,6 +9402,9 @@ private fun KmType.javaSignatureType(substitution: Map<Int, KmType>): KmType = c
             // like CharSequence! of List<E> for E of CharSequence, see isJavaErasure
             substitution[classifier.id]?.copy()?.also { type -> type.annotations.removeAll { it.className == JAVA_ERASURE_MARKER } }
                 ?: return@map argument
+        } else if (type.isJavaErasure) {
+            // an erased type argument of a raw Kotlin supertype, also its type arguments, like String of MutableList<String>
+            return@map argument
         } else {
             type.javaSignatureType(substitution)
         }
@@ -9494,14 +9576,58 @@ private fun KmType.rawBounds(): Pair<KmType, KmType> {
  */
 private val KmType.hasPlatformArguments: Boolean
     get() = generateSequence(this) { it.outerType }.any { type ->
-        // a Java collection, a Java array, or a raw type, is a platform type as well
-        type.arguments.any { it.type?.flexibleTypeUpperBound != null }
-    } || hasInexactErasure
+        // a Java collection, a Java array, or a raw type, is a platform type as well,
+        // and so is an erasure not told exactly, see JAVA_INEXACT_ERASURE_MARKER, only of a direct type argument, like kotlinc
+        type.arguments.any { argument ->
+            val argumentType = argument.type
+            argumentType != null && (argumentType.flexibleTypeUpperBound != null ||
+                argumentType.annotations.any { it.className == JAVA_INEXACT_ERASURE_MARKER })
+        }
+    }
 
-// whether this type, or one of its type arguments, also a nested one, is an erasure not told exactly, see JAVA_INEXACT_ERASURE_MARKER
-private val KmType.hasInexactErasure: Boolean
-    get() = annotations.any { it.className == JAVA_INEXACT_ERASURE_MARKER } ||
-        arguments.any { it.type?.hasInexactErasure == true } || outerType?.hasInexactErasure == true
+/**
+ * Whether this type of a supertype reached through more paths than [MAX_SUPERTYPE_PATHS] covers the [other] one,
+ * matching any type the other one matches, see [ClassSupertypes.types], the same type,
+ * but for a platform type of Java in place of the same class, or of its mutable one, see [coversClass],
+ * like `Box<(Mutable)List<String!>!>` covering `Box<MutableList<String>>`, and `Box<List<String?>>`,
+ * so that one covering others replaces them, and one covered adds nothing.
+ */
+private fun KmType.coversType(other: KmType): Boolean {
+    if (hasSameStructure(other)) return true
+    if (arguments.size != other.arguments.size || (outerType == null) != (other.outerType == null)) return false
+    if (!coversClass(other) && (classifier != other.classifier || isNullable != other.isNullable ||
+            isSuspend != other.isSuspend || isDefinitelyNonNull != other.isDefinitelyNonNull ||
+            (flexibleTypeUpperBound == null) != (other.flexibleTypeUpperBound == null) ||
+            isJavaCollection != other.isJavaCollection || isJavaArray != other.isJavaArray || isJavaRaw != other.isJavaRaw)
+    ) {
+        return false
+    }
+    val outer = outerType
+    val otherOuter = other.outerType
+    return (outer == null || otherOuter == null || outer.coversType(otherOuter)) && arguments.indices.all { index ->
+        val argument = arguments[index]
+        val otherArgument = other.arguments[index]
+        val type = argument.type
+        val otherType = otherArgument.type
+        if (type == null || otherType == null) type == null && otherType == null else {
+            argument.variance == otherArgument.variance && type.coversType(otherType)
+        }
+    }
+}
+
+// whether this platform type of Java is of the class of the other type, not a platform type, or of its mutable one,
+// also a platform one, like (Mutable)List<String!>! of MutableList<String>!, see coversType,
+// but not one made nullable, like W<String!>! substituted for T of W<T?>, which kotlinc sees nullable, like W<String!>?
+private fun KmType.coversClass(other: KmType): Boolean {
+    if (flexibleTypeUpperBound == null || isNullable || isJavaArray != other.isJavaArray || isJavaRaw != other.isJavaRaw ||
+        (other.flexibleTypeUpperBound != null && (classifier == other.classifier || other.isJavaCollection))
+    ) {
+        return false
+    }
+    val name = (classifier as? KmClassifier.Class)?.name ?: return false
+    return classifier == other.classifier ||
+        (isJavaCollection && (other.classifier as? KmClassifier.Class)?.name == MUTABLE_COLLECTION_TYPES[name])
+}
 
 /**
  * Whether this type has the same structure as the [other] one, as told by [structureKey], without building the keys,
@@ -9703,8 +9829,13 @@ private const val COMPARABLE_CLASS_NAME = "kotlin.Comparable"
 // the number of distinct types of a supertype reached through different paths which are told and walked, see supertypeNames,
 // as their number can double at each level of a hierarchy, like through Kotlin and through Java,
 // the ones reached first, which the class is matched against, an extension matching only the other ones not listed,
-// but the ones without platform type arguments, which replace the ones with them, see keptSupertypes
+// but the ones covering others, which replace them, see coversType,
+// and the ones without platform type arguments, which replace the ones with them, see keptSupertypes
 private const val MAX_SUPERTYPE_PATHS = 16
+
+// the most times an extension is matched again, choosing other supertypes reached through different paths,
+// see matchesThroughAnyPaths, as their combinations multiply, an extension matching only a later one not listed
+private const val MAX_PATH_CHOICE_MATCHES = 256
 
 /**
  * The names of the members of `kotlin.Any` whose overrides the compiler reports no hidden deprecation of,

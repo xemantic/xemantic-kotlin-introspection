@@ -9547,6 +9547,7 @@ class KotlinIntrospectorTest {
             class BoundedReceiverJavaMutableListPaths : com.xemantic.kotlin.introspection.test.other.JavaFlexibleListPaths, com.xemantic.kotlin.introspection.test.other.JavaStringMutableListPaths
             // from com.xemantic.kotlin.introspection.test
             fun BoundedReceiverPaths<MutableList<String>>.mutableStringListPaths()
+            fun BoundedReceiverPaths<MutableList<String?>>.nullableMutableStringPaths()
         """.trimIndent()
     }
 
@@ -9658,6 +9659,201 @@ class KotlinIntrospectorTest {
             fun BoundedReceiverPaths<List<CharSequence>>.charSequenceListPaths()
             fun <T : Any> BoundedReceiverPaths<List<T>>.nonNullListPaths()
             fun BoundedReceiverPaths<List<CharSequence?>>.nullableCharSequenceListPaths()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extension on type parameter of several bounds matching another supertype reached through Kotlin and through Java`() {
+        // BoundedReceiverPathsOf<String?> takes E of String?, which BoundedReceiverPaths<List<String!>> of Java matches,
+        // unlike BoundedReceiverPaths<List<String>> of Kotlin, reached first
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverNullablePathsOf"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverNullablePathsOf [page 1/1]
+            interface BoundedReceiverNullablePathsOf : BoundedReceiverStringListPaths, com.xemantic.kotlin.introspection.test.other.JavaStringListPaths, BoundedReceiverPathsOf<String?>
+            // from com.xemantic.kotlin.introspection.test
+            fun <E, P> P.listPathsOf() where P : BoundedReceiverPaths<List<E>>, P : BoundedReceiverPathsOf<E>
+            fun <T : Any> BoundedReceiverPaths<List<T>>.nonNullListPaths()
+            fun BoundedReceiverPaths<List<String?>>.nullableStringListPaths()
+            fun <P : BoundedReceiverPaths<List<String?>>> P.nullableStringListPathsOf()
+            fun <E, P> P.pathsOfList() where P : BoundedReceiverPathsOf<E>, P : BoundedReceiverPaths<List<E>>
+            fun BoundedReceiverPaths<List<String>>.stringListPaths()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extension on type parameter of several bounds matching another supertype reached through Java first`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverJavaNullablePathsOf"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverJavaNullablePathsOf [page 1/1]
+            interface BoundedReceiverJavaNullablePathsOf : com.xemantic.kotlin.introspection.test.other.JavaStringListPaths, BoundedReceiverStringListPaths, BoundedReceiverPathsOf<String?>
+            // from com.xemantic.kotlin.introspection.test
+            fun <E, P> P.listPathsOf() where P : BoundedReceiverPaths<List<E>>, P : BoundedReceiverPathsOf<E>
+            fun <T : Any> BoundedReceiverPaths<List<T>>.nonNullListPaths()
+            fun BoundedReceiverPaths<List<String?>>.nullableStringListPaths()
+            fun <P : BoundedReceiverPaths<List<String?>>> P.nullableStringListPathsOf()
+            fun <E, P> P.pathsOfList() where P : BoundedReceiverPathsOf<E>, P : BoundedReceiverPaths<List<E>>
+            fun BoundedReceiverPaths<List<String>>.stringListPaths()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extension on type parameter of several bounds matching none of supertypes reached through Kotlin and through Java`() {
+        // BoundedReceiverPathsOf<Int> takes E of Int, which neither BoundedReceiverPaths<List<String>>, nor BoundedReceiverPaths<List<String!>> matches
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverIntPathsOf"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverIntPathsOf [page 1/1]
+            interface BoundedReceiverIntPathsOf : BoundedReceiverStringListPaths, com.xemantic.kotlin.introspection.test.other.JavaStringListPaths, BoundedReceiverPathsOf<Int>
+            // from com.xemantic.kotlin.introspection.test
+            fun <T : Any> BoundedReceiverPaths<List<T>>.nonNullListPaths()
+            fun BoundedReceiverPaths<List<String?>>.nullableStringListPaths()
+            fun <P : BoundedReceiverPaths<List<String?>>> P.nullableStringListPathsOf()
+            fun BoundedReceiverPaths<List<String>>.stringListPaths()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extension on sibling type arguments matching another supertype of type argument reached through Kotlin and through Java`() {
+        // the second type argument, String?, takes E of String?, which BoundedReceiverPaths<List<String!>> of Java matches,
+        // as the supertype of the first one, unlike BoundedReceiverPaths<List<String>> of Kotlin, reached first
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverNullablePathsPair"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverNullablePathsPair [page 1/1]
+            class BoundedReceiverNullablePathsPair : BoundedReceiverPathsPair<BoundedReceiverJavaKotlinListPaths, String?>
+            // from com.xemantic.kotlin.introspection.test
+            fun <E> BoundedReceiverPathsPair<BoundedReceiverPaths<List<E>>, E>.pathsPair()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extension on sibling type arguments matching none of supertypes of type argument reached through Kotlin and through Java`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverIntPathsPair"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverIntPathsPair [page 1/1]
+            class BoundedReceiverIntPathsPair : BoundedReceiverPathsPair<BoundedReceiverJavaKotlinListPaths, Int>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with raw Kotlin supertype of Java supertype erased to star projected bound referring to its type parameter`() {
+        // kotlinc erases T : Comparable<T> of the raw BoundedReceiverComparableListPaths to Comparable<*>, not nullable
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverRawComparableListPaths"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverRawComparableListPaths [page 1/1]
+            class BoundedReceiverRawComparableListPaths : com.xemantic.kotlin.introspection.test.other.JavaRawComparableListPaths
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverPaths<List<Comparable<*>>>.comparableListPaths()
+            fun <T : Any> BoundedReceiverPaths<List<T>>.nonNullListPaths()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with raw Kotlin supertype of Java supertype erased to mutable collection bound`() {
+        // kotlinc erases T : MutableList<String> to MutableList<String>, which kotlin-reflect tells as a List<String>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverRawMutableBoundListPaths"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverRawMutableBoundListPaths [page 1/1]
+            class BoundedReceiverRawMutableBoundListPaths : com.xemantic.kotlin.introspection.test.other.JavaRawMutableBoundListPaths
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverPaths<List<MutableList<String>>>.mutableStringListListPaths()
+            fun <T : Any> BoundedReceiverPaths<List<T>>.nonNullListPaths()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with raw Kotlin supertype of Java supertype erased to first of bounds of different nullability`() {
+        // kotlinc erases T : CharSequence?, T : Comparable<T> to CharSequence?, nullable like the first bound
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverRawMixedNullabilityListPaths"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverRawMixedNullabilityListPaths [page 1/1]
+            class BoundedReceiverRawMixedNullabilityListPaths : com.xemantic.kotlin.introspection.test.other.JavaRawMixedNullabilityListPaths
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverPaths<List<CharSequence?>>.nullableCharSequenceListPaths()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extension on supertype reached through more paths without platform type arguments than walked`() {
+        // 2^5 distinct types of BoundedReceiverDoubling0<MutableList<…>> reached through Kotlin last,
+        // the one doublingLatePaths matches among the ones beyond the walked ones, generalized into one,
+        // which still tells that none of them is a BoundedReceiverDoubling0<String>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverDoubling6Chain"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverDoubling6Chain [page 1/1]
+            class BoundedReceiverDoubling6Chain : BoundedReceiverDoubling6<String>
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverDoubling0<MutableList<MutableList<MutableList<List<List<List<String>>>>>>>.doublingLatePaths()
+            fun BoundedReceiverDoubling0<*>.doublingPaths()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with raw Kotlin supertype of Java supertype erased to bound of type arguments which are not platform types`() {
+        // kotlinc erases T : MutableList<String> to MutableList<String>, not MutableList<String!>, which a MutableList<String?> would match
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverRawMutableBoundPaths"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverRawMutableBoundPaths [page 1/1]
+            class BoundedReceiverRawMutableBoundPaths : com.xemantic.kotlin.introspection.test.other.JavaRawMutableBoundPaths
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverPaths<MutableList<String>>.mutableStringListPaths()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extension on supertype of other type arguments reached through more paths than walked`() {
+        // 2^6 distinct types of BoundedReceiverNullableChain0, of nullable and platform type arguments, none of them taking a String
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverIntNullableChain"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverIntNullableChain [page 1/1]
+            class BoundedReceiverIntNullableChain : BoundedReceiverNullableChain6<Int>
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverNullableChain0<*>.nullableChainPaths()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extension on type parameter of more bounds reached through several paths than matched`() {
+        // 2^9 combinations of the paths of the bounds, more than matched, none of them taking E of Int
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverIntManyPaths"
+        ) should {
+            have("manyPaths" !in this)
+        }
+    }
+
+    @Test
+    fun `should resolve class with extension on not nullable type parameter of nullable type matching platform type made nullable`() {
+        // BoundedReceiverPaths<BoundedReceiverWrap<String!?>>, of String! substituted for T?, is no BoundedReceiverWrap<String>,
+        // while T of T? is inferred as String, satisfying T : Any
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverJavaNullableWrapPaths"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverJavaNullableWrapPaths [page 1/1]
+            class BoundedReceiverJavaNullableWrapPaths : com.xemantic.kotlin.introspection.test.other.JavaStringNullableWrapPaths.Wrap
+            // from com.xemantic.kotlin.introspection.test
+            fun <T : Any> BoundedReceiverPaths<BoundedReceiverWrap<T?>>.nonNullWrapPaths()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extension on not nullable type parameter of nested nullable type matching platform type made nullable`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverJavaNullableWrapWrapPaths"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverJavaNullableWrapWrapPaths [page 1/1]
+            class BoundedReceiverJavaNullableWrapWrapPaths : com.xemantic.kotlin.introspection.test.other.JavaStringNullableWrapPaths.WrapWrap
+            // from com.xemantic.kotlin.introspection.test
+            fun <T : Any> BoundedReceiverPaths<BoundedReceiverWrap<BoundedReceiverWrap<T?>>>.nonNullWrapWrapPaths()
         """.trimIndent()
     }
 
