@@ -3495,50 +3495,18 @@ internal class DefaultKotlinIntrospector(
      * see [OverrideResolver.locatedName], or else the [metadataName], if the class of the located name cannot be described,
      * like when collecting the members the class might override, see [OverrideResolver.locatedName],
      * but the located name of a class which neither can be described, unless absent from the classpath,
-     * so that its supertypes are walked through from its class file, see [rawJavaSupertypes],
-     * and the [metadataName] of an original Java class of the same version as the relocated one, see [isSameVersion],
-     * whose types are named by the names the metadata refers to them by,
-     * unlike the ones of the relocated class, which are not translated back from the root package, see [unlocatedName],
-     * looked up only then, when the methods of the relocated class take a class of the root package.
+     * so that its supertypes are walked through from its class file, see [rawJavaSupertypes].
      */
     private fun inheritedName(declarations: ClassDeclarations, metadataName: String): String {
         val located = declarations.overrideOwner?.let { overrideResolver.locatedName(it, metadataName) } ?: return metadataName
         // the functions of a relocated Java class which kotlin-reflect does not tell, like of one implementing a relocated Kotlin interface,
         // are converted from the Java reflection, see reflectedJavaClass, so that its members are the ones of the class extended,
         // not the ones of an original class next to it, which might be of another version
-        val locatedDeclarations = inheritedDeclarations(located)
-        fun isOriginalOfSameVersion(relocated: Class<*>) = takesRootPackageClass(relocated) &&
-            (inheritedDeclarations(metadataName) as? JavaClass)?.let { isSameVersion(it.clazz, relocated) } == true
         return when {
-            locatedDeclarations is JavaClass && isOriginalOfSameVersion(locatedDeclarations.clazz) -> metadataName
-            locatedDeclarations != null -> located
+            inheritedDeclarations(located) != null -> located
             inheritedDeclarations(metadataName) != null || isAbsent(located) -> metadataName
             else -> located
         }
-    }
-
-    /**
-     * Whether a method the Java [clazz] declares takes a class of the root package, or returns one, see [inheritedName].
-     */
-    private fun takesRootPackageClass(clazz: Class<*>): Boolean = reflectedValue(default = false) {
-        clazz.declaredMethods.any { method ->
-            (method.parameterTypes.asList() + method.returnType).any { type ->
-                val component = generateSequence(type) { it.componentType }.last()
-                !component.isPrimitive && component.packageName.isEmpty()
-            }
-        }
-    }
-
-    /**
-     * Whether the Java class [original] is of the same version as the [relocated] one, see [inheritedName],
-     * declaring the methods of the same names, and of the same shapes, their types named by their simple names,
-     * as a relocated class keeps its simple name, and of supertypes of the same simple names.
-     */
-    private fun isSameVersion(original: Class<*>, relocated: Class<*>): Boolean = reflectedValue(default = false) {
-        fun Class<*>.shape(): Set<String> = declaredMethods.filter { !it.isSynthetic }.mapTo(HashSet()) { method ->
-            method.name + method.parameterTypes.joinToString(",", "(", ")") { it.simpleName } + method.returnType.simpleName
-        } + (listOfNotNull(superclass) + interfaces).map { ":" + it.simpleName }
-        original != relocated && original.shape() == relocated.shape()
     }
 
     /**

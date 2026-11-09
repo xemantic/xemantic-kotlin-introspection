@@ -649,29 +649,77 @@ class ClassLoaderIntrospectionTest {
         """.trimIndent()
     }
 
-    @Test
-    fun `should list member inherited from Java supertype relocated to the root package next to the original one of the same version`() {
-        // given
-        val shadedRoot = tempDir.resolve("rootSubEventJavaBase")
-        relocatedCopy(
-            shadedRoot, "RelocatedSubEventJavaBase.class", "sub/RelocatedEvent.class",
-            dependents = listOf("RelocatedSubEventJavaBaseImpl.class"), toRootPackage = true
-        )
-        val root = isolatedTestFixturesCopy("originalSubEventJavaBase", "RelocatedSubEventJavaBaseImpl.class")
+    /**
+     * The signature of `RelocatedJavaBaseImpl.jm`, whose Java supertype `RelocatedJavaBase` is relocated, like by shading,
+     * with its method `jm` taking the class `RootThing` of the root package, which is not relocated,
+     * next to an original `RelocatedJavaBase` of another version, whose `jm` is changed by the [older] transformation.
+     */
+    private fun rootTakingJavaBaseSignature(name: String, older: (MethodVisitor?) -> MethodVisitor?, olderAccess: Int): String? {
+        val rootThing = "com/xemantic/kotlin/introspection/isolated/RelocatedEvent" to "RootThing"
+        fun takingRootThing(bytes: ByteArray) = withRelocatedNames(bytes) { if (it == rootThing.first) rootThing.second else null }
+        val shadedRoot = tempDir.resolve("${name}Shaded")
+        relocatedCopy(shadedRoot, "RelocatedJavaBase.class", dependents = listOf("RelocatedJavaBaseImpl.class"))
+        val shadedBase = shadedRoot.resolve("shaded/com/xemantic/kotlin/introspection/isolated/RelocatedJavaBase.class")
+        shadedBase.writeBytes(takingRootThing(shadedBase.readBytes()))
+        shadedRoot.resolve("RootThing.class").writeBytes(ClassWriter(0).apply {
+            visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC, "RootThing", null, "java/lang/Object", null)
+            visitEnd()
+        }.toByteArray())
+        val root = isolatedTestFixturesCopy(name, "RelocatedJavaBaseImpl.class") { fileName, bytes ->
+            if (fileName != "RelocatedJavaBase.class") bytes else {
+                val writer = ClassWriter(0)
+                ClassReader(takingRootThing(bytes)).accept(object : ClassVisitor(Opcodes.ASM9, writer) {
+                    override fun visitMethod(
+                        access: Int,
+                        name: String,
+                        descriptor: String,
+                        signature: String?,
+                        exceptions: Array<out String>?
+                    ): MethodVisitor? = if (name != "jm") super.visitMethod(access, name, descriptor, signature, exceptions) else {
+                        older(super.visitMethod(access or olderAccess, name, descriptor, signature, exceptions))
+                    }
+                }, 0)
+                writer.toByteArray()
+            }
+        }
         val introspector = KotlinIntrospector(
             URLClassLoader(arrayOf(shadedRoot.toUri().toURL(), root.toUri().toURL()), javaClass.classLoader)
         )
+        return introspector.resolve("com.xemantic.kotlin.introspection.isolated.RelocatedJavaBaseImpl.jm")
+    }
 
+    /**
+     * Visits only the end of a method, dropping its code, like of an abstract method.
+     */
+    private fun withoutCode(visitor: MethodVisitor?): MethodVisitor = object : MethodVisitor(Opcodes.ASM9) {
+        override fun visitEnd() {
+            visitor?.visitEnd()
+        }
+    }
+
+    private val rootTakingJavaBaseJm = /* language=kotlin */ """
+        // com.xemantic.kotlin.introspection.isolated.RelocatedJavaBaseImpl.jm [page 1/1]
+        // inherited from com.xemantic.kotlin.introspection.isolated.RelocatedJavaBase
+        fun jm(arg0: RootThing?)
+    """.trimIndent()
+
+    @Test
+    fun `should list member of relocated Java supertype taking class of the root package next to original one declaring it abstract`() {
         // when
-        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.RelocatedSubEventJavaBaseImpl.js")
+        val signature = rootTakingJavaBaseSignature("olderAbstractJavaBase", ::withoutCode, Opcodes.ACC_ABSTRACT)
 
         // then
-        // the original class, declaring the same members, names the types like the metadata, which the root package does not tell
-        signature sameAsKotlin """
-            // com.xemantic.kotlin.introspection.isolated.RelocatedSubEventJavaBaseImpl.js [page 1/1]
-            // inherited from com.xemantic.kotlin.introspection.isolated.RelocatedSubEventJavaBase
-            open fun js(arg0: com.xemantic.kotlin.introspection.isolated.sub.RelocatedEvent?)
-        """.trimIndent()
+        // the members are the ones of the relocated class extended, not of the original one of another version
+        signature sameAsKotlin rootTakingJavaBaseJm
+    }
+
+    @Test
+    fun `should list member of relocated Java supertype taking class of the root package next to original one declaring it static`() {
+        // when
+        val signature = rootTakingJavaBaseSignature("olderStaticJavaBase", { it }, Opcodes.ACC_STATIC)
+
+        // then
+        signature sameAsKotlin rootTakingJavaBaseJm
     }
 
     /**

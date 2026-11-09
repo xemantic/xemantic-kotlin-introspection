@@ -165,5 +165,3 @@ abstract class RelocatedJavaProdImpl : RelocatedJavaProd()
 abstract class RelocatedJavaProdKImpl : RelocatedJavaProdK()
 
 abstract class RelocatedJavaOuterInnerImpl(outer: RelocatedJavaOuter<RelocatedEvent>) : RelocatedJavaOuterInner(outer)
-
-abstract class RelocatedSubEventJavaBaseImpl : RelocatedSubEventJavaBase()

@@ -1031,6 +1031,42 @@ class OverrideResolverTest {
     }
 
     @Test
+    fun `should not read class files of supertypes for JVM method of no member paired with shrunk one of its shape`() {
+        // given
+        // a class which is not relocated, its supertype p/lib/Listener missing from the classpath,
+        // its overload on(p/lib/Event, p/ext/Event) shrunk away, next to the JVM method of a @JvmOverloads one of the same shape
+        val owner = kmClass("p/app/Owner", supertype = "p/app/Mid").apply {
+            functions += functionTaking("on", "p/ext/Event", "p/lib/Event")
+            functions += functionTaking("on", "p/lib/Event", "p/ext/Event")
+            functions += functionTaking("on", "p/ext/Event", "p/lib/sub/Event", "kotlin/Int")
+        }
+        val classFiles = mapOf(
+            "p/app/Owner" to classFile(
+                "p/app/Owner",
+                listOf(
+                    "on(Lp/ext/Event;Lp/lib/Event;)V",
+                    "on(Lp/ext/Event;Lp/lib/sub/Event;Lkotlin/Int;)V",
+                    "on(Lp/ext/Event;Lp/lib/sub/Event;)V"
+                ),
+                superName = "p/app/Mid"
+            ),
+            "p/app/Mid" to classFile("p/app/Mid", listOf(), interfaces = listOf("p/lib/Listener"))
+        )
+        val reads = mutableListOf<String>()
+        val resolver = overrideResolver(
+            classes = mapOf("p/app/Mid" to kmClass("p/app/Mid", supertype = "p/lib/Listener")),
+            readClassFile = { name -> reads += name; classFiles[name] }
+        )
+
+        // when
+        owner.functions.forEach { resolver.isOverride(OverrideResolver.Owner(owner), it) }
+
+        // then
+        // the classes paired, p/ext/Event and p/lib/sub/Event, are the ones the metadata refers to by these very names
+        assert("p/app/Mid" !in reads)
+    }
+
+    @Test
     fun `should find relocated Java supertype of package whose other classes are relocated to the root package`() {
         // given
         // like an app shading its dependencies, relocating lib/ to app/shaded/lib/, except for lib/Event relocated to the root package

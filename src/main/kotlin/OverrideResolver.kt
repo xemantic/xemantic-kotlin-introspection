@@ -1705,7 +1705,11 @@ internal class OverrideResolver(
         // or tell some, but not the one of a supertype not found, like of overloads telling only lib/Event relocated to the root package,
         // the class files of the supertypes reached, like app/Mid implementing the relocated lib/Listener, might tell it,
         // read only then, so that a class which is not relocated does not read them
-        val tellsTooLittle = firstSignatureNames.isAmbiguous || (isMissing && firstSignatureNames.names.isNotEmpty())
+        // a class paired with a class the metadata refers to by the same name tells no relocation, like of a JVM method of no member,
+        // like a @JvmOverloads one, paired with a shrunk one of its shape
+        val metadataClassNames by lazy(LazyThreadSafetyMode.NONE) { signatures.flatMapTo(HashSet()) { methodClassNames(it) } }
+        val tellsTooLittle = firstSignatureNames.isAmbiguous ||
+            (isMissing && firstSignatureNames.names.values.any { it !in metadataClassNames })
         val supertypeClassDependencies = if (scanSignatures && tellsTooLittle) {
             relocatedSupertypeNames(supertypeClasses).notRelocatedByOwner()
         } else {
