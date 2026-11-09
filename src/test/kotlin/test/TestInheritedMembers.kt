@@ -811,3 +811,23 @@ abstract class JavaImplementingInternalInterfaceFaceSub :
     NearestClassFace, com.xemantic.kotlin.introspection.test.other.JavaImplementingInternalInterface()
 
 class JavaImplementingInternalInterfaceFaceConcrete : JavaImplementingInternalInterfaceFaceSub()
+
+// A Kotlin class extending java.util.AbstractList and implementing MutableList, whose members K2 merges,
+// picking the Java method of AbstractList, first, when not returning a platform type
+abstract class InheritedJavaListDiamond : java.util.AbstractList<String>(), MutableList<String>
+
+// The same diamond of MutableList declared first, whose members K2 picks then
+abstract class InheritedKotlinFirstListDiamond : MutableList<String>, java.util.AbstractList<String>()
+
+// The members of java.util.Hashtable, which is no pure implementation of MutableMap, taking platform types
+abstract class InheritedStringHashtable : java.util.Hashtable<String, String>()
+
+// java.util.Hashtable merged with MutableMap, whose computeIfAbsent K2 picks, as the one of Hashtable returns V!
+abstract class InheritedStringHashtableMapDiamond : java.util.Hashtable<String, String>(), MutableMap<String, String>
+
+// The methods of java.util.ArrayList reached through a Java subclass passing its type variable, taking platform types
+abstract class InheritedJavaComparableArrayList : com.xemantic.kotlin.introspection.test.other.JavaComparableArrayList<String>()
+
+// A Java subclass of java.util.LinkedHashSet, whose own add kotlin-reflect cannot describe
+abstract class InheritedJavaLinkedHashSetSubclass :
+    com.xemantic.kotlin.introspection.test.other.JavaLinkedHashSetSubclass<String>()

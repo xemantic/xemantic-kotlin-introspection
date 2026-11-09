@@ -94,6 +94,16 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 
 - A Java test fixture implementing a Kotlin member deprecated as `HIDDEN` cannot mark it `@Override`, see `JavaPrimitiveAndBoxedHiddenPut`.
 
+- A `null` call tells nothing of the member when a standard library extension accepts it, like `contains(element: T)` of `Iterable`, `remove(key, value)` or `getOrDefault` of `Map` —
+  `x.getOrDefault("", null)` compiles on a `HashMap<String, String>` subclass through the extension.
+  Probe the member only, shadowing the extension by one of the same name in the probe's own package, returning a marker type.
+
+- A Java class gives its supertypes platform type arguments, like `MutableList<E!>` of `java.util.Vector<E>`, also of a user Java subclass of `java.util.ArrayList`,
+  but the pure implementations of the Kotlin collections (`PURE_IMPLEMENTATIONS`) don't, and only their overrides inherit the JDK enhancements of `java.util.Map` or `List`,
+  like `compute` of `HashMap`, unlike the one of `Hashtable` — see `InheritedCandidate.takesPlatformTypes`.
+  Of the members merged from several direct supertypes K2 picks the first one not returning a platform type, so `add(null)` of `X : java.util.AbstractList<String>(), MutableList<String>` compiles, unlike `set(0, null)` —
+  but not below the standard library's `AbstractMutableList` and the like, which keep the Kotlin types.
+
 - Kotlin never passes named arguments to a Java method, even one compiled with `-parameters`, so a Java method taking parameters never shadows an extension — see `isShadowingJavaMethod`.
 
 ## Anti-patterns to avoid

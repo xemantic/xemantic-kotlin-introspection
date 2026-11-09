@@ -234,6 +234,36 @@ class ReflectedDeclarationsTest {
     }
 
     @Test
+    fun `should take type parameter of class as platform type in JDK method overriding enhanced one unless purely implementing built-in type`() {
+        // given - K2 enhances the key of compute of java.util.Map, and of its override in java.util.HashMap,
+        // the pure implementation of MutableMap, but not in java.util.Hashtable, so that compute(null, …) of a Hashtable compiles
+        val methods = listOf(java.util.HashMap::class.java, java.util.Hashtable::class.java).map { clazz ->
+            clazz.getMethod("compute", Any::class.java, java.util.function.BiFunction::class.java)
+        }
+
+        // when
+        val notNull = methods.map { isNotNullClassTypeParameter(it, 0) }
+
+        // then
+        assert(notNull == listOf(true, false))
+    }
+
+    @Test
+    fun `should tell return type of JDK method overriding enhanced one as platform type unless purely implementing built-in type`() {
+        // given - K2 enhances the return type of computeIfAbsent of java.util.Map, inherited by java.util.HashMap,
+        // but not by java.util.Hashtable, returning V!
+        val functions = listOf(java.util.HashMap::class, java.util.Hashtable::class).map { kClass ->
+            kClass.declaredMemberFunctions.single { it.name == "computeIfAbsent" }
+        }
+
+        // when
+        val platform = functions.map { it.returnsPlatformType }
+
+        // then
+        assert(platform == listOf(false, true))
+    }
+
+    @Test
     fun `should take type parameter of class as in Kotlin in converted JDK method overriding member of built-in type purely implemented`() {
         // given - kotlin-reflect tells the E of add of java.util.ArrayList, the pure implementation of MutableList, not a platform type,
         // unlike the converted method, whose class tells it, unlike for the add of java.util.Vector

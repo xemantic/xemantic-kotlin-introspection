@@ -420,11 +420,11 @@ class ClassLoaderIntrospectionTest {
 
         // then
         // the type argument of the Kotlin interface, among the supertypes of the relocated Java class,
-        // is named by its metadata name, like the Kotlin interface itself
+        // is named by its metadata name, like the Kotlin interface itself, a platform type, as the Java class gives it
         signature sameAsKotlin """
             // com.xemantic.kotlin.introspection.isolated.RelocatedGenericJavaBaseImpl.kg [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.isolated.RelocatedGenericInterface
-            open fun kg(value: RelocatedEvent)
+            open fun kg(value: RelocatedEvent?)
         """.trimIndent()
     }
 
@@ -531,11 +531,12 @@ class ClassLoaderIntrospectionTest {
         val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.RelocatedJavaInnerImpl.ko")
 
         // then
-        // the type argument of the outer type of the superclass of the Java class is substituted for the type parameter of the outer class
+        // the type argument of the outer type of the superclass of the Java class is substituted for the type parameter of the outer class,
+        // a platform type, as the Java class gives it
         signature sameAsKotlin """
             // com.xemantic.kotlin.introspection.isolated.RelocatedJavaInnerImpl.ko [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.isolated.RelocatedInnerOuter.Inner
-            fun ko(value: RelocatedEvent)
+            fun ko(value: RelocatedEvent?)
         """.trimIndent()
     }
 
@@ -556,7 +557,7 @@ class ClassLoaderIntrospectionTest {
         signature sameAsKotlin """
             // com.xemantic.kotlin.introspection.isolated.RelocatedJavaInnerImpl.ko [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.isolated.RelocatedInnerOuter.Inner
-            fun ko(value: RelocatedEvent)
+            fun ko(value: RelocatedEvent?)
         """.trimIndent()
     }
 
@@ -1160,11 +1161,12 @@ class ClassLoaderIntrospectionTest {
         )
 
         // then - the addFirst(Comparable), overriding the addFirst(Object) of java.util.List by its bridge, is not listed next to it,
-        // as kotlin-reflect cannot describe the members of the Java class without Absent, so that the JVM-only member stands for it
+        // as kotlin-reflect cannot describe the members of the Java class without Absent, so that the JVM-only member stands for it,
+        // taking E!, as the Java class gives the type argument of MutableList
         signature sameAsKotlin """
             // com.xemantic.kotlin.introspection.isolated.AbsentFirstListSubclass.addFirst [page 1/1]
             // inherited from kotlin.collections.MutableList
-            open fun addFirst(arg0: E)
+            open fun addFirst(arg0: E?)
         """.trimIndent()
     }
 

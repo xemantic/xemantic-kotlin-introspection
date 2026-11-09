@@ -1096,6 +1096,10 @@ private val nullableReturnJdkMethodParameters: Set<String> =
 // a JVM signature, or descriptor, without its return type, like `get()` of `get()Ljava/lang/Object;`
 private fun String.withoutReturnType(): String = substringBefore(')') + ')'
 
+// telling most functions apart without resolving their JVM methods, see returnsPlatformType
+private val enhancedReturnJdkMethodNames: Set<String> =
+    ENHANCED_RETURN_JDK_METHODS.mapTo(HashSet()) { it.substringAfter('.').substringBefore('(') }
+
 // telling most functions apart without resolving their JVM methods, see enhanceNullableReturn
 private val nullableReturnJdkMethodNames: Set<String> =
     NULLABLE_RETURN_JDK_METHODS.mapTo(HashSet()) { it.substringAfter('.').substringBefore('(') }
@@ -1105,7 +1109,10 @@ private val nullableReturnJdkMethodNames: Set<String> =
  * or overrides one of them by the same JVM descriptor, inheriting its enhancement, where [isOverrideEnhanced],
  * like `get()` of `java.lang.ref.SoftReference` the one of `java.lang.ref.Reference`,
  * unlike an override of another descriptor, like the `String get()` of a Java interface extending `Supplier<String>`,
- * or an overload of the same name.
+ * or an overload of the same name,
+ * or an override of the method of a Java class described as a built-in type, like `computeIfAbsent` of `java.util.Map`,
+ * by a class which is not its pure implementation, see [PURE_IMPLEMENTATIONS], like the one of `java.util.Hashtable`,
+ * which sees the built-in type of platform type arguments, returning `V!`, unlike the one of `java.util.HashMap`.
  * The supertypes are walked only for a name and descriptor of the [signatures].
  */
 private fun isEnhancedJdkMethod(method: Method, signatures: Set<String>, isOverrideEnhanced: (Method) -> Boolean): Boolean {
@@ -1113,8 +1120,14 @@ private fun isEnhancedJdkMethod(method: Method, signatures: Set<String>, isOverr
     if (nameAndDescriptor !in enhancedReturnJdkMethodDescriptors) return false
     if (jvmSignature(method) in signatures) return true
     if (!isOverrideEnhanced(method)) return false
-    return method.overridesAnyOf(nameAndDescriptor, signatures)
+    val inherited = if (AsmType.getInternalName(method.declaringClass) in PURE_IMPLEMENTATIONS) signatures else {
+        signatures.filterTo(HashSet()) { it.substringBefore('.') !in BUILTIN_JAVA_COLLECTIONS }
+    }
+    return method.overridesAnyOf(nameAndDescriptor, inherited)
 }
+
+// the Java interfaces of the JDK described as the built-in collection types, whose methods K2 enhances, see isEnhancedJdkMethod
+private val BUILTIN_JAVA_COLLECTIONS = setOf("java/lang/Iterable", "java/util/Collection", "java/util/List", "java/util/Map")
 
 /**
  * Whether the [method] is one of the JDK methods whose return types K2 enhances as nullable, see [NULLABLE_RETURN_JDK_METHODS],
@@ -1205,7 +1218,10 @@ private val notNullParameterJdkMethodSignatures: Map<String, Map<Int, Set<String
  * is of the type parameter as in Kotlin, not nullable, unlike a platform type, like `E!`, accepting `null`:
  * of a JDK method of the JVM class of a built-in type, like `addFirst` of `java.util.List`, a JVM-only member of `MutableList`,
  * or of one which K2 enhances, see [NOT_NULL_PARAMETER_JDK_METHODS], also of a JDK method overriding it by the same JVM descriptor,
- * like `addFirst` of `java.util.ArrayList` the one of `java.util.List`, unlike of a Java class of the user code.
+ * of a class which is the pure implementation of a built-in type, one of the [PURE_IMPLEMENTATIONS],
+ * like `addFirst` of `java.util.ArrayList` the one of `java.util.List`, or `compute` of `java.util.HashMap` the one of `java.util.Map`,
+ * unlike of another JDK class, like `compute` of `java.util.Hashtable`, which inherits the enhanced types as platform types,
+ * see `PURE_IMPLEMENTATIONS`, so that `compute(null, …)` compiles, or of a Java class of the user code.
  * A JDK method overriding a member of the built-in type its class is the pure implementation of,
  * see `FakePureImplementationsProvider` of the compiler, like `add` of `java.util.ArrayList` of `MutableList`,
  * takes them as in Kotlin too, as kotlin-reflect tells by its types, which are no platform types then,
@@ -1222,7 +1238,9 @@ internal fun isNotNullClassTypeParameter(method: Method, position: Int, isConver
     if (method.name in notNullParameterJdkMethodNames) {
         val nameAndDescriptor = method.name + AsmType.getMethodDescriptor(method)
         val signatures = notNullParameterJdkMethodSignatures[nameAndDescriptor]?.get(position)
-        if (signatures != null && method.overridesAnyOf(nameAndDescriptor, signatures)) return true
+        if (signatures != null && jvmSignature(method) in signatures) return true
+        val isPure = AsmType.getInternalName(declaringClass) in PURE_IMPLEMENTATIONS
+        if (signatures != null && isPure && method.overridesAnyOf(nameAndDescriptor, signatures)) return true
     }
     return isConverted && AsmType.getInternalName(declaringClass) in PURE_IMPLEMENTATIONS && overridesBuiltinJavaMethod(method)
 }
@@ -1267,8 +1285,14 @@ internal val KFunction<*>.returnsPlatformType: Boolean
  * which the compiler sees there returning `T!`.
  */
 internal fun KFunction<*>.returnsPlatformType(isEnhancementLost: Boolean): Boolean {
-    // kotlin-reflect tells some of the enhanced types as such, like the V of computeIfAbsent of java.util.HashMap
-    if (!returnType.isPlatformNullable && !isEnhancementLost) return false
+    // kotlin-reflect tells some of the enhanced types as such, like the V of computeIfAbsent of java.util.HashMap,
+    // also of java.util.Hashtable, which K2 does not enhance, see isEnhancedJdkMethod
+    if (!returnType.isPlatformNullable && !isEnhancementLost) {
+        if (name !in enhancedReturnJdkMethodNames) return false
+        val method = reflectedValue(default = null) { javaMethod } ?: return false
+        if (method.name + AsmType.getMethodDescriptor(method) !in enhancedReturnJdkMethodDescriptors) return false
+        return method.returnsPlatformType(isEnhancementLost = false)
+    }
     return (reflectedValue(default = null) { javaMethod } ?: return true).returnsPlatformType(isEnhancementLost)
 }
 

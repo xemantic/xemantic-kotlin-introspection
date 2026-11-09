@@ -2378,7 +2378,18 @@ internal class OverrideResolver(
                 }
             }
         } ?: rawSupertypes.map { javaClassType(it) }
-        return supertypes.filterIsInstance<ClassType>()
+        val classTypes = supertypes.filterIsInstance<ClassType>()
+        // the type arguments a Java class gives are platform types, like the E! of MutableList<E!> of java.util.Vector<E>,
+        // also when a Kotlin class gives them in turn, unlike the ones of a pure implementation, see PURE_IMPLEMENTATIONS
+        if (AsmType.getInternalName(javaClass) in PURE_IMPLEMENTATIONS) return classTypes
+        return classTypes.map { type -> type.copy(arguments = type.arguments.map { TypeArgument(it.variance, it.type.flexible()) }) }
+    }
+
+    // this type as a platform type, see javaSupertypes, of either nullability, unless nullable
+    private fun MemberType.flexible(): MemberType = when (this) {
+        is ClassType -> if (nullable == false && !isJavaPrimitive) copy(nullable = null) else this
+        is TypeParameterType -> if (nullable == false) copy(nullable = null) else this
+        UnknownType -> this
     }
 
     /**
