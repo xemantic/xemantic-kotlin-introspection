@@ -900,3 +900,11 @@ abstract class InheritedJavaMethodNullMarkedOverriding : com.xemantic.kotlin.int
 
 // A Java subclass of java.util.HashSet implementing JavaSizeFace, whose size() implements the one of the interface
 abstract class InheritedJavaSizeFaceHashSet : com.xemantic.kotlin.introspection.test.other.JavaSizeFaceHashSet()
+
+// The overrides of the type variable of a Java class marked by @NullMarked, given through the type variables
+// of Java classes not marked, which inherit platform types, and given directly, which inherits the mark
+abstract class InheritedJavaPassingMidOverriding : com.xemantic.kotlin.introspection.test.other.JavaPassingMidOverriding()
+
+abstract class InheritedJavaPassingMid2Overriding : com.xemantic.kotlin.introspection.test.other.JavaPassingMid2Overriding()
+
+abstract class InheritedJavaPassingDirect : com.xemantic.kotlin.introspection.test.other.JavaPassingDirect()

@@ -3443,11 +3443,18 @@ internal class DefaultKotlinIntrospector(
         }
         val notOverridden = candidates.filter { isListable(it) && it !in jvmOnlyOverridden }
         // whether the member a wins over the merged member b, of a less specific return type, see compareReturnType,
-        // or else declared later
+        // or else the method of a Java class over the one of a Java interface, which it implements in Kotlin,
+        // whatever the order of the supertypes, or else the one walked first
+        fun isJavaClassMember(candidate: InheritedCandidate) =
+            candidate.declarations is JavaClass && candidate.kmClass.kind != ClassKind.INTERFACE
         fun wins(a: InheritedCandidate, aIndex: Int, b: InheritedCandidate, bIndex: Int): Boolean =
             when (val specificity = a.compareReturnType(b, supertypeNamesOf)) {
                 null -> false
-                0 -> aIndex < bIndex
+                0 -> when {
+                    a.declarations is JavaClass && b.declarations is JavaClass && isJavaClassMember(a) != isJavaClassMember(b) ->
+                        isJavaClassMember(a)
+                    else -> aIndex < bIndex
+                }
                 else -> specificity > 0
             }
         // the member winning over all the others, or none, when some cannot be compared

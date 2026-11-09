@@ -1957,8 +1957,10 @@ private fun directlyOverriddenNullabilities(method: Method): List<Pair<Method, J
  * The nullability which the type at the [position] of the [method], overriding the [overridden] one,
  * whose class type variable there the mark keeps as given, see [JavaNullability.inheritedMarks], inherits:
  * not nullable, `false`, or nullable, `true`, when the class of the [method] gives the type variable a type argument
- * annotated nullable, like `Base<@Nullable String>`, see [isNullableTypeArgument],
- * or `null`, none, when it is a type variable itself, which the compiler keeps as given, like `X` of `Sub<X> extends Base<X>`.
+ * annotated nullable, like `Base<@Nullable String>`, see [typeArgumentNullability],
+ * or `null`, none, when it is a type variable itself, which the compiler keeps as given, like `X` of `Sub<X> extends Base<X>`,
+ * or the type argument passes through the type variable of a class between them, not marked, like `Mid<String>`
+ * of `Mid<X> extends Base<X>`, whose `X!` the compiler inherits, a platform type.
  */
 private fun inheritedMark(method: Method, position: Int, overridden: Method, typeVariables: Map<Int, Boolean>): Boolean? {
     if (position in typeVariables) return null
@@ -1966,17 +1968,21 @@ private fun inheritedMark(method: Method, position: Int, overridden: Method, typ
         val type = if (position == RETURN_TYPE) overridden.genericReturnType else overridden.genericParameterTypes.getOrNull(position)
         val typeVariable = type as? TypeVariable<*> ?: return@reflectedValue false
         val target = typeVariable.genericDeclaration as? Class<*> ?: return@reflectedValue false
-        isNullableTypeArgument(method.declaringClass, target, target.typeParameters.indexOf(typeVariable))
+        typeArgumentNullability(method.declaringClass, target, target.typeParameters.indexOf(typeVariable))
     }
 }
 
 /**
- * Whether the type argument a supertype of the class [from] gives the type parameter at the [index] of the [target] class
- * is annotated nullable, see [JavaClassNullability.nullableArguments], like the `@Nullable String` of `Base<@Nullable String>`,
- * also through the type variable of a class between them, like `Mid<@Nullable String>` of `Mid<X> extends Base<X>`.
+ * The nullability of the type argument a supertype of the class [from] gives the type parameter at the [index] of the [target] class,
+ * nullable, `true`, when annotated nullable, see [JavaClassNullability.nullableArguments],
+ * like the `@Nullable String` of `Base<@Nullable String>`, also through the type variable of a class between them,
+ * like `Mid<@Nullable String>` of `Mid<X> extends Base<X>`, or else not nullable, `false`, as the mark of the [target] tells,
+ * but a platform type, `null`, when it passes through a type variable of a class between them not marked by `@NullMarked`,
+ * which it takes as `X!`, the [isThroughTypeVariable].
  */
-private fun isNullableTypeArgument(from: Class<*>, target: Class<*>, index: Int): Boolean {
-    if (from == target || index < 0) return false
+private fun typeArgumentNullability(from: Class<*>, target: Class<*>, index: Int, isThroughTypeVariable: Boolean = false): Boolean? {
+    val untold = if (isThroughTypeVariable) null else false
+    if (from == target || index < 0) return untold
     val pending = ArrayDeque(listOf(from))
     val visited = HashSet<Class<*>>()
     while (pending.isNotEmpty()) {
@@ -1991,12 +1997,16 @@ private fun isNullableTypeArgument(from: Class<*>, target: Class<*>, index: Int)
                 continue
             }
             if (index in javaNullabilities.get(type).nullableArguments[superTypeIndex].orEmpty()) return true
-            val argument = (supertype as? ParameterizedType)?.actualTypeArguments?.getOrNull(index) as? TypeVariable<*> ?: return false
-            val owner = argument.genericDeclaration as? Class<*> ?: return false
-            return isNullableTypeArgument(from, owner, owner.typeParameters.indexOf(argument))
+            val argument = (supertype as? ParameterizedType)?.actualTypeArguments?.getOrNull(index) as? TypeVariable<*>
+                ?: return untold
+            val owner = argument.genericDeclaration as? Class<*> ?: return untold
+            val ownerIndex = owner.typeParameters.indexOf(argument)
+            // unless the class between them is marked, keeping its own type variable as given, see typeVariablePositions
+            val isMarked = nullMarking(owner) == true && ownerIndex !in javaNullabilities.get(owner).nullableBounds
+            return typeArgumentNullability(from, owner, ownerIndex, isThroughTypeVariable = isThroughTypeVariable || !isMarked)
         }
     }
-    return false
+    return untold
 }
 
 private val effectiveJavaNullabilities = object : ClassValue<EffectiveJavaNullabilities>() {
@@ -2130,7 +2140,7 @@ private fun readJavaNullabilities(classLoader: ClassLoader?, binaryName: String)
             if (reference.sort == TypeReference.CLASS_TYPE_PARAMETER_BOUND && typePath == null) {
                 nullableBounds += reference.typeParameterIndex
             }
-            // a type argument of a supertype itself, like `0;`, see isNullableTypeArgument
+            // a type argument of a supertype itself, like `0;`, see typeArgumentNullability
             val argument = typePath?.toString()?.takeIf { it.endsWith(';') }?.dropLast(1)?.toIntOrNull()
             if (reference.sort == TypeReference.CLASS_EXTENDS && argument != null) {
                 nullableArguments.getOrPut(reference.superTypeIndex) { HashSet() } += argument

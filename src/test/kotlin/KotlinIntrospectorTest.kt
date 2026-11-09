@@ -7091,6 +7091,42 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve Java override of type variable of class marked by NullMarked given through type variable of class not marked as platform type`() {
+        // JavaPassingMid<X>, not marked, takes the T of JavaNullMarkedPassingBase as X!, which the override inherits
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaPassingMidOverriding.pass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaPassingMidOverriding.pass [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaPassingMidOverriding
+            abstract override fun pass(arg0: String?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java override of type variable of class marked by NullMarked given through type variables of two classes not marked as platform type`() {
+        // through JavaPassingMid2<Y> and JavaPassingMid<X>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaPassingMid2Overriding.pass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaPassingMid2Overriding.pass [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaPassingMid2Overriding
+            abstract override fun pass(arg0: String?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java override of type variable of class marked by NullMarked given directly as not nullable`() {
+        // JavaPassingDirect extends JavaNullMarkedPassingBase<String>, inheriting the mark of its T
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaPassingDirect.pass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaPassingDirect.pass [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaPassingDirect
+            abstract override fun pass(arg0: String): String
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve Java override below Java override marked by NullUnmarked of platform types`() {
         // JavaNullUnmarkedMid, marked by @NullUnmarked, stops the mark of JavaNullMarkedBase
         resolver.resolve(
