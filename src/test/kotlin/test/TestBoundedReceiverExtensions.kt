@@ -32,8 +32,10 @@ import com.xemantic.kotlin.introspection.test.other.JavaLinkBase
 import com.xemantic.kotlin.introspection.test.other.JavaListBoth
 import com.xemantic.kotlin.introspection.test.other.JavaListPathsOf
 import com.xemantic.kotlin.introspection.test.other.JavaListRows
+import com.xemantic.kotlin.introspection.test.other.JavaManyListPaths
 import com.xemantic.kotlin.introspection.test.other.JavaNamedLinkBase
 import com.xemantic.kotlin.introspection.test.other.JavaNestedRows
+import com.xemantic.kotlin.introspection.test.other.JavaNullableChainPaths
 import com.xemantic.kotlin.introspection.test.other.JavaProjectedAnyRows
 import com.xemantic.kotlin.introspection.test.other.JavaProjectedObjectArrayRows
 import com.xemantic.kotlin.introspection.test.other.JavaProjectedObjectWildcardRows
@@ -53,6 +55,7 @@ import com.xemantic.kotlin.introspection.test.other.JavaRawListPaths
 import com.xemantic.kotlin.introspection.test.other.JavaRawMapArrayBoth
 import com.xemantic.kotlin.introspection.test.other.JavaRawMapBoth
 import com.xemantic.kotlin.introspection.test.other.JavaRawMixedNullabilityListPaths
+import com.xemantic.kotlin.introspection.test.other.JavaRawMutableBoundPaths
 import com.xemantic.kotlin.introspection.test.other.JavaRawMutableBoundListPaths
 import com.xemantic.kotlin.introspection.test.other.JavaRawWildcardMapBoth
 import com.xemantic.kotlin.introspection.test.other.JavaStringCollection
@@ -1160,3 +1163,77 @@ class BoundedReceiverRawMixedNullabilityListPaths : JavaRawMixedNullabilityListP
 fun BoundedReceiverDoubling0<MutableList<MutableList<MutableList<List<List<List<String>>>>>>>.doublingLatePaths() {}
 
 class BoundedReceiverDoubling6Chain : BoundedReceiverDoubling6<String>
+
+// the type arguments of an erased bound are not platform types either, like String of MutableList<String> of T : MutableList<String>
+interface BoundedReceiverMutableBoundPaths<T : MutableList<String>> : BoundedReceiverPaths<T>
+
+fun BoundedReceiverPaths<MutableList<String?>>.nullableMutableStringPaths() {}
+
+class BoundedReceiverRawMutableBoundPaths : JavaRawMutableBoundPaths
+
+// a supertype reached through more paths than walked, of nullable type arguments through Kotlin, and platform ones through Java,
+// like BoundedReceiverNullableChain0<BoundedReceiverWrap<…?>> and BoundedReceiverNullableChain0<BoundedReceiverWrap<…!>!>,
+// none of which takes a String for an Int
+interface BoundedReceiverWrap<T>
+
+interface BoundedReceiverNullableChain0<T>
+
+interface BoundedReceiverNullableChain1<T> : BoundedReceiverNullableChain0<BoundedReceiverWrap<T?>>, JavaNullableChainPaths.Chain1<T>
+
+interface BoundedReceiverNullableChain2<T> : BoundedReceiverNullableChain1<BoundedReceiverWrap<T?>>, JavaNullableChainPaths.Chain2<T>
+
+interface BoundedReceiverNullableChain3<T> : BoundedReceiverNullableChain2<BoundedReceiverWrap<T?>>, JavaNullableChainPaths.Chain3<T>
+
+interface BoundedReceiverNullableChain4<T> : BoundedReceiverNullableChain3<BoundedReceiverWrap<T?>>, JavaNullableChainPaths.Chain4<T>
+
+interface BoundedReceiverNullableChain5<T> : BoundedReceiverNullableChain4<BoundedReceiverWrap<T?>>, JavaNullableChainPaths.Chain5<T>
+
+interface BoundedReceiverNullableChain6<T> : BoundedReceiverNullableChain5<BoundedReceiverWrap<T?>>, JavaNullableChainPaths.Chain6<T>
+
+fun BoundedReceiverNullableChain0<*>.nullableChainPaths() {}
+
+fun BoundedReceiverNullableChain0<BoundedReceiverWrap<BoundedReceiverWrap<BoundedReceiverWrap<BoundedReceiverWrap<BoundedReceiverWrap<BoundedReceiverWrap<String?>>?>?>?>?>>.nullableChainStrings() {}
+
+// a platform type made nullable, like BoundedReceiverWrap<…!>! substituted for T of BoundedReceiverWrap<T?>, is nullable
+fun <T> BoundedReceiverNullableChain0<BoundedReceiverWrap<BoundedReceiverWrap<BoundedReceiverWrap<BoundedReceiverWrap<BoundedReceiverWrap<BoundedReceiverWrap<T>>>>>>>.nonNullChainPaths() {}
+
+class BoundedReceiverIntNullableChain : BoundedReceiverNullableChain6<Int>
+
+// a type parameter of more bounds, each reached through Kotlin and through Java, than the combinations of paths matched,
+// see matchesThroughAnyPaths, none of which takes E of Int
+interface BoundedReceiverManyPaths0<T>
+interface BoundedReceiverManyPaths1<T>
+interface BoundedReceiverManyPaths2<T>
+interface BoundedReceiverManyPaths3<T>
+interface BoundedReceiverManyPaths4<T>
+interface BoundedReceiverManyPaths5<T>
+interface BoundedReceiverManyPaths6<T>
+interface BoundedReceiverManyPaths7<T>
+interface BoundedReceiverManyPaths8<T>
+
+interface BoundedReceiverListManyPaths0<T> : BoundedReceiverManyPaths0<List<T>>
+interface BoundedReceiverListManyPaths1<T> : BoundedReceiverManyPaths1<List<T>>
+interface BoundedReceiverListManyPaths2<T> : BoundedReceiverManyPaths2<List<T>>
+interface BoundedReceiverListManyPaths3<T> : BoundedReceiverManyPaths3<List<T>>
+interface BoundedReceiverListManyPaths4<T> : BoundedReceiverManyPaths4<List<T>>
+interface BoundedReceiverListManyPaths5<T> : BoundedReceiverManyPaths5<List<T>>
+interface BoundedReceiverListManyPaths6<T> : BoundedReceiverManyPaths6<List<T>>
+interface BoundedReceiverListManyPaths7<T> : BoundedReceiverManyPaths7<List<T>>
+interface BoundedReceiverListManyPaths8<T> : BoundedReceiverManyPaths8<List<T>>
+
+fun <E, P> P.manyPaths() where P : BoundedReceiverManyPaths0<List<E>>, P : BoundedReceiverManyPaths1<List<E>>,
+    P : BoundedReceiverManyPaths2<List<E>>, P : BoundedReceiverManyPaths3<List<E>>, P : BoundedReceiverManyPaths4<List<E>>,
+    P : BoundedReceiverManyPaths5<List<E>>, P : BoundedReceiverManyPaths6<List<E>>, P : BoundedReceiverManyPaths7<List<E>>,
+    P : BoundedReceiverManyPaths8<List<E>>, P : BoundedReceiverPathsOf<E> {}
+
+interface BoundedReceiverIntManyPaths :
+    BoundedReceiverManyPaths0<List<String>>, JavaManyListPaths.Strings0,
+    BoundedReceiverManyPaths1<List<String>>, JavaManyListPaths.Strings1,
+    BoundedReceiverManyPaths2<List<String>>, JavaManyListPaths.Strings2,
+    BoundedReceiverManyPaths3<List<String>>, JavaManyListPaths.Strings3,
+    BoundedReceiverManyPaths4<List<String>>, JavaManyListPaths.Strings4,
+    BoundedReceiverManyPaths5<List<String>>, JavaManyListPaths.Strings5,
+    BoundedReceiverManyPaths6<List<String>>, JavaManyListPaths.Strings6,
+    BoundedReceiverManyPaths7<List<String>>, JavaManyListPaths.Strings7,
+    BoundedReceiverManyPaths8<List<String>>, JavaManyListPaths.Strings8,
+    BoundedReceiverPathsOf<Int>

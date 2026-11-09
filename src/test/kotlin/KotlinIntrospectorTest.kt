@@ -9044,6 +9044,7 @@ class KotlinIntrospectorTest {
             class BoundedReceiverJavaMutableListPaths : com.xemantic.kotlin.introspection.test.other.JavaFlexibleListPaths, com.xemantic.kotlin.introspection.test.other.JavaStringMutableListPaths
             // from com.xemantic.kotlin.introspection.test
             fun BoundedReceiverPaths<MutableList<String>>.mutableStringListPaths()
+            fun BoundedReceiverPaths<MutableList<String?>>.nullableMutableStringPaths()
         """.trimIndent()
     }
 
@@ -9289,6 +9290,42 @@ class KotlinIntrospectorTest {
             fun BoundedReceiverDoubling0<MutableList<MutableList<MutableList<List<List<List<String>>>>>>>.doublingLatePaths()
             fun BoundedReceiverDoubling0<*>.doublingPaths()
         """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with raw Kotlin supertype of Java supertype erased to bound of type arguments which are not platform types`() {
+        // kotlinc erases T : MutableList<String> to MutableList<String>, not MutableList<String!>, which a MutableList<String?> would match
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverRawMutableBoundPaths"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverRawMutableBoundPaths [page 1/1]
+            class BoundedReceiverRawMutableBoundPaths : com.xemantic.kotlin.introspection.test.other.JavaRawMutableBoundPaths
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverPaths<MutableList<String>>.mutableStringListPaths()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extension on supertype of other type arguments reached through more paths than walked`() {
+        // 2^6 distinct types of BoundedReceiverNullableChain0, of nullable and platform type arguments, none of them taking a String
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverIntNullableChain"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverIntNullableChain [page 1/1]
+            class BoundedReceiverIntNullableChain : BoundedReceiverNullableChain6<Int>
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverNullableChain0<*>.nullableChainPaths()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extension on type parameter of more bounds reached through several paths than matched`() {
+        // 2^9 combinations of the paths of the bounds, more than matched, none of them taking E of Int
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverIntManyPaths"
+        ) should {
+            have("manyPaths" !in this)
+        }
     }
 
     @Test
