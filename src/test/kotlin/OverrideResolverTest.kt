@@ -344,6 +344,39 @@ class OverrideResolverTest {
     }
 
     /**
+     * The [classFile] of an unsupported major version, like a class file too new for ASM to parse,
+     * whose constant pool, supertypes and methods keep their format.
+     */
+    private fun tooNew(classFile: ByteArray): ByteArray = classFile.copyOf().apply {
+        // the major version, following the magic number and the minor version
+        this[6] = 0x7F
+        this[7] = 0x7F
+    }
+
+    @Test
+    fun `should find relocated supertypes of owner by the names its class file too new to be parsed refers to`() {
+        // given
+        // like above, the class file of the owner of a version ASM cannot parse
+        val owner = kmClass("app/Owner", supertype = "lib/Base")
+        val resolver = overrideResolver(
+            classes = mapOf(
+                "lib/Base" to kmClass("lib/Base", null, "original"),
+                "app/shaded/lib/Base" to kmClass("lib/Base", null, "relocated")
+            ),
+            classFiles = mapOf("app/Owner" to tooNew(classFile("app/Owner", "app/shaded/lib/Base")))
+        )
+
+        // when
+        val overrides = listOf(
+            resolver.isOverride(OverrideResolver.Owner(owner), function("original")),
+            resolver.isOverride(OverrideResolver.Owner(owner), function("relocated"))
+        )
+
+        // then
+        assert(overrides == listOf(false, true))
+    }
+
+    /**
      * A function taking a value of the class of the [typeName], like `on(event: lib/Event)`,
      * with its JVM signature, which shading does not rewrite in the metadata.
      */
@@ -753,6 +786,39 @@ class OverrideResolverTest {
         // then
         // the class file of app/Mid tells lib/ relocated to app/shaded/lib/
         assert(overrides == listOf(true, false, false))
+    }
+
+    @Test
+    fun `should tell relocated Java supertype of indirect supertype by its class file too new to be parsed next to overloads of the same shape`() {
+        // given
+        // like an app shading its dependencies, renaming lib/ to app/libs/ and other/ to app/others/,
+        // its class app/Mid implementing the relocated Java interface lib/Listener,
+        // the overloads of the owner of the same shape, so that their JVM methods cannot tell the relocation,
+        // and neither can the package prefix, as each one is renamed differently,
+        // the class file of app/Mid of a version ASM cannot parse
+        val owner = kmClass("app/Owner", supertype = "app/Mid").apply {
+            functions += functionTaking("on", "lib/Event")
+            functions += functionTaking("on", "other/Event")
+        }
+        val resolver = overrideResolver(
+            classes = mapOf("app/Mid" to kmClass("app/Mid", supertype = "lib/Listener")),
+            classFiles = mapOf(
+                "app/Owner" to classFile(
+                    "app/Owner", listOf("on(Lapp/libs/Event;)V", "on(Lapp/others/Event;)V"), superName = "app/Mid"
+                ),
+                "app/Mid" to tooNew(classFile("app/Mid", listOf(), interfaces = listOf("app/libs/Listener")))
+            ),
+            unloadableClassFiles = mapOf(
+                "app/libs/Listener" to classFile("app/libs/Listener", listOf("on(Lapp/libs/Event;)V"), isInterface = true)
+            )
+        )
+
+        // when
+        val overrides = owner.functions.map { resolver.isOverride(OverrideResolver.Owner(owner), it) }
+
+        // then
+        // the supertypes of app/Mid are read from its class file all the same, telling lib/ relocated to app/libs/
+        assert(overrides == listOf(true, false))
     }
 
     @Test

@@ -1123,7 +1123,7 @@ internal class OverrideResolver(
             // the static method of DefaultImpls takes the interface instance as the first parameter
             val instanceParameter = "(L$internalName;"
             // the methods of the interface itself are still known when the ones of DefaultImpls are not
-            declaredMethods(defaultImplsName, defaultImplsFile?.let { readDeclaredMethods(it) })?.forEach { method ->
+            declaredMethods(defaultImplsName, defaultImplsFile?.let { readClass(it)?.methods })?.forEach { method ->
                 if (method.access and Opcodes.ACC_STATIC != 0 && method.descriptor.startsWith(instanceParameter)) {
                     methods += method.name + "(" + method.descriptor.removePrefix(instanceParameter)
                 }
@@ -1146,7 +1146,7 @@ internal class OverrideResolver(
     )
 
     /**
-     * The methods declared by a class, [read] from its class file, see [readDeclaredMethods], whether the class can be loaded or not,
+     * The methods declared by a class, [read] from its class file, see [readClass], whether the class can be loaded or not,
      * or reflected, when there is no class file, like when the class loader does not serve it as a resource,
      * or it can be neither parsed nor its method table read, but the class can be loaded,
      * or `null` if they can be neither read nor reflected.
@@ -1163,7 +1163,7 @@ internal class OverrideResolver(
      * Whether the class declares the [jvmMethod], as a name followed by a descriptor, like `getState${'$'}core()I`,
      * told by resolving the JVM method alone, like the JVM links a call, through a method handle,
      * also when the methods of the class can be neither read nor reflected,
-     * like when its class file is not served, or its method table cannot be read, see [scanMethods],
+     * like when its class file is not served, or its method table cannot be read, see [scanClass],
      * and another method refers to a class missing from the classpath,
      * which fails reflecting all the methods of the class at once, see [declaredMethods];
      * the JVM method resolved might be inherited, so it is declared only if the class itself is the declaring one.
@@ -1224,27 +1224,19 @@ internal class OverrideResolver(
     private fun ownerClassFile(
         className: String,
         bytes: ByteArray? = readClassBytesByMetadataName(className),
-        declared: List<DeclaredMethod>? = declaredMethods(className, bytes?.let { readDeclaredMethods(it) })
+        declared: List<DeclaredMethod>? = declaredMethods(className, bytes?.let { readClass(it)?.methods })
     ): OwnerClassFile = OwnerClassFile(isServed = bytes != null, methods = declared?.mapTo(HashSet()) { it.name + it.descriptor })
 
     /**
-     * A parsed class file, telling the JVM internal names of the direct [supertypes], and the declared [methods].
+     * A class file, parsed, or scanned, see [readClass], telling the JVM internal names of the direct [supertypes],
+     * and the declared [methods].
      */
     private class ParsedClass(val supertypes: List<String>, val methods: List<DeclaredMethod>)
 
-    private fun readMethods(bytes: ByteArray): List<DeclaredMethod>? = readClass(bytes)?.methods
-
-    /**
-     * The methods of a class file, from its [parsed] class, see [readClass],
-     * or from its method table, when it cannot be parsed, see [scanMethods],
-     * only by their access flags, names and descriptors then.
-     */
-    private fun readDeclaredMethods(bytes: ByteArray, parsed: ParsedClass? = readClass(bytes)): List<DeclaredMethod>? =
-        parsed?.methods ?: scanMethods(bytes)
-
     /**
      * Reads the direct supertypes and the methods of a class file, with their generic signatures,
-     * or `null` if it cannot be parsed, like when it is malformed, or too new for ASM.
+     * parsed by ASM, or else scanned, when it cannot be parsed, like when it is too new for ASM, see [scanClass],
+     * or `null` if it can be neither parsed nor scanned, like when it is malformed.
      * Only the parsing is guarded, so that a failure of the code processing the methods is not mistaken for it.
      */
     private fun readClass(bytes: ByteArray): ParsedClass? {
@@ -1275,34 +1267,39 @@ internal class OverrideResolver(
                 }
             }, ClassReader.SKIP_CODE or ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES)
         } catch (_: Exception) {
-            return null
+            return scanClass(bytes)
         }
         return ParsedClass(supertypes, methods)
     }
 
     /**
-     * The methods of a class file which cannot be parsed, like when it is too new for ASM, see [readClass],
-     * read from its method table, only by their access flags, names and descriptors,
+     * The direct supertypes and the methods of a class file which cannot be parsed, like when it is too new for ASM,
+     * see [readClass], read from the class names of its constant pool, and from its method table,
+     * by the access flags, names, descriptors, and generic signatures of the methods,
      * the `Synthetic` attribute read into the access flags, like ASM does, as a class file before Java 5 tells it so,
      * which, like the constant pool they refer to, keep their format across the class file versions,
      * so that the methods are known without loading the types of their descriptors, unlike when reflected,
-     * or `null` if the method table cannot be read either, like when the constant pool has an entry of an unknown kind,
+     * or `null` if they cannot be read either, like when the constant pool has an entry of an unknown kind,
      * whose size is unknown then, or the class file is malformed.
      */
-    private fun scanMethods(bytes: ByteArray): List<DeclaredMethod>? = try {
+    private fun scanClass(bytes: ByteArray): ParsedClass? = try {
         val input = DataInputStream(bytes.inputStream())
         if (input.readInt() != 0xCAFEBABE.toInt()) return null
         // the minor and the major version
         input.skipNBytes(4)
         val constantCount = input.readUnsignedShort()
         val utf8 = arrayOfNulls<String>(constantCount)
+        // the index of the name of each Class entry
+        val classNameIndexes = IntArray(constantCount)
         var index = 1
         while (index < constantCount) {
             when (input.readUnsignedByte()) {
                 // Utf8
                 1 -> utf8[index] = input.readUTF()
-                // Class, String, MethodType, Module, Package
-                7, 8, 16, 19, 20 -> input.skipNBytes(2)
+                // Class
+                7 -> classNameIndexes[index] = input.readUnsignedShort()
+                // String, MethodType, Module, Package
+                8, 16, 19, 20 -> input.skipNBytes(2)
                 // MethodHandle
                 15 -> input.skipNBytes(3)
                 // Integer, Float, Fieldref, Methodref, InterfaceMethodref, NameAndType, Dynamic, InvokeDynamic
@@ -1316,27 +1313,44 @@ internal class OverrideResolver(
             }
             index++
         }
-        // the access flags, this class, the superclass, and the interfaces
-        input.skipNBytes(6)
-        input.skipNBytes(2L * input.readUnsignedShort())
-        // the names of the attributes, each skipped by its length
-        fun readAttributes(): List<String?> = List(input.readUnsignedShort()) {
-            val name = utf8[input.readUnsignedShort()]
-            input.skipNBytes(input.readInt().toUInt().toLong())
-            name
+        // the name of the Class entry of the index, the entry 0 of no name, as is any entry of another kind
+        fun className(index: Int): String? = utf8[classNameIndexes[index]]
+        // the access flags, and this class
+        input.skipNBytes(4)
+        // the superclass, of the entry 0 for java/lang/Object, which has none
+        val superclass = input.readUnsignedShort()
+        val supertypes = listOfNotNull(if (superclass == 0) null else className(superclass) ?: return null) +
+            List(input.readUnsignedShort()) { className(input.readUnsignedShort()) ?: return null }
+        // the attributes, each skipped by its length, but the Signature one,
+        // telling whether the Synthetic one is there, and the generic signature, if any
+        fun readAttributes(): Pair<Boolean, String?> {
+            var isSynthetic = false
+            var signature: String? = null
+            repeat(input.readUnsignedShort()) {
+                val name = utf8[input.readUnsignedShort()]
+                val length = input.readInt().toUInt().toLong()
+                if (name == "Signature" && length == 2L) {
+                    signature = utf8[input.readUnsignedShort()]
+                } else {
+                    if (name == "Synthetic") isSynthetic = true
+                    input.skipNBytes(length)
+                }
+            }
+            return isSynthetic to signature
         }
         // the fields, by their access flags, names and descriptors, followed by their attributes
         repeat(input.readUnsignedShort()) {
             input.skipNBytes(6)
             readAttributes()
         }
-        List(input.readUnsignedShort()) {
+        val methods = List(input.readUnsignedShort()) {
             val access = input.readUnsignedShort()
             val name = utf8[input.readUnsignedShort()] ?: return null
             val descriptor = utf8[input.readUnsignedShort()] ?: return null
-            val synthetic = if ("Synthetic" in readAttributes()) Opcodes.ACC_SYNTHETIC else 0
-            DeclaredMethod(access or synthetic, name, descriptor)
+            val (isSynthetic, signature) = readAttributes()
+            DeclaredMethod(access or (if (isSynthetic) Opcodes.ACC_SYNTHETIC else 0), name, descriptor, signature)
         }
+        ParsedClass(supertypes, methods)
     } catch (_: IOException) {
         null
     } catch (_: IndexOutOfBoundsException) {
@@ -1731,18 +1745,10 @@ internal class OverrideResolver(
         }
 
         /**
-         * The methods read from the class file, see [readDeclaredMethods], once,
+         * The methods declared by the class, see [declaredMethods], read from the class file once, see [parsed],
          * as the relocation might be told more than once, see [collectOverridables].
          */
-        private val readMethods: List<DeclaredMethod>? by lazy {
-            val parsed = parsed()
-            bytes?.let { readDeclaredMethods(it, parsed) }
-        }
-
-        /**
-         * The methods declared by the class, see [declaredMethods].
-         */
-        fun declaredMethods(): List<DeclaredMethod>? = declaredMethods(name, readMethods)
+        fun declaredMethods(): List<DeclaredMethod>? = declaredMethods(name, parsed()?.methods)
 
     }
 
@@ -2312,9 +2318,7 @@ internal class OverrideResolver(
         substitution: JavaSubstitution
     ): List<Pair<String, Overridable>> {
         val bytes = readClassBytesByMetadataName(kotlinClassName(javaClass)) ?: return emptyList()
-        // the methods of a class file which cannot be parsed are unknown, as their generic signatures are needed,
-        // which a scan of the method table does not read, see readDeclaredMethods
-        val methods = readMethods(bytes) ?: return emptyList()
+        val methods = readClass(bytes)?.methods ?: return emptyList()
         return asmMethods(methods, javaClass.packageName, ownerPackage, substitution, javaClass)
     }
 
