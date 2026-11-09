@@ -3082,15 +3082,18 @@ internal class DefaultKotlinIntrospector(
         // and so does the member of a public class below, overriding the one of the internal class again, like abstract,
         // which the member of the interface stands for, when listed, or the member of a public class
         // implementing the abstract one of an internal class, merged with the member of an unrelated interface,
-        // and over the implementation of a Java class above it, like intValue() of java.util.concurrent.atomic.AtomicInteger
+        // and over the implementation of a Java class above it, like intValue() of java.util.concurrent.atomic.AtomicInteger,
+        // while the method of a Java class below wins over it, like one implementing the abstract member of an internal class,
+        // merged with the member of an unrelated interface, open then
         val unlistedOverrides = unlistedKotlinCandidates.filter { !it.isHidden }
         if (unlistedOverrides.isNotEmpty()) {
-            val classMembers = candidates.filter {
-                !it.isHidden && it.declarations !is JavaClass && it.kmClass.kind != ClassKind.INTERFACE
-            }
+            val classMembers = candidates.filter { !it.isHidden && it.kmClass.kind != ClassKind.INTERFACE }
             val unlistedClassMembers = classMembers.filter { !it.isApi }
+            // whether the member overrides the other one, unlike a Kotlin member of the same JVM signature
+            // as the Java method overriding it below, see InheritedCandidate.overrides
+            fun InheritedCandidate.isBelow(other: InheritedCandidate) = overrides(other) && key !in other.overridden
             fun nearest(overriding: List<InheritedCandidate>) =
-                overriding.firstOrNull { nearest -> overriding.none { it !== nearest && it.overrides(nearest) } }
+                overriding.firstOrNull { nearest -> overriding.none { it !== nearest && it.isBelow(nearest) } }
             candidates.forEach { candidate ->
                 val implementing = candidate.implementingClass
                 if (candidate.isHidden || !candidate.isApi || (candidate.implementationModality != null && implementing == null)) {
@@ -3098,7 +3101,7 @@ internal class DefaultKotlinIntrospector(
                 }
                 val isInterfaceMember = candidate.kmClass.kind == ClassKind.INTERFACE
                 fun InheritedCandidate.standsFor() =
-                    this !== candidate && (overrides(candidate) || (isInterfaceMember && isMergedWith(candidate)))
+                    this !== candidate && (isBelow(candidate) || (isInterfaceMember && isMergedWith(candidate)))
                 // the members of the classes, but only when one of them is not part of the API, as otherwise listed on their own
                 val classOverride = if (unlistedClassMembers.none { it.standsFor() }) null else {
                     nearest(classMembers.filter { it.standsFor() })

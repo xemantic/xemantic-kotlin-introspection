@@ -14019,6 +14019,74 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve member of interface implemented by public superclass declared after it as open`() {
+        // the implementation of the nearest class wins over the abstract member of the interface declared first
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.NearestClassImplementingSub.f"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NearestClassImplementingSub.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.NearestClassFace
+            open fun f(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member redeclared by interface implemented by public superclass declared after it as open`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.NearestClassImplementedRedeclaringSub.f"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NearestClassImplementedRedeclaringSub.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.NearestClassRedeclaring
+            open override fun f(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member redeclared by interface made abstract again by public superclass declared after it as abstract`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.NearestClassReabstractingRedeclaringSub.f"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NearestClassReabstractingRedeclaringSub.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.NearestClassRedeclaring
+            override fun f(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member redeclared by interface overridden as final by public superclass declared after it as final`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.NearestClassFinalRedeclaringSub.f"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NearestClassFinalRedeclaringSub.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.NearestClassRedeclaring
+            final override fun f(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of interface implemented by Java class implementing abstract member of internal class as open`() {
+        // the method of the Java class stands for the implementation of the abstract f() of HiddenMergedInternalAbstract
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaImplementingInternalSub.f"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaImplementingInternalSub.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.NearestClassFace
+            open fun f(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of interface declared first implemented by Java class implementing abstract member of internal class as open`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaImplementingInternalFaceFirstSub.f"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaImplementingInternalFaceFirstSub.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.NearestClassFace
+            open fun f(): Int
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve member implemented by Java class overridden as final by internal subclass as final`() {
         // the final override of the internal class wins over the implementation of java.util.concurrent.atomic.AtomicInteger above it
         resolver.resolve(
