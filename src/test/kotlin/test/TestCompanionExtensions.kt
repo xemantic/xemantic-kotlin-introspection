@@ -272,6 +272,34 @@ operator fun UnshadowedSupertype.invoke(): Int = 1
 
 fun UnshadowingObject.named(y: Int): Int = y
 
+// an extension on a type parameter taking it as a parameter, not pinned to the object, which can be inferred as the supertype,
+// like UnpinnedUnshadowingObject.unpinned(UnpinnedOther), calling the extension,
+// while UnpinnedUnshadowingObject.unpinned(UnpinnedUnshadowingObject) calls the member,
+// and pinned to it, like by SelfBounded<PinnedShadowingObject>, where the member is always called
+interface UnpinnedSupertype
+
+object UnpinnedOther : UnpinnedSupertype
+
+object UnpinnedUnshadowingObject : UnpinnedSupertype {
+    fun unpinned(x: UnpinnedUnshadowingObject): Int = 0
+}
+
+class UnpinnedUnshadowingCompanionHolder {
+    companion object : UnpinnedSupertype {
+        fun unpinned(x: UnpinnedUnshadowingCompanionHolder.Companion): Int = 0
+    }
+}
+
+fun <T : UnpinnedSupertype> T.unpinned(x: T): Int = 1
+
+interface SelfBounded<T>
+
+object PinnedShadowingObject : SelfBounded<PinnedShadowingObject> {
+    fun pinned(x: PinnedShadowingObject): Int = 0
+}
+
+fun <T : SelfBounded<T>> T.pinned(x: T): Int = 1
+
 // a JVM-only method taking parameters inherited by an object, never called with named arguments,
 // like JvmOnlyUnshadowingObject.sort(c = naturalOrder()), which calls the extension
 object JvmOnlyUnshadowingObject : AbstractList<String>() {

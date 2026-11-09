@@ -3677,14 +3677,15 @@ internal class DefaultKotlinIntrospector(
         // the companion object looked up only when one of them is called on it
         val unshadowedByMembers = when {
             kmClass.kind == ClassKind.OBJECT || kmClass.kind == ClassKind.COMPANION_OBJECT ->
-                unshadowed.withoutShadowedByMembers(kmClass.name, { true }) { name ->
+                unshadowed.withoutShadowedByMembers(kmClass.name, { true }, { supertypes }) { name ->
                     publicMembersNamed(kmClass, declarations, name, apiClass)
                 }
             companion != null -> {
                 val companionName = "${kmClass.name}.${companion.name}"
                 val apiCompanion by lazy(LazyThreadSafetyMode.NONE) { apiCompanionOf(kmClass, declarations, apiClass) }
                 val isOnCompanion = { receiver: KmType? -> (receiver?.classifier as? KmClassifier.Class)?.name == companionName }
-                unshadowed.withoutShadowedByMembers(companionName, isOnCompanion) { name ->
+                val companionSupertypes = { apiCompanion?.let { supertypesOf(it.kmClass) } }
+                unshadowed.withoutShadowedByMembers(companionName, isOnCompanion, companionSupertypes) { name ->
                     apiCompanion?.let { publicMembersNamed(it.kmClass, it.foundClass, name, it.apiClass) }.orEmpty()
                 }
             }
@@ -3704,19 +3705,25 @@ internal class DefaultKotlinIntrospector(
      *
      * @param objectName the name of the object, like `com/example/Foo.Companion`, which the type parameter of the receiver
      *   of an extension stands for.
+     * @param objectSupertypes the supertypes of the object, telling whether the type parameter of the receiver of an extension
+     *   is pinned to it, see [shadowsOnObject], looked up only for such an extension, or `null` if the object is not found.
      */
     private fun ListedExtensions.withoutShadowedByMembers(
         objectName: String,
         isCalledOnObject: (receiver: KmType?) -> Boolean,
+        objectSupertypes: () -> ClassSupertypes?,
         membersNamed: (name: String) -> List<Member>
     ): ListedExtensions {
         val functions = functions.filter { !it.hidesMembers && isCalledOnObject(it.function.receiverParameterType) }
         val properties = properties.filter { isCalledOnObject(it.property.receiverParameterType) }
         if (functions.isEmpty() && properties.isEmpty()) return this
         val members = (functions.map { it.function.name } + properties.map { it.property.name }).toSet().associateWith(membersNamed)
+        val supertypes by lazy(LazyThreadSafetyMode.NONE, objectSupertypes)
         val shadowedFunctions = functions.filterTo(HashSet()) { extension ->
             members.getValue(extension.function.name).any { member ->
-                member is Member.Function && member.function.shadowsOnObject(extension.function, objectName)
+                member is Member.Function && member.function.shadowsOnObject(extension.function, objectName) { typeParameter ->
+                    supertypes?.pins(typeParameter) == true
+                }
             }
         }
         val shadowedProperties = properties.filterTo(HashSet()) { extension ->
@@ -8432,11 +8439,26 @@ private fun KmFunction.shadows(function: KmFunction, className: String): Boolean
  * is called instead of the [extension] called on the name of the object, see `withoutShadowedByMembers`,
  * like `fun shadow()` of `companion object : Bar` instead of `fun Bar.shadow()` for `Foo.shadow()`,
  * by the rule of [shadows], where the type parameter of the receiver of the [extension], if any, stands for the object,
- * also when the receiver is nullable, as the name of an object is never `null`.
+ * also when the receiver is nullable, as the name of an object is never `null`,
+ * but only when it is pinned to the object, told by [isPinned], see `pins`, if a value parameter refers to it,
+ * as it can be inferred otherwise as a supertype of the object, like for `Obj.ext(other)` of `fun <T : Bar> T.ext(x: T)`
+ * next to a member `ext(x: Obj)`.
+ * Like [shadows], it does not tell a call giving the type arguments explicitly, which reaches the extension,
+ * like `Obj.ext<Int>()` of `fun <R> Bar.ext()` next to a member `ext()`.
  */
-private fun KmFunction.shadowsOnObject(extension: KmFunction, objectName: String): Boolean {
-    val receiverTypeParameterId = (extension.receiverParameterType?.classifier as? KmClassifier.TypeParameter)?.id ?: -1
-    return isCalledLike(extension, receiverTypeParameterId, objectName)
+private fun KmFunction.shadowsOnObject(
+    extension: KmFunction,
+    objectName: String,
+    isPinned: (KmTypeParameter) -> Boolean
+): Boolean {
+    val receiverTypeParameterId = (extension.receiverParameterType?.classifier as? KmClassifier.TypeParameter)?.id
+    if (receiverTypeParameterId != null &&
+        extension.valueParameters.any { !it.type.refersOnlyTo { id -> id != receiverTypeParameterId } }
+    ) {
+        val typeParameter = extension.typeParameters.firstOrNull { it.id == receiverTypeParameterId } ?: return false
+        if (!isPinned(typeParameter)) return false
+    }
+    return isCalledLike(extension, receiverTypeParameterId ?: -1, objectName)
 }
 
 /**

@@ -1348,6 +1348,51 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve extension on type parameter not pinned to object next to member taking the object`() {
+        // UnpinnedUnshadowingObject.unpinned(UnpinnedOther) calls the extension, inferring T as UnpinnedSupertype
+        resolver.resolve("com.xemantic.kotlin.introspection.test.UnpinnedUnshadowingObject.unpinned") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.UnpinnedUnshadowingObject.unpinned [page 1/1]
+            fun unpinned(x: UnpinnedUnshadowingObject): Int
+            // from com.xemantic.kotlin.introspection.test
+            fun <T : UnpinnedSupertype> T.unpinned(x: T): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should list extension on type parameter not pinned to object next to member taking the object`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.UnpinnedUnshadowingObject") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.UnpinnedUnshadowingObject [page 1/1]
+            object UnpinnedUnshadowingObject : UnpinnedSupertype {
+                fun unpinned(x: UnpinnedUnshadowingObject): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun <T : UnpinnedSupertype> T.unpinned(x: T): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension on type parameter not pinned to companion object next to member taking the companion object`() {
+        // UnpinnedUnshadowingCompanionHolder.unpinned(UnpinnedOther) calls the extension
+        resolver.resolve("com.xemantic.kotlin.introspection.test.UnpinnedUnshadowingCompanionHolder.unpinned") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.UnpinnedUnshadowingCompanionHolder.unpinned [page 1/1]
+            companion object : UnpinnedSupertype {
+                fun unpinned(x: UnpinnedUnshadowingCompanionHolder.Companion): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun <T : UnpinnedSupertype> T.unpinned(x: T): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve extension on type parameter pinned to object shadowed by its member`() {
+        // PinnedShadowingObject.pinned(x) calls the member, as T can only be PinnedShadowingObject
+        resolver.resolve("com.xemantic.kotlin.introspection.test.PinnedShadowingObject.pinned") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PinnedShadowingObject.pinned [page 1/1]
+            fun pinned(x: PinnedShadowingObject): Int
+        """.trimIndent()
+    }
+
+    @Test
     fun `should not resolve extension of object shadowed by inherited member`() {
         // ShadowingInheritingObject.inherited() calls the member
         resolver.resolve("com.xemantic.kotlin.introspection.test.ShadowingInheritingObject.inherited") sameAsKotlin """
