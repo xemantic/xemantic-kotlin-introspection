@@ -2574,10 +2574,12 @@ internal class DefaultKotlinIntrospector(
          * or by the key of its JVM method, see [OverrideResolver.overriddenJavaMembers],
          * like the `newThread(r: Runnable)` of a Kotlin interface the `newThread(r: Runnable?)` of `java.util.concurrent.ThreadFactory`,
          * or by its JVM signature, which overrides it on the JVM, like `apply(t: String)` the `apply(s: String?)` of a Java subtype
-         * of `java.util.function.Function<String, String>`.
+         * of `java.util.function.Function<String, String>`,
+         * unless the [other] candidate, of a Java class, overrides the [member] in turn, by its key,
+         * like the method of a Java class implementing the member of an internal Kotlin class, or interface, above it.
          */
         fun overrides(other: InheritedCandidate): Boolean =
-            other.key in overridden || other.jvmMethod?.let { jvmMethod ->
+            other.key in overridden || key !in other.overridden && other.jvmMethod?.let { jvmMethod ->
                 jvmMethod.key in overriddenJavaMembers ||
                     jvmMethod.signature == (member as? Member.Function)?.declaration?.signature
             } == true
@@ -3083,12 +3085,12 @@ internal class DefaultKotlinIntrospector(
         // and so does the member of a public class below, overriding the one of the internal class again, like abstract,
         // which the member of the interface stands for, when listed, or the member of a public class
         // implementing the abstract one of an internal class, merged with the member of an unrelated interface,
-        // and over the implementation of a Java class above it, like intValue() of java.util.concurrent.atomic.AtomicInteger
+        // and over the implementation of a Java class above it, like intValue() of java.util.concurrent.atomic.AtomicInteger,
+        // while the method of a Java class below wins over it, like one implementing the abstract member of an internal class,
+        // merged with the member of an unrelated interface, open then, or the member of an internal interface, see overrides
         val unlistedOverrides = unlistedKotlinCandidates.filter { !it.isHidden }
         if (unlistedOverrides.isNotEmpty()) {
-            val classMembers = candidates.filter {
-                !it.isHidden && it.declarations !is JavaClass && it.kmClass.kind != ClassKind.INTERFACE
-            }
+            val classMembers = candidates.filter { !it.isHidden && it.kmClass.kind != ClassKind.INTERFACE }
             val unlistedClassMembers = classMembers.filter { !it.isApi }
             fun nearest(overriding: List<InheritedCandidate>) =
                 overriding.firstOrNull { nearest -> overriding.none { it !== nearest && it.overrides(nearest) } }

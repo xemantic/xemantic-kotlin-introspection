@@ -679,3 +679,76 @@ abstract class InheritedJavaNullUnmarkedOverriding : com.xemantic.kotlin.introsp
 abstract class InheritedJavaNullUnmarkedOuter : com.xemantic.kotlin.introspection.test.other.JavaNullUnmarkedOuter.Inner()
 
 abstract class InheritedJavaNullUnmarkedPackage : com.xemantic.kotlin.introspection.test.unmarked.JavaNullUnmarkedPackageOverriding()
+
+// The member of the nearest class wins over the ones of the interfaces, also in a hierarchy which is all part of the API,
+// whatever the order of the supertypes: open of the abstract member a superclass implements, next to an unrelated interface,
+// so that a subclass of NearestClassImplementingSub need not override f(),
+// open, abstract, or final of the member a superclass overrides, merged with a redeclaration of the root interface,
+// so that a subclass of NearestClassReabstractingRedeclaringSub has to override f(),
+// and a subclass of NearestClassFinalRedeclaringSub cannot, unchecked by the build
+interface NearestClassFace {
+    fun f(): Int
+}
+
+abstract class NearestClassAbstract {
+    abstract fun f(): Int
+}
+
+abstract class NearestClassImplementing : NearestClassAbstract() {
+    override fun f(): Int = 1
+}
+
+abstract class NearestClassImplementingSub : NearestClassFace, NearestClassImplementing()
+
+class NearestClassImplementingConcrete : NearestClassImplementingSub()
+
+interface NearestClassRoot {
+    fun f(): Int
+}
+
+interface NearestClassRedeclaring : NearestClassRoot {
+    override fun f(): Int
+}
+
+abstract class NearestClassImplemented : NearestClassRoot {
+    override fun f(): Int = 1
+}
+
+abstract class NearestClassReabstracting : NearestClassImplemented() {
+    abstract override fun f(): Int
+}
+
+abstract class NearestClassFinal : NearestClassImplemented() {
+    final override fun f(): Int = 2
+}
+
+abstract class NearestClassImplementedRedeclaringSub : NearestClassRedeclaring, NearestClassImplemented()
+
+class NearestClassImplementedRedeclaringConcrete : NearestClassImplementedRedeclaringSub()
+
+abstract class NearestClassReabstractingRedeclaringSub : NearestClassRedeclaring, NearestClassReabstracting()
+
+abstract class NearestClassFinalRedeclaringSub : NearestClassRedeclaring, NearestClassFinal()
+
+// and the method of a Java class implementing the abstract member of an internal class, next to an unrelated interface,
+// so that a subclass of JavaImplementingInternalSub need not override f()
+abstract class JavaImplementingInternalSub : com.xemantic.kotlin.introspection.test.other.JavaImplementingInternal(), NearestClassFace
+
+class JavaImplementingInternalConcrete : JavaImplementingInternalSub()
+
+abstract class JavaImplementingInternalFaceFirstSub : NearestClassFace, com.xemantic.kotlin.introspection.test.other.JavaImplementingInternal()
+
+// and the method of a Java class implementing the member of an internal interface, alone, or next to an unrelated interface,
+// so that a subclass of JavaImplementingInternalInterfaceSub, or of JavaImplementingInternalInterfaceFaceSub, need not override f()
+internal interface NearestClassInternalFace {
+    fun f(): Int
+}
+
+abstract class JavaImplementingInternalInterfaceSub : com.xemantic.kotlin.introspection.test.other.JavaImplementingInternalInterface()
+
+class JavaImplementingInternalInterfaceConcrete : JavaImplementingInternalInterfaceSub()
+
+abstract class JavaImplementingInternalInterfaceFaceSub :
+    NearestClassFace, com.xemantic.kotlin.introspection.test.other.JavaImplementingInternalInterface()
+
+class JavaImplementingInternalInterfaceFaceConcrete : JavaImplementingInternalInterfaceFaceSub()
