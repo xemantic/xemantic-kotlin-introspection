@@ -62,6 +62,7 @@ import com.xemantic.kotlin.introspection.test.other.JavaStringCollection
 import com.xemantic.kotlin.introspection.test.other.JavaStringList
 import com.xemantic.kotlin.introspection.test.other.JavaStringListPaths
 import com.xemantic.kotlin.introspection.test.other.JavaStringMutableListPaths
+import com.xemantic.kotlin.introspection.test.other.JavaStringNullableWrapPaths
 import com.xemantic.kotlin.introspection.test.other.JavaStringObjectPairSink
 import com.xemantic.kotlin.introspection.test.other.JavaWildcardListConsumer
 import com.xemantic.kotlin.introspection.test.other.JavaWildcardRows
@@ -1237,3 +1238,19 @@ interface BoundedReceiverIntManyPaths :
     BoundedReceiverManyPaths7<List<String>>, JavaManyListPaths.Strings7,
     BoundedReceiverManyPaths8<List<String>>, JavaManyListPaths.Strings8,
     BoundedReceiverPathsOf<Int>
+
+// a platform type substituted for a nullable type parameter, like String! for T of BoundedReceiverWrap<T?>,
+// is nullable for a type it is matched against, but infers a type parameter of a nullable type, like T of T?, as not nullable
+interface BoundedReceiverNullableWrapPaths<T> : BoundedReceiverPaths<BoundedReceiverWrap<T?>>
+
+interface BoundedReceiverNullableWrapWrapPaths<T> : BoundedReceiverPaths<BoundedReceiverWrap<BoundedReceiverWrap<T?>>>
+
+fun <T : Any> BoundedReceiverPaths<BoundedReceiverWrap<T?>>.nonNullWrapPaths() {}
+
+fun <T : Any> BoundedReceiverPaths<BoundedReceiverWrap<BoundedReceiverWrap<T?>>>.nonNullWrapWrapPaths() {}
+
+fun BoundedReceiverPaths<BoundedReceiverWrap<String>>.stringWrapPaths() {}
+
+class BoundedReceiverJavaNullableWrapPaths : JavaStringNullableWrapPaths.Wrap
+
+class BoundedReceiverJavaNullableWrapWrapPaths : JavaStringNullableWrapPaths.WrapWrap

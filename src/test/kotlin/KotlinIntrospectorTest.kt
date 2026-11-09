@@ -9329,6 +9329,32 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve class with extension on not nullable type parameter of nullable type matching platform type made nullable`() {
+        // BoundedReceiverPaths<BoundedReceiverWrap<String!?>>, of String! substituted for T?, is no BoundedReceiverWrap<String>,
+        // while T of T? is inferred as String, satisfying T : Any
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverJavaNullableWrapPaths"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverJavaNullableWrapPaths [page 1/1]
+            class BoundedReceiverJavaNullableWrapPaths : com.xemantic.kotlin.introspection.test.other.JavaStringNullableWrapPaths.Wrap
+            // from com.xemantic.kotlin.introspection.test
+            fun <T : Any> BoundedReceiverPaths<BoundedReceiverWrap<T?>>.nonNullWrapPaths()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extension on not nullable type parameter of nested nullable type matching platform type made nullable`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverJavaNullableWrapWrapPaths"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverJavaNullableWrapWrapPaths [page 1/1]
+            class BoundedReceiverJavaNullableWrapWrapPaths : com.xemantic.kotlin.introspection.test.other.JavaStringNullableWrapPaths.WrapWrap
+            // from com.xemantic.kotlin.introspection.test
+            fun <T : Any> BoundedReceiverPaths<BoundedReceiverWrap<BoundedReceiverWrap<T?>>>.nonNullWrapWrapPaths()
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve class comparable through raw Java supertype without extensions on comparable of its package`() {
         // the Comparable of the raw JavaGenericComparable, told only by its name, is comparable to the raw type,
         // so that kotlinc accepts none of the extensions on Comparable of the package, like Comparable<BoundedReceiverMoney>,

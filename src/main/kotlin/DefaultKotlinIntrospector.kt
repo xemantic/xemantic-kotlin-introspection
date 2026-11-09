@@ -5465,11 +5465,14 @@ internal class DefaultKotlinIntrospector(
          * The type a type parameter of the [expected] type is inferred from, the [actual] type in a position of the given
          * [variance], without the nullability of a nullable type parameter, like `String` of `String?` for `T?`
          * in a covariant position, while it can be `String?` in a contravariant one, and either in an invariant one,
-         * like the platform type `String!`, or `null` if a not nullable type cannot be a nullable type parameter,
+         * like the platform type `String!`, also made nullable, like `String!` substituted for `T?`,
+         * or `null` if a not nullable type cannot be a nullable type parameter,
          * like `String` for `T?` in a contravariant, or an invariant position.
          */
         private fun inferredFrom(expected: KmType, actual: KmType, variance: KmVariance): KmType? = when {
-            !expected.isNullable || actual.flexibleTypeUpperBound != null -> actual
+            !expected.isNullable -> actual
+            // a platform type made nullable, like String! substituted for T of W<T?>, infers T? as String!, not nullable
+            actual.flexibleTypeUpperBound != null -> if (actual.isNullable) actual.copy().also { it.isNullable = false } else actual
             !actual.isNullable -> actual.takeIf { variance == KmVariance.OUT }
             variance == KmVariance.IN -> actual
             else -> actual.copy().also { type ->
