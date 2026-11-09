@@ -47,6 +47,7 @@ import com.xemantic.kotlin.introspection.test.other.JavaRawBoundedListPaths
 import com.xemantic.kotlin.introspection.test.other.JavaRawCharSequenceJavaListPaths
 import com.xemantic.kotlin.introspection.test.other.JavaRawCharSequenceListPaths
 import com.xemantic.kotlin.introspection.test.other.JavaRawGenericComparableMid
+import com.xemantic.kotlin.introspection.test.other.JavaRawListConsumer
 import com.xemantic.kotlin.introspection.test.other.JavaRawListPaths
 import com.xemantic.kotlin.introspection.test.other.JavaRawMapArrayBoth
 import com.xemantic.kotlin.introspection.test.other.JavaRawMapBoth
@@ -55,6 +56,7 @@ import com.xemantic.kotlin.introspection.test.other.JavaStringCollection
 import com.xemantic.kotlin.introspection.test.other.JavaStringList
 import com.xemantic.kotlin.introspection.test.other.JavaStringListPaths
 import com.xemantic.kotlin.introspection.test.other.JavaStringMutableListPaths
+import com.xemantic.kotlin.introspection.test.other.JavaWildcardListConsumer
 import com.xemantic.kotlin.introspection.test.other.JavaWildcardRows
 
 // Extensions on type parameter receivers, listed for the classes satisfying their bounds,
@@ -770,20 +772,49 @@ class BoundedReceiverAnyConsumer : BoundedReceiverConsumer<Any>
 class BoundedReceiverIntConsumer : BoundedReceiverConsumer<Int>
 
 // a type parameter in a projection contradicting the type parameter of a supertype, like T of List<in T>,
-// the supertype of MutableList<in T>, which kotlinc infers, not told, like by a star projection
+// the supertype of MutableList<in T>, which kotlinc infers, not told, but by a star projection, which tells nothing of it
 fun <T> BoundedReceiverConsumer<MutableList<in T>>.consumeIntoMutable() {}
 
 class BoundedReceiverNullableAnyListConsumer : BoundedReceiverConsumer<List<Any?>>
 
-// a type parameter kotlinc infers as an intersection type, not checked against its recursive bound, like by kotlinc,
-// of multiple bounds, which a final class satisfies by Nothing, like Int, which is no CharSequence
+// a type parameter kotlinc infers as an intersection type, checked against its recursive bound,
+// of multiple bounds, which is Nothing for a final class, like Int, which is no CharSequence, satisfying the bounds
 fun <T> BoundedReceiverConsumer<T>.consumeComparableCharSequence() where T : Comparable<T>, T : CharSequence {}
 
 class BoundedReceiverPlain
 
 class BoundedReceiverPlainConsumer : BoundedReceiverConsumer<BoundedReceiverPlain>
 
-// of multiple contravariant positions, or of the bound of another type parameter, like A of B : A
+// a type parameter bounded by another one, which nothing else constrains, like T : U of U : Comparable<U>,
+// which kotlinc infers as the same type, satisfying the bound of the other one
+fun <T : U, U : Comparable<U>> BoundedReceiverConsumer<T>.consumeThroughComparable() {}
+
+fun <T : Comparable<T>, U : T> BoundedReceiverConsumer<U>.consumeUnderComparable() {}
+
+fun <C : B, B : A, A : Comparable<A>> BoundedReceiverConsumer<C>.consumeThroughComparableChain() {}
+
+// the intersection of two classes, neither of them a subclass of the other, is empty, like of Number and an open class
+fun <T> BoundedReceiverConsumer<T>.consumeComparableNumber() where T : Comparable<T>, T : Number {}
+
+open class BoundedReceiverOpenPlain
+
+class BoundedReceiverOpenPlainConsumer : BoundedReceiverConsumer<BoundedReceiverOpenPlain>
+
+// a raw Java List, or a List of a wildcard, which a List<T> is a subtype of, of any T, which kotlinc cannot infer T from
+class BoundedReceiverRawListConsumer : JavaRawListConsumer()
+
+class BoundedReceiverWildcardListConsumer : JavaWildcardListConsumer()
+
+// a star projection of an invariant type parameter, the same type as in Nothing, like MutableList<*>, and MutableList<in Nothing>
+interface BoundedReceiverMutableRows<T>
+
+fun <T> BoundedReceiverMutableRows<MutableList<in T>>.mutableIntoRows() {}
+
+fun <T : Comparable<T>> BoundedReceiverMutableRows<MutableList<in T>>.mutableComparableIntoRows() {}
+
+class BoundedReceiverStarMutableRows : BoundedReceiverMutableRows<MutableList<*>>
+
+// of multiple contravariant positions, or of the type of another type parameter, like A of B : A
 interface BoundedReceiverBiConsumer<in A, in B>
 
 fun <T : Comparable<T>> BoundedReceiverBiConsumer<T, T>.biConsumeComparable() {}
@@ -793,6 +824,16 @@ fun <A : Comparable<A>, B : A> BoundedReceiverBiConsumer<B, A>.biConsumeBounded(
 class BoundedReceiverStringBiConsumer : BoundedReceiverBiConsumer<String, CharSequence>
 
 class BoundedReceiverIntStringBiConsumer : BoundedReceiverBiConsumer<Int, String>
+
+class BoundedReceiverListCollectionBiConsumer : BoundedReceiverBiConsumer<List<String>, Collection<String>>
+
+class BoundedReceiverPlainAnyBiConsumer : BoundedReceiverBiConsumer<BoundedReceiverPlain, Any>
+
+// Any? constrains a type parameter of a contravariant position trivially, inferred after the other ones
+class BoundedReceiverStringNullableAnyBiConsumer : BoundedReceiverBiConsumer<String?, Any?>
+
+// a type parameter bounding multiple ones, inferred as the type of the first one fixed, which the other one is a subtype of then
+fun <A : Comparable<A>, B : A, C : A> BoundedReceiverBiConsumer<B, C>.biConsumeUnder() {}
 
 // or a covariant position of the same type parameter, which it is inferred from instead, also through a bound, like B : A
 interface BoundedReceiverMixed<out A, in B>
@@ -817,6 +858,17 @@ fun <T> BoundedReceiverProducer<List<T>>.produceFirst(): T? = null
 fun <E, T : List<E>> BoundedReceiverProducer<T>.produceElements() {}
 
 class BoundedReceiverNothingProducer : BoundedReceiverProducer<Nothing>
+
+// a recursive bound of a type parameter of a covariant position, checked against the type it is inferred from,
+// like T : List<T> for List<String>, which is no List<List<String>>, while Nothing is,
+// but not Nothing?, which kotlinc infers T : Comparable<T>? as Comparable<Nothing?>? from, no Comparable<Comparable<Nothing?>?>?
+fun <T : List<T>> BoundedReceiverProducer<T>.produceSelfList() {}
+
+fun <T : Comparable<T>?> BoundedReceiverProducer<T>.produceNullableComparable() {}
+
+class BoundedReceiverListProducer : BoundedReceiverProducer<List<String>>
+
+class BoundedReceiverNullableNothingProducer : BoundedReceiverProducer<Nothing?>
 
 // a supertype reached both through Kotlin and through Java, of type arguments which are not platform types themselves,
 // like BoundedReceiverPaths<List<String!>> of JavaStringListPaths, unlike its nested String!,
