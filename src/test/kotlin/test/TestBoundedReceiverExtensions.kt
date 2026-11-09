@@ -46,11 +46,14 @@ import com.xemantic.kotlin.introspection.test.other.JavaRawComparableBoth
 import com.xemantic.kotlin.introspection.test.other.JavaRawBoundedListPaths
 import com.xemantic.kotlin.introspection.test.other.JavaRawCharSequenceJavaListPaths
 import com.xemantic.kotlin.introspection.test.other.JavaRawCharSequenceListPaths
+import com.xemantic.kotlin.introspection.test.other.JavaRawComparableListPaths
 import com.xemantic.kotlin.introspection.test.other.JavaRawGenericComparableMid
 import com.xemantic.kotlin.introspection.test.other.JavaRawListConsumer
 import com.xemantic.kotlin.introspection.test.other.JavaRawListPaths
 import com.xemantic.kotlin.introspection.test.other.JavaRawMapArrayBoth
 import com.xemantic.kotlin.introspection.test.other.JavaRawMapBoth
+import com.xemantic.kotlin.introspection.test.other.JavaRawMixedNullabilityListPaths
+import com.xemantic.kotlin.introspection.test.other.JavaRawMutableBoundListPaths
 import com.xemantic.kotlin.introspection.test.other.JavaRawWildcardMapBoth
 import com.xemantic.kotlin.introspection.test.other.JavaStringCollection
 import com.xemantic.kotlin.introspection.test.other.JavaStringList
@@ -1103,3 +1106,57 @@ class BoundedReceiverRawBoundedListPaths : JavaRawBoundedListPaths
 interface BoundedReceiverCharSequenceJavaListPaths<T : CharSequence> : JavaListPathsOf<T>
 
 class BoundedReceiverRawCharSequenceJavaListPaths : JavaRawCharSequenceJavaListPaths
+
+// a type parameter of several bounds, like BoundedReceiverPaths<List<E>> and BoundedReceiverPathsOf<E>, satisfied by kotlinc
+// through either supertype reached through Kotlin and through Java, like BoundedReceiverPaths<List<String!>> for E of String?,
+// unlike BoundedReceiverPaths<List<String>>, which is reached first
+interface BoundedReceiverPathsOf<T>
+
+fun <E, P> P.listPathsOf() where P : BoundedReceiverPaths<List<E>>, P : BoundedReceiverPathsOf<E> {}
+
+fun <E, P> P.pathsOfList() where P : BoundedReceiverPathsOf<E>, P : BoundedReceiverPaths<List<E>> {}
+
+interface BoundedReceiverNullablePathsOf : BoundedReceiverStringListPaths, JavaStringListPaths, BoundedReceiverPathsOf<String?>
+
+interface BoundedReceiverJavaNullablePathsOf : JavaStringListPaths, BoundedReceiverStringListPaths, BoundedReceiverPathsOf<String?>
+
+interface BoundedReceiverIntPathsOf : BoundedReceiverStringListPaths, JavaStringListPaths, BoundedReceiverPathsOf<Int>
+
+// also of sibling type arguments, the supertype of the first one, reached through Kotlin and through Java,
+// matched together with the second one
+interface BoundedReceiverPathsPair<out A, B>
+
+fun <E> BoundedReceiverPathsPair<BoundedReceiverPaths<List<E>>, E>.pathsPair() {}
+
+class BoundedReceiverNullablePathsPair : BoundedReceiverPathsPair<BoundedReceiverJavaKotlinListPaths, String?>
+
+class BoundedReceiverIntPathsPair : BoundedReceiverPathsPair<BoundedReceiverJavaKotlinListPaths, Int>
+
+// a raw Kotlin supertype of a Java one erased to a bound taking type arguments, star projected where it refers to the type parameter,
+// like Comparable<*> of T : Comparable<T>, a mutable collection, like MutableList<String> of T : MutableList<String>,
+// or to the first one of bounds of different nullability, like CharSequence? of T : CharSequence?, T : Comparable<T>
+interface BoundedReceiverComparableListPaths<T : Comparable<T>> : BoundedReceiverPaths<List<T>>
+
+interface BoundedReceiverMutableBoundListPaths<T : MutableList<String>> : BoundedReceiverPaths<List<T>>
+
+interface BoundedReceiverMixedNullabilityListPaths<T> : BoundedReceiverPaths<List<T>> where T : CharSequence?, T : Comparable<T>
+
+fun BoundedReceiverPaths<List<Comparable<*>>>.comparableListPaths() {}
+
+fun BoundedReceiverPaths<List<Comparable<*>?>>.nullableComparableListPaths() {}
+
+fun BoundedReceiverPaths<List<MutableList<String>>>.mutableStringListListPaths() {}
+
+fun BoundedReceiverPaths<List<List<String>>>.stringListListPaths() {}
+
+class BoundedReceiverRawComparableListPaths : JavaRawComparableListPaths
+
+class BoundedReceiverRawMutableBoundListPaths : JavaRawMutableBoundListPaths
+
+class BoundedReceiverRawMixedNullabilityListPaths : JavaRawMixedNullabilityListPaths
+
+// a supertype reached through more paths without platform type arguments than walked, 2^5 of them,
+// BoundedReceiverDoubling0<MutableList<…>>, the ones beyond generalized, still telling the one matching only a late one
+fun BoundedReceiverDoubling0<MutableList<MutableList<MutableList<List<List<List<String>>>>>>>.doublingLatePaths() {}
+
+class BoundedReceiverDoubling6Chain : BoundedReceiverDoubling6<String>

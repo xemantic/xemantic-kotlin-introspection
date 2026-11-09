@@ -42,6 +42,7 @@ import java.util.concurrent.ConcurrentHashMap
 import kotlin.jvm.functions.FunctionN
 import kotlin.jvm.optionals.getOrNull
 import kotlin.metadata.*
+import kotlin.metadata.jvm.KotlinClassMetadata
 import kotlin.metadata.jvm.annotations
 import kotlin.reflect.KCallable
 import kotlin.reflect.KClass
@@ -400,17 +401,21 @@ internal fun KClass<*>.toKmJavaClassHeader(
  * to the bounds of its type parameters, as kotlinc erases them, see [rawErasure], like `Any?` of `T`,
  * or `CharSequence` of `T : CharSequence`, like `Box<List<Any?>>` of the raw `ListBox`, where `interface ListBox<T> : Box<List<T>>`,
  * unlike kotlin-reflect, which tells them as not nullable, made platform types then, see [JAVA_ERASURE_MARKER],
+ * told by its Kotlin metadata, which tells a mutable collection apart from a read-only one, unlike kotlin-reflect,
  * or else marks them as not told exactly, see [JAVA_INEXACT_ERASURE_MARKER],
  * while the ones of a Java class, like `Any!` of the raw `java.util.List`, are platform types in kotlinc too.
  */
 private fun KmType.eraseRawKotlinArguments(supertypeClass: KClass<*>) {
-    if (!supertypeClass.java.isAnnotationPresent(Metadata::class.java)) return
-    val typeParameters = reflectedValue(default = null) { supertypeClass.typeParameters }
+    val metadata = supertypeClass.java.getAnnotation(Metadata::class.java) ?: return
+    val typeParameters = try {
+        (KotlinClassMetadata.readLenient(metadata) as? KotlinClassMetadata.Class)?.kmClass?.typeParameters
+    } catch (_: IllegalArgumentException) {
+        null
+    }
     if (typeParameters?.size != arguments.size) return
-    typeParameters.forEachIndexed { index, typeParameter ->
-        val argument = arguments[index]
+    arguments.forEachIndexed { index, argument ->
         val type = argument.type ?: return@forEachIndexed
-        val erasure = reflectedValue(default = null) { rawErasure(typeParameter) }
+        val erasure = rawErasure(typeParameters[index], typeParameters)
         if (erasure != null) {
             erasure.annotations += KmAnnotation(JAVA_ERASURE_MARKER, emptyMap())
             arguments[index] = KmTypeProjection(argument.variance, erasure)
@@ -421,25 +426,41 @@ private fun KmType.eraseRawKotlinArguments(supertypeClass: KClass<*>) {
 }
 
 /**
- * The type kotlinc erases the [typeParameter] of a raw type to, its first bound, nullable like it,
- * through the bound of a type parameter, like `CharSequence?` of `B` of `<A : CharSequence?, B : A>`,
- * or `null` when it is not told exactly, like of a bound taking type arguments, like `T : Comparable<T>`, also of its outer class,
- * erased by kotlinc to a raw type, or of bounds of different nullability.
+ * The type kotlinc erases the [typeParameter] of a raw type to, among the [typeParameters] of its class,
+ * its first bound, nullable like it, also when the other ones are not, through the bound of a type parameter,
+ * like `CharSequence?` of `B` of `<A : CharSequence?, B : A>`, of its type arguments erased as well,
+ * like `List<CharSequence>` of `T : List<A>` of `<A : CharSequence, T : List<A>>`,
+ * but a star projection of a type parameter erased already, like `Comparable<*>` of `T : Comparable<T>`,
+ * or `null` when it is not told exactly, like of an inner class of a generic class, like `Outer<String>.Inner`.
  */
-private fun rawErasure(typeParameter: KTypeParameter, visited: Set<KTypeParameter> = emptySet()): KmType? {
-    val bounds = typeParameter.upperBounds
-    val bound = bounds.firstOrNull() ?: return null
-    if (bounds.any { it.isMarkedNullable != bound.isMarkedNullable }) return null
+private fun rawErasure(typeParameter: KmTypeParameter, typeParameters: List<KmTypeParameter>, visited: Set<Int> = emptySet()): KmType? {
+    val erasing = visited + typeParameter.id
+    fun KmType.erased(): KmType? {
+        if (outerType != null) return null
+        val erasedArguments = arguments.map { argument ->
+            val type = argument.type ?: return@map argument
+            when (val classifier = type.classifier) {
+                is KmClassifier.Class -> KmTypeProjection(argument.variance, type.erased() ?: return null)
+                is KmClassifier.TypeParameter -> if (classifier.id in erasing) KmTypeProjection.STAR else {
+                    val other = typeParameters.find { it.id == classifier.id } ?: return null
+                    val erasure = rawErasure(other, typeParameters, erasing) ?: return null
+                    if (type.isNullable) erasure.isNullable = true
+                    KmTypeProjection(argument.variance, erasure)
+                }
+                is KmClassifier.TypeAlias -> return null
+            }
+        }
+        return copy(arguments = erasedArguments).also { it.annotations.clear() }
+    }
+    val bound = typeParameter.upperBounds.firstOrNull() ?: return classType("kotlin/Any", nullable = true)
     return when (val classifier = bound.classifier) {
-        // like of an inner class of a generic class, like Outer<String>.Inner, as well
-        is KClass<*> -> if (classifier.typeParameters.isNotEmpty() || bound.arguments.isNotEmpty()) null else KmType().also { type ->
-            type.classifier = KmClassifier.Class(reflectedClassName(classifier))
-            type.isNullable = bound.isMarkedNullable
+        is KmClassifier.Class -> bound.erased()
+        is KmClassifier.TypeParameter -> {
+            if (classifier.id in erasing) return null
+            val other = typeParameters.find { it.id == classifier.id } ?: return null
+            rawErasure(other, typeParameters, erasing)?.also { type -> if (bound.isNullable) type.isNullable = true }
         }
-        is KTypeParameter -> if (classifier in visited) null else rawErasure(classifier, visited + typeParameter)?.also { type ->
-            if (bound.isMarkedNullable) type.isNullable = true
-        }
-        else -> null
+        is KmClassifier.TypeAlias -> null
     }
 }
 
