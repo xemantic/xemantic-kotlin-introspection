@@ -56,6 +56,7 @@ import com.xemantic.kotlin.introspection.test.other.JavaStringCollection
 import com.xemantic.kotlin.introspection.test.other.JavaStringList
 import com.xemantic.kotlin.introspection.test.other.JavaStringListPaths
 import com.xemantic.kotlin.introspection.test.other.JavaStringMutableListPaths
+import com.xemantic.kotlin.introspection.test.other.JavaStringObjectPairSink
 import com.xemantic.kotlin.introspection.test.other.JavaWildcardListConsumer
 import com.xemantic.kotlin.introspection.test.other.JavaWildcardRows
 
@@ -835,6 +836,31 @@ class BoundedReceiverStringNullableAnyBiConsumer : BoundedReceiverBiConsumer<Str
 // a type parameter bounding multiple ones, inferred as the type of the first one fixed, which the other one is a subtype of then
 fun <A : Comparable<A>, B : A, C : A> BoundedReceiverBiConsumer<B, C>.biConsumeUnder() {}
 
+// a pair of contravariant positions, a type parameter bounded by a type of another one, which is part of its intersection,
+// like List<CharSequence> of T : List<U> for U inferred as CharSequence, or bounding multiple ones,
+// inferred as the type of the first one declared of them, wherever it is declared itself
+interface BoundedReceiverPairSink<in A, in B>
+
+fun <U, T : List<U>> BoundedReceiverPairSink<T, U>.sinkListOf() {}
+
+fun <B : A, C : A, A : Comparable<A>> BoundedReceiverPairSink<B, C>.sinkUnderLast() {}
+
+fun <C : A, B : A, A : Comparable<A>> BoundedReceiverPairSink<B, C>.sinkUnderLastMirrored() {}
+
+fun <A : Comparable<A>, B : A> BoundedReceiverPairSink<B, A>.sinkBounded() {}
+
+class BoundedReceiverStringCharSequencePairSink : BoundedReceiverPairSink<String, CharSequence>
+
+class BoundedReceiverCharSequenceIntPairSink : BoundedReceiverPairSink<CharSequence, Int>
+
+// Any! of a Java Object constrains a type parameter of a contravariant position trivially, like Any?
+class BoundedReceiverJavaStringObjectPairSink : JavaStringObjectPairSink()
+
+// mutually recursive bounds, which kotlinc satisfies by the bound of the type parameter only they constrain
+fun <T : Comparable<U>, U : Comparable<T>> BoundedReceiverPairSink<T, Nothing>.sinkMutuallyComparable() {}
+
+class BoundedReceiverComparableAnyPairSink : BoundedReceiverPairSink<Comparable<Any>, Nothing>
+
 // or a covariant position of the same type parameter, which it is inferred from instead, also through a bound, like B : A
 interface BoundedReceiverMixed<out A, in B>
 
@@ -869,6 +895,15 @@ fun <T : Comparable<T>?> BoundedReceiverProducer<T>.produceNullableComparable() 
 class BoundedReceiverListProducer : BoundedReceiverProducer<List<String>>
 
 class BoundedReceiverNullableNothingProducer : BoundedReceiverProducer<Nothing?>
+
+// a supertype of the type a type parameter of a covariant position is inferred from, satisfying its recursive bound,
+// like List<BoundedReceiverSelfList> of MutableList<BoundedReceiverSelfList> for T : List<T>
+interface BoundedReceiverSelfList : List<BoundedReceiverSelfList>
+
+class BoundedReceiverMutableSelfListProducer : BoundedReceiverProducer<MutableList<BoundedReceiverSelfList>>
+
+// but not of a nullable one, which a nullable supertype is the only supertype of
+class BoundedReceiverNullableMutableSelfListProducer : BoundedReceiverProducer<MutableList<BoundedReceiverSelfList>?>
 
 // a supertype reached both through Kotlin and through Java, of type arguments which are not platform types themselves,
 // like BoundedReceiverPaths<List<String!>> of JavaStringListPaths, unlike its nested String!,
