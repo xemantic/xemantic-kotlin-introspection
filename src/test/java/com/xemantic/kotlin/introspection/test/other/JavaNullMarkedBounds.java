@@ -21,7 +21,8 @@ package com.xemantic.kotlin.introspection.test.other;
 
 /**
  * A Java class marked by {@code @NullMarked} of JSpecify, whose bounds of type parameters not annotated the compiler takes as not nullable,
- * like {@code <U : Any>} of {@code <U>}, but the one annotated nullable.
+ * like {@code <U : Any>} of {@code <U>}, but the one annotated nullable, also of a method marked by {@code @NullUnmarked},
+ * as the compiler reads the bounds by the mark of the class.
  */
 @org.jspecify.annotations.NullMarked
 public abstract class JavaNullMarkedBounds {
@@ -31,5 +32,8 @@ public abstract class JavaNullMarkedBounds {
     public abstract <V extends Number> V number(V value);
 
     public abstract <W extends @org.jspecify.annotations.Nullable Object> W nullable(W value);
+
+    @org.jspecify.annotations.NullUnmarked
+    public abstract <U> U unmarked(U value);
 
 }

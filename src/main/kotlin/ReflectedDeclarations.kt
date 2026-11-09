@@ -1722,12 +1722,6 @@ internal class JavaNullability(
      */
     fun isMarkedNotNull(position: Int): Boolean = isNullMarked && position !in platform
 
-    /**
-     * The nullability of the type at the [position] which an override not annotated inherits, see [EffectiveJavaNullabilities],
-     * or `null` of a platform type, or of a type variable of the method, which the mark keeps as given.
-     */
-    fun inherited(position: Int): Boolean? = types[position] ?: false.takeIf { position in inheritedMarks }
-
 }
 
 /**
@@ -1740,7 +1734,9 @@ internal class JavaNullability(
  * The bounds of its type parameters are marked alike, see [enhanceJavaBounds].
  */
 private fun enhanceJavaNullability(method: Method, function: KmFunction) {
-    val nullability = javaNullabilityOf(method) ?: return
+    val nullability = javaNullabilityOf(method)
+    reflectedValue(default = Unit) { enhanceJavaBounds(method, function, nullability) }
+    if (nullability == null) return
     // as annotated, or else not nullable, when marked by @NullMarked
     fun KmType.enhance(position: Int, isNullable: Boolean?) = when (isNullable) {
         null -> if (nullability.isMarkedNotNull(position)) markNullable(isNullable = false) else Unit
@@ -1761,29 +1757,34 @@ private fun enhanceJavaNullability(method: Method, function: KmFunction) {
         val javaType = method.parameterTypes.getOrNull(position) ?: return@forEachIndexed
         enhance(position, parameter.type, javaType, parameter.varargElementType)
     }
-    reflectedValue(default = Unit) { enhanceJavaBounds(method, function, nullability) }
 }
 
 /**
  * Marks the bounds of the type parameters of the [function], converted from the [method], nullable, or not,
- * as the [nullability] tells, see [JavaNullability.bounds], or else not nullable, when marked by `@NullMarked`,
+ * as the [nullability] tells, see [JavaNullability.bounds], or else not nullable, when its class is marked by `@NullMarked`,
+ * by itself, an outer class, or its package, see [nullMarking], whatever the mark of the method itself,
  * like `<U : Any>` of `<U>`, or `<V : Number>` of `<V extends Number>`, as the compiler reads them,
  * unlike kotlin-reflect, which tells them as platform types, nullable then.
  * The class file numbers the bounds of a type parameter from `1` when the first one is an interface,
  * the `0` standing for the class bound, which reflection leaves out then.
  */
-private fun enhanceJavaBounds(method: Method, function: KmFunction, nullability: JavaNullability) {
-    if (nullability.bounds.isEmpty() && !nullability.isNullMarked) return
+private fun enhanceJavaBounds(method: Method, function: KmFunction, nullability: JavaNullability?) {
+    if (method.typeParameters.isEmpty()) return
+    val declaring = method.declaringClass
+    if (declaring.isJdkClass || declaring.isKotlinClass) return
+    val isNullMarked = nullMarking(declaring) == true
+    val annotatedBounds = nullability?.bounds.orEmpty()
+    if (annotatedBounds.isEmpty() && !isNullMarked) return
     method.typeParameters.forEachIndexed { index, typeVariable ->
         val typeParameter = function.typeParameters.getOrNull(index) ?: return@forEachIndexed
         val bounds = typeVariable.bounds
         val first = bounds.firstOrNull()
         val firstClass = (first as? ParameterizedType)?.rawType ?: first
         val offset = if ((firstClass as? Class<*>)?.isInterface == true) 1 else 0
-        val annotated = nullability.bounds[index].orEmpty()
+        val annotated = annotatedBounds[index].orEmpty()
         typeParameter.upperBounds.forEachIndexed { boundIndex, bound ->
             when (val isNullable = annotated[boundIndex + offset]) {
-                null -> if (nullability.isNullMarked) bound.markNullable(isNullable = false)
+                null -> if (isNullMarked) bound.markNullable(isNullable = false)
                 else -> bound.markNullable(isNullable)
             }
         }
@@ -1873,7 +1874,7 @@ private class EffectiveJavaNullabilities(type: Class<*>) {
         // like one annotated, unlike one marked by neither
         val inherited = if (marking == false) emptyList() else directlyOverriddenNullabilities(method)
         if (ownNullability == null && inherited.isEmpty() && !isNullMarked) return null
-        val typeVariables = if (isNullMarked) typeVariablePositions(method) else emptyMap()
+        val typeVariables = typeVariablePositions(method)
         val types = HashMap<Int, Boolean>()
         val platform = HashSet<Int>()
         val inheritedMarks = HashSet<Int>()
@@ -1884,7 +1885,11 @@ private class EffectiveJavaNullabilities(type: Class<*>) {
         (listOf(RETURN_TYPE) + method.parameterTypes.indices).forEach { position ->
             val annotated = ownNullability?.types?.get(position)
             val ownType = annotated ?: false.takeIf { isNullMarked && position !in typeVariables }
-            val overridden = inherited.mapNotNullTo(HashSet()) { it.inherited(position) }
+            val overridden = inherited.mapNotNullTo(HashSet()) { (overriddenMethod, nullability) ->
+                nullability.types[position] ?: if (position !in nullability.inheritedMarks) null else {
+                    inheritedMark(method, position, overriddenMethod, typeVariables)
+                }
+            }
             val nullability = if (position == RETURN_TYPE) {
                 val fromOverridden = if (false in overridden) false else overridden.singleOrNull()
                 if (fromOverridden == false && ownType == true) null else ownType ?: fromOverridden
@@ -1896,7 +1901,8 @@ private class EffectiveJavaNullabilities(type: Class<*>) {
                 !isNullMarked -> {}
                 // where the own annotation, or the mark, and the overridden methods disagree
                 annotated != null || overridden.isNotEmpty() -> platform += position
-                // a type variable of the class of a bound not nullable, unlike one of the method, is not nullable in the overrides
+                // a type variable of a class marked by @NullMarked, of a bound not nullable, unlike one of the method,
+                // is not nullable in the overrides
                 typeVariables[position] == true -> inheritedMarks += position
             }
         }
@@ -1907,7 +1913,7 @@ private class EffectiveJavaNullabilities(type: Class<*>) {
         }
         // the own annotations of the nested types first, then the inherited ones, unless marked by @NullMarked
         ownNullability?.let(::mergeNested)
-        if (!isNullMarked) inherited.forEach(::mergeNested)
+        if (!isNullMarked) inherited.forEach { mergeNested(it.second) }
         return JavaNullability(types, nested, isNullMarked, platform, inheritedMarks, ownNullability?.bounds.orEmpty())
     }
 
@@ -1915,15 +1921,17 @@ private class EffectiveJavaNullabilities(type: Class<*>) {
 
 /**
  * The positions of the types of the [method] which are type variables, whether the overrides inherit them as not nullable,
- * see [JavaNullability.inheritedMarks]: `true` of one of a class, but of a bound annotated nullable, see [JavaClassNullability.nullableBounds],
- * like `N` of `N extends @Nullable Object`, and `false` of one of the method itself, like the compiler does.
+ * see [JavaNullability.inheritedMarks]: `true` of one of a class marked by `@NullMarked`, by itself, an outer class, or its package,
+ * see [nullMarking], but of a bound annotated nullable, see [JavaClassNullability.nullableBounds],
+ * like `N` of `N extends @Nullable Object`, and `false` of one of the method itself, or of a class not marked,
+ * even if the method is, like the compiler does.
  */
 private fun typeVariablePositions(method: Method): Map<Int, Boolean> = reflectedValue(default = emptyMap()) {
     val positions = HashMap<Int, Boolean>()
     fun record(position: Int, type: Type) {
         if (type !is TypeVariable<*>) return
         val declaration = type.genericDeclaration
-        positions[position] = declaration is Class<*> &&
+        positions[position] = declaration is Class<*> && nullMarking(declaration) == true &&
             declaration.typeParameters.indexOf(type) !in javaNullabilities.get(declaration).nullableBounds
     }
     record(RETURN_TYPE, method.genericReturnType)
@@ -1932,16 +1940,63 @@ private fun typeVariablePositions(method: Method): Map<Int, Boolean> = reflected
 }
 
 /**
- * The nullabilities of the methods which the [method] overrides directly, see [overriddenJavaMethods],
- * leaving out the ones overridden by another one, which tells their nullability already, see [javaNullabilityOf].
+ * The methods of Java classes which the [method] overrides directly, see [overriddenJavaMethods], and their nullabilities,
+ * see [javaNullabilityOf], leaving out the ones overridden by another one, which tells their nullability already,
+ * also by telling none, like one marked by `@NullUnmarked`, while a method of a Kotlin class, telling none, stops none of them.
  */
-private fun directlyOverriddenNullabilities(method: Method): List<JavaNullability> {
-    val overridden = overriddenJavaMethods(method).mapNotNull { overridden -> javaNullabilityOf(overridden)?.let { overridden to it } }
-    return overridden.filter { (candidate, _) ->
-        overridden.none { (other, _) ->
+private fun directlyOverriddenNullabilities(method: Method): List<Pair<Method, JavaNullability>> {
+    val overridden = overriddenJavaMethods(method).filter { !it.declaringClass.isKotlinClass }
+    return overridden.filter { candidate ->
+        overridden.none { other ->
             other.declaringClass != candidate.declaringClass && candidate.declaringClass.isAssignableFrom(other.declaringClass)
         }
-    }.map { it.second }
+    }.mapNotNull { overriddenMethod -> javaNullabilityOf(overriddenMethod)?.let { overriddenMethod to it } }
+}
+
+/**
+ * The nullability which the type at the [position] of the [method], overriding the [overridden] one,
+ * whose class type variable there the mark keeps as given, see [JavaNullability.inheritedMarks], inherits:
+ * not nullable, `false`, or nullable, `true`, when the class of the [method] gives the type variable a type argument
+ * annotated nullable, like `Base<@Nullable String>`, see [isNullableTypeArgument],
+ * or `null`, none, when it is a type variable itself, which the compiler keeps as given, like `X` of `Sub<X> extends Base<X>`.
+ */
+private fun inheritedMark(method: Method, position: Int, overridden: Method, typeVariables: Map<Int, Boolean>): Boolean? {
+    if (position in typeVariables) return null
+    return reflectedValue(default = false) {
+        val type = if (position == RETURN_TYPE) overridden.genericReturnType else overridden.genericParameterTypes.getOrNull(position)
+        val typeVariable = type as? TypeVariable<*> ?: return@reflectedValue false
+        val target = typeVariable.genericDeclaration as? Class<*> ?: return@reflectedValue false
+        isNullableTypeArgument(method.declaringClass, target, target.typeParameters.indexOf(typeVariable))
+    }
+}
+
+/**
+ * Whether the type argument a supertype of the class [from] gives the type parameter at the [index] of the [target] class
+ * is annotated nullable, see [JavaClassNullability.nullableArguments], like the `@Nullable String` of `Base<@Nullable String>`,
+ * also through the type variable of a class between them, like `Mid<@Nullable String>` of `Mid<X> extends Base<X>`.
+ */
+private fun isNullableTypeArgument(from: Class<*>, target: Class<*>, index: Int): Boolean {
+    if (from == target || index < 0) return false
+    val pending = ArrayDeque(listOf(from))
+    val visited = HashSet<Class<*>>()
+    while (pending.isNotEmpty()) {
+        val type = pending.removeFirst()
+        if (!visited.add(type)) continue
+        // by the indices of the supertypes in the class file, the superclass at -1, see TypeReference.getSuperTypeIndex
+        val supertypes = listOfNotNull(type.genericSuperclass?.let { -1 to it }) + type.genericInterfaces.withIndex().map { it.index to it.value }
+        for ((superTypeIndex, supertype) in supertypes) {
+            val raw = ((supertype as? ParameterizedType)?.rawType ?: supertype) as? Class<*> ?: continue
+            if (raw != target) {
+                if (target.isAssignableFrom(raw)) pending += raw
+                continue
+            }
+            if (index in javaNullabilities.get(type).nullableArguments[superTypeIndex].orEmpty()) return true
+            val argument = (supertype as? ParameterizedType)?.actualTypeArguments?.getOrNull(index) as? TypeVariable<*> ?: return false
+            val owner = argument.genericDeclaration as? Class<*> ?: return false
+            return isNullableTypeArgument(from, owner, owner.typeParameters.indexOf(argument))
+        }
+    }
+    return false
 }
 
 private val effectiveJavaNullabilities = object : ClassValue<EffectiveJavaNullabilities>() {
@@ -2012,13 +2067,16 @@ private val packageNullMarkings: MutableMap<Package, Optional<Boolean>> = Collec
  * whether `@NullMarked`, `true`, or `@NullUnmarked`, `false`, tells the types not annotated of its members, see [nullMarking],
  * the [methods], by their names and JVM descriptors, and the methods its [bridges] call, by the names and the JVM descriptors of both,
  * like `resolve(Ljava/lang/String;)…` of `resolve(Ljava/lang/Object;)…`, see [overriddenJavaMethods], or `null` if not read,
- * and the indices of its type parameters of the [nullableBounds], annotated nullable, like `N extends @Nullable Object`.
+ * the indices of its type parameters of the [nullableBounds], annotated nullable, like `N extends @Nullable Object`,
+ * and the indices of the type arguments of its supertypes annotated nullable, the [nullableArguments],
+ * by the indices of the supertypes in the class file, the superclass at `-1`, like `Base<@Nullable String>`.
  */
 private class JavaClassNullability(
     val isNullMarked: Boolean?,
     val methods: Map<String, JavaMethodNullability>,
     val bridges: Map<String, String>? = null,
-    val nullableBounds: Set<Int> = emptySet()
+    val nullableBounds: Set<Int> = emptySet(),
+    val nullableArguments: Map<Int, Set<Int>> = emptyMap()
 )
 
 /**
@@ -2057,6 +2115,7 @@ private fun readJavaNullabilities(classLoader: ClassLoader?, binaryName: String)
     val nullabilities = HashMap<String, JavaMethodNullability>()
     var isClassNullMarked: Boolean? = null
     val nullableBounds = HashSet<Int>()
+    val nullableArguments = HashMap<Int, MutableSet<Int>>()
     var hasBridges = false
     ClassReader(bytes).accept(object : ClassVisitor(Opcodes.ASM9) {
 
@@ -2067,8 +2126,14 @@ private fun readJavaNullabilities(classLoader: ClassLoader?, binaryName: String)
 
         override fun visitTypeAnnotation(typeRef: Int, typePath: TypePath?, annotation: String, visible: Boolean): AnnotationVisitor? {
             val reference = TypeReference(typeRef)
-            if (reference.sort == TypeReference.CLASS_TYPE_PARAMETER_BOUND && typePath == null && annotation in NULLABLE_ANNOTATIONS) {
+            if (annotation !in NULLABLE_ANNOTATIONS) return null
+            if (reference.sort == TypeReference.CLASS_TYPE_PARAMETER_BOUND && typePath == null) {
                 nullableBounds += reference.typeParameterIndex
+            }
+            // a type argument of a supertype itself, like `0;`, see isNullableTypeArgument
+            val argument = typePath?.toString()?.takeIf { it.endsWith(';') }?.dropLast(1)?.toIntOrNull()
+            if (reference.sort == TypeReference.CLASS_EXTENDS && argument != null) {
+                nullableArguments.getOrPut(reference.superTypeIndex) { HashSet() } += argument
             }
             return null
         }
@@ -2171,7 +2236,7 @@ private fun readJavaNullabilities(classLoader: ClassLoader?, binaryName: String)
         }
     }, ClassReader.SKIP_CODE or ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES)
     val bridges = if (!hasBridges) emptyMap() else reflectedValue(default = null) { readJavaBridges(bytes) }
-    return JavaClassNullability(isClassNullMarked, nullabilities, bridges, nullableBounds)
+    return JavaClassNullability(isClassNullMarked, nullabilities, bridges, nullableBounds, nullableArguments)
 }
 
 /**

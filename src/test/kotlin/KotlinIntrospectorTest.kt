@@ -7056,6 +7056,111 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve Java override of type variable passing through type variable of class marked by NullMarked as given`() {
+        // the X of JavaGenericPassing<X> keeps no mark of the T of JavaNullMarkedPassingBase<T>, given String? here
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaGenericPassing.pass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaGenericPassing.pass [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaGenericPassing
+            abstract override fun pass(arg0: String?): String?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java override below Java override passing through type variable of class marked by NullMarked as platform types`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaGenericPassingBottom.pass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaGenericPassingBottom.pass [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaGenericPassingBottom
+            abstract override fun pass(arg0: String?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java override of type variable of class marked by NullMarked given nullable type argument as nullable`() {
+        // JavaNullableArgumentPassing extends JavaNullMarkedPassingBase<@Nullable String>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaNullableArgumentPassing.pass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaNullableArgumentPassing.pass [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNullableArgumentPassing
+            abstract override fun pass(arg0: String?): String?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java override below Java override marked by NullUnmarked of platform types`() {
+        // JavaNullUnmarkedMid, marked by @NullUnmarked, stops the mark of JavaNullMarkedBase
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaNullUnmarkedMidBottom.label"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaNullUnmarkedMidBottom.label [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNullUnmarkedMidBottom
+            abstract override fun label(arg0: String?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve bound of type parameter of Java method marked by NullMarked in class not marked as platform type`() {
+        // the compiler reads the bounds by the mark of the class, not of the method
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaMethodNullMarked.id"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaMethodNullMarked.id [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaMethodNullMarked
+            abstract fun <U> id(arg0: U): U
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve bound of type parameter of Java method marked by NullUnmarked in class marked by NullMarked as not nullable`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaNullMarkedBounds.unmarked"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaNullMarkedBounds.unmarked [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNullMarkedBounds
+            abstract fun <U : Any> unmarked(arg0: U?): U
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java override of type variable of class not marked of method marked by NullMarked as platform type`() {
+        // the N of JavaMethodNullMarked, not marked itself, is not inherited as not nullable, though its put is marked
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaMethodNullMarkedOverriding.put"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaMethodNullMarkedOverriding.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaMethodNullMarkedOverriding
+            abstract override fun put(arg0: String?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve size of Java interface implemented by Java subclass of java util HashSet as size of Set`() {
+        // JavaSizeFaceHashSet implements the size() of JavaSizeFace by the one of java.util.HashSet, seen in Kotlin as the size of Set
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaSizeFaceHashSet.size"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaSizeFaceHashSet.size [page 1/1]
+            // inherited from kotlin.collections.Set
+            open override val size: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve isEmpty of Java interface implemented by Java subclass of java util HashSet as isEmpty of Set`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaSizeFaceHashSet.isEmpty"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaSizeFaceHashSet.isEmpty [page 1/1]
+            // inherited from kotlin.collections.Set
+            open override fun isEmpty(): Boolean
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve nullable member of Kotlin interface merged with enhanced member inherited through Java class`() {
         // the get() of Supplier, inherited through JavaInheritingSupplier, returns String!, less specific than String?
         resolver.resolve(

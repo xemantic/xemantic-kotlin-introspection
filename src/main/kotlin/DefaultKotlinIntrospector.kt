@@ -1294,9 +1294,11 @@ internal class DefaultKotlinIntrospector(
      * or `null`: one of its superclasses declaring a method of the same name and parameter types,
      * which kotlin-reflect might describe as another member, like the `size()` of `java.util.Hashtable`,
      * seen in Kotlin as the `size` of `Map`, overriding the abstract one of `java.util.Dictionary`,
-     * a subtype of the declaring class, as the method of a class which does not implement an interface
-     * only merges with the one of the interface in a subclass implementing both, like the `size()` of `java.util.HashSet`
-     * with the one of an unrelated Java interface, which stays abstract in Kotlin,
+     * but the one of a class which does not implement the interface declaring the [method] only merges with it
+     * in a Kotlin subclass implementing both, like the `size()` of `java.util.HashSet` with the one of an unrelated Java interface,
+     * which stays abstract in Kotlin, unlike in a Java subclass implementing both,
+     * unless the method of the interface returns a type of the nullability its annotations tell, see [javaNullabilityOf],
+     * which K2 picks of the merged ones, like the `@Nullable String get()` of an interface over the `String get()` of a superclass,
      * or, of a public [method], the one resolved on the [inheriting] class being declared by a subtype of its class,
      * as a JVM class, whose superclasses can be told, tells it, unlike the Kotlin view of its methods.
      * Neither a bridge, like the one javac generates in a public class for a public method of its package-private superclass,
@@ -1308,8 +1310,16 @@ internal class DefaultKotlinIntrospector(
         val parameterTypes = method.parameterTypes
         fun Method.overrides() = !isBridge && !Modifier.isPrivate(modifiers) && !Modifier.isStatic(modifiers) &&
             name == method.name && this.parameterTypes.contentEquals(parameterTypes)
+        // the method of a superclass not implementing the interface declaring the method is merged with it, not overriding it,
+        // by a Kotlin class, implementing both, but implements it in a Java class between them, implementing the interface,
+        // unless the method of the interface returns a type its nullability annotations tell, which K2 picks among the merged ones
+        var isImplementedByJava = false
+        val isMerged = lazy(LazyThreadSafetyMode.NONE) { !method.returnType.isPrimitive && javaNullabilityOf(method)?.returnType != null }
         generateSequence(inheriting.superclass) { it.superclass }.takeWhile { it != declaring }.firstNotNullOfOrNull { superclass ->
-            superclass.takeIf { declaring.isAssignableFrom(it) }?.declaredMethods?.firstOrNull { it.overrides() }
+            val isImplementing = declaring.isAssignableFrom(superclass)
+            if (isImplementing && !superclass.isAnnotationPresent(Metadata::class.java)) isImplementedByJava = true
+            superclass.takeIf { isImplementing || (isImplementedByJava && !isMerged.value) }
+                ?.declaredMethods?.firstOrNull { it.overrides() }
         } ?: if (!Modifier.isPublic(method.modifiers)) null else inheriting.getMethod(method.name, *parameterTypes).takeIf {
             it.overrides() && it.declaringClass != declaring && declaring.isAssignableFrom(it.declaringClass)
         }

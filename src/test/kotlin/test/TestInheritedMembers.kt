@@ -881,3 +881,22 @@ abstract class InheritedJavaSizeFaceSet : java.util.HashSet<String>(), com.xeman
 
 // The vararg contains, and compareTo, of a Java subclass of java.util.LinkedHashSet, whose members kotlin-reflect cannot describe
 abstract class InheritedJavaVarargContainsSet : com.xemantic.kotlin.introspection.test.other.JavaVarargContainsSet()
+
+// The overrides of type variables given by Java classes not marked, of a type variable of a Java class marked by @NullMarked,
+// passed through by a generic subclass, or given a type argument annotated nullable,
+// and of a Java class marked by @NullUnmarked in between, which inherit no mark
+abstract class InheritedJavaGenericPassing : com.xemantic.kotlin.introspection.test.other.JavaGenericPassing<String?>()
+
+abstract class InheritedJavaGenericPassingBottom : com.xemantic.kotlin.introspection.test.other.JavaGenericPassingBottom()
+
+abstract class InheritedJavaNullableArgumentPassing : com.xemantic.kotlin.introspection.test.other.JavaNullableArgumentPassing()
+
+abstract class InheritedJavaNullUnmarkedMidBottom : com.xemantic.kotlin.introspection.test.other.JavaNullUnmarkedMidBottom()
+
+// The methods marked by @NullMarked of a Java class not marked, and their override
+abstract class InheritedJavaMethodNullMarked : com.xemantic.kotlin.introspection.test.other.JavaMethodNullMarked<String>()
+
+abstract class InheritedJavaMethodNullMarkedOverriding : com.xemantic.kotlin.introspection.test.other.JavaMethodNullMarkedOverriding()
+
+// A Java subclass of java.util.HashSet implementing JavaSizeFace, whose size() implements the one of the interface
+abstract class InheritedJavaSizeFaceHashSet : com.xemantic.kotlin.introspection.test.other.JavaSizeFaceHashSet()

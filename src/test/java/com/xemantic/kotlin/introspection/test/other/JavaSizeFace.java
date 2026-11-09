@@ -20,10 +20,13 @@
 package com.xemantic.kotlin.introspection.test.other;
 
 /**
- * A Java interface declaring {@code int size()}, unrelated to the collections, which the {@code size} of {@code Set} does not implement.
+ * A Java interface declaring {@code int size()}, and {@code boolean isEmpty()}, unrelated to the collections,
+ * whose {@code size()} the {@code size} of {@code Set} does not implement.
  */
 public interface JavaSizeFace {
 
     int size();
+
+    boolean isEmpty();
 
 }
