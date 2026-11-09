@@ -33,6 +33,7 @@ import kotlin.metadata.KmVariance
 import kotlin.metadata.Modality
 import kotlin.metadata.Visibility
 import kotlin.metadata.isInner
+import kotlin.metadata.isNullable
 import kotlin.metadata.modality
 import kotlin.metadata.jvm.JvmMethodSignature
 import kotlin.metadata.jvm.KotlinClassMetadata
@@ -113,6 +114,37 @@ class OverrideResolverTest {
         // then
         assert(builtinOverrides == listOf(true, false))
         assert(classFileOverrides == listOf(false, true))
+    }
+
+    /**
+     * Like `put(key: Int)`, of the [descriptor], or of the nullable `Int?`, when [isNullable].
+     */
+    private fun intFunction(descriptor: String?, isNullable: Boolean = false) = function("put").apply {
+        valueParameters += KmValueParameter("key").apply { type = type("kotlin/Int").apply { this.isNullable = isNullable } }
+        signature = descriptor?.let { JvmMethodSignature("put", it) }
+    }
+
+    @Test
+    fun `should tell overrides of Java method by its primitive types regardless of nullability`() {
+        // given
+        // like a Java class implementing `interface PrimitivePut { fun put(key: Int) }` of put(int), and declaring put(Integer)
+        val owner = kmClass("test/JavaPut", supertype = "test/PrimitivePut")
+        val resolver = overrideResolver(
+            classes = mapOf("test/PrimitivePut" to kmClass("test/PrimitivePut").apply { functions += intFunction("(I)V") })
+        )
+
+        // when
+        val primitive = resolver.overriddenMembers(OverrideResolver.Owner(owner), intFunction(null), jvmDescriptor = "(I)V")
+        // the Int? of the platform type Int!, as kotlin-reflect describes it
+        val boxed = resolver.overriddenMembers(
+            OverrideResolver.Owner(owner), intFunction(null, isNullable = true), jvmDescriptor = "(Ljava/lang/Integer;)V"
+        )
+        val boxedByKotlinTypes = resolver.overriddenMembers(OverrideResolver.Owner(owner), intFunction(null))
+
+        // then
+        assert(primitive == setOf("test/PrimitivePut#context() fun put(kotlin/Int)"))
+        assert(boxed.isEmpty())
+        assert(boxedByKotlinTypes == primitive)
     }
 
     /**

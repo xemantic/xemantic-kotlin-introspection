@@ -571,10 +571,14 @@ internal fun KFunction<*>.toKmFunction(typeParameters: ReflectedTypeParameters):
     if (method.value?.let { reflectedValue(default = false) { isComparableJavaMethod(it) } } == true) {
         function.valueParameters.single().type.isNullable = true
     }
-    method.value?.let { javaMethod ->
-        function.valueParameters.forEachIndexed { position, parameter ->
-            if (reflectedValue(default = false) { isBoxedNextToPrimitive(javaMethod, position) }) parameter.type.isNullable = true
+    // told only when kotlin-reflect describes a value parameter of a reference type as not nullable
+    method.value?.takeIf { javaMethod ->
+        function.valueParameters.withIndex().any { (position, parameter) ->
+            !parameter.type.isNullable && javaMethod.parameterTypes.getOrNull(position)?.isPrimitive == false
         }
+    }?.let { javaMethod ->
+        val positions = reflectedValue(default = emptySet()) { platformPositions(javaMethod) }
+        positions.forEach { function.valueParameters.getOrNull(it)?.type?.isNullable = true }
     }
     function.returnType = returnType.toKmType(scope)
     enhanceDefinitelyNotNull(function)
@@ -598,50 +602,120 @@ private fun isComparableJavaMethod(method: Method): Boolean {
 }
 
 /**
- * Whether the value parameter of the [method] at the [position] is of a boxed type, like `Integer`,
- * while its class, not of the JDK, declares or inherits the overload of the primitive type there,
- * or of the primitive types at the positions of all its boxed ones, like `put(int)` next to `put(Integer)`,
- * or `put(int, int)` next to `put(Integer, Integer)`, also the `put(key: Int)` of a Kotlin interface, deprecated as hidden or not,
- * which kotlin-reflect takes as overridden by the boxed one, describing it as not nullable, like `put(arg0: Int)`,
- * though only the one of the primitive type overrides it on the JVM, so that K2 takes the boxed one as a platform type,
- * like `Int!`, and `put(null)` compiles.
+ * The positions of the value parameters of the [method], of a class not of the JDK, of reference types,
+ * which K2 takes as platform types, like `Int!`, though kotlin-reflect describes them as not nullable,
+ * by the types of a member of a supertype it takes the [method] for an override of, matched by their Kotlin types,
+ * like the `Int` of the `put(key: Int)` of a Kotlin interface for `put(Integer)`, while the [method] does not inherit them:
+ * - all of them, when the [method] overrides none of the Kotlin members on the JVM, as their JVM descriptors differ,
+ *   like `put(Integer)` the `put(I)` of `put(key: Int)`, also deprecated as hidden, or the `put(int)` of a Java superclass,
+ *   or overrides a Java method only, like the one of a Java interface, though kotlin-reflect still takes the types of the other one,
+ *   or `put(Integer, String, Integer)` the `put(ILjava/lang/String;I)` of `put(a: Int, b: String, c: Int)`,
+ *   also its `String`, so that `put(null, null, null)` compiles,
+ * - or the ones of a type parameter of the class of the Kotlin members it overrides, whose type argument a Java class gives,
+ *   a platform type, like the `T` of `put(t: T)` of `GenericPut<T>`, which a Java class implements as `GenericPut<Integer>`,
+ *   through the bridge javac generates, see [jvmDescriptorsOf], or as `GenericPut<T>` of its own type parameter, see [isJavaTypeArgument].
  */
-private fun isBoxedNextToPrimitive(method: Method, position: Int): Boolean {
+private fun platformPositions(method: Method): Set<Int> {
     val declaringClass = method.declaringClass
-    if (declaringClass.isJdkClass) return false
+    if (declaringClass.isJdkClass) return emptySet()
     val parameterTypes = method.parameterTypes
-    val primitive = parameterTypes.getOrNull(position)?.kotlin?.javaPrimitiveType?.takeIf { it != parameterTypes[position] }
-        ?: return false
-    // the overload of the primitive type at this position only, or at the position of each boxed type
-    val primitiveTypes = parameterTypes.copyOf().also { it[position] = primitive }
-    val allPrimitiveTypes = parameterTypes.map { it.kotlin.javaPrimitiveType ?: it }
-    val methods = overridableMethods.get(declaringClass)
-    return listOf(primitiveTypes.toList(), allPrimitiveTypes).any { types ->
-        method.name + AsmType.getMethodDescriptor(AsmType.VOID_TYPE, *types.map(AsmType::getType).toTypedArray()) in methods
+    // a vararg array is never null, see toKmValueParameter
+    val references = parameterTypes.indices.filterTo(HashSet()) { position ->
+        !parameterTypes[position].isPrimitive && !(method.isVarArgs && position == parameterTypes.lastIndex)
+    }
+    if (references.isEmpty()) return emptySet()
+    // like the Object of an erased type parameter, or the int of an Int, matched by the Kotlin types
+    val matched = inheritedMethods.get(declaringClass)[method.name].orEmpty().filter { inherited ->
+        inherited.parameterCount == parameterTypes.size && inherited.parameterTypes.indices.all { position ->
+            val type = inherited.parameterTypes[position]
+            type.isAssignableFrom(parameterTypes[position]) || type.kotlin.javaObjectType == parameterTypes[position]
+        }
+    }
+    // kotlin-reflect takes the types of a Kotlin member, or the primitive ones of a Java member, like the int of put(int),
+    // while the other ones of a Java member are platform types anyway
+    if (matched.none { inherited ->
+            inherited.declaringClass.isKotlinClass ||
+                inherited.parameterTypes.indices.any { inherited.parameterTypes[it].isPrimitive && it in references }
+        }
+    ) {
+        return emptySet()
+    }
+    val descriptors = jvmDescriptorsOf(method)
+    val (overriding, notOverriding) = matched.filter { it.declaringClass.isKotlinClass }
+        .partition { AsmType.getMethodDescriptor(it) in descriptors }
+    // but the ones a Kotlin subclass declares again, which the method does not override, and which hides them from it,
+    // like the put(t: T) of GenericPut<Integer> of put(Integer), declared again as put(t: Int) of IntPut : GenericPut<Int>
+    val overridden = overriding.filter { inherited ->
+        notOverriding.none { it.declaringClass != inherited.declaringClass && inherited.declaringClass.isAssignableFrom(it.declaringClass) }
+    }
+    return references.filterTo(HashSet()) { position ->
+        overridden.all { inherited ->
+            val type = inherited.genericParameterTypes.getOrNull(position) as? TypeVariable<*>
+            val typeClass = type?.genericDeclaration as? Class<*>
+            typeClass != null && isJavaTypeArgument(declaringClass, typeClass, typeClass.typeParameters.indexOf(type))
+        }
     }
 }
 
+// whether this class is a Kotlin one, compiled with its metadata
+private val Class<*>.isKotlinClass: Boolean get() = isAnnotationPresent(Metadata::class.java)
+
 /**
- * The instance methods a method of a class might be an overload of, see [isBoxedNextToPrimitive], by their names
- * followed by their parameter types, as a JVM method descriptor returning `void`, like `put(I)V`:
- * the ones the class declares, the ones of its superclasses, but the private ones, and the public ones of its interfaces,
- * also the synthetic ones of the members of a Kotlin interface deprecated as hidden, computed once per class,
- * the ones of the class still told when the ones of its supertypes cannot be reflected, like on a broken classpath.
+ * Whether a Java class gives the type argument of the type parameter at the [index] of the [typeClass],
+ * a supertype of the [javaClass], as seen by it, a platform type then, like the `Integer` of `GenericPut<Integer>`,
+ * or the `T` of `GenericPut<T>` of its own type parameter, maybe of a Kotlin class between them, like `Mid<Integer>` of `Mid<T> : GenericPut<T>`,
+ * unlike a Kotlin class, like the `Int` of `IntPut : GenericPut<Int>`, which a Java class implements in turn,
+ * or a raw Java supertype, also a platform type.
  */
-private val overridableMethods = object : ClassValue<Set<String>>() {
-    override fun computeValue(type: Class<*>): Set<String> {
-        fun Method.key() = name + AsmType.getMethodDescriptor(AsmType.VOID_TYPE, *AsmType.getArgumentTypes(this))
-        fun Method.isOverridable() = !Modifier.isStatic(modifiers) && !Modifier.isPrivate(modifiers)
-        val keys = HashSet<String>()
-        fun collect(methods: () -> Array<Method>) = reflectedValue(default = Unit) {
-            methods().forEach { if (it.isOverridable()) keys += it.key() }
+private fun isJavaTypeArgument(javaClass: Class<*>, typeClass: Class<*>, index: Int): Boolean {
+    val visited = HashSet<Class<*>>()
+    val pending = ArrayDeque(listOf(javaClass))
+    while (pending.isNotEmpty()) {
+        val type = pending.removeFirst()
+        if (!visited.add(type)) continue
+        val supertypes = listOfNotNull(type.genericSuperclass) + type.genericInterfaces
+        val supertype = supertypes.firstOrNull { (it as? ParameterizedType)?.rawType == typeClass || it == typeClass }
+        if (supertype == null) {
+            pending += listOfNotNull(type.superclass) + type.interfaces
+            continue
         }
-        collect { type.declaredMethods }
-        reflectedValue(default = Unit) {
-            generateSequence(type.superclass) { it.superclass }.forEach { superclass -> collect { superclass.declaredMethods } }
+        if (supertype !is ParameterizedType || !type.isKotlinClass) return true
+        val argument = supertype.actualTypeArguments.getOrNull(index) as? TypeVariable<*> ?: return false
+        val argumentClass = argument.genericDeclaration as? Class<*> ?: return false
+        return isJavaTypeArgument(javaClass, argumentClass, argumentClass.typeParameters.indexOf(argument))
+    }
+    return false
+}
+
+/**
+ * The instance methods of the supertypes of a class, but the private ones, and the bridges, by their names,
+ * also the synthetic ones of the members of a Kotlin interface deprecated as hidden, computed once per class,
+ * a method of a class might be taken for an override of, see [platformPositions],
+ * the ones of the supertypes which cannot be reflected left out, like on a broken classpath.
+ */
+private val inheritedMethods = object : ClassValue<Map<String, List<Method>>>() {
+    override fun computeValue(type: Class<*>): Map<String, List<Method>> {
+        val methods = HashMap<String, MutableList<Method>>()
+        val visited = HashSet<Class<*>>()
+        val pending = ArrayDeque<Class<*>>()
+        fun Class<*>.enqueueSupertypes() = reflectedValue(default = Unit) {
+            superclass?.let { pending += it }
+            pending += interfaces
         }
-        collect { type.methods }
-        return keys
+        type.enqueueSupertypes()
+        while (pending.isNotEmpty()) {
+            val supertype = pending.removeFirst()
+            if (!visited.add(supertype)) continue
+            reflectedValue(default = Unit) {
+                supertype.declaredMethods.forEach { method ->
+                    if (!Modifier.isStatic(method.modifiers) && !Modifier.isPrivate(method.modifiers) && !method.isBridge) {
+                        methods.getOrPut(method.name) { ArrayList() } += method
+                    }
+                }
+            }
+            supertype.enqueueSupertypes()
+        }
+        return methods
     }
 }
 
@@ -1767,21 +1841,7 @@ private val effectiveJavaNullabilities = object : ClassValue<EffectiveJavaNullab
  */
 private fun overriddenJavaMethods(method: Method): List<Method> {
     val declaring = method.declaringClass
-    val descriptor = AsmType.getMethodDescriptor(method)
-    // the JVM descriptors of the method, and of the bridges javac generates for it, calling it, like resolve(Object) of resolve(String),
-    // not of an overload, like resolve(Integer), which a bridge resolve(Object) might take as well,
-    // or else, when the class file cannot be read, of the bridges of the parameter and return types it might call
-    val bridges = javaNullabilities.get(declaring).bridges
-    val descriptors = if (bridges != null) {
-        bridges.filterValues { it == method.name + descriptor }.keys.mapTo(hashSetOf(descriptor)) { it.removePrefix(method.name) }
-    } else {
-        val parameterTypes = method.parameterTypes
-        declaring.declaredMethods.filter { bridge ->
-            bridge.isBridge && bridge.name == method.name && bridge.parameterCount == parameterTypes.size &&
-                bridge.parameterTypes.indices.all { bridge.parameterTypes[it].isAssignableFrom(parameterTypes[it]) } &&
-                bridge.returnType.isAssignableFrom(method.returnType)
-        }.mapTo(hashSetOf(descriptor)) { AsmType.getMethodDescriptor(it) }
-    }
+    val descriptors = jvmDescriptorsOf(method)
     val overridden = ArrayList<Method>()
     val visited = HashSet<Class<*>>()
     val pending = ArrayDeque<Class<*>>()
@@ -1800,6 +1860,28 @@ private fun overriddenJavaMethods(method: Method): List<Method> {
         type.enqueueSupertypes()
     }
     return overridden
+}
+
+/**
+ * The JVM descriptors of the [method], and of the bridges javac generates for it, calling it, like `resolve(Object)` of `resolve(String)`,
+ * not of an overload, like `resolve(Integer)`, which a bridge `resolve(Object)` might take as well,
+ * or else, when the class file cannot be read, of the bridges of the parameter and return types it might call,
+ * the JVM methods of the supertypes it overrides.
+ */
+private fun jvmDescriptorsOf(method: Method): Set<String> {
+    val declaring = method.declaringClass
+    val descriptor = AsmType.getMethodDescriptor(method)
+    val bridges = javaNullabilities.get(declaring).bridges
+    return if (bridges != null) {
+        bridges.filterValues { it == method.name + descriptor }.keys.mapTo(hashSetOf(descriptor)) { it.removePrefix(method.name) }
+    } else {
+        val parameterTypes = method.parameterTypes
+        declaring.declaredMethods.filter { bridge ->
+            bridge.isBridge && bridge.name == method.name && bridge.parameterCount == parameterTypes.size &&
+                bridge.parameterTypes.indices.all { bridge.parameterTypes[it].isAssignableFrom(parameterTypes[it]) } &&
+                bridge.returnType.isAssignableFrom(method.returnType)
+        }.mapTo(hashSetOf(descriptor)) { AsmType.getMethodDescriptor(it) }
+    }
 }
 
 /**

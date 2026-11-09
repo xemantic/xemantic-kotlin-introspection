@@ -838,6 +838,20 @@ interface HiddenPrimitiveGenericPutJoin : HiddenPrimitivePut, GenericPut<Int>
 
 abstract class PrimitiveAndBoxedJavaHiddenPut : com.xemantic.kotlin.introspection.test.other.JavaPrimitiveAndBoxedHiddenPut()
 
+// the hidden put(key: Int) of HiddenPrimitivePut is grouped with the put(t: T) of GenericPut<Int>, and picked of them,
+// apart from the put(Integer) of JavaIntegerPutOverride, which overrides the put(T) of JavaGenericPut
+abstract class OverridingGenericBoxedJavaHiddenGenericPutJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaIntegerPutOverride(), HiddenPrimitivePut, GenericPut<Int>
+
+// the hidden put(key: Int) of HiddenPrimitivePut is picked of the ones grouped with the put(key: Int) of PrimitivePut,
+// which the put(int) of JavaPrimitivePutImplementation implements, so that the put(@NotNull Integer) below is called
+abstract class HiddenPrimitiveNotNullBoxedJavaPutBelowJoin :
+    HiddenPrimitivePut, com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPutBelow()
+
+// the hidden put(key: Int) of HiddenPrimitivePut, between the two, hides neither of the others
+abstract class GenericBoxedJavaHiddenGenericPutJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaIntegerPut(), HiddenPrimitivePut, GenericPut<Int>
+
 interface HiddenPrimitivePutRedeclaring : HiddenPrimitivePut
 
 abstract class BoxedJavaPutBelowHiddenInterface : com.xemantic.kotlin.introspection.test.other.JavaBoxedPutBelowHiddenInterface()

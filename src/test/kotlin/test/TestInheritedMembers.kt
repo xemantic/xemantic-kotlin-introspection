@@ -417,6 +417,65 @@ abstract class MixedNullabilityJavaTakerJoin : com.xemantic.kotlin.introspection
 
 abstract class NotNullableJavaTakerJoin : com.xemantic.kotlin.introspection.test.other.JavaTwoStringTaker(), NotNullableTaker
 
+interface NullableElementListTaker {
+    fun take(list: List<String?>): String
+}
+
+abstract class NullableElementListJavaTakerJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaStringListTaker(), NullableElementListTaker
+
+interface OutProjectedMutableListTaker {
+    fun take(list: MutableList<out Int>): String
+}
+
+abstract class OutProjectedMutableListJavaTakerJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaExtendsIntegerListTaker(), OutProjectedMutableListTaker
+
+interface PrimitiveTriplePut {
+    fun put(a: Int, b: String, c: Int): String
+}
+
+abstract class BoxedTripleJavaPut : com.xemantic.kotlin.introspection.test.other.JavaBoxedTriplePut()
+
+interface NullableLastTriplePut {
+    fun put(a: Int, b: Int, c: Int?): String
+}
+
+abstract class BoxedNullableLastTripleJavaPut : com.xemantic.kotlin.introspection.test.other.JavaBoxedNullableLastTriplePut()
+
+abstract class GenericJavaPutImplementation : com.xemantic.kotlin.introspection.test.other.JavaGenericPutImplementation()
+
+abstract class GenericAndPrimitiveJavaPutImplementation :
+    com.xemantic.kotlin.introspection.test.other.JavaGenericAndPrimitivePutImplementation()
+
+abstract class PrimitiveAndNotNullBoxedJavaPut : com.xemantic.kotlin.introspection.test.other.JavaPrimitiveAndNotNullBoxedPut()
+
+abstract class NotNullBoxedJavaPutOverPrimitive : com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPutOverPrimitive()
+
+interface IntGenericPutRedeclaring : GenericPut<Int> {
+    override fun put(t: Int): String
+}
+
+abstract class RedeclaredGenericJavaPut : com.xemantic.kotlin.introspection.test.other.JavaRedeclaredGenericPutImplementation()
+
+abstract class NullablePrimitiveRedeclaredGenericJavaPutJoin :
+    NullablePrimitivePut, com.xemantic.kotlin.introspection.test.other.JavaRedeclaredGenericPutImplementation()
+
+interface MutableListPut {
+    fun put(list: MutableList<String>): String
+}
+
+// the List<String> given for the T of put(T) is no (Mutable)List<String!>!, so that the two are not merged
+abstract class StringListGenericJavaMutableListPutJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaGenericPut<List<String>>(), MutableListPut
+
+interface GenericGetOrDefault<K, V> {
+    fun getOrDefault(key: K, defaultValue: V): V
+}
+
+// java.util.TreeMap inherits the default getOrDefault of java.util.Map, which implements the one of GenericGetOrDefault
+abstract class GenericGetOrDefaultTreeMapJoin : java.util.TreeMap<String, String>(), GenericGetOrDefault<String, String>
+
 interface PrimitiveCompareTo {
     fun compareTo(other: Int): Int
 }
