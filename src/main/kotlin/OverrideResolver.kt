@@ -25,6 +25,8 @@ import org.objectweb.asm.MethodVisitor
 import org.objectweb.asm.Opcodes
 import org.objectweb.asm.signature.SignatureReader
 import org.objectweb.asm.signature.SignatureVisitor
+import java.io.DataInputStream
+import java.io.IOException
 import java.lang.invoke.MethodHandles
 import java.lang.invoke.MethodType
 import java.lang.reflect.GenericArrayType
@@ -1092,7 +1094,7 @@ internal class OverrideResolver(
      * including the members of an interface relocated to its `DefaultImpls` class, if it [hasDefaultImpls],
      * like with `-jvm-default=disable`, as if they were declared in the interface, unless they are unknown,
      * or `null` if the methods of the class itself can be neither read nor reflected.
-     * The class is reflected only when its class file is not served, or cannot be parsed,
+     * The class is reflected only when its class file is not served, or neither parsed nor its method table read,
      * which is then the same evidence, as the class is already loaded, being the owner of the resolved members,
      * and so is its `DefaultImpls` class, loaded by its name, unless the class file of the interface is served,
      * when the absence of the class file of `DefaultImpls` tells that there is none.
@@ -1110,7 +1112,7 @@ internal class OverrideResolver(
             // the static method of DefaultImpls takes the interface instance as the first parameter
             val instanceParameter = "(L$internalName;"
             // the methods of the interface itself are still known when the ones of DefaultImpls are not
-            declaredMethods(defaultImplsName, defaultImplsFile?.let { readClass(it) })?.forEach { method ->
+            declaredMethods(defaultImplsName, defaultImplsFile?.let { readDeclaredMethods(it) })?.forEach { method ->
                 if (method.access and Opcodes.ACC_STATIC != 0 && method.descriptor.startsWith(instanceParameter)) {
                     methods += method.name + "(" + method.descriptor.removePrefix(instanceParameter)
                 }
@@ -1133,13 +1135,13 @@ internal class OverrideResolver(
     )
 
     /**
-     * The methods declared by a class, read from its parsed [classFile], whether the class can be loaded or not,
+     * The methods declared by a class, [read] from its class file, see [readDeclaredMethods], whether the class can be loaded or not,
      * or reflected, when there is no class file, like when the class loader does not serve it as a resource,
-     * or it cannot be parsed, like when it is too new for ASM, but the class can be loaded,
+     * or it can be neither parsed nor its method table read, but the class can be loaded,
      * or `null` if they can be neither read nor reflected.
      */
-    private fun declaredMethods(className: String, classFile: ParsedClass?): List<DeclaredMethod>? {
-        classFile?.let { return it.methods }
+    private fun declaredMethods(className: String, read: List<DeclaredMethod>?): List<DeclaredMethod>? {
+        read?.let { return it }
         val clazz = loadClassByMetadataName(className) ?: return null
         return reflectOrNull {
             clazz.declaredMethods.map { DeclaredMethod(it.modifiers, it.name, AsmType.getMethodDescriptor(it)) }
@@ -1150,7 +1152,8 @@ internal class OverrideResolver(
      * Whether the class declares the [jvmMethod], as a name followed by a descriptor, like `getState${'$'}core()I`,
      * told by resolving the JVM method alone, like the JVM links a call, through a method handle,
      * also when the methods of the class can be neither read nor reflected,
-     * like when its class file cannot be parsed, and another method refers to a class missing from the classpath,
+     * like when its class file is not served, or its method table cannot be read, see [scanMethods],
+     * and another method refers to a class missing from the classpath,
      * which fails reflecting all the methods of the class at once, see [declaredMethods];
      * the JVM method resolved might be inherited, so it is declared only if the class itself is the declaring one.
      * It is `null` if the method cannot be resolved, like when a type of its descriptor cannot be loaded,
@@ -1210,7 +1213,7 @@ internal class OverrideResolver(
     private fun ownerClassFile(
         className: String,
         bytes: ByteArray? = readClassBytesByMetadataName(className),
-        declared: List<DeclaredMethod>? = declaredMethods(className, bytes?.let { readClass(it) })
+        declared: List<DeclaredMethod>? = declaredMethods(className, bytes?.let { readDeclaredMethods(it) })
     ): OwnerClassFile = OwnerClassFile(isServed = bytes != null, methods = declared?.mapTo(HashSet()) { it.name + it.descriptor })
 
     /**
@@ -1219,6 +1222,14 @@ internal class OverrideResolver(
     private class ParsedClass(val supertypes: List<String>, val methods: List<DeclaredMethod>)
 
     private fun readMethods(bytes: ByteArray): List<DeclaredMethod>? = readClass(bytes)?.methods
+
+    /**
+     * The methods of a class file, from its [parsed] class, see [readClass],
+     * or from its method table, when it cannot be parsed, see [scanMethods],
+     * only by their access flags, names and descriptors then.
+     */
+    private fun readDeclaredMethods(bytes: ByteArray, parsed: ParsedClass? = readClass(bytes)): List<DeclaredMethod>? =
+        parsed?.methods ?: scanMethods(bytes)
 
     /**
      * Reads the direct supertypes and the methods of a class file, with their generic signatures,
@@ -1256,6 +1267,69 @@ internal class OverrideResolver(
             return null
         }
         return ParsedClass(supertypes, methods)
+    }
+
+    /**
+     * The methods of a class file which cannot be parsed, like when it is too new for ASM, see [readClass],
+     * read from its method table, only by their access flags, names and descriptors,
+     * the `Synthetic` attribute read into the access flags, like ASM does, as a class file before Java 5 tells it so,
+     * which, like the constant pool they refer to, keep their format across the class file versions,
+     * so that the methods are known without loading the types of their descriptors, unlike when reflected,
+     * or `null` if the method table cannot be read either, like when the constant pool has an entry of an unknown kind,
+     * whose size is unknown then, or the class file is malformed.
+     */
+    private fun scanMethods(bytes: ByteArray): List<DeclaredMethod>? = try {
+        val input = DataInputStream(bytes.inputStream())
+        if (input.readInt() != 0xCAFEBABE.toInt()) return null
+        // the minor and the major version
+        input.skipNBytes(4)
+        val constantCount = input.readUnsignedShort()
+        val utf8 = arrayOfNulls<String>(constantCount)
+        var index = 1
+        while (index < constantCount) {
+            when (input.readUnsignedByte()) {
+                // Utf8
+                1 -> utf8[index] = input.readUTF()
+                // Class, String, MethodType, Module, Package
+                7, 8, 16, 19, 20 -> input.skipNBytes(2)
+                // MethodHandle
+                15 -> input.skipNBytes(3)
+                // Integer, Float, Fieldref, Methodref, InterfaceMethodref, NameAndType, Dynamic, InvokeDynamic
+                3, 4, 9, 10, 11, 12, 17, 18 -> input.skipNBytes(4)
+                // Long and Double, taking two entries
+                5, 6 -> {
+                    input.skipNBytes(8)
+                    index++
+                }
+                else -> return null
+            }
+            index++
+        }
+        // the access flags, this class, the superclass, and the interfaces
+        input.skipNBytes(6)
+        input.skipNBytes(2L * input.readUnsignedShort())
+        // the names of the attributes, each skipped by its length
+        fun readAttributes(): List<String?> = List(input.readUnsignedShort()) {
+            val name = utf8[input.readUnsignedShort()]
+            input.skipNBytes(input.readInt().toUInt().toLong())
+            name
+        }
+        // the fields, by their access flags, names and descriptors, followed by their attributes
+        repeat(input.readUnsignedShort()) {
+            input.skipNBytes(6)
+            readAttributes()
+        }
+        List(input.readUnsignedShort()) {
+            val access = input.readUnsignedShort()
+            val name = utf8[input.readUnsignedShort()] ?: return null
+            val descriptor = utf8[input.readUnsignedShort()] ?: return null
+            val synthetic = if ("Synthetic" in readAttributes()) Opcodes.ACC_SYNTHETIC else 0
+            DeclaredMethod(access or synthetic, name, descriptor)
+        }
+    } catch (_: IOException) {
+        null
+    } catch (_: IndexOutOfBoundsException) {
+        null
     }
 
     private val Visibility.isOverridable: Boolean
@@ -1555,7 +1629,7 @@ internal class OverrideResolver(
         if (builtinClasses()[owner.kmClass.name] === owner.kmClass) return OwnerRelocation(own)
         fun classFile(declared: List<DeclaredMethod>?) = if (reader.isRead) ownerClassFile(owner.name, reader.bytes, declared) else null
         val jvmSupertypes = jvmSupertypeNames(owner.name) { reader.parsed() }
-            ?: return OwnerRelocation(own, classFile(declaredMethods(owner.name, reader.parsed())))
+            ?: return OwnerRelocation(own, classFile(reader.declaredMethods()))
         val metadataSupertypes = owner.kmClass.relocatableSupertypes()
         val jvmSupertypeNames = jvmSupertypes.toHashSet()
         val excluded = metadataSupertypes.filterKeys { it in jvmSupertypeNames }.values.toSet()
@@ -1573,10 +1647,10 @@ internal class OverrideResolver(
         ) {
             return OwnerRelocation(
                 own?.withDependencies(emptyMap(), excluded),
-                if (reader.isRead) classFile(declaredMethods(owner.name, reader.parsed())) else null
+                if (reader.isRead) classFile(reader.declaredMethods()) else null
             )
         }
-        val declared = declaredMethods(owner.name, reader.parsed())
+        val declared = reader.declaredMethods()
         val signatureNames = relocatedSignatureNames(signatures, declared.orEmpty(), own)
         // when the JVM methods tell a relocation, but not which one, like of overloads of the same shape,
         // the class files of the supertypes reached, like app/Mid implementing the relocated lib/Listener, might tell it,
@@ -1644,6 +1718,20 @@ internal class OverrideResolver(
             }
             return parsed
         }
+
+        /**
+         * The methods read from the class file, see [readDeclaredMethods], once,
+         * as the relocation might be told more than once, see [collectOverridables].
+         */
+        private val readMethods: List<DeclaredMethod>? by lazy {
+            val parsed = parsed()
+            bytes?.let { readDeclaredMethods(it, parsed) }
+        }
+
+        /**
+         * The methods declared by the class, see [declaredMethods].
+         */
+        fun declaredMethods(): List<DeclaredMethod>? = declaredMethods(name, readMethods)
 
     }
 
@@ -2213,7 +2301,8 @@ internal class OverrideResolver(
         substitution: JavaSubstitution
     ): List<Pair<String, Overridable>> {
         val bytes = readClassBytesByMetadataName(kotlinClassName(javaClass)) ?: return emptyList()
-        // the methods of a class file which cannot be parsed are unknown
+        // the methods of a class file which cannot be parsed are unknown, as their generic signatures are needed,
+        // which a scan of the method table does not read, see readDeclaredMethods
         val methods = readMethods(bytes) ?: return emptyList()
         return asmMethods(methods, javaClass.packageName, ownerPackage, substitution, javaClass)
     }
