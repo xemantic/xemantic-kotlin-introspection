@@ -42,6 +42,25 @@ typealias AliasOfOtherPackageAlias = com.xemantic.kotlin.introspection.test.othe
 @Deprecated("Use TypeAliasTarget", level = DeprecationLevel.ERROR)
 typealias ErrorDeprecatedAlias = TypeAliasTarget
 
+// typealiases through which kotlinc resolves the members of the class they expand to, like AliasOfNested.companionValue,
+// but neither its nested classes, nor its companion object by its name, like AliasOfNested.Deeper, or AliasOfNested.Companion
+class AliasedOuter {
+    class Nested {
+        class Deeper {
+            companion object {
+                val deeperValue: Int = 0
+            }
+        }
+        companion object {
+            val companionValue: Int = 0
+        }
+    }
+}
+
+typealias AliasOfNested = AliasedOuter.Nested
+
+typealias AliasOfOuter = AliasedOuter
+
 // an interface member with a body, declared abstract again by a Java interface
 interface DefaultedMember {
     fun foo(): Int = 1

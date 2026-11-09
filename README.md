@@ -98,7 +98,13 @@ com.example.AnnotationTestClass
   not to flood the listing of the class, like with the ones on `Any`,
   which are still resolved by the name of the class, like `com.example.Foo.parse` of `fun Parser.parse()` for `companion object : Parser`,
   except the ones of the standard library, like for the supertypes of the class,
-  and the ones of a protected companion object, or one within a protected class, called so only within the subclasses,
+  and the ones of a protected companion object, called so only within the subclasses,
+  while the ones of a companion object within a protected class are told by the comment of the protected class,
+  like its members,
+  and neither the extensions on the companion object, nor the ones on its supertypes,
+  shadowed by a member of the companion object called the same way, which Kotlin calls instead, are listed or resolved,
+  like `fun shadow()` for `fun Parser.shadow()`, while `fun shadow(x: Int)` does not shadow `fun Parser.shadow(y: Int)`,
+  called as `Foo.shadow(y = 1)`,
   while a class nested in the companion object is resolved only through it, like `com.example.Foo.Companion.Builder`,
   as Kotlin does not resolve `Foo.Builder` either.
   The deprecation of a companion object deprecated with the `WARNING` or the `ERROR` level,
@@ -160,7 +166,9 @@ com.example.AnnotationTestClass
   as a Java class it might expand to is not rendered,
   while a member of a typealias of a class without type arguments, like `com.example.Alias.member`,
   is resolved as the member of that class,
-  following the declaration of the typealias when it is deprecated.
+  following the declaration of the typealias when it is deprecated,
+  but neither a class nested in it, nor its companion object by its name, like `com.example.Alias.Nested`,
+  or `com.example.Alias.Companion.create`, which Kotlin does not resolve through a typealias, unlike `Alias.create()`.
   A member of a typealias of a Java class, like `kotlin.collections.ArrayList.add`,
   or of one with type arguments, like `typealias Names = List<String>`,
   is not resolved, as a Java class is not rendered,
