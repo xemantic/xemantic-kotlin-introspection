@@ -57,3 +57,9 @@ class CollectionSameKeyed<V> : CollectionKeyed<V, V>
 fun CollectionKeyed<String, CollectionOrder>.keyedOrder() {}
 
 fun CollectionKeyed<String, CharSequence>.keyedText() {}
+
+// no V makes a Map<V, Comparable<V>> a Map<T, T> of a T : Comparable<T>
+
+interface CollectionComparableMap<V> : Map<V, Comparable<V>>
+
+fun <T : Comparable<T>> Map<T, T>.sameComparables() {}

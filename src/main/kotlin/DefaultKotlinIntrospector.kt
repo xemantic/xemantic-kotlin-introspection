@@ -4162,6 +4162,15 @@ internal class DefaultKotlinIntrospector(
                 }
                 return receiverTypes.all { classReceiverIndexKey(it) != supertype || it.arguments.isEmpty() }
             }
+            // but not, beyond Comparable, one of a type parameter bounded recursively, like T : Comparable<T>,
+            // matched against a supertype referring to the type parameters of the class, like Map<V, Comparable<V>>,
+            // whose bounds against the types a type parameter of the class takes are not told, see isClassTypeParameterTyped
+            fun isRecursivelyBoundedOnTypeParameters(supertype: String, typeParameters: List<KmTypeParameter>): Boolean =
+                supertype != COMPARABLE_CLASS_NAME &&
+                    typeParameters.any { typeParameter ->
+                        typeParameter.upperBounds.any { bound -> !bound.refersOnlyTo { it != typeParameter.id } }
+                    } &&
+                    supertypes.types[supertype].orEmpty().any { !it.refersOnlyTo { false } }
             // filtered by name first, like below, not to tell whether each of the others is listed
             fun <E : ReceiverBounded> Map<String, List<E>>.listedOnOtherSupertypes(
                 declarationOf: (E) -> Triple<String, KmType?, List<KmTypeParameter>>
@@ -4169,7 +4178,8 @@ internal class DefaultKotlinIntrospector(
                 this[supertype].orEmpty().filter { extension ->
                     val (name, receiver, typeParameters) = declarationOf(extension)
                     (memberName == null || name == memberName) &&
-                        extension.isListedOn(supertype) && isTold(supertype, receiver, typeParameters)
+                        extension.isListedOn(supertype) && isTold(supertype, receiver, typeParameters) &&
+                        !isRecursivelyBoundedOnTypeParameters(supertype, typeParameters)
                 }
             }
             ListedExtensions(

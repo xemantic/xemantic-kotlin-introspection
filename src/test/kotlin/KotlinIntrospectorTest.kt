@@ -8730,6 +8730,17 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve class with type parameter in standard library supertype without extension on recursively bounded type parameter`() {
+        // a recursively bounded T : Comparable<T> matched against a type parameter of the class is not told,
+        // so that the extensions of the package on the kotlin.* and java.* supertypes are not listed then
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.CollectionComparableMap"
+        ) should {
+            have(lines().none { "sameComparables" in it })
+        }
+    }
+
+    @Test
     fun `should resolve extension of its package on Any by name of class with deprecated companion object of other supertype`() {
         // on a supertype of both the class and its companion object, deprecated only when called on the class name, like TaskHolder.describeTask()
         resolver.resolve(
