@@ -452,6 +452,47 @@ abstract class PrimitiveAndNotNullBoxedJavaPut : com.xemantic.kotlin.introspecti
 
 abstract class NotNullBoxedJavaPutOverPrimitive : com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPutOverPrimitive()
 
+// the put(T) of JavaGenericPut, overridden by the put(Integer) of JavaIntegerPutOverride, never implements the put(t: T) of GenericPut<Int>
+abstract class GenericOverridingGenericBoxedJavaPutJoin :
+    GenericPut<Int>, com.xemantic.kotlin.introspection.test.other.JavaIntegerPutOverride()
+
+// the put(int) of the Java class implements the put(key: Int) of PrimitivePut, called in place of its put(@NotNull Integer)
+abstract class PrimitiveAndNotNullBoxedJavaPutJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaPrimitiveAndNotNullBoxedPut(), PrimitivePut
+
+abstract class NotNullBoxedJavaOverPrimitiveGenericPutJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPutOverPrimitive(), GenericPut<Int>
+
+interface ManyCollectionsTaker {
+    fun take(
+        first: MutableMap<MutableList<String>, MutableList<String>>,
+        second: MutableMap<MutableList<String>, MutableList<String>>,
+        third: MutableList<String>
+    ): String
+}
+
+abstract class ManyCollectionsJavaTakerJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaManyCollectionsTaker(), ManyCollectionsTaker
+
+interface IntCollectionAdder {
+    fun addAll2(c: Collection<Int>): Boolean
+}
+
+// the compiler picks the addAll2 of the first supertype, as both return Boolean: the Java one, so that addAll2(null) compiles
+abstract class ExtendsIntegerJavaCollectionAdderJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaExtendsIntegerCollectionAdder(), IntCollectionAdder
+
+// and the Kotlin one, so that addAll2(null) does not compile
+abstract class CollectionAdderExtendsIntegerJavaJoin :
+    IntCollectionAdder, com.xemantic.kotlin.introspection.test.other.JavaExtendsIntegerCollectionAdder()
+
+interface StringAcceptor {
+    fun accept(s: String)
+}
+
+// the compiler picks the accept(String) of the Java class, declared first, taking String!, so that accept(null) compiles
+abstract class StringJavaAcceptorJoin : com.xemantic.kotlin.introspection.test.other.JavaStringAcceptor(), StringAcceptor
+
 interface IntGenericPutRedeclaring : GenericPut<Int> {
     override fun put(t: Int): String
 }

@@ -645,13 +645,7 @@ private fun platformPositions(method: Method): Set<Int> {
         !parameterTypes[position].isPrimitive && !(method.isVarArgs && position == parameterTypes.lastIndex)
     }
     if (references.isEmpty()) return emptySet()
-    // like the Object of an erased type parameter, or the int of an Int, matched by the Kotlin types
-    val matched = inheritedMethods.get(declaringClass)[method.name].orEmpty().filter { inherited ->
-        inherited.parameterCount == parameterTypes.size && inherited.parameterTypes.indices.all { position ->
-            val type = inherited.parameterTypes[position]
-            type.isAssignableFrom(parameterTypes[position]) || type.kotlin.javaObjectType == parameterTypes[position]
-        }
-    }
+    val matched = methodsMatchedByKotlinTypes(method)
     // kotlin-reflect takes the types of a Kotlin member, or the primitive ones of a Java member, like the int of put(int),
     // while the other ones of a Java member are platform types anyway
     if (matched.none { inherited ->
@@ -661,14 +655,7 @@ private fun platformPositions(method: Method): Set<Int> {
     ) {
         return emptySet()
     }
-    val descriptors = jvmDescriptorsOf(method)
-    val (overriding, notOverriding) = matched.filter { it.declaringClass.isKotlinClass }
-        .partition { AsmType.getMethodDescriptor(it) in descriptors }
-    // but the ones a Kotlin subclass declares again, which the method does not override, and which hides them from it,
-    // like the put(t: T) of GenericPut<Integer> of put(Integer), declared again as put(t: Int) of IntPut : GenericPut<Int>
-    val overridden = overriding.filter { inherited ->
-        notOverriding.none { it.declaringClass != inherited.declaringClass && inherited.declaringClass.isAssignableFrom(it.declaringClass) }
-    }
+    val overridden = overriddenKotlinMethods(method, matched)
     return references.filterTo(HashSet()) { position ->
         overridden.all { inherited ->
             val type = inherited.genericParameterTypes.getOrNull(position) as? TypeVariable<*>
@@ -676,6 +663,48 @@ private fun platformPositions(method: Method): Set<Int> {
             typeClass != null && isJavaTypeArgument(declaringClass, typeClass, typeClass.typeParameters.indexOf(type))
         }
     }
+}
+
+/**
+ * The methods of the supertypes of the class of the [method] which kotlin-reflect takes it for an override of,
+ * see [platformPositions], matched by their Kotlin types, like the `Object` of an erased type parameter, or the `int` of an `Int`,
+ * given `Integer`.
+ */
+private fun methodsMatchedByKotlinTypes(method: Method): List<Method> {
+    val parameterTypes = method.parameterTypes
+    return inheritedMethods.get(method.declaringClass)[method.name].orEmpty().filter { inherited ->
+        inherited.parameterCount == parameterTypes.size && inherited.parameterTypes.indices.all { position ->
+            val type = inherited.parameterTypes[position]
+            type.isAssignableFrom(parameterTypes[position]) || type.kotlin.javaObjectType == parameterTypes[position]
+        }
+    }
+}
+
+/**
+ * The methods of the Kotlin classes, of the [matched] ones, see [methodsMatchedByKotlinTypes], which the [method] overrides
+ * on the JVM, by its JVM descriptors, see [jvmDescriptorsOf], as K2 tells, but the ones a Kotlin subclass declares again,
+ * which the [method] does not override, and which hides them from it, like the `put(t: T)` of `GenericPut<Integer>` of `put(Integer)`,
+ * declared again as `put(t: Int)` of `IntPut : GenericPut<Int>`.
+ */
+private fun overriddenKotlinMethods(method: Method, matched: List<Method>): List<Method> {
+    val descriptors = jvmDescriptorsOf(method)
+    val (overriding, notOverriding) = matched.filter { it.declaringClass.isKotlinClass }
+        .partition { AsmType.getMethodDescriptor(it) in descriptors }
+    return overriding.filter { inherited ->
+        notOverriding.none { it.declaringClass != inherited.declaringClass && inherited.declaringClass.isAssignableFrom(it.declaringClass) }
+    }
+}
+
+/**
+ * Whether kotlin-reflect takes the return type of the [method], of a class not of the JDK, from the member of a Kotlin supertype
+ * which the [method] does not override on the JVM, see [overriddenKotlinMethods], like the `String` of the `put(key: Int): String`
+ * of a Kotlin interface for the `String put(Integer)` of a Java class implementing it by `put(int)`,
+ * which K2 sees as a method of its own, returning the platform type `String!`, see [returnsPlatformType].
+ */
+private fun isReturnTypeOfKotlinMemberNotOverridden(method: Method): Boolean {
+    if (method.declaringClass.isJdkClass) return false
+    val matched = methodsMatchedByKotlinTypes(method)
+    return matched.any { it.declaringClass.isKotlinClass } && overriddenKotlinMethods(method, matched).isEmpty()
 }
 
 // whether this class is a Kotlin one, compiled with its metadata
@@ -1309,8 +1338,12 @@ internal fun KFunction<*>.returnsPlatformType(isEnhancementLost: Boolean): Boole
     // kotlin-reflect tells some of the enhanced types as such, like the V of computeIfAbsent of java.util.HashMap,
     // also of java.util.Hashtable, which K2 does not enhance, see isEnhancedJdkMethod
     if (!returnType.isPlatformNullable && !isEnhancementLost) {
-        if (name !in enhancedReturnJdkMethodNames) return false
         val method = reflectedValue(default = null) { javaMethod } ?: return false
+        // or takes the type of a Kotlin member the method does not override, like put(key: Int): String for put(Integer)
+        if (name !in enhancedReturnJdkMethodNames) {
+            return method.returnsPlatformType(isEnhancementLost = false) &&
+                reflectedValue(default = false) { isReturnTypeOfKotlinMemberNotOverridden(method) }
+        }
         if (method.name + AsmType.getMethodDescriptor(method) !in enhancedReturnJdkMethodDescriptors) return false
         return method.returnsPlatformType(isEnhancementLost = false)
     }

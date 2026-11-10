@@ -495,6 +495,25 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should list member inherited from relocated Java superclass of Kotlin superclass which is not relocated`() {
+        // given
+        // only the class file of the Kotlin superclass refers to the Java class by its relocated name
+        val root = isolatedTestFixturesCopy("relocatedJavaBaseOfMid", "RelocatedJavaBase.class", "RelocatedJavaBaseMid.class")
+        relocatedCopy(root, "RelocatedJavaBase.class", dependents = listOf("RelocatedJavaBaseMid.class"))
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.RelocatedJavaBaseMidImpl.jm")
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.RelocatedJavaBaseMidImpl.jm [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.isolated.RelocatedJavaBase
+            fun jm(arg0: RelocatedEvent?)
+        """.trimIndent()
+    }
+
+    @Test
     fun `should list members inherited from relocated Java supertype which kotlin-reflect cannot describe next to older original one`() {
         // given
         val shadedRoot = tempDir.resolve("relocatedJavaBaseNextToOlder")
@@ -584,14 +603,13 @@ class ClassLoaderIntrospectionTest {
             // inherited from com.xemantic.kotlin.introspection.isolated.RelocatedJavaProd
             override fun make(): RelocatedProdSub
         """.trimIndent()
-        // only the Java method refining the return type is listed, though not told as an override,
-        // as the relocated Java class does not find the Kotlin interface of its relocated superclass by its metadata name
-        signatureThroughClass should {
-            have(this!!.lines().drop(1) == listOf(
-                "// inherited from com.xemantic.kotlin.introspection.isolated.RelocatedJavaProdK",
-                "open fun make(): RelocatedProdSub"
-            ))
-        }
+        // also told as an override through the relocated Kotlin superclass of the Java class, whose Kotlin interface,
+        // named by its metadata name, is found by the relocation of the superclass, as a Java class has no metadata telling its own
+        signatureThroughClass sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.RelocatedJavaProdKImpl.make [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.isolated.RelocatedJavaProdK
+            override fun make(): RelocatedProdSub
+        """.trimIndent()
     }
 
     @Test

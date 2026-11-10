@@ -126,6 +126,11 @@ interface RelocatedDefaultInterface {
 
 class RelocatedJavaBaseImpl : RelocatedJavaBase(), RelocatedDefaultInterface
 
+// tests relocate its Java superclass, like shading, but neither it, nor its subclass, whose class file does not refer to the Java class
+open class RelocatedJavaBaseMid : RelocatedJavaBase()
+
+class RelocatedJavaBaseMidImpl : RelocatedJavaBaseMid()
+
 // tests relocate it, like shading, together with the Java class implementing it, and its type argument, but not the subclass
 interface RelocatedGenericInterface<T> {
     fun kg(value: T) {}
