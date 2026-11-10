@@ -160,13 +160,14 @@ class IdentifiersTest {
     @Test
     fun `should name synthetic properties of getters like kotlinc`() {
         // given
-        val getterNames = listOf("getName", "getURL", "getUrlX", "getFOObar", "getAB", "get_x", "getÄx", "isActive", "isURL")
+        val getterNames = listOf("getName", "getURL", "getUrlX", "getFOObar", "getAB", "get_x", "getÄx", "isActive", "isURL", "is1")
 
         // when
         val names = getterNames.map { syntheticPropertyName(it) }
 
-        // then - an is getter keeps its name, and only ASCII uppercase letters are decapitalized, as verified with kotlinc 2.4.21
-        assert(names == listOf("name", "url", "urlX", "foObar", "ab", "_x", "Äx", "isActive", "isURL"))
+        // then - an is getter keeps its name, also of a digit after is, unlike after get,
+        // and only ASCII uppercase letters are decapitalized, as verified with kotlinc 2.4.21
+        assert(names == listOf("name", "url", "urlX", "foObar", "ab", "_x", "Äx", "isActive", "isURL", "is1"))
     }
 
     @Test

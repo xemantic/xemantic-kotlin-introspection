@@ -39,6 +39,11 @@ public class JavaSyntheticPropertyBase {
     // not of the type of getCount(), so that count stays a val
     public void setCount(String count) {}
 
+    public String getPr() { return ""; }
+
+    // less visible than getPr(), so that pr can be assigned only in a subclass, where it can be read anywhere
+    protected void setPr(String pr) {}
+
     public String getAt(int index) { return ""; }
 
     public <T> T getAny() { return null; }

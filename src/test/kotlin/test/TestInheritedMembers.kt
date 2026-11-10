@@ -919,3 +919,27 @@ open class SyntheticPropertyHolder : com.xemantic.kotlin.introspection.test.othe
 
 // The getters of java.lang.Thread, like getName(), offered as the var name, with setName(String)
 class SyntheticPropertyThread : Thread()
+
+// A getter of a generic Java class overridden by a generic Kotlin subclass, offered as the var value with the inherited setValue(T)
+open class SyntheticPropertyGenericHolder<T> : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyBox<T>() {
+    override fun getValue(): T = throw UnsupportedOperationException()
+}
+
+// Kotlin functions named like getters, overridden, or implemented, by Java methods, which kotlinc offers no synthetic properties of,
+// as the topmost declarations are Kotlin ones, also through a Kotlin override of the Java method
+abstract class KotlinGetterBase {
+    abstract fun getCs(): CharSequence
+    open fun getKb(): String = ""
+}
+
+interface KotlinGetterFace {
+    fun getK(): String
+}
+
+class KotlinGetterJavaOverrideSub : com.xemantic.kotlin.introspection.test.other.JavaKotlinGetterOverride() {
+    override fun getKb(): String = ""
+}
+
+class KotlinGetterJavaImplementationSub : com.xemantic.kotlin.introspection.test.other.JavaKotlinGetterImplementation() {
+    override fun getK(): String = ""
+}

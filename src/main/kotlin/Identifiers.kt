@@ -95,9 +95,9 @@ internal fun unescapeQualifiedName(name: String): String =
 
 /**
  * The name of the synthetic property which Kotlin reads a Java getter named [getterName] as, like `name` of `getName()`,
- * or `null` if it is not named like a getter: `get`, or `is`, followed by a character which is neither a lowercase ASCII letter,
- * like of `getaB()`, nor a digit, like of `get1()`, as verified with kotlinc 2.4.21.
- * The one of an `is` getter is named like the getter, like `isActive`, of any return type,
+ * or `null` if it is not named like a getter: `get`, or `is`, followed by a character which is not a lowercase ASCII letter,
+ * like of `getaB()`, nor, after `get`, a digit, like of `get1()`, unlike `is1()`, as verified with kotlinc 2.4.21.
+ * The one of an `is` getter is named like the getter, like `isActive`, or `is1`, of any return type,
  * the one of a `get` getter without the prefix, its leading ASCII uppercase letters lowercased,
  * but the last one of several followed by a lowercase letter, like `url` of `getURL()`, or `foObar` of `getFOObar()`,
  * while any other letter stays, like `Äx` of `getÄx()`.
@@ -109,7 +109,7 @@ internal fun syntheticPropertyName(getterName: String): String? {
         else -> return null
     }
     val first = getterName.getOrNull(prefix.length) ?: return null
-    if (first in 'a'..'z' || first.isDigit()) return null
+    if (first in 'a'..'z' || (prefix == "get" && first.isDigit())) return null
     if (prefix == "is") return getterName
     val name = getterName.substring(prefix.length)
     val uppercase = name.indexOfFirst { it !in 'A'..'Z' }.let { if (it == -1) name.length else it }
