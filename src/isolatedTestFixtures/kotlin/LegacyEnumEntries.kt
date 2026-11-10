@@ -21,3 +21,12 @@ package com.xemantic.kotlin.introspection.isolated
 // tests rewrite the metadata of the enum class, so that it does not tell the entries property,
 // like the one of an enum class compiled before Kotlin 1.9, for which kotlinc still resolves LegacyEntriesEnum.entries
 enum class LegacyEntriesEnum { FIRST, SECOND }
+
+// tests do not serve the class file of the enum class, so that the deprecations of its entries are reflected
+enum class UnservedDeprecatedEntriesEnum {
+    CURRENT,
+    @Deprecated("Use CURRENT")
+    OLD,
+    @Deprecated("Gone", level = DeprecationLevel.HIDDEN)
+    GONE
+}

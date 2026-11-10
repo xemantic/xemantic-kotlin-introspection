@@ -299,10 +299,11 @@ com.example.AnnotationTestClass
   Any other one is listed, as its type parameter can be inferred as a supertype,
   or it can be called with other arguments, like `5.coerceIn(null, 10)`, or `5.rangeTo(that = 6)`.
   So is an extension property on such a `T` next to an extension property of the same name on the type itself,
-  of the same package, like `val <T : Comparable<T>> T.rank` next to `val Version.rank`, read instead.
+  of the same package, without context parameters,
+  like `val <T : Comparable<T>> T.rank` next to `val Version.rank`, read instead.
 * An extension which Kotlin never calls on a class, as a member of the class is always called instead, is not listed for it,
   nor resolved by its name, unless the class is a built-in type:
-  an extension property next to a member property of the same name,
+  an extension property next to a member property of the same name, without context parameters,
   and an extension function next to a member function taking the same number of parameters, of the same names,
   each accepting every argument of the parameter of the extension:
   of the same type, also nullable, of a supertype without type arguments, or of an unbounded type parameter of the member,
@@ -319,8 +320,10 @@ com.example.AnnotationTestClass
   but the ones which can be called on a nullable receiver, like `fun Bar?.ext()`, where no member can.
   An extension which can be called another way is listed:
   with a default argument, with a named one, like `fun Bar.put(y: Int)`, as an operator, or infix, when the member is not,
-  while a call giving the type arguments explicitly, like `foo.ext<Int>()`, which would reach an extension next to a member
-  without type parameters, is not told.
+  or with type arguments which only the caller tells, like `foo.parse<Int>()` of `fun <R> Bar.parse()`,
+  unless the member takes as many of them, whatever they are, like `fun <T> parse()`,
+  while a call giving explicitly the type arguments which are otherwise inferred,
+  like `foo.ext<Bar>()` of `fun <T : Bar> T.ext()`, which would reach the extension next to a member `fun ext()`, is not told.
   The extensions on an unbounded type parameter, like `let` or `also`, are not listed for any type,
   as they would be listed for every one.
 * The types of the `kotlin.*` packages are rendered with simple names, as LLMs know them well,

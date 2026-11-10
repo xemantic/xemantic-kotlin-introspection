@@ -2704,6 +2704,32 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should reflect deprecations of enum entries, when the class file is not served`() {
+        // given
+        val root = isolatedTestFixturesCopy("unservedDeprecatedEntries")
+        val classLoader = object : URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader) {
+            override fun getResourceAsStream(name: String): InputStream? =
+                if (name.endsWith("/UnservedDeprecatedEntriesEnum.class")) null else super.getResourceAsStream(name)
+        }
+        val introspector = KotlinIntrospector(classLoader)
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.UnservedDeprecatedEntriesEnum")
+        val hidden = introspector.resolve("com.xemantic.kotlin.introspection.isolated.UnservedDeprecatedEntriesEnum.GONE")
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.UnservedDeprecatedEntriesEnum [page 1/1]
+            enum class UnservedDeprecatedEntriesEnum {
+                CURRENT,
+                @Deprecated("Use CURRENT") OLD,
+                @Deprecated("Gone", level = DeprecationLevel.HIDDEN) GONE
+            }
+        """.trimIndent()
+        assert(hidden == null)
+    }
+
+    @Test
     fun `should mark overrides of raw Java superclass which cannot be loaded, as read from its class file without generic signature`() {
         // given
         val introspector = introspectorWithoutAbsentClass()

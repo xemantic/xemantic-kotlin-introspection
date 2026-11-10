@@ -101,9 +101,6 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 - kotlinc 2.4.21 rejects an enum entry named `entries` (`conflicting declarations`, KT-48872), also one deprecated as `HIDDEN`,
   so the entry shadowing the `entries` property can be neither probed, nor compiled as a fixture.
 
-- A function type takes no named arguments, so a member property of a function type shadows only an extension without value parameters:
-  `Obj.run(x = 1)` calls `fun Bar.run(x: Int)` next to `val run: (Int) -> Unit`, see `isInvokedInsteadOf`.
-
 - Kotlin never passes named arguments to a Java method, even one compiled with `-parameters`, so a Java method taking parameters never shadows an extension — see `isShadowingJavaMethod`.
 
 ## Anti-patterns to avoid

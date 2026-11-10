@@ -414,7 +414,10 @@ fun <T> WideningProducer<T>.produced(x: T): Int = 1
 // members of a class called instead of the extensions of the same name on the class, or on its supertype,
 // like shadowing.shadowed(), or shadowing.inherited(), by the rule of the members of an object,
 // unless the extension can be called on a nullable receiver, like nullableShadowing.onNullable(),
-// with other arguments, like shadowing.shadowed(1), or the member cannot be called, like a protected one
+// with other arguments, like shadowing.shadowed(1), or the member cannot be called, like a protected one,
+// or a property with a context parameter outside its context, like shadowing.contextualProperty,
+// or with the type arguments of the extension, which only they tell, like shadowing.explicit<Int>(),
+// while shadowing.explicitSame<Int>() calls the member, taking as many type arguments, whatever they are
 interface InstanceShadowedSupertype
 
 open class InstanceShadowingBase {
@@ -424,9 +427,15 @@ open class InstanceShadowingBase {
 
 open class InstanceShadowing : InstanceShadowingBase(), InstanceShadowedSupertype {
     val shadowedProperty: Int = 0
+    context(text: String) val contextualProperty: Int get() = text.length
     fun shadowed(): Int = 0
     fun onNullable(): Int = 0
     fun onNullableBound(): Int = 0
+    fun onDefinitelyNotNull(): Int = 0
+    fun explicit(): Int = 0
+    fun <T> explicitSame(): Int = 0
+    fun <T : Number> explicitBounded(): Int = 0
+    fun <T> explicitInferred(x: T): Int = 0
     fun named(x: Int): Int = x
     fun <T> generic(x: T): Int = 0
 }
@@ -440,6 +449,21 @@ val InstanceShadowedSupertype.shadowedProperty: Int get() = 1
 fun InstanceShadowedSupertype?.onNullable(): Int = 1
 
 fun <T : InstanceShadowedSupertype?> T.onNullableBound(): Int = 1
+
+// never called on a nullable receiver, unlike the one on T itself
+fun <T : InstanceShadowedSupertype?> (T & Any).onDefinitelyNotNull(): Int = 1
+
+val InstanceShadowedSupertype.contextualProperty: Int get() = 1
+
+fun <R> InstanceShadowedSupertype.explicit(): Int = 1
+
+fun <R> InstanceShadowedSupertype.explicitSame(): Int = 1
+
+// shadowing.explicitBounded<String>() calls the extension, as String is no Number
+fun <R> InstanceShadowedSupertype.explicitBounded(): Int = 1
+
+// shadowing.explicitInferred<String>(1) calls the extension, as 1 is no String
+fun <R> InstanceShadowedSupertype.explicitInferred(x: Int): Int = 1
 
 fun InstanceShadowedSupertype.named(y: Int): Int = y
 

@@ -40,6 +40,17 @@ class PinnedMemberProperty : Comparable<PinnedMemberProperty> {
     override fun compareTo(other: PinnedMemberProperty): Int = 0
 }
 
+// an extension property on the class itself with a context parameter is read only within its context,
+// so that PinnedContextualExtensionProperty().rank reads the generic one elsewhere
+class PinnedPropertyContext
+
+class PinnedContextualExtensionProperty : Comparable<PinnedContextualExtensionProperty> {
+    override fun compareTo(other: PinnedContextualExtensionProperty): Int = 0
+}
+
+context(context: PinnedPropertyContext)
+val PinnedContextualExtensionProperty.rank: Int get() = 1
+
 // without a more specific one, the generic one is read
 class UnpinnedProperty : Comparable<UnpinnedProperty> {
     override fun compareTo(other: UnpinnedProperty): Int = 0

@@ -90,10 +90,7 @@ internal data class IndexedExtension(
     // the deprecation of the companion object it extends, when listed with its class, see withCompanionDeprecation
     val companionDeprecation: Deprecation? = null,
     // whether it is also called on an instance of the class, not reporting the companionDeprecation then
-    val isAlsoCalledOnInstance: Boolean = false,
-    // the deprecations of the classes its call on the name of the class goes through, not reported when called on an instance,
-    // see enclosingContext
-    val classDeprecations: String = ""
+    val isAlsoCalledOnInstance: Boolean = false
 ) : ReceiverBounded
 
 /**
@@ -139,10 +136,7 @@ internal data class IndexedExtensionProperty(
     // the deprecation of the companion object it extends, when listed with its class, see withCompanionDeprecation
     val companionDeprecation: Deprecation? = null,
     // whether it is also called on an instance of the class, not reporting the companionDeprecation then
-    val isAlsoCalledOnInstance: Boolean = false,
-    // the deprecations of the classes its call on the name of the class goes through, not reported when called on an instance,
-    // see enclosingContext
-    val classDeprecations: String = ""
+    val isAlsoCalledOnInstance: Boolean = false
 ) : ReceiverBounded
 
 /**
@@ -1977,14 +1971,17 @@ internal class DefaultKotlinIntrospector(
         // is told before them when resolved directly, like the one of any class, see enclosingContext
         val listedExtensions = listedExtensions(kmClass, className, apiClass, declarations, isBuiltin, memberName)
         // also the JVM-only members hidden by an extension, which are not listed, but still override the inherited ones
-        val apiMembers = apiMembersNamed(kmClass, declarations, memberName, apiClass)
-        val hiddenJvmOnlyFunctions = (declarations as? BuiltinClass)?.jvmOnlyFunctions.orEmpty() -
-            jvmOnlyFunctionsNotHidden(kmClass, declarations, listedExtensions.functions).toSet()
-        val members = declaredMembers(
-            kmClass, declarations,
-            apiMembers.filter { member -> (member as? Member.Function)?.function !in hiddenJvmOnlyFunctions },
-            apiClass, contextPackage
-        )
+        // but no member of the class through a typealias expanding to it with type arguments, which they would not tell
+        val members = if (isOnlyCalledOnClassName) emptyList() else {
+            val apiMembers = apiMembersNamed(kmClass, declarations, memberName, apiClass)
+            val hiddenJvmOnlyFunctions = (declarations as? BuiltinClass)?.jvmOnlyFunctions.orEmpty() -
+                jvmOnlyFunctionsNotHidden(kmClass, declarations, listedExtensions.functions).toSet()
+            declaredMembers(
+                kmClass, declarations,
+                apiMembers.filter { member -> (member as? Member.Function)?.function !in hiddenJvmOnlyFunctions },
+                apiClass, contextPackage
+            )
+        }
 
         val apiCompanion = apiCompanionOf(kmClass, declarations, apiClass)
         val companionMembers = apiCompanion?.let { companion ->
@@ -2001,7 +1998,7 @@ internal class DefaultKotlinIntrospector(
         // a member always wins over an extension, so the inherited members are looked up also when an extension,
         // or a companion object member, is found, and the inherited overloads also next to the declared ones
         val hidingExtensions = mutableListOf<IndexedExtension>()
-        val inherited = inheritedMembers(
+        val inherited = if (isOnlyCalledOnClassName) emptyList() else inheritedMembers(
             kmClass, declarations, memberName, apiClass, contextPackage, hidingExtensions
         )
 
@@ -2028,14 +2025,10 @@ internal class DefaultKotlinIntrospector(
         val context = enclosingContext(kmClass, apiClass, declarations, includingClass = true, isBuiltin, aliasedClass)
         val classDeprecations = if (isObject) "" else context.joinToString("") { it.deprecationOnClassName.orEmpty() }
         val companionFunctions = companionSupertypeExtensions?.functions.orEmpty().map {
-            if (it.function in classFunctionDeclarations) {
-                it.copy(isAlsoCalledOnInstance = true, classDeprecations = classDeprecations)
-            } else it
+            if (it.function in classFunctionDeclarations) it.copy(isAlsoCalledOnInstance = true) else it
         }
         val companionProperties = companionSupertypeExtensions?.properties.orEmpty().map {
-            if (it.property in classPropertyDeclarations) {
-                it.copy(isAlsoCalledOnInstance = true, classDeprecations = classDeprecations)
-            } else it
+            if (it.property in classPropertyDeclarations) it.copy(isAlsoCalledOnInstance = true) else it
         }
         val companionFunctionDeclarations = companionFunctions.mapTo(HashSet()) { it.function }
         val companionPropertyDeclarations = companionProperties.mapTo(HashSet()) { it.property }
@@ -2044,6 +2037,7 @@ internal class DefaultKotlinIntrospector(
                 companionFunctions,
             listedExtensions.properties.filter { it.property !in companionPropertyDeclarations } + companionProperties,
             contextPackage,
+            classDeprecations = classDeprecations,
             isAlsoCalledOnInstance = { !isObject && it }
         ) { extension, receiver ->
             // told by their declarations, the very instances of the index, as two receivers may look the same, like T
@@ -2054,14 +2048,13 @@ internal class DefaultKotlinIntrospector(
             // the ones on the companion object itself are listed for the class only, when it extends Any only
             isObject || isOnCompanion || receiver.isOnCompanion()
         }
-        val items = (enumMembersNamed(kmClass, declarations, memberName, contextPackage) + members).map { ListingItem.Declaration(it) } +
-            inherited + companionMembers + extensions
+        val enumMembers = if (isOnlyCalledOnClassName) emptyList() else {
+            enumMembersNamed(kmClass, declarations, memberName, contextPackage)
+        }
         return MemberListing.of(
-            // through a typealias expanding to the class with type arguments, only what is called on the name of the class
-            items.filter { item ->
-                !isOnlyCalledOnClassName || isObject || item is ListingItem.CompanionMember ||
-                    (item is ListingItem.Extension && item.isCalledOnClassName)
-            },
+            (enumMembers + members).map { ListingItem.Declaration(it) } + inherited + companionMembers +
+                // through a typealias expanding to the class with type arguments, only the ones called on the name of the class
+                extensions.filter { !isOnlyCalledOnClassName || it.isCalledOnClassName },
             context = context,
             areMembersCalledOnClassName = isObject
         )
@@ -4365,8 +4358,9 @@ internal class DefaultKotlinIntrospector(
      * told by their receivers, see [isCalledOnClass],
      * shadowed by a member of the class, given by [membersNamed] their name, which Kotlin always calls instead,
      * reporting an extension on the class itself as shadowed by the member:
-     * an extension property by a member property of the same name, and an extension function by a member function
-     * accepting its every call, see [shadowsAsMember], or by a member property of a function type, see [isInvokedInsteadOf],
+     * an extension property by a member property of the same name, unless it has a context parameter, see [isReadAnywhere],
+     * and an extension function by a member function accepting its every call, see [shadowsAsMember],
+     * or by a member property of a function type, see [isInvokedInsteadOf],
      * unless the extension hides the members, see [IndexedExtension.hidesMembers].
      *
      * @param className the name of the class, like `com/example/Foo.Companion`, which the type parameter of the receiver
@@ -4396,7 +4390,7 @@ internal class DefaultKotlinIntrospector(
             }
         }
         val shadowedProperties = properties.filterTo(HashSet()) { extension ->
-            members.getValue(extension.property.name).any { it is Member.Property }
+            members.getValue(extension.property.name).any { it is Member.Property && it.property.isReadAnywhere }
         }
         return ListedExtensions(
             this.functions.filter { it !in shadowedFunctions },
@@ -4407,7 +4401,8 @@ internal class DefaultKotlinIntrospector(
     /**
      * Whether the [receiver] of an extension, declaring the [typeParameters], is never `null`,
      * so that a member of its class can always be called on it: neither a nullable type, like `Foo?`,
-     * nor a type parameter which can be inferred as one, like `T : Foo?`, also through a type parameter bounding it.
+     * nor a type parameter which can be inferred as one, like `T : Foo?`, also through a type parameter bounding it,
+     * unless definitely not nullable, like `T & Any`.
      */
     private fun isNeverNullable(
         receiver: KmType?,
@@ -4417,10 +4412,10 @@ internal class DefaultKotlinIntrospector(
         if (receiver == null || receiver.isNullable) return false
         return when (val classifier = receiver.classifier) {
             is KmClassifier.Class -> true
-            is KmClassifier.TypeParameter -> visited.add(classifier.id) &&
+            is KmClassifier.TypeParameter -> receiver.isDefinitelyNonNull || (visited.add(classifier.id) &&
                 typeParameters.firstOrNull { it.id == classifier.id }?.upperBounds.orEmpty().any {
                     isNeverNullable(it, typeParameters, visited)
-                }
+                })
             is KmClassifier.TypeAlias -> false
         }
     }
@@ -4445,8 +4440,13 @@ internal class DefaultKotlinIntrospector(
      * see [receiverTypeArguments], like `x: String` for `x: T` of `fun <T> Base<T>.ext(x: T)` for `object Obj : Base<String>`.
      * It has no context parameter, and it is an operator, or infix, if the [extension] is, as only then it is called the same way,
      * also when it is suspend, called then also outside a coroutine, failing to compile.
-     * Not told is a call giving the type arguments explicitly, which reaches the [extension],
-     * like `Obj.ext<Int>()` of `fun <R> Bar.ext()` next to a member `ext()`.
+     * An [extension] with a type parameter which only a type argument given explicitly tells, see [hasExplicitTypeParameter],
+     * like `fun <R> Bar.ext()`, called as `Obj.ext<Int>()`, is shadowed only by a member taking as many type arguments,
+     * whatever they are, neither bounded, nor the types of its value parameters, like `fun <T> ext()`,
+     * as Kotlin calls the extension when the member does not take them, like `fun ext()`, `fun <T : Number> ext()`,
+     * or `fun <T> ext(x: T)` next to `fun <R> Bar.ext(x: Int)`, called as `Obj.ext<String>(1)`.
+     * Not told is a call giving explicitly the type arguments which are inferred otherwise, which reaches the [extension],
+     * like `Obj.ext<Bar>()` of `fun <T : Bar> T.ext()` next to a member `ext()`.
      *
      * @param supertypes the supertypes of the class, looked up only when asked, or `null` if the class is not found.
      */
@@ -4458,6 +4458,11 @@ internal class DefaultKotlinIntrospector(
         // the ones inferred as the type of any argument
         val inferred = typeParameters.filter { typeParameter -> typeParameter.upperBounds.all { it.isNullableAny() } }
             .mapTo(HashSet()) { it.id }
+        if (extension.hasExplicitTypeParameter) {
+            val takesAnyTypeArguments = typeParameters.size == extension.typeParameters.size && inferred.size == typeParameters.size &&
+                valueParameters.all { parameter -> parameter.type.refersOnlyTo { it !in inferred } }
+            if (!takesAnyTypeArguments) return false
+        }
         val pinnedId by lazy(LazyThreadSafetyMode.NONE) {
             val id = (extension.receiverParameterType?.classifier as? KmClassifier.TypeParameter)?.id
             extension.typeParameters.firstOrNull { it.id == id }?.takeIf { supertypes()?.pinsFinal(it) == true }?.id ?: -1
@@ -4494,12 +4499,13 @@ internal class DefaultKotlinIntrospector(
      * Whether this member property of a class is always invoked instead of the [extension] function of its name
      * called on the class, see [withoutShadowedByMembers], like `val run: () -> Unit` instead of `fun Bar.run()` for `Obj.run()`:
      * a property of a function type without parameters, neither nullable, nor suspend, nor with a receiver,
-     * next to an extension without value parameters, which is no operator,
+     * read anywhere, see [isReadAnywhere], next to an extension without value parameters, which is no operator,
+     * nor called with type arguments given explicitly, see [hasExplicitTypeParameter], which a function type does not take,
      * while a function type with parameters does not take the named arguments of the [extension],
      * like `Obj.run(x = 1)` of `fun Bar.run(x: Int)` next to `val run: (Int) -> Unit`.
      */
     private fun KmProperty.isInvokedInsteadOf(extension: KmFunction): Boolean =
-        extension.valueParameters.isEmpty() && !extension.isOperator &&
+        extension.valueParameters.isEmpty() && !extension.isOperator && !extension.hasExplicitTypeParameter && isReadAnywhere &&
             !returnType.isNullable && !returnType.isSuspend && returnType.arguments.size == 1 &&
             (returnType.classifier as? KmClassifier.Class)?.name == "kotlin/Function0"
 
@@ -4594,7 +4600,8 @@ internal class DefaultKotlinIntrospector(
      * imported from the same package as the shadowed one.
      * So is an extension property on such a type parameter, like `val <T : Comparable<T>> T.rank`,
      * shadowed by one of these extension properties of the same name on the class itself, like `val Version.rank`,
-     * imported from the same package, read instead, while a member property shadows it anyway, see [withoutShadowedByMembers].
+     * imported from the same package, read instead, unless it has a context parameter, see [isReadAnywhere],
+     * while a member property shadows it anyway, see [withoutShadowedByMembers].
      * Any other extension on a type parameter is listed, as the type parameter can be inferred as a supertype of the class,
      * like for `ps.foo(object : PD {})` of `fun <T : PD> T.foo(value: T)`, next to the member `foo(value: PS)`.
      */
@@ -4617,7 +4624,7 @@ internal class DefaultKotlinIntrospector(
         val shadowedProperties = pinnedProperties.filterTo(HashSet()) { extension ->
             properties.any {
                 it.property.name == extension.property.name && it.source == extension.source &&
-                    it.property.receiverParameterType.isClass()
+                    it.property.receiverParameterType.isClass() && it.property.isReadAnywhere
             }
         }
         if (pinned.isEmpty()) return ListedExtensions(functions, properties.filter { it !in shadowedProperties })
@@ -7822,6 +7829,9 @@ internal class DefaultKotlinIntrospector(
      * The extensions of all the receivers are sorted together, not grouped by receiver,
      * so that the overloads callable on the class, like `Iterable.first()` and `List.first()`, are adjacent.
      *
+     * @param classDeprecations the deprecations of the classes the name of the class goes through,
+     *   see [EnclosingClass.deprecationOnClassName], told on each extension called also on an instance of the class,
+     *   see [IndexedExtension.isAlsoCalledOnInstance], for which Kotlin does not report them.
      * @param isAlsoCalledOnInstance whether the extension called on the name of a class, told to be called on its instance too,
      *   see [IndexedExtension.isAlsoCalledOnInstance], is, see [ListingItem.Extension.isAlsoCalledOnInstance].
      * @param isCalledOnClassName whether the extension, on the receiver of this type, is called on the name of a class,
@@ -7831,6 +7841,7 @@ internal class DefaultKotlinIntrospector(
         functions: List<IndexedExtension>,
         properties: List<IndexedExtensionProperty>,
         contextPackage: String?,
+        classDeprecations: String = "",
         isAlsoCalledOnInstance: (Boolean) -> Boolean = { false },
         isCalledOnClassName: (extension: ReceiverBounded, receiver: KmType?) -> Boolean = { _, _ -> false }
     ): List<ListingItem.Extension> {
@@ -7846,7 +7857,8 @@ internal class DefaultKotlinIntrospector(
                         formatProperty(
                             it.property, it.setterVisibility, contextPackage = contextPackage,
                             deprecation = it.deprecation, companionDeprecation = it.companionDeprecation,
-                            isAlsoCalledOnInstance = it.isAlsoCalledOnInstance, classDeprecations = it.classDeprecations
+                            isAlsoCalledOnInstance = it.isAlsoCalledOnInstance,
+                            classDeprecations = if (it.isAlsoCalledOnInstance) classDeprecations else ""
                         ),
                         isCalledOnClassName(it, it.property.receiverParameterType),
                         isAlsoCalledOnInstance(it.isAlsoCalledOnInstance)
@@ -7861,7 +7873,8 @@ internal class DefaultKotlinIntrospector(
                                 formatFunction(
                                     it.function, contextPackage = contextPackage,
                                     deprecation = it.deprecation, companionDeprecation = it.companionDeprecation,
-                                    isAlsoCalledOnInstance = it.isAlsoCalledOnInstance, classDeprecations = it.classDeprecations
+                                    isAlsoCalledOnInstance = it.isAlsoCalledOnInstance,
+                                    classDeprecations = if (it.isAlsoCalledOnInstance) classDeprecations else ""
                                 )
                             ),
                             isCalledOnClassName(it, it.function.receiverParameterType),
@@ -8048,7 +8061,7 @@ internal class DefaultKotlinIntrospector(
      * @param isAlsoCalledOnInstance whether the [function] is also called on an instance of the class,
      *   not reporting the [companionDeprecation] then, see [formatCompanionDeprecation].
      * @param classDeprecations the deprecations of the classes the call of the [function] on the name of the class goes through,
-     *   see [IndexedExtension.classDeprecations].
+     *   see [extensionSignatures].
      * @param isOwnerOpenForOverrides whether the user code might override the members of the [owner],
      *   see [formatModalityModifiers], by default unless final.
      * @param declaration the [function] as the [owner] declares it, telling whether it is an override,
@@ -9918,6 +9931,25 @@ private class MemberListing(
  */
 private val KmFunction.pinnableReceiverTypeParameter: KmTypeParameter?
     get() = pinnableReceiverTypeParameter(receiverParameterType, typeParameters)
+
+/**
+ * Whether this property is read anywhere, without a context parameter, outside whose context Kotlin reads
+ * the extension property it would shadow instead, like `val Bar.rank` next to a member `context(c: Ctx) val rank`.
+ */
+@OptIn(ExperimentalContextParameters::class)
+private val KmProperty.isReadAnywhere: Boolean get() = contextParameters.isEmpty()
+
+/**
+ * Whether this extension function has a type parameter which only a type argument given explicitly tells,
+ * like `R` of `fun <R> Bar.ext()`, called as `bar.ext<Int>()`, or inferred from the expected type:
+ * one which neither its receiver, nor a value parameter, nor a context parameter refers to.
+ */
+@OptIn(ExperimentalContextParameters::class)
+private val KmFunction.hasExplicitTypeParameter: Boolean
+    get() = typeParameters.isNotEmpty() && run {
+        val types = listOfNotNull(receiverParameterType) + valueParameters.map { it.type } + contextParameters.map { it.type }
+        typeParameters.any { typeParameter -> types.all { type -> type.refersOnlyTo { it != typeParameter.id } } }
+    }
 
 /**
  * The type parameter of the receiver of this extension property, like the one of an extension function.

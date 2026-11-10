@@ -1630,19 +1630,32 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve class without extensions shadowed by its members`() {
-        // shadowing.shadowed(), shadowing.shadowedProperty, shadowing.generic("") and shadowing.inherited() call the members,
-        // while nullableShadowing.onNullable(), shadowing.named(y = 1) and shadowing.protectedMember() call the extensions
-        resolver.resolve("com.xemantic.kotlin.introspection.test.InstanceShadowing", pageSize = 20) sameAsKotlin """
+        // shadowing.shadowed(), shadowing.shadowedProperty, shadowing.generic(""), shadowing.inherited(),
+        // shadowing.onDefinitelyNotNull() and shadowing.explicitSame<Int>() call the members,
+        // while nullableShadowing.onNullable(), shadowing.named(y = 1), shadowing.protectedMember(),
+        // shadowing.contextualProperty outside the context, shadowing.explicit<Int>(), shadowing.explicitBounded<String>()
+        // and shadowing.explicitInferred<String>(1) call the extensions
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InstanceShadowing", pageSize = 30) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.InstanceShadowing [page 1/1]
             open class InstanceShadowing : InstanceShadowingBase, InstanceShadowedSupertype {
                 val shadowedProperty: Int
+                context(text: String) val contextualProperty: Int
                 fun shadowed(): Int
                 fun onNullable(): Int
                 fun onNullableBound(): Int
+                fun onDefinitelyNotNull(): Int
+                fun explicit(): Int
+                fun <T> explicitSame(): Int
+                fun <T : Number> explicitBounded(): Int
+                fun <T> explicitInferred(x: T): Int
                 fun named(x: Int): Int
                 fun <T> generic(x: T): Int
             }
             // from com.xemantic.kotlin.introspection.test
+            val InstanceShadowedSupertype.contextualProperty: Int
+            fun <R> InstanceShadowedSupertype.explicit(): Int
+            fun <R> InstanceShadowedSupertype.explicitBounded(): Int
+            fun <R> InstanceShadowedSupertype.explicitInferred(x: Int): Int
             fun InstanceShadowedSupertype.named(y: Int): Int
             fun InstanceShadowedSupertype?.onNullable(): Int
             fun <T : InstanceShadowedSupertype?> T.onNullableBound(): Int
@@ -9726,6 +9739,19 @@ class KotlinIntrospectorTest {
             have("    val rank: Int" in lines())
             have("val <T : Comparable<T>> T.rank: Int" !in lines())
         }
+    }
+
+    @Test
+    fun `should resolve class with extension property on type parameter pinned to it next to extension property on it with context parameter`() {
+        // PinnedContextualExtensionProperty().rank reads the generic one outside the context of the one on the class
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.pinning.property.PinnedContextualExtensionProperty.rank"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.pinning.property.PinnedContextualExtensionProperty.rank [page 1/1]
+            // from com.xemantic.kotlin.introspection.test.pinning.property
+            context(context: PinnedPropertyContext) val PinnedContextualExtensionProperty.rank: Int
+            val <T : Comparable<T>> T.rank: Int
+        """.trimIndent()
     }
 
     @Test
