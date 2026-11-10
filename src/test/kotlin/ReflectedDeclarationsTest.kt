@@ -306,6 +306,21 @@ class ReflectedDeclarationsTest {
     }
 
     @Test
+    fun `should tell platform return type of Java method taking boxed type next to one implementing Kotlin member taking primitive type`() {
+        // given - kotlin-reflect takes put(Integer) for an override of the put(key: Int): String of PrimitivePut, returning String,
+        // which only the inherited put(int) implements, while the compiler sees a method of its own, returning String!
+        val boxed = com.xemantic.kotlin.introspection.test.other.JavaBoxedPutBelow::class.declaredMemberFunctions.single { it.name == "put" }
+        val primitive = com.xemantic.kotlin.introspection.test.other.JavaPrimitivePutImplementation::class.declaredMemberFunctions
+            .single { it.name == "put" }
+
+        // when
+        val platform = listOf(boxed, primitive).map { it.returnsPlatformType }
+
+        // then
+        assert(platform == listOf(true, false))
+    }
+
+    @Test
     fun `should not convert return type of JDK method enhanced as not nullable to nullable`() {
         // given
         val typeParameters = ReflectedTypeParameters.classTypeParameters(listOf(KmTypeParameter("T", 0, KmVariance.INVARIANT)))

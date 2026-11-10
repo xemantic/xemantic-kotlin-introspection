@@ -5563,6 +5563,112 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve Kotlin member merged with Java one taking primitive type next to its own one taking boxed type annotated not null once`() {
+        // the put(int) of JavaPrimitiveAndNotNullBoxedPut, merged with the put(key: Int) of PrimitivePut, implements it,
+        // and is called in place of put(@NotNull Integer), like without the interface: put(1) returns String, not String!
+        resolver.resolve("com.xemantic.kotlin.introspection.test.PrimitiveAndNotNullBoxedJavaPutJoin.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PrimitiveAndNotNullBoxedJavaPutJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.PrimitivePut
+            open fun put(key: Int): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin generic member merged with Java one taking primitive type below one taking boxed type annotated not null once`() {
+        // the put(int) of JavaPrimitivePut implements the put(t: T) of GenericPut<Int>, so that a concrete subclass compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NotNullBoxedJavaOverPrimitiveGenericPutJoin.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NotNullBoxedJavaOverPrimitiveGenericPutJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.GenericPut
+            open fun put(t: Int): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin generic member declared before Java class overriding generic method as abstract`() {
+        // the put(T) of JavaGenericPut, taking Object, is no member of JavaIntegerPutOverride, which overrides it by put(Integer),
+        // so that nothing implements the put(t: T) of GenericPut<Int>, like with the Java class declared first
+        resolver.resolve("com.xemantic.kotlin.introspection.test.GenericOverridingGenericBoxedJavaPutJoin.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GenericOverridingGenericBoxedJavaPutJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.GenericPut
+            fun put(t: Int): String
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaIntegerPutOverride
+            override fun put(arg0: Int?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member merged with Java member taking many collection types`() {
+        // each of the seven collection types of the Java member is either the read-only, or the mutable one, in Kotlin,
+        // told per value parameter, so that a concrete subclass compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.ManyCollectionsJavaTakerJoin.take") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ManyCollectionsJavaTakerJoin.take [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.ManyCollectionsTaker
+            open fun take(first: MutableMap<MutableList<String>, MutableList<String>>, second: MutableMap<MutableList<String>, MutableList<String>>, third: MutableList<String>): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member taking types of Java member merged with it declared first returning no platform type`() {
+        // both return Boolean, so that the compiler picks the addAll2(Collection<? extends Integer>) of the Java class, declared first:
+        // addAll2(null) compiles, also as addAll2(c = null), by the name the Kotlin interface gives
+        resolver.resolve("com.xemantic.kotlin.introspection.test.ExtendsIntegerJavaCollectionAdderJoin.addAll2") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ExtendsIntegerJavaCollectionAdderJoin.addAll2 [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.IntCollectionAdder
+            open fun addAll2(c: Collection<out Int>?): Boolean
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member declared before Java member merged with it returning no platform type`() {
+        // the compiler picks the addAll2(c: Collection<Int>) of the interface, declared first, so that addAll2(null) does not compile
+        resolver.resolve("com.xemantic.kotlin.introspection.test.CollectionAdderExtendsIntegerJavaJoin.addAll2") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.CollectionAdderExtendsIntegerJavaJoin.addAll2 [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.IntCollectionAdder
+            open fun addAll2(c: Collection<Int>): Boolean
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member taking platform type of Java member merged with it declared first returning Unit`() {
+        // accept(null) compiles, as the compiler picks the accept(String) of the Java class, declared first
+        resolver.resolve("com.xemantic.kotlin.introspection.test.StringJavaAcceptorJoin.accept") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.StringJavaAcceptorJoin.accept [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.StringAcceptor
+            open fun accept(s: String?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve generic Kotlin member taking types of generic Java member declared first by its own type parameter`() {
+        // the T of the take2 of JavaGenericMethodTaker is the T of the one of GenericMethodTaker, numbered after its E:
+        // take2(null, null) compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.GenericMethodJavaTakerJoin.take2") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GenericMethodJavaTakerJoin.take2 [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.GenericMethodTaker
+            open fun <T> take2(value: T?, type: java.lang.Class<T>?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve generic Kotlin member of class type parameter taking types of generic Java member declared first`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.GenericMethodJavaTakerParameterJoin.take2") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GenericMethodJavaTakerParameterJoin.take2 [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.GenericMethodTaker
+            open fun <T> take2(value: T?, type: java.lang.Class<T>?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve generic Kotlin member taking types of Java member declared first by its bounded type parameters`() {
+        // the A and B of the Java method are the X and Y of the Kotlin member, by their positions
+        resolver.resolve("com.xemantic.kotlin.introspection.test.GenericMethodJavaTakerJoin.pair") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GenericMethodJavaTakerJoin.pair [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.GenericMethodTaker
+            open fun <X : CharSequence, Y> pair(first: X?, second: Y?)
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve Kotlin member taking not nullable parameters merged with Java member of platform types`() {
         resolver.resolve("com.xemantic.kotlin.introspection.test.NotNullableJavaTakerJoin.take") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.NotNullableJavaTakerJoin.take [page 1/1]
@@ -7801,24 +7907,27 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve method of Java superclass merged with member of Kotlin interface once`() {
-        // take(String) of JavaTakeBase implements the take(x: String) of InheritedTaker on the JVM
+        // take(String) of JavaTakeBase implements the take(x: String) of InheritedTaker on the JVM,
+        // and the compiler picks it of the two, as declared first, both returning Unit, so that take(null) compiles,
+        // also as take(x = null), by the name the interface gives
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.InheritedFromJavaTakeBase.take"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.InheritedFromJavaTakeBase.take [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.InheritedTaker
-            fun take(x: String)
+            fun take(x: String?)
         """.trimIndent()
     }
 
     @Test
     fun `should resolve method of Java superclass of mixed nullability merged with member of Kotlin interface once`() {
+        // taking the platform types of mixed(Object, String) of JavaTakeBase, declared first, so that mixed(null, null) compiles
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.InheritedFromJavaTakeBase.mixed"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.InheritedFromJavaTakeBase.mixed [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.InheritedTaker
-            fun mixed(a: Any, b: String?)
+            fun mixed(a: Any?, b: String?)
         """.trimIndent()
     }
 
@@ -16548,6 +16657,30 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.test.HiddenPrimitiveNotNullBoxedJavaPutBelowJoin.put [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPutBelow
             open fun put(arg0: Int): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin generic member picked before hidden one as implemented by Java member taking primitive type`() {
+        // the put(t: T) of GenericPut<Int> is picked of the ones merged with the put(int) of JavaPrimitiveAndNotNullBoxedPut,
+        // before the hidden put(key: Int) of HiddenPrimitivePut, so that a concrete subclass compiles, and put(1) returns String,
+        // called in place of put(@NotNull Integer)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.PrimitiveAndNotNullBoxedJavaGenericHiddenPutJoin.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PrimitiveAndNotNullBoxedJavaGenericHiddenPutJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.GenericPut
+            open fun put(t: Int): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve Java member taking boxed type below one implementing Kotlin member merged with hidden one taking nullable type`() {
+        // the put(Integer) of JavaBoxedPutBelow, which does not override the put(key: Int) of PrimitivePut, returns String!,
+        // so that the hidden put(key: Int?) of HiddenNullablePrimitivePut, returning String, is picked of the two:
+        // put(null) does not compile
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaPutBelowHiddenNullablePutJoin.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaPutBelowHiddenNullablePutJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.PrimitivePut
+            open fun put(key: Int): String
         """.trimIndent()
     }
 
