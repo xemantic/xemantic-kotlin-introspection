@@ -5450,16 +5450,19 @@ internal class DefaultKotlinIntrospector(
             classTypeParameterTypes.groupBy({ it.first }, { it.second to it.third }).all { (id, positions) ->
                 fun typesOf(variance: KmVariance) = positions.filter { it.second == variance }.map { it.first }
                 val invariant = typesOf(KmVariance.INVARIANT)
+                val bounds = supertypes.kmClass.typeParameters.find { it.id == id }?.upperBounds.orEmpty()
                 // also the bounds of the type parameter, like CharSequence of V : CharSequence, referring to no type parameter
-                val upper = typesOf(KmVariance.OUT) + supertypes.kmClass.typeParameters.find { it.id == id }?.upperBounds.orEmpty()
-                    .filter { bound -> bound.refersOnlyTo { false } }
+                val upper = typesOf(KmVariance.OUT) + bounds.filter { bound -> bound.refersOnlyTo { false } }
                 val lower = typesOf(KmVariance.IN)
                 // whether the subtype is a subtype of the supertype, as far as told
                 fun isSubtype(subtype: KmType, supertype: KmType) = typeMatcher.matches(supertype, subtype, KmVariance.OUT, isStrict = false)
                 when (val type = invariant.firstOrNull()) {
                     null -> lower.all { subtype -> upper.all { isSubtype(subtype, it) } }
                     else -> invariant.all { typeMatcher.matches(it, type, KmVariance.INVARIANT, isStrict = false) } &&
-                        upper.all { isSubtype(type, it) } && lower.all { isSubtype(it, type) }
+                        upper.all { isSubtype(type, it) } && lower.all { isSubtype(it, type) } &&
+                        // and the bounds referring only to itself, like Comparable<V> of V : Comparable<V>, of the type it takes
+                        bounds.filter { bound -> !bound.refersOnlyTo { false } && bound.refersOnlyTo { it == id } }
+                            .all { bound -> isSubtype(type, bound.substituted(mapOf(id to type))) }
                 }
             }
 
@@ -5477,10 +5480,16 @@ internal class DefaultKotlinIntrospector(
          * with the variance of its position, the [expected] type referring to no type parameter of the extension,
          * or else the bound of its type parameter, like `Order` of `T : Order` for `Map<String, T>`, which it is a subtype of,
          * in a covariant, or an invariant, position,
-         * without the nullability for a platform type, like `V!` of a Java supertype, or for a nullable one, like `V?`,
+         * without the nullability for a platform type, when [isPlatform], like `V!` of a Java supertype,
+         * also a type argument of one, like `T` of `(Mutable)List<T!>!`, or for a nullable one, like `V?`,
          * or `null` if nothing is told, like of a nullable one for a not nullable type, or of a type parameter bounded by another.
          */
-        private fun classTypeParameterTypeOf(expected: KmType, actual: KmType, variance: KmVariance): Pair<KmType, KmVariance>? {
+        private fun classTypeParameterTypeOf(
+            expected: KmType,
+            actual: KmType,
+            variance: KmVariance,
+            isPlatform: Boolean
+        ): Pair<KmType, KmVariance>? {
             val typeParameterId = (expected.classifier as? KmClassifier.TypeParameter)?.id
             val (type, typeVariance) = when {
                 expected.refersToNoTypeParameter() -> expected to variance
@@ -5492,7 +5501,7 @@ internal class DefaultKotlinIntrospector(
                 }
             }
             return when {
-                actual.flexibleTypeUpperBound != null -> type.notNullable() to typeVariance
+                isPlatform -> type.notNullable() to typeVariance
                 !actual.isNullable -> type to typeVariance
                 type.isNullable -> type.notNullable() to typeVariance
                 else -> null
@@ -5916,6 +5925,30 @@ internal class DefaultKotlinIntrospector(
          * while a type parameter of the class stands for any type, other than the class itself.
          */
         private fun matches(expected: KmType, actual: KmType, variance: KmVariance, isStrict: Boolean): Boolean {
+            val isPlatformPosition = isPlatformArgument
+            isPlatformArgument = actual.flexibleTypeUpperBound != null
+            try {
+                return matchesType(expected, actual, variance, isStrict, isPlatformPosition)
+            } finally {
+                isPlatformArgument = isPlatformPosition
+            }
+        }
+
+        // whether the types matched are the type arguments of a platform type, like T of (Mutable)List<T!>! of a Java supertype,
+        // where a type parameter of the class is a platform type too, which the substitution leaves as is, see matchesType
+        private var isPlatformArgument = false
+
+        /**
+         * Whether the [expected] type matches the [actual] one, see [matches],
+         * the [actual] one a type argument of a platform type when [isPlatformPosition].
+         */
+        private fun matchesType(
+            expected: KmType,
+            actual: KmType,
+            variance: KmVariance,
+            isStrict: Boolean,
+            isPlatformPosition: Boolean
+        ): Boolean {
             val actualClassifier = actual.classifier as? KmClassifier.Class
                 // a type parameter bounded by the class itself, like `E` of `Enum<E : Enum<E>>`, stands for the class
                 ?: KmClassifier.Class(supertypes.kmClass.name).takeIf { supertypes.isSelfTypeParameter(actual) }
@@ -5926,11 +5959,12 @@ internal class DefaultKotlinIntrospector(
                     (expected.classifier as? KmClassifier.TypeParameter)?.id != receiverTypeParameterId) &&
                     // a nullable one, like V?, is no type of a class, like String, in a covariant, or an invariant position,
                     // nor a type parameter bounded only by classes, like T : Order
-                    (!actual.isNullable || actual.flexibleTypeUpperBound != null || variance == KmVariance.IN ||
+                    (!actual.isNullable || actual.flexibleTypeUpperBound != null || isPlatformPosition || variance == KmVariance.IN ||
                         expected.isNullable || !expected.isNeverNullable()) &&
                     matchesUntold(isStrict = false).also {
                         val id = (actual.classifier as? KmClassifier.TypeParameter)?.id
-                        if (id != null) classTypeParameterTypeOf(expected, actual, variance)?.let { (type, typeVariance) ->
+                        val isPlatform = isPlatformPosition || actual.flexibleTypeUpperBound != null
+                        if (id != null) classTypeParameterTypeOf(expected, actual, variance, isPlatform)?.let { (type, typeVariance) ->
                             classTypeParameterTypes += Triple(id, type, typeVariance)
                         }
                     }

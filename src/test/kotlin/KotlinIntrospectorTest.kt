@@ -10042,6 +10042,27 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve class with type parameter bounded by not nullable type in platform position of Java supertype`() {
+        // the BoundedReceiverPaths<(Mutable)List<T!>!> of JavaListPathsOf<T> takes a T! of String for List<String?>,
+        // but no CharSequence takes Any?, nor Comparable<*>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverCharSequenceJavaListPaths"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverCharSequenceJavaListPaths [page 1/1]
+            interface BoundedReceiverCharSequenceJavaListPaths<T : CharSequence> : com.xemantic.kotlin.introspection.test.other.JavaListPathsOf<T>
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverPaths<List<CharSequence>>.charSequenceListPaths()
+            fun BoundedReceiverPaths<MutableList<String>>.mutableStringListPaths()
+            fun <T : Any> BoundedReceiverPaths<List<T>>.nonNullListPaths()
+            fun BoundedReceiverPaths<List<CharSequence?>>.nullableCharSequenceListPaths()
+            fun BoundedReceiverPaths<MutableList<String?>>.nullableMutableStringPaths()
+            fun BoundedReceiverPaths<List<String?>>.nullableStringListPaths()
+            fun <P : BoundedReceiverPaths<List<String?>>> P.nullableStringListPathsOf()
+            fun BoundedReceiverPaths<List<String>>.stringListPaths()
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve class with raw Kotlin supertype of Java supertype erased to not nullable bound of its type parameter`() {
         // kotlinc erases the raw BoundedReceiverCharSequenceListPaths to BoundedReceiverPaths<List<CharSequence>>, not to CharSequence!
         resolver.resolve(
