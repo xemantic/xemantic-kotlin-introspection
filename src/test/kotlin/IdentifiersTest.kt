@@ -157,4 +157,40 @@ class IdentifiersTest {
         assert(escaped == "com.example.`in`.Outer.`Dollar\$Nested`")
     }
 
+    @Test
+    fun `should name synthetic properties of getters like kotlinc`() {
+        // given
+        val getterNames = listOf("getName", "getURL", "getUrlX", "getFOObar", "getAB", "get_x", "getÄx", "isActive", "isURL")
+
+        // when
+        val names = getterNames.map { syntheticPropertyName(it) }
+
+        // then - an is getter keeps its name, and only ASCII uppercase letters are decapitalized, as verified with kotlinc 2.4.21
+        assert(names == listOf("name", "url", "urlX", "foObar", "ab", "_x", "Äx", "isActive", "isURL"))
+    }
+
+    @Test
+    fun `should not name synthetic properties of methods which are not named like getters`() {
+        // given
+        val methodNames = listOf("get", "is", "getaB", "isa", "get1", "issue", "getting", "size", "toString")
+
+        // when
+        val names = methodNames.map { syntheticPropertyName(it) }
+
+        // then
+        assert(names.all { it == null })
+    }
+
+    @Test
+    fun `should name setters of synthetic properties of getters`() {
+        // given
+        val getterNames = listOf("getName", "getURL", "isActive")
+
+        // when
+        val setterNames = getterNames.map { syntheticPropertySetterName(it) }
+
+        // then
+        assert(setterNames == listOf("setName", "setURL", "setActive"))
+    }
+
 }

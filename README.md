@@ -161,6 +161,15 @@ com.example.AnnotationTestClass
   or `final` when implemented by a final Java method,
   or `abstract` when the Java class declares it abstract again,
   like `abstract fun hashCode(): Int` for a class extending `java.security.Permission`.
+  The synthetic property which Kotlin reads a Java getter as is not listed as a member of its own,
+  as Kotlin does not let it be referenced, like `Thread::name`, and it would repeat every getter,
+  but hinted on the line above the getter, like `// also property: var name` above `fun getName(): String` of `java.lang.Thread`,
+  a `var` when there is a setter taking the type the getter returns, like `setName(String)`,
+  named like kotlinc names it, like `url` of `getURL()`, or `isActive` of `isActive()`,
+  for a method of a Java class, a JVM-only member of a built-in type, like `getStackTrace()` of `kotlin.Throwable`,
+  or a Kotlin function overriding one of them, unlike any other Kotlin function,
+  and only for a getter taking no parameters, neither generic, nor `void`,
+  of a class without a property of the same name, which Kotlin reads instead, like `key` of `java.util.Map.Entry` of `getKey()`.
 * A typealias is rendered as its declaration,
   like `typealias ArrayList<E> = java.util.ArrayList<E>` for `kotlin.collections.ArrayList`,
   as a Java class it might expand to is not rendered,

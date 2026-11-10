@@ -908,3 +908,14 @@ abstract class InheritedJavaPassingMidOverriding : com.xemantic.kotlin.introspec
 abstract class InheritedJavaPassingMid2Overriding : com.xemantic.kotlin.introspection.test.other.JavaPassingMid2Overriding()
 
 abstract class InheritedJavaPassingDirect : com.xemantic.kotlin.introspection.test.other.JavaPassingDirect()
+
+// The getters of a Java superclass, which kotlinc also offers as synthetic properties, like `name` of getName(),
+// but not the one of a Java field of the same name, like `code`,
+// while a Kotlin override of a Java getter, like getLabel(), is offered as one too, unlike another Kotlin function, like getOwn()
+open class SyntheticPropertyHolder : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyBase() {
+    override fun getLabel(): String = ""
+    fun getOwn(): String = ""
+}
+
+// The getters of java.lang.Thread, like getName(), offered as the var name, with setName(String)
+class SyntheticPropertyThread : Thread()

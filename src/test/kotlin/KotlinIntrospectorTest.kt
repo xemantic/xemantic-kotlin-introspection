@@ -7237,6 +7237,7 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.JavaCharSequenceSubclass.isEmpty [page 1/1]
             // inherited from java.lang.CharSequence
+            // also property: val isEmpty
             open fun isEmpty(): Boolean
         """.trimIndent()
     }
@@ -7314,6 +7315,108 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should hint synthetic property of getter inherited from JDK class`() {
+        // kotlinc reads getName() as the name property, a var with setName(String), not listed as a member of its own
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.SyntheticPropertyThread.getName"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SyntheticPropertyThread.getName [page 1/1]
+            // inherited from java.lang.Thread
+            // also property: var name
+            fun getName(): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should hint synthetic property of getter inherited from Java class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.SyntheticPropertyHolder.getName"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SyntheticPropertyHolder.getName [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyBase
+            // also property: var name
+            open fun getName(): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should hint synthetic property of is getter named like the getter`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.SyntheticPropertyHolder.isActive"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SyntheticPropertyHolder.isActive [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyBase
+            // also property: val isActive
+            open fun isActive(): Boolean
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should hint synthetic property of getter of acronym decapitalized`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.SyntheticPropertyHolder.getURL"
+        ) should {
+            have("// also property: val url" in lines())
+        }
+    }
+
+    @Test
+    fun `should hint synthetic property as val when setter takes another type`() {
+        // setCount(String) does not set the count of getCount(): Int, so kotlinc rejects holder.count = 1
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.SyntheticPropertyHolder.getCount"
+        ) should {
+            have("// also property: val count" in lines())
+        }
+    }
+
+    @Test
+    fun `should not hint synthetic property of Java methods which are no getters`() {
+        // a getter taking a parameter, a generic one, a void one, one of a lowercase letter after get,
+        // the one of a Java field of the same name, which kotlinc reads instead, and a Kotlin function overriding none
+        listOf("getAt", "getAny", "getNothing", "getaB", "getCode", "getOwn").forEach { name ->
+            resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertyHolder.$name") should {
+                have(lines().isNotEmpty())
+                have(lines().none { "// also property" in it })
+            }
+        }
+    }
+
+    @Test
+    fun `should hint synthetic property of Kotlin override of Java getter`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.SyntheticPropertyHolder.getLabel"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SyntheticPropertyHolder.getLabel [page 1/1]
+            // also property: val label
+            override fun getLabel(): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should list synthetic property hint above Kotlin override of Java getter`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.SyntheticPropertyHolder"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SyntheticPropertyHolder [page 1/1]
+            open class SyntheticPropertyHolder : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyBase {
+                // also property: val label
+                override fun getLabel(): String
+                fun getOwn(): String
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should hint synthetic property of JVM-only getter of built-in type`() {
+        resolver.resolve("kotlin.Throwable.getStackTrace") sameAsKotlin """
+            // kotlin.Throwable.getStackTrace [page 1/1]
+            // also property: var stackTrace
+            open fun getStackTrace(): Array<java.lang.StackTraceElement>
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve own member of Java superclass whose members kotlin-reflect cannot describe since JDK 21`() {
         assumeTrue(Runtime.version().feature() >= 21, "kotlin-reflect fails on the members of java.util.LinkedHashSet since JDK 21")
         resolver.resolve(
@@ -7321,6 +7424,7 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.InheritedLinkedHashSet.getFirst [page 1/1]
             // inherited from java.util.LinkedHashSet
+            // also property: val first
             override fun getFirst(): E
         """.trimIndent()
     }
@@ -7333,6 +7437,7 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.InheritedLinkedHashSetHidingFirst.getFirst [page 1/1]
             // inherited from java.util.LinkedHashSet
+            // also property: val first
             override fun getFirst(): String
         """.trimIndent()
     }
