@@ -2685,6 +2685,25 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should resolve entries of enum class whose metadata does not tell them`() {
+        // given
+        // like an enum class compiled before Kotlin 1.9, for which kotlinc still resolves LegacyEntriesEnum.entries
+        val root = isolatedTestFixturesCopy("legacyEnumEntries") { fileName, bytes ->
+            if (fileName == "LegacyEntriesEnum.class") withoutEnumEntriesInMetadata(bytes) else bytes
+        }
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val entries = introspector.resolve("com.xemantic.kotlin.introspection.isolated.LegacyEntriesEnum.entries")
+
+        // then
+        entries sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.LegacyEntriesEnum.entries [page 1/1]
+            val entries: EnumEntries<LegacyEntriesEnum>
+        """.trimIndent()
+    }
+
+    @Test
     fun `should mark overrides of raw Java superclass which cannot be loaded, as read from its class file without generic signature`() {
         // given
         val introspector = introspectorWithoutAbsentClass()

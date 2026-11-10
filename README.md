@@ -91,8 +91,11 @@ com.example.AnnotationTestClass
   its members, the members of its companion object, and the extensions of the class and its supertypes,
   paged by signatures, one item each.
   An entry of an enum class is resolved by its name too, like `com.example.Color.RED`, rendered as a bare `RED` line,
+  following its own deprecation, if any, like in the listing of the enum class, like `@Deprecated("Use CRIMSON") RED`,
+  while an entry deprecated with the `HIDDEN` level, which Kotlin does not resolve, is not resolved,
+  only listed with its deprecation, as a `when` expression still has to cover it,
   and so are the members the compiler generates for every enum class, which its listing implies, and does not show:
-  `val entries: EnumEntries<Color>`, when the metadata of the class tells it has one,
+  `val entries: EnumEntries<Color>`, also of an enum class compiled before Kotlin 1.9, for which Kotlin resolves it too,
   `fun valueOf(value: String): Color`, and `fun values(): Array<Color>`,
   followed by the members of the same name of its companion object, if any,
   even when one of the same signature is called only as `Color.Companion.valueOf("RED")`,
@@ -109,9 +112,9 @@ com.example.AnnotationTestClass
   while the ones of a companion object within a protected class are told by the comment of the protected class,
   like its members,
   and neither the extensions on the companion object, nor the ones on its supertypes,
-  shadowed by a member of the companion object called the same way, which Kotlin calls instead, are listed or resolved,
+  shadowed by a member of the companion object, which Kotlin always calls instead, are listed or resolved,
   like `fun shadow()` for `fun Parser.shadow()`, while `fun shadow(x: Int)` does not shadow `fun Parser.shadow(y: Int)`,
-  called as `Foo.shadow(y = 1)`,
+  called as `Foo.shadow(y = 1)`, see the shadowed extensions below,
   while a class nested in the companion object is resolved only through it, like `com.example.Foo.Companion.Builder`,
   as Kotlin does not resolve `Foo.Builder` either.
   The deprecation of a companion object deprecated with the `WARNING` or the `ERROR` level,
@@ -123,6 +126,9 @@ com.example.AnnotationTestClass
   like `/* companion object deprecated: "Use the constructor", level = DeprecationLevel.ERROR */ fun Foo.Companion.parse(): Foo`,
   qualified when the class extends the supertype too, as Kotlin reports nothing for `foo.parse()` called on its instance,
   like `/* companion object deprecated: "Use the constructor" (when called on the class name) */ fun Parser.parse(): Foo`.
+  Such an extension, called both ways, tells the deprecation of the class itself the same way,
+  like `/* class Foo deprecated: "Use Bar" (when called on the class name) */ fun Parser.parse(): Foo`,
+  rather than by the comment before the page, see below.
   The deprecation of the class itself, which Kotlin reports for `Foo.parse()` too, on the name of the class the caller writes,
   is told by the header of the class when the class itself is resolved,
   and by a comment on every page of whatever is resolved by a name going through it,
@@ -195,9 +201,10 @@ com.example.AnnotationTestClass
   but neither a class nested in it, nor its companion object by its name, like `com.example.Alias.Nested`,
   or `com.example.Alias.Companion.create`, which Kotlin does not resolve through a typealias, unlike `Alias.create()`.
   A member of a typealias of a Java class, like `kotlin.collections.ArrayList.add`,
-  or of one with type arguments, like `typealias Names = List<String>`,
   is not resolved, as a Java class is not rendered,
-  and the members of the class would not tell the type arguments.
+  and of a typealias of a class with type arguments, like `typealias Names = List<String>`, or `typealias Box<T> = Holder<T>`,
+  only what is called on the name of the class, like `com.example.Box.create` of the companion object of `Holder`,
+  or of an extension on it, as the members of the class would not tell the type arguments.
   Typealiases are found by the classpath scan only.
 * The Kotlin built-in types, like `kotlin.String` or `kotlin.collections.List`,
   which are mapped to the JVM types and have no class files of their own,
@@ -291,6 +298,29 @@ com.example.AnnotationTestClass
   called instead, unless the type argument is given explicitly, like `5.coerceAtLeast<Int>(3)`.
   Any other one is listed, as its type parameter can be inferred as a supertype,
   or it can be called with other arguments, like `5.coerceIn(null, 10)`, or `5.rangeTo(that = 6)`.
+  So is an extension property on such a `T` next to an extension property of the same name on the type itself,
+  of the same package, like `val <T : Comparable<T>> T.rank` next to `val Version.rank`, read instead.
+* An extension which Kotlin never calls on a class, as a member of the class is always called instead, is not listed for it,
+  nor resolved by its name, unless the class is a built-in type:
+  an extension property next to a member property of the same name,
+  and an extension function next to a member function taking the same number of parameters, of the same names,
+  each accepting every argument of the parameter of the extension:
+  of the same type, also nullable, of a supertype without type arguments, or of an unbounded type parameter of the member,
+  like `fun <T> put(x: T)`, `fun put(x: Int?)`, or `fun put(x: Number)`, next to `fun Bar.put(x: Int)`,
+  where a type parameter of the extension is accepted like its bound,
+  like by `fun put(x: Bar)` next to `fun <T : Bar> T.put(x: T)`,
+  or like the type argument of the supertype which is the receiver of the extension,
+  like by `fun put(x: String)` of `object Strings : Base<String>` next to `fun <T> Base<T>.put(x: T)`.
+  A member property of a function type without parameters shadows an extension function without parameters too,
+  like `val run: () -> Unit` next to `fun Bar.run()`.
+  The members are the public ones, also the inherited ones,
+  of an object for the extensions called on its name, of a companion object for the ones called on the name of its class,
+  and of any other class for the ones called on its instance,
+  but the ones which can be called on a nullable receiver, like `fun Bar?.ext()`, where no member can.
+  An extension which can be called another way is listed:
+  with a default argument, with a named one, like `fun Bar.put(y: Int)`, as an operator, or infix, when the member is not,
+  while a call giving the type arguments explicitly, like `foo.ext<Int>()`, which would reach an extension next to a member
+  without type parameters, is not told.
   The extensions on an unbounded type parameter, like `let` or `also`, are not listed for any type,
   as they would be listed for every one.
 * The types of the `kotlin.*` packages are rendered with simple names, as LLMs know them well,
