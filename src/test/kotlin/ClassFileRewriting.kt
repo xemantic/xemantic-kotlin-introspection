@@ -205,6 +205,19 @@ internal fun withoutMetadata(bytes: ByteArray): ByteArray {
 }
 
 /**
+ * The class [bytes] of an unsupported major version, like a class file too new for ASM to parse,
+ * whose constant pool, supertypes, methods and attributes keep their format,
+ * unless the [constantPool] is not to be read either, its first entry of an unknown kind then.
+ */
+internal fun tooNew(bytes: ByteArray, constantPool: Boolean = true): ByteArray = bytes.copyOf().apply {
+    // the major version, following the magic number and the minor version
+    this[6] = 0x7F
+    this[7] = 0x7F
+    // the tag of the first constant pool entry, following the constant pool count
+    if (!constantPool) this[10] = 0x7F
+}
+
+/**
  * Removes the `InnerClasses` attribute from the class bytes, like R8 does unless told to keep it,
  * so that reflection no longer tells the nested classes.
  */
