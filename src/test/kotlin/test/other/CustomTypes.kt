@@ -45,3 +45,9 @@ typealias OtherPackageAlias = com.xemantic.kotlin.introspection.test.TypeAliasTa
  * unlike the one of the package of the class.
  */
 fun Comparable<com.xemantic.kotlin.introspection.test.BoundedReceiverMoney>.otherAtLeastMoney() {}
+
+/**
+ * An extension on a list of a type of another package, not listed for a user collection of that type,
+ * unlike the ones of the package of the collection.
+ */
+fun List<com.xemantic.kotlin.introspection.test.CollectionOrder>.otherTotalAmount(): Int = size

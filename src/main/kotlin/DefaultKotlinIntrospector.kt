@@ -4081,7 +4081,9 @@ internal class DefaultKotlinIntrospector(
      * For any other class, all of them, on the class and its [userSupertypes],
      * not to flood its listing with the generic extensions of the standard library,
      * but the ones of the standard library on `Comparable` for a class comparable to itself, see [isComparableToItself],
-     * and the ones of its package on `Comparable` for a comparable class, see [isComparable].
+     * and the ones of its package on any of its supertypes, like `fun List<Order>.total()` for `interface Orders : List<Order>`,
+     * when the type arguments of the supertype are told, see [ClassSupertypes.types], on `Comparable` only for a comparable class,
+     * see [isComparable], and for a class of the `kotlin.*` or `java.*` packages only on `Comparable`.
      * Either way, the ones on a type parameter with multiple bounds only when the class satisfies all of them,
      * see [receiverBoundsOf], also when none of them is among the [userSupertypes], see [listedFor],
      * and only the ones which can be called on the class, as told by the type arguments, see [isCallableOn],
@@ -4126,26 +4128,68 @@ internal class DefaultKotlinIntrospector(
         } else {
             val ownReceiverNames = ownExtensionReceiverNames(className)
             val satisfiedBounds = ownReceiverNames.toSet() + supertypes.names
-            val listed = extensionsListedFor(ownReceiverNames + userSupertypes(kmClass) + companionReceiverNames, satisfiedBounds)
-            if (supertypes.isComparable) {
-                val isComparableToItself = supertypes.isComparableToItself
-                // only the ones of the standard library, like on the other types of the standard library, see userSupertypes,
-                // for a class comparable to itself, satisfying their bounds,
-                // and of the package of the class, like next to it, but not the ones of the other libraries,
-                // while the ones with multiple bounds, satisfied by the class, are already listed
-                // also the ones of an object of the package, imported from it, told by the JVM package of their class,
-                // like the one of the class
-                val classPackage = contextPackageOf(declarations, kmClass)
-                fun ReceiverBounded.isListed() =
-                    ((isComparableToItself && isBuiltinExtension) || sourceClass.substringBeforeLast('.', "") == classPackage) &&
-                        receiverBounds.all { it in satisfiedBounds }
-                ListedExtensions(
-                    (listed.functions + extensionIndex[COMPARABLE_CLASS_NAME].orEmpty().filter { it.isListed() }).distinct(),
-                    (listed.properties + extensionPropertyIndex[COMPARABLE_CLASS_NAME].orEmpty().filter { it.isListed() }).distinct()
-                )
-            } else {
-                listed
+            val userSupertypes = userSupertypes(kmClass)
+            val listed = extensionsListedFor(ownReceiverNames + userSupertypes + companionReceiverNames, satisfiedBounds)
+            // also the ones of an object of the package, imported from it, told by the JVM package of their class,
+            // like the one of the class
+            val classPackage = contextPackageOf(declarations, kmClass)
+            // the other supertypes, from the kotlin.* and java.* packages, whose extensions are listed only
+            // when of the package of the class, like next to it, but not the ones of the other libraries,
+            // like fun List<Order>.total() for interface Orders : List<Order>, also on Any,
+            // which an interface extending only Java interfaces does not reach, like interface Task : Runnable,
+            // and on Comparable, only for a comparable class, see isComparable,
+            // also the ones of the standard library for a class comparable to itself,
+            // unless the class is of these packages itself, whose extensions are the ones of the standard library,
+            // listed then only on Comparable,
+            // while the ones with multiple bounds, satisfied by the class, are already listed
+            val otherSupertypes = when {
+                isOfStandardPackage(classPackage) -> listOf(COMPARABLE_CLASS_NAME)
+                else -> (supertypes.names + ANY_RECEIVER_KEY).filter { it !in userSupertypes }
+            }.filter { it != COMPARABLE_CLASS_NAME || supertypes.isComparable }
+            val isComparableToItself = supertypes.isComparableToItself
+            fun ReceiverBounded.isListedOn(supertype: String) =
+                (sourceClass.substringBeforeLast('.', "") == classPackage ||
+                    (supertype == COMPARABLE_CLASS_NAME && isComparableToItself && isBuiltinExtension)) &&
+                    receiverBounds.all { it in satisfiedBounds }
+            // a supertype taking type arguments only when they are told, see ClassSupertypes.types,
+            // like not java.util.Collection<E> of the JDK interface java.util.List<String> named as a supertype,
+            // which an extension on Collection<Order> would be told callable on, see isCallableOn
+            fun isTold(supertype: String, receiver: KmType?, typeParameters: List<KmTypeParameter>): Boolean {
+                if (supertype in supertypes.types) return true
+                val receiverTypes = when (val classifier = receiver?.classifier) {
+                    is KmClassifier.TypeParameter -> receiverBoundTypes(classifier.id, typeParameters)
+                    else -> listOfNotNull(receiver)
+                }
+                return receiverTypes.all { classReceiverIndexKey(it) != supertype || it.arguments.isEmpty() }
             }
+            // but not, beyond Comparable, one of a type parameter bounded recursively, like T : Comparable<T>,
+            // matched against a supertype referring to the type parameters of the class, like Map<V, Comparable<V>>,
+            // whose bounds against the types a type parameter of the class takes are not told, see isClassTypeParameterTyped
+            fun isRecursivelyBoundedOnTypeParameters(supertype: String, typeParameters: List<KmTypeParameter>): Boolean =
+                supertype != COMPARABLE_CLASS_NAME &&
+                    typeParameters.any { typeParameter ->
+                        typeParameter.upperBounds.any { bound -> !bound.refersOnlyTo { it != typeParameter.id } }
+                    } &&
+                    supertypes.types[supertype].orEmpty().any { !it.refersOnlyTo { false } }
+            // filtered by name first, like below, not to tell whether each of the others is listed
+            fun <E : ReceiverBounded> Map<String, List<E>>.listedOnOtherSupertypes(
+                declarationOf: (E) -> Triple<String, KmType?, List<KmTypeParameter>>
+            ): List<E> = otherSupertypes.flatMap { supertype ->
+                this[supertype].orEmpty().filter { extension ->
+                    val (name, receiver, typeParameters) = declarationOf(extension)
+                    (memberName == null || name == memberName) &&
+                        extension.isListedOn(supertype) && isTold(supertype, receiver, typeParameters) &&
+                        !isRecursivelyBoundedOnTypeParameters(supertype, typeParameters)
+                }
+            }
+            ListedExtensions(
+                (listed.functions + extensionIndex.listedOnOtherSupertypes {
+                    Triple(it.function.name, it.function.receiverParameterType, it.function.typeParameters)
+                }).distinct(),
+                (listed.properties + extensionPropertyIndex.listedOnOtherSupertypes {
+                    Triple(it.property.name, it.property.receiverParameterType, it.property.typeParameters)
+                }).distinct()
+            )
         }
         val callable = ListedExtensions(
             listed.functions.filter { extension ->
@@ -4821,7 +4865,7 @@ internal class DefaultKotlinIntrospector(
      * nor with the ones of any other library on these types, like on `java.lang.AutoCloseable`,
      * or `java.util.function.Function`, which can still be called on the class,
      * also on `kotlin.Comparable`, like `fun Comparable<Money>.atLeast()` of another package than
-     * `class Price : Comparable<Money>`, but the ones of the package of a comparable class, see [isComparable],
+     * `class Price : Comparable<Money>`, but the ones of the package of the class, on any of these types, see [listedExtensions],
      * and the ones of the standard library for a class comparable to itself, see [isComparableToItself],
      * except the function types, like `(String) -> Unit`, and their supertype `kotlin.Function`,
      * whose extensions are listed for a class implementing them, like for a function type class,
@@ -4830,7 +4874,7 @@ internal class DefaultKotlinIntrospector(
      */
     private fun userSupertypes(kmClass: KmClass): Set<String> =
         supertypeNames(kmClass, kmClassOf = ::loadKmClass) {
-            (!it.startsWith("kotlin.") && !it.startsWith("java.")) ||
+            !isOfStandardPackage(it) ||
                 it == FUNCTION_CLASS_NAME ||
                 FunctionTypeClass.of(it) != null
         }
@@ -5329,6 +5373,10 @@ internal class DefaultKotlinIntrospector(
         // or a type parameter of the class, which stands for any type, so that what is inferred is not told, see isInferred
         private var isUntold = false
 
+        // the types of the extension each type parameter of the class is matched against, by its id,
+        // with the variances of their positions, see isClassTypeParameterTyped
+        private val classTypeParameterTypes = ArrayList<Triple<Int, KmType, KmVariance>>()
+
         /**
          * Whether each type parameter the receiver refers to, the [referred] ones, also through the bounds of the ones it refers to,
          * like `E` of `T : List<E>`, is inferred from the matched types, see [infer],
@@ -5350,6 +5398,7 @@ internal class DefaultKotlinIntrospector(
          *   is not callable on `Box<Nothing>`, of `interface Box<out T>`, as `box.get()` is not, like kotlinc.
          */
         fun isInferred(referred: Lazy<Set<Int>>, inferredOtherwise: Lazy<Set<Int>>, referredByReturnType: Lazy<Set<Int>>): Boolean {
+            if (!isClassTypeParameterTyped()) return false
             if (isUntold || typeParameters.isEmpty()) return true
             val isInferred = referred.value.filterTo(HashSet()) { id ->
                 id == receiverTypeParameterId || id !in typeParameters || !inferred[id].isNullOrEmpty() || id in inferredOtherwise.value
@@ -5397,6 +5446,76 @@ internal class DefaultKotlinIntrospector(
                 if (isNotModelled) BoundInference.NOT_MODELLED else BoundInference.FIXED
             }
             return inferences.minOrNull()
+        }
+
+        /**
+         * Whether each type parameter of the class, standing for any type, see [matches], can take one type
+         * in all the positions it is matched in, against the types of the extension referring to none of its type parameters,
+         * like `V` of `HashMap<V, V>` not for `Map<String, Order>`, as the invariant key makes it `String`, which is no `Order`,
+         * but for `Map<String, CharSequence>`: the same type in all the invariant positions,
+         * a subtype of the types of the covariant ones, and a supertype of the types of the contravariant ones,
+         * like `Nothing` of only covariant positions, or `Any?` of only contravariant ones.
+         */
+        private fun isClassTypeParameterTyped(): Boolean =
+            classTypeParameterTypes.groupBy({ it.first }, { it.second to it.third }).all { (id, positions) ->
+                fun typesOf(variance: KmVariance) = positions.filter { it.second == variance }.map { it.first }
+                val invariant = typesOf(KmVariance.INVARIANT)
+                val bounds = supertypes.kmClass.typeParameters.find { it.id == id }?.upperBounds.orEmpty()
+                // also the bounds of the type parameter, like CharSequence of V : CharSequence, referring to no type parameter
+                val upper = typesOf(KmVariance.OUT) + bounds.filter { bound -> bound.refersOnlyTo { false } }
+                val lower = typesOf(KmVariance.IN)
+                // whether the subtype is a subtype of the supertype, as far as told
+                fun isSubtype(subtype: KmType, supertype: KmType) = typeMatcher.matches(supertype, subtype, KmVariance.OUT, isStrict = false)
+                when (val type = invariant.firstOrNull()) {
+                    null -> lower.all { subtype -> upper.all { isSubtype(subtype, it) } }
+                    else -> invariant.all { typeMatcher.matches(it, type, KmVariance.INVARIANT, isStrict = false) } &&
+                        upper.all { isSubtype(type, it) } && lower.all { isSubtype(it, type) } &&
+                        // and the bounds referring only to itself, like Comparable<V> of V : Comparable<V>, of the type it takes
+                        bounds.filter { bound -> !bound.refersOnlyTo { false } && bound.refersOnlyTo { it == id } }
+                            .all { bound -> isSubtype(type, bound.substituted(mapOf(id to type))) }
+                }
+            }
+
+        // whether this not nullable type of the extension is a class, or a type parameter bounded only by not nullable classes
+        private fun KmType.isNeverNullable(): Boolean = when (val classifier = classifier) {
+            is KmClassifier.Class -> true
+            is KmClassifier.TypeParameter -> typeParameters[classifier.id]?.upperBounds.orEmpty().let { bounds ->
+                bounds.isNotEmpty() && bounds.all { it.classifier is KmClassifier.Class && !it.isNullable }
+            }
+            is KmClassifier.TypeAlias -> false
+        }
+
+        /**
+         * The type of the extension the type parameter of the class [actual] is matched against, see [isClassTypeParameterTyped],
+         * with the variance of its position, the [expected] type referring to no type parameter of the extension,
+         * or else the bound of its type parameter, like `Order` of `T : Order` for `Map<String, T>`, which it is a subtype of,
+         * in a covariant, or an invariant, position,
+         * without the nullability for a platform type, when [isPlatform], like `V!` of a Java supertype,
+         * also a type argument of one, like `T` of `(Mutable)List<T!>!`, or for a nullable one, like `V?`,
+         * or `null` if nothing is told, like of a nullable one for a not nullable type, or of a type parameter bounded by another.
+         */
+        private fun classTypeParameterTypeOf(
+            expected: KmType,
+            actual: KmType,
+            variance: KmVariance,
+            isPlatform: Boolean
+        ): Pair<KmType, KmVariance>? {
+            val typeParameterId = (expected.classifier as? KmClassifier.TypeParameter)?.id
+            val (type, typeVariance) = when {
+                expected.refersToNoTypeParameter() -> expected to variance
+                typeParameterId == null || variance == KmVariance.IN -> return null
+                else -> {
+                    val bound = typeParameters[typeParameterId]?.upperBounds?.singleOrNull()
+                        ?.takeIf { it.refersToNoTypeParameter() && it.classifier is KmClassifier.Class } ?: return null
+                    (if (expected.isNullable) bound.copy().also { it.isNullable = true } else bound) to KmVariance.OUT
+                }
+            }
+            return when {
+                isPlatform -> type.notNullable() to typeVariance
+                !actual.isNullable -> type to typeVariance
+                type.isNullable -> type.notNullable() to typeVariance
+                else -> null
+            }
         }
 
         // the ids of the type parameters bounding this one, like U of T : U
@@ -5816,14 +5935,49 @@ internal class DefaultKotlinIntrospector(
          * while a type parameter of the class stands for any type, other than the class itself.
          */
         private fun matches(expected: KmType, actual: KmType, variance: KmVariance, isStrict: Boolean): Boolean {
+            val isPlatformPosition = isPlatformArgument
+            isPlatformArgument = actual.flexibleTypeUpperBound != null
+            try {
+                return matchesType(expected, actual, variance, isStrict, isPlatformPosition)
+            } finally {
+                isPlatformArgument = isPlatformPosition
+            }
+        }
+
+        // whether the types matched are the type arguments of a platform type, like T of (Mutable)List<T!>! of a Java supertype,
+        // where a type parameter of the class is a platform type too, which the substitution leaves as is, see matchesType
+        private var isPlatformArgument = false
+
+        /**
+         * Whether the [expected] type matches the [actual] one, see [matches],
+         * the [actual] one a type argument of a platform type when [isPlatformPosition].
+         */
+        private fun matchesType(
+            expected: KmType,
+            actual: KmType,
+            variance: KmVariance,
+            isStrict: Boolean,
+            isPlatformPosition: Boolean
+        ): Boolean {
             val actualClassifier = actual.classifier as? KmClassifier.Class
                 // a type parameter bounded by the class itself, like `E` of `Enum<E : Enum<E>>`, stands for the class
                 ?: KmClassifier.Class(supertypes.kmClass.name).takeIf { supertypes.isSelfTypeParameter(actual) }
                 // any other one for any type, but for the class itself,
-                // like of `inner class Outer<T>.Inner : Comparable<T>`, comparable to `T`
+                // like of `inner class Outer<T>.Inner : Comparable<T>`, comparable to `T`,
+                // the same one in all its positions, see isClassTypeParameterTyped
                 ?: return (receiverTypeParameterId == null ||
                     (expected.classifier as? KmClassifier.TypeParameter)?.id != receiverTypeParameterId) &&
-                    matchesUntold(isStrict = false)
+                    // a nullable one, like V?, is no type of a class, like String, in a covariant, or an invariant position,
+                    // nor a type parameter bounded only by classes, like T : Order
+                    (!actual.isNullable || actual.flexibleTypeUpperBound != null || isPlatformPosition || variance == KmVariance.IN ||
+                        expected.isNullable || !expected.isNeverNullable()) &&
+                    matchesUntold(isStrict = false).also {
+                        val id = (actual.classifier as? KmClassifier.TypeParameter)?.id
+                        val isPlatform = isPlatformPosition || actual.flexibleTypeUpperBound != null
+                        if (id != null) classTypeParameterTypeOf(expected, actual, variance, isPlatform)?.let { (type, typeVariance) ->
+                            classTypeParameterTypes += Triple(id, type, typeVariance)
+                        }
+                    }
             return when (val classifier = expected.classifier) {
                 is KmClassifier.TypeParameter -> when (classifier.id) {
                     receiverTypeParameterId ->
@@ -5912,12 +6066,19 @@ internal class DefaultKotlinIntrospector(
         }
 
         // what is inferred, and whether what is not told was matched, see isUntold, at a point of the matching, see retrying
-        private inner class Mark(val inferredCount: Int = inferredIds.size, val isUntold: Boolean = this@ReceiverMatcher.isUntold) {
+        private inner class Mark(
+            val inferredCount: Int = inferredIds.size,
+            val isUntold: Boolean = this@ReceiverMatcher.isUntold,
+            val classTypeParameterTypeCount: Int = classTypeParameterTypes.size
+        ) {
 
             // goes back to this point, forgetting what is inferred since, and whether what is not told was matched since
             fun restore() {
                 forgetInferredSince(inferredCount)
                 this@ReceiverMatcher.isUntold = isUntold
+                while (classTypeParameterTypes.size > classTypeParameterTypeCount) {
+                    classTypeParameterTypes.removeAt(classTypeParameterTypes.lastIndex)
+                }
             }
 
         }
@@ -10032,6 +10193,12 @@ private fun kotlinPackageOf(binaryName: String, packageName: String): String =
 private const val ANY_RECEIVER_KEY = "kotlin.Any"
 
 private const val COMPARABLE_CLASS_NAME = "kotlin.Comparable"
+
+/**
+ * Whether the class, or the package, of this [name] is of the `kotlin.*` or `java.*` packages,
+ * whose extensions are not listed for the classes of the other packages, see [DefaultKotlinIntrospector.userSupertypes].
+ */
+private fun isOfStandardPackage(name: String): Boolean = "$name.".let { it.startsWith("kotlin.") || it.startsWith("java.") }
 
 // the number of distinct types of a supertype reached through different paths which are told and walked, see supertypeNames,
 // as their number can double at each level of a hierarchy, like through Kotlin and through Java,

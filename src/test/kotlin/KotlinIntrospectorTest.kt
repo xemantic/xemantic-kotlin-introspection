@@ -3815,6 +3815,7 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should mark overrides of CharSequence members mapped to differently named JVM methods`() {
+        // with the extension of its package on CharSequence, unlike the ones of the standard library
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.Chars"
         ) sameAsKotlin """
@@ -3823,6 +3824,8 @@ class KotlinIntrospectorTest {
                 override val length: Int
                 override operator fun get(index: Int): Char
             }
+            // from com.xemantic.kotlin.introspection.test
+            fun CharSequence.charCount(): Int
         """.trimIndent()
     }
 
@@ -8640,6 +8643,127 @@ class KotlinIntrospectorTest {
         """.trimIndent()
     }
 
+    // TestCollectionSupertypeExtensions tests
+
+    @Test
+    fun `should resolve user collection interface with extensions of its package on its standard library supertypes`() {
+        // only the ones which can be called on it, not refundedAmount() on a List<CollectionRefund>,
+        // nor the ones of the other packages, like otherTotalAmount(), or of the standard library, which can still be called
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.CollectionOrders"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.CollectionOrders [page 1/1]
+            interface CollectionOrders : List<CollectionOrder>
+            // from com.xemantic.kotlin.introspection.test
+            val Collection<CollectionOrder>.orderCount: Int
+            fun List<CollectionOrder>.totalAmount(): Int
+            fun <T : List<CollectionOrder>> T.withLargestFirst(): T
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve subclass of ArrayList with extensions of its package on its standard library supertypes`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.CollectionOrderList"
+        ) should {
+            have("val Collection<CollectionOrder>.orderCount: Int" in lines())
+            have("fun List<CollectionOrder>.totalAmount(): Int" in lines())
+            have("fun <T : List<CollectionOrder>> T.withLargestFirst(): T" in lines())
+            have(lines().none { "refundedAmount" in it || "otherTotalAmount" in it || "orderById" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve subclass of HashMap with extensions of its package on its standard library supertypes`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.CollectionOrderMap"
+        ) should {
+            have("fun Map<String, CollectionOrder>.orderById(id: String): CollectionOrder?" in lines())
+            have(lines().none { "totalAmount" in it || "orderCount" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve Kotlin subclass of Java list with extensions of its package on its standard library supertypes`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.CollectionOrderJavaList"
+        ) should {
+            have("val Collection<CollectionOrder>.orderCount: Int" in lines())
+            have("fun List<CollectionOrder>.totalAmount(): Int" in lines())
+            have("fun <T : List<CollectionOrder>> T.withLargestFirst(): T" in lines())
+            have(lines().none { "refundedAmount" in it || "otherTotalAmount" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve class implementing JDK list named directly without extensions of its package on untold supertypes`() {
+        // the java.util.Collection<E> of java.util.List<String> is not told, so that Collection<CollectionOrder> might be callable
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaListSubclass"
+        ) should {
+            have(lines().none { "orderCount" in it || "totalAmount" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve class with repeated type parameter in JDK map supertype without extension of other key and value types`() {
+        // the V of HashMap<V, V> is the key String of Map<String, CollectionOrder> only when the value is not a CollectionOrder
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.CollectionSameKeyMap"
+        ) should {
+            have(lines().none { "orderById" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve class with repeated type parameter in supertype with extensions of one type in all its positions`() {
+        // CollectionKeyed<String, String> is a CollectionKeyed<String, CharSequence>, but no CollectionKeyed<V, V> is
+        // a CollectionKeyed<String, CollectionOrder>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.CollectionSameKeyed"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.CollectionSameKeyed [page 1/1]
+            class CollectionSameKeyed<V> : CollectionKeyed<V, V>
+            // from com.xemantic.kotlin.introspection.test
+            fun CollectionKeyed<String, CharSequence>.keyedText()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with type parameter in standard library supertype without extension on recursively bounded type parameter`() {
+        // a recursively bounded T : Comparable<T> matched against a type parameter of the class is not told,
+        // so that the extensions of the package on the kotlin.* and java.* supertypes are not listed then
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.CollectionComparableMap"
+        ) should {
+            have(lines().none { "sameComparables" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve extension of its package on Any by name of class with deprecated companion object of other supertype`() {
+        // on a supertype of both the class and its companion object, deprecated only when called on the class name, like TaskHolder.describeTask()
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.task.TaskHolder.describeTask"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.task.TaskHolder.describeTask [page 1/1]
+            // from com.xemantic.kotlin.introspection.test.task
+            /* companion object deprecated: "Use TaskRunnable" (when called on the class name) */ fun Any.describeTask(): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve interface extending only Java interface with extension of its package on Any`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.task.TaskRunnable"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.task.TaskRunnable [page 1/1]
+            interface TaskRunnable : java.lang.Runnable
+            // from com.xemantic.kotlin.introspection.test.task
+            fun Any.describeTask(): String
+        """.trimIndent()
+    }
+
     // TestBoundedReceiverExtensions tests
 
     @Test
@@ -9925,6 +10049,27 @@ class KotlinIntrospectorTest {
             class BoundedReceiverDoublingPadChain : BoundedReceiverDoubling5<String>, BoundedReceiverDoublingPad24
             // from com.xemantic.kotlin.introspection.test
             fun BoundedReceiverDoubling0<*>.doublingPaths()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with type parameter bounded by not nullable type in platform position of Java supertype`() {
+        // the BoundedReceiverPaths<(Mutable)List<T!>!> of JavaListPathsOf<T> takes a T! of String for List<String?>,
+        // but no CharSequence takes Any?, nor Comparable<*>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverCharSequenceJavaListPaths"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverCharSequenceJavaListPaths [page 1/1]
+            interface BoundedReceiverCharSequenceJavaListPaths<T : CharSequence> : com.xemantic.kotlin.introspection.test.other.JavaListPathsOf<T>
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverPaths<List<CharSequence>>.charSequenceListPaths()
+            fun BoundedReceiverPaths<MutableList<String>>.mutableStringListPaths()
+            fun <T : Any> BoundedReceiverPaths<List<T>>.nonNullListPaths()
+            fun BoundedReceiverPaths<List<CharSequence?>>.nullableCharSequenceListPaths()
+            fun BoundedReceiverPaths<MutableList<String?>>.nullableMutableStringPaths()
+            fun BoundedReceiverPaths<List<String?>>.nullableStringListPaths()
+            fun <P : BoundedReceiverPaths<List<String?>>> P.nullableStringListPathsOf()
+            fun BoundedReceiverPaths<List<String>>.stringListPaths()
         """.trimIndent()
     }
 
