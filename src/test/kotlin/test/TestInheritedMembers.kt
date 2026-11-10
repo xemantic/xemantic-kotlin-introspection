@@ -943,3 +943,18 @@ class KotlinGetterJavaOverrideSub : com.xemantic.kotlin.introspection.test.other
 class KotlinGetterJavaImplementationSub : com.xemantic.kotlin.introspection.test.other.JavaKotlinGetterImplementation() {
     override fun getK(): String = ""
 }
+
+// A getter declared by both a Java interface and a Kotlin one, which kotlinc offers as the var w,
+// as one of its topmost declarations is a Java one, inherited, overridden, or implemented by a Java class
+interface KotlinGetterW {
+    fun getW(): String
+}
+
+abstract class SyntheticPropertyDiamond : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyFace, KotlinGetterW
+
+class SyntheticPropertyDiamondOverride : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyFace, KotlinGetterW {
+    override fun getW(): String = ""
+    override fun setW(w: String) {}
+}
+
+class SyntheticPropertyJavaDiamondSub : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyDiamond()

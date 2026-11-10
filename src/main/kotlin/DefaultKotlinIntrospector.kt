@@ -2278,10 +2278,11 @@ internal class DefaultKotlinIntrospector(
      * It is not listed as a member of its own, as Kotlin does not let it be referenced, like `Thread::name`,
      * and it would repeat every getter.
      * Kotlin reads so a function named like a getter, see [syntheticPropertyName], taking no parameters, nor type parameters,
-     * and returning a value, whose topmost declaration, the one it overrides, if any, is a Java one:
+     * and returning a value, when one of its topmost declarations, the ones overriding nothing, is a Java one, see [isJavaRootMethod]:
      * a method of a Java class, or a JVM-only one of a built-in type, see [BuiltinClass.jvmOnlyFunctions],
-     * like `getStackTrace()` of `kotlin.Throwable`, or a Kotlin function overriding only such ones,
-     * see [OverrideResolver.overriddenJavaMembers], unlike any other Kotlin function,
+     * like `getStackTrace()` of `kotlin.Throwable`, also when the getter is a Kotlin function overriding one,
+     * see [OverrideResolver.overriddenJavaMembers], or when the [kmClass] inherits one too,
+     * like the `getW()` of both a Java and a Kotlin interface, unlike any other Kotlin function,
      * and unlike a Java method overriding a Kotlin function, also a member of a built-in type,
      * like the `isEmpty()` of `java.util.Collection` of the one of `Collection`,
      * but not when the [kmClass] has a property of the name, declared, or inherited, like `key` of `java.util.Map.Entry` of `getKey()`,
@@ -2303,18 +2304,19 @@ internal class DefaultKotlinIntrospector(
         val getter = (member as? Member.Function)?.function ?: return null
         if (!getter.isAccessorShaped(parameterCount = 0) || getter.returnType.isUnit) return null
         val name = syntheticPropertyName(getter.name) ?: return null
-        val owner = memberDeclarations.overrideOwner
-        val isJava = when (memberDeclarations) {
-            is JavaClass -> true
+        val isJavaRoot = when (memberDeclarations) {
+            is JavaClass -> memberDeclarations.overriddenMembers(member).isEmpty()
             is BuiltinClass -> member.declaration in memberDeclarations.jvmOnlyFunctions
-            else -> owner != null && overrideResolver.overriddenJavaMembers(owner, member.declaration).isNotEmpty()
+            else -> false
         }
-        if (!isJava) return null
-        val overridesKotlin = when (memberDeclarations) {
-            is JavaClass -> memberDeclarations.overriddenMembers(member).isNotEmpty()
-            else -> owner != null && overrideResolver.overriddenMembers(owner, member.declaration).isNotEmpty()
-        }
-        if (overridesKotlin) return null
+        // the Java methods the getter overrides, also as a member of the kmClass inheriting it, so that a getter inherited
+        // from a Kotlin interface stands for the one of a Java interface too, like the getW() of both
+        fun overriddenJavaMembers(owner: OverrideResolver.Owner?, function: KmFunction): Set<String> =
+            owner?.let { overrideResolver.overriddenJavaMembers(it, function) }.orEmpty()
+        val hasJavaRoot = isJavaRoot ||
+            (overriddenJavaMembers(memberDeclarations.overrideOwner, member.declaration) +
+                overriddenJavaMembers(declarations.overrideOwner, getter)).any(::isJavaRootMethod)
+        if (!hasJavaRoot) return null
         // the types of the members the kmClass declares refer to its type parameters by the ids of the inherited ones,
         // like the T of getValue(): T of Holder<T> to the one of setValue(T) inherited from Box<T>, see inheritedCandidates
         val inheritingTypes = typeParameterScopeOf(kmClass, declarations).names.keys
@@ -2334,6 +2336,24 @@ internal class DefaultKotlinIntrospector(
                 setter.function.valueParameters.single().type.isSameIgnoringNullability(getterType)
         }
         return (if (isVar) "var " else "val ") + escapeIdentifier(name)
+    }
+
+    /**
+     * Whether the Java method of the [key], see [javaMemberKey], is a topmost declaration, see [syntheticPropertyOf]:
+     * a JVM-only member of the built-in type its class is mapped to, see [BuiltinClass.jvmOnlyFunctions],
+     * like `java.lang.Throwable#getStackTrace()`, unlike the one mapped to a member of the built-in type,
+     * like `java.util.Collection#isEmpty()` to the `isEmpty()` of `Collection`,
+     * or else a method of a Java class overriding no Kotlin function, see [JavaClass.overriddenMembers].
+     */
+    private fun isJavaRootMethod(key: String): Boolean {
+        val className = key.substringBefore('#')
+        overrideResolver.builtinNameOfJavaClass(className)?.let { builtinName ->
+            val builtinClass = classDeclarations(builtinName) as? BuiltinClass ?: return false
+            return builtinClass.jvmOnlyFunctions.any { builtinClass.jvmMethodOf(it)?.key == key }
+        }
+        val javaClass = findClassByName(className)?.javaDeclarations ?: return false
+        val function = javaClass.kmClass.functions.firstOrNull { javaClass.jvmMethodOf(it)?.key == key } ?: return false
+        return javaClass.overriddenMembers(Member.Function(function)).isEmpty()
     }
 
     /**

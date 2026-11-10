@@ -7187,11 +7187,13 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve isEmpty of Java interface implemented by Java subclass of java util HashSet as isEmpty of Set`() {
+        // kotlinc reads set.isEmpty, as one of the topmost declarations is the isEmpty() of JavaSizeFace
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.InheritedJavaSizeFaceHashSet.isEmpty"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.InheritedJavaSizeFaceHashSet.isEmpty [page 1/1]
             // inherited from kotlin.collections.Set
+            // also property: val isEmpty
             open override fun isEmpty(): Boolean
         """.trimIndent()
     }
@@ -7452,6 +7454,28 @@ class KotlinIntrospectorTest {
         resolver.resolve("com.xemantic.kotlin.introspection.test.KotlinGetterJavaImplementationSub.getK") should {
             have(lines().any { " getK(" in it })
             have(lines().none { "// also property" in it })
+        }
+    }
+
+    @Test
+    fun `should hint synthetic property of getter inherited from both Java and Kotlin interface`() {
+        // kotlinc reads diamond.w, and diamond.w = "", as one of the topmost declarations of getW() is the Java one
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertyDiamond.getW") should {
+            have("// also property: var w" in lines())
+        }
+    }
+
+    @Test
+    fun `should hint synthetic property of Kotlin override of getter of both Java and Kotlin interface`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertyDiamondOverride.getW") should {
+            have("// also property: var w" in lines())
+        }
+    }
+
+    @Test
+    fun `should hint synthetic property of getter of Java class implementing both Java and Kotlin interface`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertyJavaDiamondSub.getW") should {
+            have("// also property: var w" in lines())
         }
     }
 
