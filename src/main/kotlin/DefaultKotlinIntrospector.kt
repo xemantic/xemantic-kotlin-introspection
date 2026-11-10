@@ -5182,7 +5182,8 @@ internal class DefaultKotlinIntrospector(
          * like `E` of `T : List<E>`, is inferred from the matched types, see [infer],
          * like not `T` of `I<List<T>>` for `I<List<*>>`, see [isTrivialStarConstraint], nor `E` of `R<T>` for `R<Nothing>`,
          * where kotlinc cannot infer it, unless it is the type parameter receiver standing for the class,
-         * a bound of an inferred one, like `U` of `T : U`, or one of the [inferredOtherwise] ones, also through their bounds,
+         * a bound of an inferred one, like `U` of `T : U`, or one bounded by inferred ones, like `T` of `T : R`, or of `T : List<R>`,
+         * which kotlinc fixes as its bound, or one of the [inferredOtherwise] ones, also through their bounds,
          * like `E` of `T : List<E>` for `value: T`, see [typeParameterIdsReferredBy],
          * and the recursive bounds of the ones inferred only from contravariant positions are satisfied, see [satisfiesRecursiveBounds],
          * as far as what is matched is told, see [isUntold].
@@ -5192,19 +5193,36 @@ internal class DefaultKotlinIntrospector(
          * @param inferredOtherwise the ones the types of the context and value parameters of the extension refer to,
          *   which a call can infer them from, like `T` of `fun <T> Box<List<T>>.put(value: T)`,
          *   but not the return type, which only an expected type tells, so that `fun <T> Box<List<T>>.get(): T`
-         *   is not callable on `Box<Nothing>`, as `box.get()` is not, like kotlinc.
+         *   is not callable on `Box<Nothing>`, of `interface Box<out T>`, as `box.get()` is not, like kotlinc.
          */
         fun isInferred(referred: Lazy<Set<Int>>, inferredOtherwise: Lazy<Set<Int>>): Boolean {
             if (isUntold || typeParameters.isEmpty()) return true
             val isInferred = referred.value.filterTo(HashSet()) { id ->
                 id == receiverTypeParameterId || id !in typeParameters || !inferred[id].isNullOrEmpty() || id in inferredOtherwise.value
             }
-            // a type parameter bounding an inferred one is its supertype, like U of T : U
+            // a type parameter bounding an inferred one is its supertype, like U of T : U,
+            // and one bounded by inferred ones is fixed by kotlinc as its bound, like T : R, or T : List<R>, for r: R
             do {
                 val bounding = isInferred.flatMap { id -> typeParameters[id]?.boundingTypeParameterIds().orEmpty() }
-            } while (isInferred.addAll(bounding))
+                val bounded = typeParameters.keys.filter { id -> id !in isInferred && isFixedByInferredBound(id, isInferred) }
+            } while (isInferred.addAll(bounding) or isInferred.addAll(bounded))
             return isInferred.containsAll(referred.value) && satisfiesRecursiveBounds { inferredOtherwise.value }
         }
+
+        /**
+         * Whether the type parameter of the given [id] has a bound referring only to the [inferred] type parameters,
+         * like `T : R`, or `T : List<R>`, which kotlinc fixes it as, unless what the bound refers to refers back to it,
+         * like `T : Comparable<T>`, or `U : Comparable<T>` for `T : Comparable<U>`, or bounds another type parameter as well,
+         * like `A` of `B : A`, and `C : A`, whose recursive bounds are not checked then, see [satisfiesRecursiveBounds].
+         */
+        private fun isFixedByInferredBound(id: Int, inferred: Set<Int>): Boolean =
+            typeParameters.getValue(id).upperBounds.any { bound ->
+                val referred = typeParameterIdsReferredBy(listOf(bound), typeParameters.values.toList())
+                referred.isNotEmpty() && id !in referred && referred.all { it in inferred } &&
+                    referred.none { other ->
+                        typeParameters.values.any { it.id != id && other in it.boundingTypeParameterIds() }
+                    }
+            }
 
         // the ids of the type parameters bounding this one, like U of T : U
         private fun KmTypeParameter.boundingTypeParameterIds(): List<Int> =
