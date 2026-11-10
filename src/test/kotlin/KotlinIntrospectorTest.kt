@@ -1201,6 +1201,54 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve extension of supertype of both deprecated class and its companion object with qualified deprecation of class`() {
+        // Kotlin reports the deprecation of the class for DeprecatedClassSharedSupertypeCompanionHolder.onSupertype(),
+        // writing its name, but not for holder.onSupertype(), called on an instance of the class
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.DeprecatedClassSharedSupertypeCompanionHolder.onSupertype"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DeprecatedClassSharedSupertypeCompanionHolder.onSupertype [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            /* class DeprecatedClassSharedSupertypeCompanionHolder deprecated: "Use CompanionExtensionHolder" (when called on the class name) */ fun CompanionSupertype.onSupertype(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension property of supertype of both deprecated class and its companion object with qualified deprecation of class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.DeprecatedClassSharedSupertypeCompanionHolder.onSupertypeProperty"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DeprecatedClassSharedSupertypeCompanionHolder.onSupertypeProperty [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            /* class DeprecatedClassSharedSupertypeCompanionHolder deprecated: "Use CompanionExtensionHolder" (when called on the class name) */ val CompanionSupertype.onSupertypeProperty: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension of companion object of deprecated class with supertype shared with class following deprecation of class`() {
+        // called only on the name of the class, DeprecatedClassSharedSupertypeCompanionHolder.onDeprecatedClassCompanion()
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.DeprecatedClassSharedSupertypeCompanionHolder.onDeprecatedClassCompanion"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DeprecatedClassSharedSupertypeCompanionHolder.onDeprecatedClassCompanion [page 1/1]
+            // in @Deprecated("Use CompanionExtensionHolder") class DeprecatedClassSharedSupertypeCompanionHolder
+            // from com.xemantic.kotlin.introspection.test
+            fun DeprecatedClassSharedSupertypeCompanionHolder.Companion.onDeprecatedClassCompanion(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension of supertype of both deprecated class and its deprecated companion object with both deprecations qualified`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.DeprecatedClassAndSharedSupertypeCompanionHolder.onSupertype"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DeprecatedClassAndSharedSupertypeCompanionHolder.onSupertype [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            /* class DeprecatedClassAndSharedSupertypeCompanionHolder deprecated: "Use CompanionExtensionHolder" (when called on the class name) */ /* companion object deprecated: "Use the constructor" (when called on the class name) */ fun CompanionSupertype.onSupertype(): Int
+        """.trimIndent()
+    }
+
+    @Test
     fun `should not resolve extension of supertype of protected companion object as class member`() {
         // ProtectedSupertypeCompanionHolder.onSupertype() runs only within its subclasses, while kotlinc 2.4.21 compiles it anywhere,
         // failing elsewhere with an IllegalAccessError of the protected companion object field
@@ -1499,6 +1547,183 @@ class KotlinIntrospectorTest {
             // inherited from com.xemantic.kotlin.introspection.test.ShadowingObjectBase
             fun inherited(): Int
         """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve object without extensions shadowed by its members accepting all their arguments`() {
+        // WideningShadowingObject.generic(1), uninferred(1), nullable(1), supertype(""), bounded(other), functionProperty(),
+        // substituted("") and consumed("") call the members
+        resolver.resolve("com.xemantic.kotlin.introspection.test.WideningShadowingObject", pageSize = 20) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.WideningShadowingObject [page 1/1]
+            object WideningShadowingObject : WideningSupertype, WideningBase<String>, WideningConsumer<String>, WideningProducer<String> {
+                val functionProperty: () -> Int
+                fun <T> generic(x: T): Int
+                fun <T> uninferred(x: Int): T?
+                fun nullable(x: Int?): Int
+                fun supertype(x: CharSequence): Int
+                fun bounded(x: WideningSupertype): Int
+                fun substituted(x: String): Int
+                fun consumed(x: String): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun WideningSupertype.boundedGeneric(x: Int?): Int
+            fun WideningSupertype.functionProperty(x: Int): Int
+            fun <T> WideningSupertype.notNull(x: T): Int
+            fun WideningSupertype.nullableFunctionProperty(): Int
+            fun <T> WideningProducer<T>.produced(x: T): Int
+            fun WideningSupertype.receiverFunctionProperty(): Int
+            fun WideningSupertype.subtype(x: CharSequence): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve object with extensions next to its members not accepting all their arguments`() {
+        // NarrowingUnshadowingObject.notNull(null), boundedGeneric(null), functionProperty(x = 1), nullableFunctionProperty(),
+        // receiverFunctionProperty(), subtype(StringBuilder()) and produced(1) call the extensions
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NarrowingUnshadowingObject", pageSize = 20) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NarrowingUnshadowingObject [page 1/1]
+            object NarrowingUnshadowingObject : WideningSupertype, WideningProducer<String> {
+                val functionProperty: (Int) -> Int
+                val nullableFunctionProperty: (() -> Int)?
+                val receiverFunctionProperty: WideningSupertype.() -> Int
+                fun notNull(x: Any): Int
+                fun <T : Any> boundedGeneric(x: T): Int
+                fun subtype(x: String): Int
+                fun produced(x: String): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun <T : WideningSupertype> T.bounded(x: T): Int
+            fun WideningSupertype.boundedGeneric(x: Int?): Int
+            fun WideningSupertype.functionProperty(): Int
+            fun WideningSupertype.functionProperty(x: Int): Int
+            fun WideningSupertype.generic(x: Int): Int
+            fun <T> WideningSupertype.notNull(x: T): Int
+            fun WideningSupertype.nullable(x: Int): Int
+            fun WideningSupertype.nullableFunctionProperty(): Int
+            fun <T> WideningProducer<T>.produced(x: T): Int
+            fun WideningSupertype.receiverFunctionProperty(): Int
+            fun WideningSupertype.subtype(x: CharSequence): Int
+            fun WideningSupertype.supertype(x: String): Int
+            fun WideningSupertype.uninferred(x: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve extension of object shadowed by its property of function type`() {
+        // WideningShadowingObject.functionProperty() invokes the property, while functionProperty(1) calls the extension
+        resolver.resolve("com.xemantic.kotlin.introspection.test.WideningShadowingObject.functionProperty") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.WideningShadowingObject.functionProperty [page 1/1]
+            val functionProperty: () -> Int
+            // from com.xemantic.kotlin.introspection.test
+            fun WideningSupertype.functionProperty(x: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve extension on type parameter of supertype of object shadowed by its member taking the type argument`() {
+        // WideningShadowingObject.substituted("") calls the member, as T of WideningBase<T> can only be String
+        resolver.resolve("com.xemantic.kotlin.introspection.test.WideningShadowingObject.substituted") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.WideningShadowingObject.substituted [page 1/1]
+            fun substituted(x: String): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extensions shadowed by its members`() {
+        // shadowing.shadowed(), shadowing.shadowedProperty, shadowing.generic(""), shadowing.inherited(),
+        // shadowing.onDefinitelyNotNull() and shadowing.explicitSame<Int>() call the members,
+        // while nullableShadowing.onNullable(), shadowing.named(y = 1), shadowing.protectedMember(),
+        // shadowing.contextualProperty outside the context, shadowing.explicit<Int>(), shadowing.explicitBounded<String>()
+        // and shadowing.explicitInferred<String>(1) call the extensions
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InstanceShadowing", pageSize = 30) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InstanceShadowing [page 1/1]
+            open class InstanceShadowing : InstanceShadowingBase, InstanceShadowedSupertype {
+                val shadowedProperty: Int
+                context(text: String) val contextualProperty: Int
+                fun shadowed(): Int
+                fun onNullable(): Int
+                fun onNullableBound(): Int
+                fun onDefinitelyNotNull(): Int
+                fun explicit(): Int
+                fun <T> explicitSame(): Int
+                fun <T : Number> explicitBounded(): Int
+                fun <T> explicitInferred(x: T): Int
+                fun named(x: Int): Int
+                fun <T> generic(x: T): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            val InstanceShadowedSupertype.contextualProperty: Int
+            fun <R> InstanceShadowedSupertype.explicit(): Int
+            fun <R> InstanceShadowedSupertype.explicitBounded(): Int
+            fun <R> InstanceShadowedSupertype.explicitInferred(x: Int): Int
+            fun InstanceShadowedSupertype.named(y: Int): Int
+            fun InstanceShadowedSupertype?.onNullable(): Int
+            fun <T : InstanceShadowedSupertype?> T.onNullableBound(): Int
+            fun InstanceShadowedSupertype.protectedMember(): Int
+            fun InstanceShadowedSupertype.shadowed(x: Int): Int
+            fun InstanceShadowedSupertype.typed(x: String): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve extensions of class and of its supertype shadowed by its member`() {
+        // shadowing.shadowed() calls the member, while shadowing.shadowed(1) calls the extension
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InstanceShadowing.shadowed") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InstanceShadowing.shadowed [page 1/1]
+            fun shadowed(): Int
+            // from com.xemantic.kotlin.introspection.test
+            fun InstanceShadowedSupertype.shadowed(x: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve extension property of supertype of class shadowed by its member property`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InstanceShadowing.shadowedProperty") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InstanceShadowing.shadowedProperty [page 1/1]
+            val shadowedProperty: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve extension of supertype of class shadowed by its inherited member`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InstanceShadowing.inherited") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InstanceShadowing.inherited [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.InstanceShadowingBase
+            fun inherited(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension of supertype of class next to its protected inherited member`() {
+        // shadowing.protectedMember() calls the extension, where the member cannot be called
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InstanceShadowing.protectedMember") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InstanceShadowing.protectedMember [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.InstanceShadowingBase
+            protected fun protectedMember(): Int
+            // from com.xemantic.kotlin.introspection.test
+            fun InstanceShadowedSupertype.protectedMember(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension on nullable supertype of class next to its member`() {
+        // nullableShadowing.onNullable() calls the extension
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InstanceShadowing.onNullable") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InstanceShadowing.onNullable [page 1/1]
+            fun onNullable(): Int
+            // from com.xemantic.kotlin.introspection.test
+            fun InstanceShadowedSupertype?.onNullable(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve generic class without extension shadowed by its member, with one next to member taking its type parameter`() {
+        // GenericInstanceShadowing<Int>().shadowed() calls the member, while GenericInstanceShadowing<Int>().typed("") calls the extension
+        resolver.resolve("com.xemantic.kotlin.introspection.test.GenericInstanceShadowing", pageSize = 20) should {
+            have("fun InstanceShadowedSupertype.shadowed(): Int" !in lines())
+            have("fun InstanceShadowedSupertype.shadowed(x: Int): Int" in lines())
+            have("fun InstanceShadowedSupertype.typed(x: String): Int" in lines())
+        }
     }
 
     @Test
@@ -8984,7 +9209,9 @@ class KotlinIntrospectorTest {
     @Test
     fun `should resolve class with extensions on type parameters next to its overloads`() {
         // T is not pinned to BoundedReceiverShadowing, but can be inferred as BoundedReceiverD, so that,
-        // like for BoundedReceiverShadowing().nextToExtension(object : BoundedReceiverD {}), the extension can be called
+        // like for BoundedReceiverShadowing().nextToExtension(object : BoundedReceiverD {}), the extension can be called,
+        // unlike the ones taking no parameter of the type, for which the members are always called instead,
+        // like BoundedReceiverShadowing().nextToProperty, or BoundedReceiverShadowing().nextToMember()
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.BoundedReceiverShadowing"
         ) sameAsKotlin """
@@ -8996,10 +9223,8 @@ class KotlinIntrospectorTest {
                 fun nextToNullableBound(value: BoundedReceiverShadowing)
             }
             // from com.xemantic.kotlin.introspection.test
-            val <T : BoundedReceiverD> T.nextToProperty: Int
             fun BoundedReceiverShadowing.nextToExtension(value: BoundedReceiverShadowing): BoundedReceiverShadowing
             fun <T : BoundedReceiverD> T.nextToExtension(value: T): T
-            fun <T : BoundedReceiverD> T.nextToMember(): T
             fun <T : BoundedReceiverD?> T.nextToNullableBound(value: T)
             fun <T : BoundedReceiverD> T.nextToSubtypeParameter(value: T)
         """.trimIndent()
@@ -9048,14 +9273,13 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should resolve extension property on type parameter next to member property as member of class`() {
+    fun `should not resolve extension property on type parameter shadowed by member property as member of class`() {
+        // BoundedReceiverShadowing().nextToProperty reads the member
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.BoundedReceiverShadowing.nextToProperty"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.BoundedReceiverShadowing.nextToProperty [page 1/1]
             val nextToProperty: Int
-            // from com.xemantic.kotlin.introspection.test
-            val <T : BoundedReceiverD> T.nextToProperty: Int
         """.trimIndent()
     }
 
@@ -9465,6 +9689,77 @@ class KotlinIntrospectorTest {
             "com.xemantic.kotlin.introspection.test.pinning.UnpinnedEnum"
         ) should {
             have("fun <T : Comparable<T>> T.between(low: T, high: T): Boolean" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve class without extension property on type parameter pinned to it shadowed by extension property on it`() {
+        // PinnedExtensionProperty().rank reads the extension on the class itself, of the same package
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.pinning.property.PinnedExtensionProperty"
+        ) should {
+            have("val PinnedExtensionProperty.rank: Int" in lines())
+            have("val <T : Comparable<T>> T.rank: Int" !in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve extension property on class without one on type parameter pinned to it`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.pinning.property.PinnedExtensionProperty.rank"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.pinning.property.PinnedExtensionProperty.rank [page 1/1]
+            // from com.xemantic.kotlin.introspection.test.pinning.property
+            val PinnedExtensionProperty.rank: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve enum class without extension property on type parameter pinned to it shadowed by extension property on it`() {
+        // PinnedExtensionPropertyEnum.LOW.rank reads the extension on the enum class itself
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.pinning.property.PinnedExtensionPropertyEnum"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.pinning.property.PinnedExtensionPropertyEnum [page 1/1]
+            enum class PinnedExtensionPropertyEnum {
+                LOW,
+                HIGH
+            }
+            // from com.xemantic.kotlin.introspection.test.pinning.property
+            val PinnedExtensionPropertyEnum.rank: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extension property on type parameter shadowed by its member property`() {
+        // PinnedMemberProperty().rank reads the member
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.pinning.property.PinnedMemberProperty"
+        ) should {
+            have("    val rank: Int" in lines())
+            have("val <T : Comparable<T>> T.rank: Int" !in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve class with extension property on type parameter pinned to it next to extension property on it with context parameter`() {
+        // PinnedContextualExtensionProperty().rank reads the generic one outside the context of the one on the class
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.pinning.property.PinnedContextualExtensionProperty.rank"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.pinning.property.PinnedContextualExtensionProperty.rank [page 1/1]
+            // from com.xemantic.kotlin.introspection.test.pinning.property
+            context(context: PinnedPropertyContext) val PinnedContextualExtensionProperty.rank: Int
+            val <T : Comparable<T>> T.rank: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extension property on type parameter pinned to it without more specific one`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.pinning.property.UnpinnedProperty"
+        ) should {
+            have("val <T : Comparable<T>> T.rank: Int" in lines())
         }
     }
 
@@ -14565,6 +14860,44 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve enum class with deprecations of its entries`() {
+        // DeprecatedEntriesEnum.GONE is an unresolved reference, which a when expression still has to cover
+        resolver.resolve("com.xemantic.kotlin.introspection.test.DeprecatedEntriesEnum") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DeprecatedEntriesEnum [page 1/1]
+            enum class DeprecatedEntriesEnum {
+                CURRENT,
+                @Deprecated("Use CURRENT", ReplaceWith("CURRENT")) OLD,
+                @Deprecated("Removed", level = DeprecationLevel.ERROR) REMOVED,
+                @Deprecated("Gone", level = DeprecationLevel.HIDDEN) GONE
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun <E : Comparable<in E>> E.isBetween(low: E, high: E): Boolean
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve deprecated enum entry with its deprecation`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.DeprecatedEntriesEnum.OLD") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DeprecatedEntriesEnum.OLD [page 1/1]
+            @Deprecated("Use CURRENT", ReplaceWith("CURRENT")) OLD
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve enum entry deprecated with error level with its deprecation`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.DeprecatedEntriesEnum.REMOVED") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DeprecatedEntriesEnum.REMOVED [page 1/1]
+            @Deprecated("Removed", level = DeprecationLevel.ERROR) REMOVED
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve enum entry deprecated with hidden level`() {
+        // kotlinc rejects DeprecatedEntriesEnum.GONE as an unresolved reference
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.DeprecatedEntriesEnum.GONE") == null)
+    }
+
+    @Test
     fun `should resolve entry of deprecated enum class with its deprecation`() {
         // DeprecatedEnum.A writes the name of the enum class
         resolver.resolve("com.xemantic.kotlin.introspection.test.DeprecatedEnum.A") sameAsKotlin """
@@ -16843,6 +17176,71 @@ class KotlinIntrospectorTest {
     fun `should not resolve member of class nested in class of typealias`() {
         // kotlinc rejects AliasOfOuter.Nested as an unresolved reference
         assert(resolver.resolve("com.xemantic.kotlin.introspection.test.AliasOfOuter.Nested.companionValue") == null)
+    }
+
+    @Test
+    fun `should resolve member of companion object through typealias with type parameters`() {
+        // kotlinc resolves GenericAliasOfBox.boxValue, like AliasedBox.boxValue
+        resolver.resolve("com.xemantic.kotlin.introspection.test.GenericAliasOfBox.boxValue") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GenericAliasOfBox.boxValue [page 1/1]
+            companion object : AliasedBoxMarker {
+                val boxValue: Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of companion object through typealias with type arguments`() {
+        // kotlinc resolves StringAliasOfBox.of(1), the type arguments of the typealias telling nothing of the companion object
+        resolver.resolve("com.xemantic.kotlin.introspection.test.StringAliasOfBox.of") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.StringAliasOfBox.of [page 1/1]
+            companion object : AliasedBoxMarker {
+                fun <T> of(value: T): AliasedBox<T>
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension of companion object through typealias with type parameters`() {
+        // kotlinc resolves GenericAliasOfBox.parse("")
+        resolver.resolve("com.xemantic.kotlin.introspection.test.GenericAliasOfBox.parse") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GenericAliasOfBox.parse [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            fun AliasedBox.Companion.parse(text: String): AliasedBox<String>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension of supertype of companion object through typealias with type parameters`() {
+        // kotlinc resolves GenericAliasOfBox.onBoxMarker(), called on the companion object
+        resolver.resolve("com.xemantic.kotlin.introspection.test.GenericAliasOfBox.onBoxMarker") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GenericAliasOfBox.onBoxMarker [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            fun AliasedBoxMarker.onBoxMarker(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of companion object through deprecated typealias with type parameters with deprecated typealias`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.DeprecatedGenericAliasOfBox.boxValue") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DeprecatedGenericAliasOfBox.boxValue [page 1/1]
+            // through @Deprecated("Use AliasedBox") typealias DeprecatedGenericAliasOfBox<T> = AliasedBox<T>
+            companion object : AliasedBoxMarker {
+                val boxValue: Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve member of class through typealias with type parameters`() {
+        // rendered without the type arguments of the typealias substituted, like T of fun unbox(): T
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.GenericAliasOfBox.unbox") == null)
+    }
+
+    @Test
+    fun `should not resolve extension of class through typealias with type arguments`() {
+        // called on an instance, like fun <T> AliasedBox<T>.unboxed(): T, not on the name of the class
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.StringAliasOfBox.unboxed") == null)
     }
 
     @Test

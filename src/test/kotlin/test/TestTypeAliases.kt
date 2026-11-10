@@ -61,6 +61,32 @@ typealias AliasOfNested = AliasedOuter.Nested
 
 typealias AliasOfOuter = AliasedOuter
 
+// typealiases with type parameters, or type arguments, through which kotlinc resolves what is called on the name of the class
+// they expand to, like GenericAliasOfBox.boxValue, or GenericAliasOfBox.parse(""), while the members of the class,
+// like unbox, would be rendered without the type arguments of the typealias substituted
+interface AliasedBoxMarker
+
+class AliasedBox<T>(val value: T) : AliasedBoxMarker {
+    fun unbox(): T = value
+    companion object : AliasedBoxMarker {
+        val boxValue: Int = 0
+        fun <T> of(value: T): AliasedBox<T> = AliasedBox(value)
+    }
+}
+
+fun AliasedBox.Companion.parse(text: String): AliasedBox<String> = AliasedBox(text)
+
+fun AliasedBoxMarker.onBoxMarker(): Int = 0
+
+fun <T> AliasedBox<T>.unboxed(): T = value
+
+typealias GenericAliasOfBox<T> = AliasedBox<T>
+
+typealias StringAliasOfBox = AliasedBox<String>
+
+@Deprecated("Use AliasedBox")
+typealias DeprecatedGenericAliasOfBox<T> = AliasedBox<T>
+
 // an interface member with a body, declared abstract again by a Java interface
 interface DefaultedMember {
     fun foo(): Int = 1

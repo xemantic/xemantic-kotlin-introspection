@@ -32,6 +32,7 @@ import kotlin.metadata.KmPackage
 import kotlin.metadata.KmType
 import kotlin.metadata.KmTypeProjection
 import kotlin.metadata.KmVariance
+import kotlin.metadata.hasEnumEntries
 import kotlin.metadata.jvm.KotlinClassMetadata
 import kotlin.metadata.jvm.Metadata
 
@@ -158,6 +159,17 @@ private val legacyComparator = KmType().apply {
 internal fun withSupertypesInMetadata(bytes: ByteArray, vararg types: KmType): ByteArray = withMetadata(bytes) {
     val metadata = KotlinClassMetadata.readStrict(it) as KotlinClassMetadata.Class
     metadata.kmClass.supertypes += types
+    metadata.write()
+}
+
+/**
+ * Removes the flag telling the `entries` property from the metadata of an enum class,
+ * like of one compiled before Kotlin 1.9, which the current compiler no longer compiles.
+ */
+internal fun withoutEnumEntriesInMetadata(bytes: ByteArray): ByteArray = withMetadata(bytes) {
+    val metadata = KotlinClassMetadata.readStrict(it) as KotlinClassMetadata.Class
+    check(metadata.kmClass.hasEnumEntries)
+    metadata.kmClass.hasEnumEntries = false
     metadata.write()
 }
 

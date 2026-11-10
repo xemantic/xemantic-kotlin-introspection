@@ -98,6 +98,9 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   `x.getOrDefault("", null)` compiles on a `HashMap<String, String>` subclass through the extension.
   Probe the member only, shadowing the extension by one of the same name in the probe's own package, returning a marker type.
 
+- kotlinc 2.4.21 rejects an enum entry named `entries` (`conflicting declarations`, KT-48872), also one deprecated as `HIDDEN`,
+  so the entry shadowing the `entries` property can be neither probed, nor compiled as a fixture.
+
 - Kotlin never passes named arguments to a Java method, even one compiled with `-parameters`, so a Java method taking parameters never shadows an extension — see `isShadowingJavaMethod`.
 
 ## Anti-patterns to avoid
