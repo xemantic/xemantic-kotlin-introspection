@@ -101,6 +101,20 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 - kotlinc 2.4.21 rejects an enum entry named `entries` (`conflicting declarations`, KT-48872), also one deprecated as `HIDDEN`,
   so the entry shadowing the `entries` property can be neither probed, nor compiled as a fixture.
 
+- `CallInference` models the constraint system of K2 after the compiler sources
+  (`VariableReadinessCalculator`, `ConstraintIncorporator`, `ResultTypeResolver`, `NewCommonSuperTypeCalculator`, tag `v2.4.21`),
+  not after probes: the rules of the order the type parameters are fixed in, derived from probes, regressed in every round (#268, #292).
+  Change it only against a sweep of extension shapes × receivers judged by kotlinc, comparing the listings before and after.
+
+- kotlinc reports a violated bound of an inferred type parameter only as a warning,
+  when a type parameter of the same call is inferred as an empty intersection, like `Int & String`, itself only a warning —
+  so `x.ext()` compiles with `A` inferred as `Any` for `A : Comparable<A>`.
+  A probe compiled with `-nowarn` does not tell the two apart.
+
+- A type parameter neither the receiver nor the value parameters refer to is still inferred by kotlinc, when its bound refers to one which is,
+  like `C` of `<A, B : A, C : A> Sink<A, B>`, fixed after `A`, and it takes part in the order of fixing the other ones —
+  only one whose bounds refer to none of them, like `<reified T>`, has to be given explicitly.
+
 - Kotlin never passes named arguments to a Java method, even one compiled with `-parameters`, so a Java method taking parameters never shadows an extension — see `isShadowingJavaMethod`.
 
 ## Anti-patterns to avoid

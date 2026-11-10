@@ -848,12 +848,12 @@ class BoundedReceiverPlainAnyBiConsumer : BoundedReceiverBiConsumer<BoundedRecei
 // Any? constrains a type parameter of a contravariant position trivially, inferred after the other ones
 class BoundedReceiverStringNullableAnyBiConsumer : BoundedReceiverBiConsumer<String?, Any?>
 
-// a type parameter bounding multiple ones, which kotlinc infers as the type of the first one fixed, not checked
+// a type parameter bounding multiple ones, which kotlinc infers as the type of the first one fixed
 fun <A : Comparable<A>, B : A, C : A> BoundedReceiverBiConsumer<B, C>.biConsumeUnder() {}
 
 // a pair of contravariant positions, a type parameter bounded by a type of another one, which is part of its intersection,
 // like List<CharSequence> of T : List<U> for U inferred as CharSequence, or bounding multiple ones,
-// which kotlinc infers as the type of the first one declared of them, wherever it is declared itself, not checked
+// which kotlinc infers as the type of the first one declared of them, wherever it is declared itself
 interface BoundedReceiverPairSink<in A, in B>
 
 fun <U, T : List<U>> BoundedReceiverPairSink<T, U>.sinkListOf() {}
@@ -953,7 +953,7 @@ class BoundedReceiverNullableNothingOutlet : BoundedReceiverOutlet<Nothing?>
 
 // a type parameter bounding multiple ones, which kotlinc may fix after them, like A of B : A, and C : A, as String of B,
 // C inferred as Nothing, the intersection of Int and String, then, or bounded by a type of a type parameter fixed after it,
-// like T : Comparable<B>, not checked
+// like T : Comparable<B>
 interface BoundedReceiverTripleSink<in A, in B, in C>
 
 fun <A : Comparable<A>, B : A, C : A> BoundedReceiverTripleSink<B, C, A>.tripleUnder() {}
@@ -964,7 +964,7 @@ class BoundedReceiverStringIntAnyTripleSink : BoundedReceiverTripleSink<String, 
 
 class BoundedReceiverPlainAnyAnyTripleSink : BoundedReceiverTripleSink<BoundedReceiverPlain, Any, Any>
 
-// a type parameter bounding multiple ones, like A of B : A, and C : A, which kotlinc fixes in an order not modelled, not checked
+// a type parameter bounding multiple ones, like A of B : A, and C : A, which kotlinc fixes after B, declared before it
 fun <B : A, A : Comparable<A>, C : A> BoundedReceiverTripleSink<B, C, A>.tripleUnderMiddle() {}
 
 class BoundedReceiverComparableIntAnyTripleSink : BoundedReceiverTripleSink<Comparable<String>, Int, Any>
@@ -1301,3 +1301,70 @@ class BoundedReceiverAnyTaker : BoundedReceiverTaker<Any>
 class BoundedReceiverStringListTaker : BoundedReceiverTaker<List<String>>
 
 class BoundedReceiverStringTaker : BoundedReceiverTaker<String>
+
+// the type parameters inferred like kotlinc does, by the constraints of the receiver and of their bounds, see #292,
+// fixed one by one, the first one declared of the readiest ones first:
+// a type parameter bounding multiple ones, like A of B : A, and C : A, is fixed first when declared first,
+// as the type of its own position, like Any, no Comparable<Any>, and after B, as String, when B is declared first,
+// also bounding them through a chain, like A of C : B, B : A, or bounded by a type parameter declared later, like T : Comparable<B>
+interface InferredReceiverTripleSink<in A, in B, in C>
+
+fun <A : Comparable<A>, B : A, C : A> InferredReceiverTripleSink<B, C, A>.tripleFanFirst() {}
+
+fun <B : A, A : Comparable<A>, C : A> InferredReceiverTripleSink<B, C, A>.tripleFanMiddle() {}
+
+fun <C : B, B : A, A : Comparable<A>> InferredReceiverTripleSink<A, B, C>.tripleChain() {}
+
+fun <A : Comparable<A>, T : Comparable<B>, B : A> InferredReceiverTripleSink<T, A, B>.tripleComparableOfLater() {}
+
+class InferredReceiverStringStringAnyTripleSink : InferredReceiverTripleSink<String, String, Any>
+
+class InferredReceiverCharSequenceTripleSink : InferredReceiverTripleSink<CharSequence, CharSequence, CharSequence>
+
+class InferredReceiverStringComparableIntTripleSink : InferredReceiverTripleSink<String, Comparable<String>, Int>
+
+// a type parameter bounding the one of the receiver, like T of U : T, takes its type, which satisfies its recursive bound, or not,
+// like BoundedReceiverSubSelfList widened to BoundedReceiverSelfList, a List<BoundedReceiverSelfList>, unlike String
+interface InferredReceiverSink<in T>
+
+fun <T : List<T>, U : T> InferredReceiverSink<U>.sinkUnderSelfList() {}
+
+class InferredReceiverStringSink : InferredReceiverSink<String>
+
+class InferredReceiverSubSelfListSink : InferredReceiverSink<BoundedReceiverSubSelfList>
+
+// a covariant recursive bound is satisfied by the common supertype of the type, and of its type arguments, if any,
+// like List<BoundedReceiverSelfList> of List<BoundedReceiverSubSelfList>, but none of List<List<String>>, as String is no List
+interface InferredReceiverSource<out T>
+
+fun <T : List<T>> InferredReceiverSource<T>.sourceSelfList() {}
+
+class InferredReceiverStringListsSource : InferredReceiverSource<List<List<String>>>
+
+class InferredReceiverSubSelfListsSource : InferredReceiverSource<List<List<BoundedReceiverSubSelfList>>>
+
+// a type parameter bounded by another one, in a type argument, like B of List<B>, which nothing constrains for Any,
+// is fixed after A, as its type, like String
+interface InferredReceiverPairSink<in A, in B>
+
+fun <A : Comparable<A>, B : A> InferredReceiverPairSink<List<B>, A>.pairSinkListBounded() {}
+
+class InferredReceiverAnyStringPairSink : InferredReceiverPairSink<Any, String>
+
+class InferredReceiverStringStringPairSink : InferredReceiverPairSink<String, String>
+
+// a star projection of an invariant type parameter is the same type as its in Nothing, and its out Any?, projections,
+// also as a type argument of an invariant position, each of them matching the other ones
+interface InferredReceiverCell<T>
+
+fun InferredReceiverCell<MutableList<*>>.cellOfStar() {}
+
+fun InferredReceiverCell<MutableList<in Nothing>>.cellOfInNothing() {}
+
+fun InferredReceiverCell<MutableList<out Any?>>.cellOfOutAny() {}
+
+class InferredReceiverStarCell : InferredReceiverCell<MutableList<*>>
+
+class InferredReceiverInNothingCell : InferredReceiverCell<MutableList<in Nothing>>
+
+class InferredReceiverOutAnyCell : InferredReceiverCell<MutableList<out Any?>>
