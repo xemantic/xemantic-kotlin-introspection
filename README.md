@@ -278,11 +278,14 @@ com.example.AnnotationTestClass
   is listed for `interface Orders : List<Order>`, and for `class OrderList : ArrayList<Order>()`.
   This holds only when the type arguments of the supertype are known,
   from the Kotlin metadata, or from the generic signatures of the Java supertypes.
-  It does not apply on `Comparable` of an enum class,
-  nor to the classes of the `kotlin.*` and `java.*` packages themselves,
+  It applies on `Comparable` of an enum class too,
+  like `fun <T : Comparable<T>> T.isBetween(low: T, high: T)` declared next to `enum class Level`,
+  unlike the extensions of the standard library on `Comparable`, which are never listed for an enum class.
+  It does not apply to the classes of the `kotlin.*` and `java.*` packages themselves,
   whose extensions of their own packages are the ones of the standard library.
   The ones on `T : Comparable<T>` are not listed for a final type comparable only to itself, which pins `T` to it,
-  like `Int`, when it declares a more specific overload, a member, or an extension on the type itself,
+  like `Int`, or an enum class, also one whose entries have bodies,
+  when it declares a more specific overload, a member, or an extension on the type itself,
   taking the same parameters, of the same names, where `T` stands for the type,
   like `fun <T : Comparable<T>> T.coerceAtLeast(minimumValue: T): T` next to `fun Int.coerceAtLeast(minimumValue: Int): Int`,
   called instead, unless the type argument is given explicitly, like `5.coerceAtLeast<Int>(3)`.

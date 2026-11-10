@@ -4083,7 +4083,7 @@ internal class DefaultKotlinIntrospector(
      * but the ones of the standard library on `Comparable` for a class comparable to itself, see [isComparableToItself],
      * and the ones of its package on any of its supertypes, like `fun List<Order>.total()` for `interface Orders : List<Order>`,
      * when the type arguments of the supertype are told, see [ClassSupertypes.types], on `Comparable` only for a comparable class,
-     * see [isComparable], and for a class of the `kotlin.*` or `java.*` packages only on `Comparable`.
+     * also an enum class, see [isComparable], and for a class of the `kotlin.*` or `java.*` packages only on `Comparable`.
      * Either way, the ones on a type parameter with multiple bounds only when the class satisfies all of them,
      * see [receiverBoundsOf], also when none of them is among the [userSupertypes], see [listedFor],
      * and only the ones which can be called on the class, as told by the type arguments, see [isCallableOn],
@@ -4140,17 +4140,23 @@ internal class DefaultKotlinIntrospector(
             // and on Comparable, only for a comparable class, see isComparable,
             // also the ones of the standard library for a class comparable to itself,
             // unless the class is of these packages itself, whose extensions are the ones of the standard library,
-            // listed then only on Comparable,
+            // listed then only on Comparable, but never for an enum class, see isComparableToItself,
+            // like Comparable<T>.compareTo of the kotlin package for kotlin.DeprecationLevel,
             // while the ones with multiple bounds, satisfied by the class, are already listed
             val otherSupertypes = when {
                 isOfStandardPackage(classPackage) -> listOf(COMPARABLE_CLASS_NAME)
                 else -> (supertypes.names + ANY_RECEIVER_KEY).filter { it !in userSupertypes }
             }.filter { it != COMPARABLE_CLASS_NAME || supertypes.isComparable }
             val isComparableToItself = supertypes.isComparableToItself
-            fun ReceiverBounded.isListedOn(supertype: String) =
-                (sourceClass.substringBeforeLast('.', "") == classPackage ||
-                    (supertype == COMPARABLE_CLASS_NAME && isComparableToItself && isBuiltinExtension)) &&
-                    receiverBounds.all { it in satisfiedBounds }
+            val isEnum = kmClass.kind == ClassKind.ENUM_CLASS
+            fun ReceiverBounded.isListedOn(supertype: String): Boolean {
+                val isOfClassPackage = sourceClass.substringBeforeLast('.', "") == classPackage
+                val isListed = when {
+                    supertype != COMPARABLE_CLASS_NAME || !isBuiltinExtension -> isOfClassPackage
+                    else -> isComparableToItself || (isOfClassPackage && !isEnum)
+                }
+                return isListed && receiverBounds.all { it in satisfiedBounds }
+            }
             // a supertype taking type arguments only when they are told, see ClassSupertypes.types,
             // like not java.util.Collection<E> of the JDK interface java.util.List<String> named as a supertype,
             // which an extension on Collection<Order> would be told callable on, see isCallableOn
@@ -4937,7 +4943,8 @@ internal class DefaultKotlinIntrospector(
      * Told by the Kotlin metadata of the class and of its supertypes, see [ClassSupertypes.types],
      * or by the generic signature of a Java supertype, like `class Base implements Comparable<Base>`, see [javaSupertypeTypes].
      * An enum class, comparable to itself through `kotlin.Enum`, is not told to be,
-     * as these extensions are rarely called on the enum entries, and would grow the listing of every enum class.
+     * as these extensions are rarely called on the enum entries, and would grow the listing of every enum class,
+     * unlike the ones of its own package, like `fun <T : Comparable<T>> T.isBetween(low: T, high: T)`, see [isComparable].
      */
     private val ClassSupertypes.isComparableToItself: Boolean
         get() {
@@ -4952,13 +4959,14 @@ internal class DefaultKotlinIntrospector(
     /**
      * Whether the class is comparable, to whatever type, like `class Price : Comparable<Money>`,
      * so that the extensions on `Comparable` of the package of the class are listed for it, like next to it,
-     * see [listedExtensions], but not an enum class, see [isComparableToItself], which implies it,
-     * nor a class comparable only through a raw Java supertype, like `class Mid extends Base`, where
+     * see [listedExtensions], also for an enum class, comparable to itself through `kotlin.Enum`,
+     * unlike the ones of the standard library, see [isComparableToItself], which implies it,
+     * but not a class comparable only through a raw Java supertype, like `class Mid extends Base`, where
      * `class Base<T> implements Comparable<Base<T>>`, told by its name, but not by its type, see [ClassSupertypes.types],
      * comparable to the raw `Base`, on which kotlinc does not accept the extensions of the package, like on `Comparable<Money>`.
      */
     private val ClassSupertypes.isComparable: Boolean
-        get() = kmClass.kind != ClassKind.ENUM_CLASS && COMPARABLE_CLASS_NAME in types
+        get() = COMPARABLE_CLASS_NAME in types
 
     /**
      * Whether the [type] is a type parameter of the class bounded by the class itself, of its own type parameters,
