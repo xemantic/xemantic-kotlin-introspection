@@ -879,7 +879,8 @@ class BoundedReceiverStringMixed : BoundedReceiverMixed<String, CharSequence>
 
 class BoundedReceiverListMixed : BoundedReceiverMixed<List<String>, Any>
 
-// a type parameter constrained only by Nothing, which kotlinc cannot infer, unless the expected type of the call tells it
+// a type parameter constrained only by Nothing, which kotlinc cannot infer, also when the return type refers to it,
+// which only an expected type of the call tells, unlike a value parameter, inferred from the argument
 interface BoundedReceiverProducer<out T>
 
 fun <T> BoundedReceiverProducer<T>.produce() {}
@@ -887,6 +888,23 @@ fun <T> BoundedReceiverProducer<T>.produce() {}
 fun <T> BoundedReceiverProducer<List<T>>.produceList() {}
 
 fun <T> BoundedReceiverProducer<List<T>>.produceFirst(): T? = null
+
+val <T> BoundedReceiverProducer<List<T>>.firstProduced: T? get() = null
+
+fun <T> BoundedReceiverProducer<List<T>>.produceWith(value: T) {}
+
+fun <E, T : List<E>> BoundedReceiverProducer<T>.produceFirstElement(): E? = null
+
+// or a type parameter bounded by one inferred, like T : R for r: R, fixed by kotlinc as the type of R,
+// unlike by one which nothing infers, like R : CharSequence
+fun <T : R, R> BoundedReceiverProducer<List<T>>.produceBounded(r: R): T? = null
+
+fun <T : R, R : CharSequence> BoundedReceiverProducer<List<T>>.produceBoundedByUninferred(): T? = null
+
+// also through a chain of bounds, like T : U, U : R, or when R bounds another type parameter as well, like U : R
+fun <T : U, U : R, R> BoundedReceiverProducer<List<T>>.produceChained(r: R): T? = null
+
+fun <T : R, U : R, R> BoundedReceiverProducer<List<T>>.produceFanned(r: R): T? = null
 
 fun <E, T : List<E>> BoundedReceiverProducer<T>.produceElements() {}
 
@@ -1254,3 +1272,24 @@ fun BoundedReceiverPaths<BoundedReceiverWrap<String>>.stringWrapPaths() {}
 class BoundedReceiverJavaNullableWrapPaths : JavaStringNullableWrapPaths.Wrap
 
 class BoundedReceiverJavaNullableWrapWrapPaths : JavaStringNullableWrapPaths.WrapWrap
+
+// a type parameter of a contravariant position, which nothing else constrains than the return type,
+// inferred from the receiver alone, as a call without an expected type tells nothing of it,
+// like T : Comparable<T> as Any, which is no Comparable<Any>, or T of List<T> for Any, which kotlinc cannot infer
+interface BoundedReceiverTaker<in T>
+
+fun <T : Comparable<T>> BoundedReceiverTaker<T>.takeComparable(): T? = null
+
+fun <T> BoundedReceiverTaker<List<T>>.takeFirst(): T? = null
+
+val <T> BoundedReceiverTaker<List<T>>.firstTaken: T? get() = null
+
+// mutually recursive bounds, U fixed by kotlinc as Comparable<T>, which T must be a Comparable of,
+// like String, a Comparable<Comparable<String>>, but not List<String>
+fun <T : Comparable<U>, U : Comparable<T>> BoundedReceiverTaker<T>.takeMutuallyComparable() {}
+
+class BoundedReceiverAnyTaker : BoundedReceiverTaker<Any>
+
+class BoundedReceiverStringListTaker : BoundedReceiverTaker<List<String>>
+
+class BoundedReceiverStringTaker : BoundedReceiverTaker<String>

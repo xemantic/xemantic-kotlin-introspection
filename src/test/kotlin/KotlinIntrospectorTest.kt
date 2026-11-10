@@ -10709,16 +10709,23 @@ class KotlinIntrospectorTest {
     fun `should resolve class with extension on covariant type parameter of recursive bound satisfied by supertype`() {
         // T of T : List<T> is inferred as List<BoundedReceiverSelfList>, a supertype of MutableList<BoundedReceiverSelfList>
         resolver.resolve(
-            "com.xemantic.kotlin.introspection.test.BoundedReceiverMutableSelfListProducer"
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverMutableSelfListProducer",
+            pageSize = 20
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.BoundedReceiverMutableSelfListProducer [page 1/1]
             class BoundedReceiverMutableSelfListProducer : BoundedReceiverProducer<MutableList<BoundedReceiverSelfList>>
             // from com.xemantic.kotlin.introspection.test
+            val <T> BoundedReceiverProducer<List<T>>.firstProduced: T?
             fun <T> BoundedReceiverProducer<T>.produce()
+            fun <T : R, R> BoundedReceiverProducer<List<T>>.produceBounded(r: R): T?
+            fun <T : U, U : R, R> BoundedReceiverProducer<List<T>>.produceChained(r: R): T?
             fun <E, T : List<E>> BoundedReceiverProducer<T>.produceElements()
+            fun <T : R, U : R, R> BoundedReceiverProducer<List<T>>.produceFanned(r: R): T?
             fun <T> BoundedReceiverProducer<List<T>>.produceFirst(): T?
+            fun <E, T : List<E>> BoundedReceiverProducer<T>.produceFirstElement(): E?
             fun <T> BoundedReceiverProducer<List<T>>.produceList()
             fun <T : List<T>> BoundedReceiverProducer<T>.produceSelfList()
+            fun <T> BoundedReceiverProducer<List<T>>.produceWith(value: T)
         """.trimIndent()
     }
 
@@ -10787,7 +10794,10 @@ class KotlinIntrospectorTest {
     @Test
     fun `should resolve class without extension on type parameter constrained only by Nothing`() {
         // Nothing is a List<T>, and a List<E>, of any T, and E, which kotlinc cannot infer then,
-        // unless the expected type of the call tells it, like of produceFirst returning T?,
+        // also not when the return type refers to it, like of produceFirst returning T?, as x.produceFirst() fails,
+        // unlike a value parameter, inferred from the argument, like of produceWith(value: T),
+        // also through a bound, like T : R of produceBounded(r: R), unless nothing infers R, like of produceBoundedByUninferred,
+        // also through a chain of bounds, like of produceChained, or a bound bounding another type parameter, like of produceFanned,
         // while Nothing satisfies the recursive bounds of T, a List<Nothing>, and a Comparable<Nothing>
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.BoundedReceiverNothingProducer"
@@ -10796,9 +10806,52 @@ class KotlinIntrospectorTest {
             class BoundedReceiverNothingProducer : BoundedReceiverProducer<Nothing>
             // from com.xemantic.kotlin.introspection.test
             fun <T> BoundedReceiverProducer<T>.produce()
-            fun <T> BoundedReceiverProducer<List<T>>.produceFirst(): T?
+            fun <T : R, R> BoundedReceiverProducer<List<T>>.produceBounded(r: R): T?
+            fun <T : U, U : R, R> BoundedReceiverProducer<List<T>>.produceChained(r: R): T?
+            fun <T : R, U : R, R> BoundedReceiverProducer<List<T>>.produceFanned(r: R): T?
             fun <T : Comparable<T>?> BoundedReceiverProducer<T>.produceNullableComparable()
             fun <T : List<T>> BoundedReceiverProducer<T>.produceSelfList()
+            fun <T> BoundedReceiverProducer<List<T>>.produceWith(value: T)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extensions on contravariant type parameter told only by return type`() {
+        // a call without an expected type tells nothing of T, inferred as Any, which is no Comparable<Any>,
+        // nor can kotlinc infer T of List<T> from Any
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverAnyTaker"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverAnyTaker [page 1/1]
+            class BoundedReceiverAnyTaker : BoundedReceiverTaker<Any>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extension on contravariant type parameter told by receiver`() {
+        // T of List<T> is inferred as String from List<String>, while List<String> is no Comparable<List<String>>,
+        // nor a Comparable<Comparable<List<String>>>, of U fixed as Comparable<T>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverStringListTaker"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverStringListTaker [page 1/1]
+            class BoundedReceiverStringListTaker : BoundedReceiverTaker<List<String>>
+            // from com.xemantic.kotlin.introspection.test
+            val <T> BoundedReceiverTaker<List<T>>.firstTaken: T?
+            fun <T> BoundedReceiverTaker<List<T>>.takeFirst(): T?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extension on contravariant type parameter of recursive bound satisfied by receiver`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverStringTaker"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverStringTaker [page 1/1]
+            class BoundedReceiverStringTaker : BoundedReceiverTaker<String>
+            // from com.xemantic.kotlin.introspection.test
+            fun <T : Comparable<T>> BoundedReceiverTaker<T>.takeComparable(): T?
+            fun <T : Comparable<U>, U : Comparable<T>> BoundedReceiverTaker<T>.takeMutuallyComparable()
         """.trimIndent()
     }
 
@@ -10807,15 +10860,23 @@ class KotlinIntrospectorTest {
         // T is inferred as List<String>, which is no List<List<String>>, nor a Comparable<List<String>>,
         // while E of T : List<E> is inferred as String
         resolver.resolve(
-            "com.xemantic.kotlin.introspection.test.BoundedReceiverListProducer"
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverListProducer",
+            pageSize = 20
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.BoundedReceiverListProducer [page 1/1]
             class BoundedReceiverListProducer : BoundedReceiverProducer<List<String>>
             // from com.xemantic.kotlin.introspection.test
+            val <T> BoundedReceiverProducer<List<T>>.firstProduced: T?
             fun <T> BoundedReceiverProducer<T>.produce()
+            fun <T : R, R> BoundedReceiverProducer<List<T>>.produceBounded(r: R): T?
+            fun <T : R, R : CharSequence> BoundedReceiverProducer<List<T>>.produceBoundedByUninferred(): T?
+            fun <T : U, U : R, R> BoundedReceiverProducer<List<T>>.produceChained(r: R): T?
             fun <E, T : List<E>> BoundedReceiverProducer<T>.produceElements()
+            fun <T : R, U : R, R> BoundedReceiverProducer<List<T>>.produceFanned(r: R): T?
             fun <T> BoundedReceiverProducer<List<T>>.produceFirst(): T?
+            fun <E, T : List<E>> BoundedReceiverProducer<T>.produceFirstElement(): E?
             fun <T> BoundedReceiverProducer<List<T>>.produceList()
+            fun <T> BoundedReceiverProducer<List<T>>.produceWith(value: T)
         """.trimIndent()
     }
 
