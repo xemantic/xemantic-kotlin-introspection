@@ -2645,20 +2645,25 @@ internal class DefaultKotlinIntrospector(
          * which the compiler picks of the two, see [inheritedCandidates], like the `Collection<out Int>?` of the
          * `addAll2(Collection<? extends Integer>)` of a Java class for the `addAll2(c: Collection<Int>)` of a Kotlin interface
          * declared after it, keeping the names of its own value parameters, which the compiler lets a call name,
-         * unless either is a vararg one, which is not told.
+         * and its own type parameters, which the ones of the [picked] method are, by their positions, like the `T`
+         * of a Java `<T> void take2(T, Class<T>)` the `T` of `fun <T> take2(value: T, type: Class<T>)`, numbered otherwise,
+         * unless they differ in number, or a value parameter of either is a vararg one, which is not told.
          */
         fun takeTypesOf(picked: InheritedCandidate) {
             val function = member as? Member.Function ?: return
             val pickedFunction = (picked.effectiveMember as? Member.Function)?.function ?: return
             val parameters = function.function.valueParameters
             val pickedParameters = pickedFunction.valueParameters
-            if (parameters.size != pickedParameters.size ||
+            val typeParameters = function.function.typeParameters
+            val pickedTypeParameters = pickedFunction.typeParameters
+            if (parameters.size != pickedParameters.size || typeParameters.size != pickedTypeParameters.size ||
                 (parameters + pickedParameters).any { it.varargElementType != null }
             ) {
                 return
             }
+            val own = pickedTypeParameters.indices.associate { pickedTypeParameters[it].id to typeParameterType(typeParameters[it].id) }
             val types = IdentityHashMap<KmType, KmType>()
-            parameters.forEachIndexed { index, parameter -> types[parameter.type] = pickedParameters[index].type }
+            parameters.forEachIndexed { index, parameter -> types[parameter.type] = pickedParameters[index].type.substituted(own) }
             javaTypedMember = Member.Function(function.function.withValueParameterTypes { types[it] ?: it }, function.declaration)
         }
 
@@ -2823,13 +2828,15 @@ internal class DefaultKotlinIntrospector(
                     isMergedOnJvm(other))
 
         // whether one of the members is a member of a Java class, see isMergedWith, or a Kotlin member taking the platform types
-        // a Java class gives, see takesPlatformTypes, like the put(t: T) of GenericPut<T> which a Java class implements
-        // as GenericPut<Integer>, merged with the hidden put(key: Int?) of an unrelated interface, picked when declared first
+        // a Java class gives, see takesPlatformTypes, standing for the method of the Java class implementing it,
+        // see implementingJvmMethod, like the put(t: T) of GenericPut<T> which a Java class implements as GenericPut<Integer>,
+        // merged with the hidden put(key: Int?) of an unrelated interface, picked when declared first
         private fun isJavaRivalry(other: InheritedCandidate): Boolean =
             declarations is JavaClass || other.declarations is JavaClass || isPlatformKotlinMember || other.isPlatformKotlinMember
 
         // but a member of a built-in type, like the getOrDefault of Map reached through a JDK class, which stays apart
-        private val isPlatformKotlinMember: Boolean get() = takesPlatformTypes && declarations !is BuiltinClass
+        private val isPlatformKotlinMember: Boolean
+            get() = takesPlatformTypes && implementingJvmMethod != null && declarations !is BuiltinClass
 
         // whether the value parameters of the JVM methods of both members are merged position by position, where both are told
         private fun isMergedOnJvm(other: InheritedCandidate): Boolean {
@@ -3776,8 +3783,7 @@ internal class DefaultKotlinIntrospector(
                     return@forEach
                 }
                 val overriding = javaOverrides.overridingBySignature(picked.jvmMethod) ?: return@forEach
-                val isUnrelated = !isOverriddenByJavaSubclass(picked) &&
-                    walked.none { it !== picked && it.key in overriding && picked.name in supertypeNamesOf(it.name) }
+                val isUnrelated = walked.none { it !== picked && it.key in overriding && picked.name in supertypeNamesOf(it.name) }
                 if (isUnrelated) candidate.takeTypesOf(picked)
             }
             // the method of a Java class merged with a listed Kotlin member, or implementing a member merged with it,

@@ -493,6 +493,18 @@ interface StringAcceptor {
 // the compiler picks the accept(String) of the Java class, declared first, taking String!, so that accept(null) compiles
 abstract class StringJavaAcceptorJoin : com.xemantic.kotlin.introspection.test.other.JavaStringAcceptor(), StringAcceptor
 
+// the type parameter of the interface numbers the ones of its members apart from the ones of the Java methods
+interface GenericMethodTaker<E> {
+    fun <T> take2(value: T, type: Class<T>)
+    fun <X : CharSequence, Y> pair(first: X, second: Y)
+}
+
+abstract class GenericMethodJavaTakerJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaGenericMethodTaker(), GenericMethodTaker<String>
+
+abstract class GenericMethodJavaTakerParameterJoin<Q> :
+    com.xemantic.kotlin.introspection.test.other.JavaGenericMethodTaker(), GenericMethodTaker<Q>
+
 interface IntGenericPutRedeclaring : GenericPut<Int> {
     override fun put(t: Int): String
 }

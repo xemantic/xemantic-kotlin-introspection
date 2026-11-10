@@ -104,7 +104,6 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 
 - A Java method and a Kotlin member of unrelated supertypes, of the same JVM signature, are merged only when their Kotlin types agree but for the platform ones:
   a Java `accept(@NotNull String)` next to a Kotlin `accept(s: String?)` is rejected with `inherited platform declarations clash`, so such a join is no valid fixture.
-  Of the merged ones K2 picks the member of the first supertype when the return types are equally specific, like `Unit`, or `Boolean`, see `takeTypesOf`.
 
 - Kotlin never passes named arguments to a Java method, even one compiled with `-parameters`, so a Java method taking parameters never shadows an extension — see `isShadowingJavaMethod`.
 

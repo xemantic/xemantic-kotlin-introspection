@@ -1012,10 +1012,6 @@ internal class OverrideResolver(
         // a class is never its own supertype, which matters for Any itself
         val visited = mutableSetOf(ownerClass.name)
         val kotlinSupertypes = HashMap<String, List<String>>()
-        // the relocation of the Kotlin supertypes found by their relocated names, by the names of their own supertypes,
-        // which it locates when the relocation of the owner does not, like the ones of a relocated Kotlin class
-        // which a relocated Java class extends, as a Java class has no metadata telling its relocation
-        val supertypeRelocations = HashMap<String, Relocation>()
 
         while (pending.isNotEmpty()) {
             val supertype = pending.removeFirst()
@@ -1036,11 +1032,7 @@ internal class OverrideResolver(
                 continue
             }
 
-            val (foundName, declaration) = foundDeclaration(relocation, supertype.name).let { found ->
-                if (found.second.isFound) found else {
-                    supertypeRelocations[supertype.name]?.let { foundDeclaration(it, supertype.name) }?.takeIf { it.second.isFound } ?: found
-                }
-            }
+            val (foundName, declaration) = foundDeclaration(relocation, supertype.name)
             if (!declaration.isFound) {
                 isMissing = true
                 if (supertype.name.isRelocatable) isRelocatableMissing = true
@@ -1104,12 +1096,8 @@ internal class OverrideResolver(
                         key = memberKey(kmClass, property)
                     )
                 }
-                val supertypeRelocation = Relocation.of(kmClass.name, foundName)
                 kmClass.supertypes.forEach { type ->
-                    (kotlinType(type, substitution) as? ClassType)?.let {
-                        if (supertypeRelocation != null) supertypeRelocations.putIfAbsent(it.name, supertypeRelocation)
-                        pending += it
-                    }
+                    (kotlinType(type, substitution) as? ClassType)?.let { pending += it }
                 }
             }
 

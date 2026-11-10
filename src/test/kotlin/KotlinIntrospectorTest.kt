@@ -5639,6 +5639,36 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve generic Kotlin member taking types of generic Java member declared first by its own type parameter`() {
+        // the T of the take2 of JavaGenericMethodTaker is the T of the one of GenericMethodTaker, numbered after its E:
+        // take2(null, null) compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.GenericMethodJavaTakerJoin.take2") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GenericMethodJavaTakerJoin.take2 [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.GenericMethodTaker
+            open fun <T> take2(value: T?, type: java.lang.Class<T>?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve generic Kotlin member of class type parameter taking types of generic Java member declared first`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.GenericMethodJavaTakerParameterJoin.take2") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GenericMethodJavaTakerParameterJoin.take2 [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.GenericMethodTaker
+            open fun <T> take2(value: T?, type: java.lang.Class<T>?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve generic Kotlin member taking types of Java member declared first by its bounded type parameters`() {
+        // the A and B of the Java method are the X and Y of the Kotlin member, by their positions
+        resolver.resolve("com.xemantic.kotlin.introspection.test.GenericMethodJavaTakerJoin.pair") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GenericMethodJavaTakerJoin.pair [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.GenericMethodTaker
+            open fun <X : CharSequence, Y> pair(first: X?, second: Y?)
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve Kotlin member taking not nullable parameters merged with Java member of platform types`() {
         resolver.resolve("com.xemantic.kotlin.introspection.test.NotNullableJavaTakerJoin.take") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.NotNullableJavaTakerJoin.take [page 1/1]

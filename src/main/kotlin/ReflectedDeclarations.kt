@@ -1338,12 +1338,15 @@ internal fun KFunction<*>.returnsPlatformType(isEnhancementLost: Boolean): Boole
     // kotlin-reflect tells some of the enhanced types as such, like the V of computeIfAbsent of java.util.HashMap,
     // also of java.util.Hashtable, which K2 does not enhance, see isEnhancedJdkMethod
     if (!returnType.isPlatformNullable && !isEnhancementLost) {
-        val method = reflectedValue(default = null) { javaMethod } ?: return false
-        // or takes the type of a Kotlin member the method does not override, like put(key: Int): String for put(Integer)
+        // or takes the type of a Kotlin member the method does not override, like put(key: Int): String for put(Integer),
+        // which only a method taking parameters can be mistaken for, so that the JVM method of the others is not resolved
         if (name !in enhancedReturnJdkMethodNames) {
+            if (parameters.none { it.kind == KParameter.Kind.VALUE }) return false
+            val method = reflectedValue(default = null) { javaMethod } ?: return false
             return method.returnsPlatformType(isEnhancementLost = false) &&
                 reflectedValue(default = false) { isReturnTypeOfKotlinMemberNotOverridden(method) }
         }
+        val method = reflectedValue(default = null) { javaMethod } ?: return false
         if (method.name + AsmType.getMethodDescriptor(method) !in enhancedReturnJdkMethodDescriptors) return false
         return method.returnsPlatformType(isEnhancementLost = false)
     }
