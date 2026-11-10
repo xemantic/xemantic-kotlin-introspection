@@ -20,3 +20,8 @@ package com.xemantic.kotlin.introspection.isolated.sub
 
 // tests relocate it, like shading, next to the class of the same simple name of the enclosing package
 class RelocatedEvent
+
+// tests relocate it, like shading, to another package than the Java class extending it
+abstract class RelocatedSubBase {
+    open fun kb(value: String) {}
+}

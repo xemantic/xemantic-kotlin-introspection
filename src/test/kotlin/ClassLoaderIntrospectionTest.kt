@@ -575,6 +575,40 @@ class ClassLoaderIntrospectionTest {
         """.trimIndent()
     }
 
+    @Test
+    fun `should list member inherited through relocated Java class from Kotlin class relocated to another package`() {
+        // given
+        // like by shading, the Java class to shaded/, and the Kotlin class of the subpackage it extends to other/,
+        // which the relocation of the Java class, told by the class file of the class extending it, does not tell
+        val isolated = "com/xemantic/kotlin/introspection/isolated"
+        val relocated = mapOf(
+            "$isolated/RelocatedSubBaseJavaMid" to "shaded/$isolated/RelocatedSubBaseJavaMid",
+            "$isolated/sub/RelocatedSubBase" to "other/RelocatedSubBase"
+        )
+        val root = isolatedTestFixturesCopy("relocatedSubBase", "RelocatedSubBaseJavaMid.class", "RelocatedSubBase.class") { fileName, bytes ->
+            if (fileName.endsWith(".class")) withRelocatedNames(bytes, relocated::get) else bytes
+        }
+        relocated.forEach { (name, relocatedName) ->
+            val original = isolatedTestFixtures.map { it.resolve("$name.class") }.single { it.exists() }
+            val target = root.resolve("$relocatedName.class")
+            target.parent.createDirectories()
+            target.writeBytes(withRelocatedNames(original.readBytes(), relocated::get))
+        }
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.RelocatedSubBaseImpl.kb")
+
+        // then
+        // the Kotlin class, named by the name its own metadata tells among the supertypes of the Java class,
+        // is found by the name the Java class refers to it by
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.RelocatedSubBaseImpl.kb [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.isolated.sub.RelocatedSubBase
+            fun kb(value: String)
+        """.trimIndent()
+    }
+
     /**
      * An introspector of the classes implementing the Java interface `RelocatedListener` through the class `RelocatedListenerMid`
      * of the app, the interface relocated, like by shading, with the types its method takes, next to an older version

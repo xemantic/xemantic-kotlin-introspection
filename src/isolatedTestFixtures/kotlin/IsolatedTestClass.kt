@@ -185,3 +185,6 @@ abstract class RelocatedListenerDeepInheriting : RelocatedListenerMid()
 
 // tests relocate, like shading, the Java class it extends, and the Kotlin class of the subpackage its method takes, to the root package
 class RelocatedSubEventJavaBaseImpl : RelocatedSubEventJavaBase()
+
+// tests relocate, like shading, the Java class it extends, and the Kotlin class of the subpackage that one extends, each elsewhere
+class RelocatedSubBaseImpl : RelocatedSubBaseJavaMid()
