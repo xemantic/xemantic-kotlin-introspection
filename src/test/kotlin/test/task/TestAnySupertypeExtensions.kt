@@ -24,3 +24,13 @@ package com.xemantic.kotlin.introspection.test.task
 interface TaskRunnable : Runnable
 
 fun Any.describeTask(): String = toString()
+
+// a class with a deprecated companion object of another supertype than Any,
+// whose extensions on Any are called on its instances, and on the class, reporting the deprecation of the companion object then
+
+class TaskHolder {
+    @Deprecated("Use TaskRunnable")
+    companion object : Runnable {
+        override fun run() {}
+    }
+}

@@ -8706,6 +8706,42 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve class with repeated type parameter in JDK map supertype without extension of other key and value types`() {
+        // the V of HashMap<V, V> is the key String of Map<String, CollectionOrder> only when the value is not a CollectionOrder
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.CollectionSameKeyMap"
+        ) should {
+            have(lines().none { "orderById" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve class with repeated type parameter in supertype with extensions of one type in all its positions`() {
+        // CollectionKeyed<String, String> is a CollectionKeyed<String, CharSequence>, but no CollectionKeyed<V, V> is
+        // a CollectionKeyed<String, CollectionOrder>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.CollectionSameKeyed"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.CollectionSameKeyed [page 1/1]
+            class CollectionSameKeyed<V> : CollectionKeyed<V, V>
+            // from com.xemantic.kotlin.introspection.test
+            fun CollectionKeyed<String, CharSequence>.keyedText()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension of its package on Any by name of class with deprecated companion object of other supertype`() {
+        // on a supertype of both the class and its companion object, deprecated only when called on the class name, like TaskHolder.describeTask()
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.task.TaskHolder.describeTask"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.task.TaskHolder.describeTask [page 1/1]
+            // from com.xemantic.kotlin.introspection.test.task
+            /* companion object deprecated: "Use TaskRunnable" (when called on the class name) */ fun Any.describeTask(): String
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve interface extending only Java interface with extension of its package on Any`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.task.TaskRunnable"

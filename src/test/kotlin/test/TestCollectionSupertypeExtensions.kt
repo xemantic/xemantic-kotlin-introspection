@@ -44,3 +44,16 @@ fun <T : List<CollectionOrder>> T.withLargestFirst(): T = this
 fun List<CollectionRefund>.refundedAmount(): Int = sumOf { it.amount }
 
 fun Map<String, CollectionOrder>.orderById(id: String): CollectionOrder? = get(id)
+
+// a type parameter of the class repeated in the type arguments of a supertype takes one type in all its positions,
+// so that an extension on Map<String, CollectionOrder> cannot be called on any HashMap<V, V>
+
+class CollectionSameKeyMap<V> : HashMap<V, V>()
+
+interface CollectionKeyed<K, out V>
+
+class CollectionSameKeyed<V> : CollectionKeyed<V, V>
+
+fun CollectionKeyed<String, CollectionOrder>.keyedOrder() {}
+
+fun CollectionKeyed<String, CharSequence>.keyedText() {}
