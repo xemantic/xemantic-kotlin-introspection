@@ -10401,7 +10401,8 @@ class KotlinIntrospectorTest {
     fun `should resolve class with extension on covariant type parameter of recursive bound satisfied by supertype`() {
         // T of T : List<T> is inferred as List<BoundedReceiverSelfList>, a supertype of MutableList<BoundedReceiverSelfList>
         resolver.resolve(
-            "com.xemantic.kotlin.introspection.test.BoundedReceiverMutableSelfListProducer"
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverMutableSelfListProducer",
+            pageSize = 20
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.BoundedReceiverMutableSelfListProducer [page 1/1]
             class BoundedReceiverMutableSelfListProducer : BoundedReceiverProducer<MutableList<BoundedReceiverSelfList>>
@@ -10409,7 +10410,9 @@ class KotlinIntrospectorTest {
             val <T> BoundedReceiverProducer<List<T>>.firstProduced: T?
             fun <T> BoundedReceiverProducer<T>.produce()
             fun <T : R, R> BoundedReceiverProducer<List<T>>.produceBounded(r: R): T?
+            fun <T : U, U : R, R> BoundedReceiverProducer<List<T>>.produceChained(r: R): T?
             fun <E, T : List<E>> BoundedReceiverProducer<T>.produceElements()
+            fun <T : R, U : R, R> BoundedReceiverProducer<List<T>>.produceFanned(r: R): T?
             fun <T> BoundedReceiverProducer<List<T>>.produceFirst(): T?
             fun <E, T : List<E>> BoundedReceiverProducer<T>.produceFirstElement(): E?
             fun <T> BoundedReceiverProducer<List<T>>.produceList()
@@ -10486,6 +10489,7 @@ class KotlinIntrospectorTest {
         // also not when the return type refers to it, like of produceFirst returning T?, as x.produceFirst() fails,
         // unlike a value parameter, inferred from the argument, like of produceWith(value: T),
         // also through a bound, like T : R of produceBounded(r: R), unless nothing infers R, like of produceBoundedByUninferred,
+        // also through a chain of bounds, like of produceChained, or a bound bounding another type parameter, like of produceFanned,
         // while Nothing satisfies the recursive bounds of T, a List<Nothing>, and a Comparable<Nothing>
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.BoundedReceiverNothingProducer"
@@ -10495,6 +10499,8 @@ class KotlinIntrospectorTest {
             // from com.xemantic.kotlin.introspection.test
             fun <T> BoundedReceiverProducer<T>.produce()
             fun <T : R, R> BoundedReceiverProducer<List<T>>.produceBounded(r: R): T?
+            fun <T : U, U : R, R> BoundedReceiverProducer<List<T>>.produceChained(r: R): T?
+            fun <T : R, U : R, R> BoundedReceiverProducer<List<T>>.produceFanned(r: R): T?
             fun <T : Comparable<T>?> BoundedReceiverProducer<T>.produceNullableComparable()
             fun <T : List<T>> BoundedReceiverProducer<T>.produceSelfList()
             fun <T> BoundedReceiverProducer<List<T>>.produceWith(value: T)
@@ -10546,7 +10552,8 @@ class KotlinIntrospectorTest {
         // T is inferred as List<String>, which is no List<List<String>>, nor a Comparable<List<String>>,
         // while E of T : List<E> is inferred as String
         resolver.resolve(
-            "com.xemantic.kotlin.introspection.test.BoundedReceiverListProducer"
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverListProducer",
+            pageSize = 20
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.BoundedReceiverListProducer [page 1/1]
             class BoundedReceiverListProducer : BoundedReceiverProducer<List<String>>
@@ -10555,7 +10562,9 @@ class KotlinIntrospectorTest {
             fun <T> BoundedReceiverProducer<T>.produce()
             fun <T : R, R> BoundedReceiverProducer<List<T>>.produceBounded(r: R): T?
             fun <T : R, R : CharSequence> BoundedReceiverProducer<List<T>>.produceBoundedByUninferred(): T?
+            fun <T : U, U : R, R> BoundedReceiverProducer<List<T>>.produceChained(r: R): T?
             fun <E, T : List<E>> BoundedReceiverProducer<T>.produceElements()
+            fun <T : R, U : R, R> BoundedReceiverProducer<List<T>>.produceFanned(r: R): T?
             fun <T> BoundedReceiverProducer<List<T>>.produceFirst(): T?
             fun <E, T : List<E>> BoundedReceiverProducer<T>.produceFirstElement(): E?
             fun <T> BoundedReceiverProducer<List<T>>.produceList()

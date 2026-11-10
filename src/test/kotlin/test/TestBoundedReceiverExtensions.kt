@@ -901,6 +901,11 @@ fun <T : R, R> BoundedReceiverProducer<List<T>>.produceBounded(r: R): T? = null
 
 fun <T : R, R : CharSequence> BoundedReceiverProducer<List<T>>.produceBoundedByUninferred(): T? = null
 
+// also through a chain of bounds, like T : U, U : R, or when R bounds another type parameter as well, like U : R
+fun <T : U, U : R, R> BoundedReceiverProducer<List<T>>.produceChained(r: R): T? = null
+
+fun <T : R, U : R, R> BoundedReceiverProducer<List<T>>.produceFanned(r: R): T? = null
+
 fun <E, T : List<E>> BoundedReceiverProducer<T>.produceElements() {}
 
 class BoundedReceiverNothingProducer : BoundedReceiverProducer<Nothing>
