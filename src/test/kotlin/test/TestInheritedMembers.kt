@@ -908,3 +908,53 @@ abstract class InheritedJavaPassingMidOverriding : com.xemantic.kotlin.introspec
 abstract class InheritedJavaPassingMid2Overriding : com.xemantic.kotlin.introspection.test.other.JavaPassingMid2Overriding()
 
 abstract class InheritedJavaPassingDirect : com.xemantic.kotlin.introspection.test.other.JavaPassingDirect()
+
+// The getters of a Java superclass, which kotlinc also offers as synthetic properties, like `name` of getName(),
+// but not the one of a Java field of the same name, like `code`,
+// while a Kotlin override of a Java getter, like getLabel(), is offered as one too, unlike another Kotlin function, like getOwn()
+open class SyntheticPropertyHolder : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyBase() {
+    override fun getLabel(): String = ""
+    fun getOwn(): String = ""
+}
+
+// The getters of java.lang.Thread, like getName(), offered as the var name, with setName(String)
+class SyntheticPropertyThread : Thread()
+
+// A getter of a generic Java class overridden by a generic Kotlin subclass, offered as the var value with the inherited setValue(T)
+open class SyntheticPropertyGenericHolder<T> : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyBox<T>() {
+    override fun getValue(): T = throw UnsupportedOperationException()
+}
+
+// Kotlin functions named like getters, overridden, or implemented, by Java methods, which kotlinc offers no synthetic properties of,
+// as the topmost declarations are Kotlin ones, also through a Kotlin override of the Java method
+abstract class KotlinGetterBase {
+    abstract fun getCs(): CharSequence
+    open fun getKb(): String = ""
+}
+
+interface KotlinGetterFace {
+    fun getK(): String
+}
+
+class KotlinGetterJavaOverrideSub : com.xemantic.kotlin.introspection.test.other.JavaKotlinGetterOverride() {
+    override fun getKb(): String = ""
+}
+
+class KotlinGetterJavaImplementationSub : com.xemantic.kotlin.introspection.test.other.JavaKotlinGetterImplementation() {
+    override fun getK(): String = ""
+}
+
+// A getter declared by both a Java interface and a Kotlin one, which kotlinc offers as the var w,
+// as one of its topmost declarations is a Java one, inherited, overridden, or implemented by a Java class
+interface KotlinGetterW {
+    fun getW(): String
+}
+
+abstract class SyntheticPropertyDiamond : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyFace, KotlinGetterW
+
+class SyntheticPropertyDiamondOverride : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyFace, KotlinGetterW {
+    override fun getW(): String = ""
+    override fun setW(w: String) {}
+}
+
+class SyntheticPropertyJavaDiamondSub : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyDiamond()

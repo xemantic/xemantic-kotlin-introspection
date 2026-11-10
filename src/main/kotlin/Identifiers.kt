@@ -92,3 +92,38 @@ private fun String.isIdentifier(): Boolean {
  */
 internal fun unescapeQualifiedName(name: String): String =
     name.split('.').joinToString(".") { it.removeSurrounding("`") }
+
+/**
+ * The name of the synthetic property which Kotlin reads a Java getter named [getterName] as, like `name` of `getName()`,
+ * or `null` if it is not named like a getter: `get`, or `is`, followed by a character which is not a lowercase ASCII letter,
+ * like of `getaB()`, nor, after `get`, a digit, like of `get1()`, unlike `is1()`, as verified with kotlinc 2.4.21.
+ * The one of an `is` getter is named like the getter, like `isActive`, or `is1`, of any return type,
+ * the one of a `get` getter without the prefix, its leading ASCII uppercase letters lowercased,
+ * but the last one of several followed by a lowercase letter, like `url` of `getURL()`, or `foObar` of `getFOObar()`,
+ * while any other letter stays, like `Äx` of `getÄx()`.
+ */
+internal fun syntheticPropertyName(getterName: String): String? {
+    val prefix = when {
+        getterName.startsWith("get") -> "get"
+        getterName.startsWith("is") -> "is"
+        else -> return null
+    }
+    val first = getterName.getOrNull(prefix.length) ?: return null
+    if (first in 'a'..'z' || (prefix == "get" && first.isDigit())) return null
+    if (prefix == "is") return getterName
+    val name = getterName.substring(prefix.length)
+    val uppercase = name.indexOfFirst { it !in 'A'..'Z' }.let { if (it == -1) name.length else it }
+    return when (uppercase) {
+        0 -> name
+        name.length -> name.lowercase()
+        1 -> name.first().lowercaseChar() + name.substring(1)
+        else -> name.substring(0, uppercase - 1).lowercase() + name.substring(uppercase - 1)
+    }
+}
+
+/**
+ * The name of the setter of the synthetic property of a getter named [getterName], see [syntheticPropertyName],
+ * like `setName` of `getName`, or `setActive` of `isActive`.
+ */
+internal fun syntheticPropertySetterName(getterName: String): String =
+    "set" + getterName.removePrefix(if (getterName.startsWith("get")) "get" else "is")
