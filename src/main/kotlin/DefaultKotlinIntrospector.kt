@@ -4018,7 +4018,7 @@ internal class DefaultKotlinIntrospector(
                 (memberName == null || extension.function.name == memberName) &&
                     extension.function.let { function ->
                         supertypes.isCallableOn(function.receiverParameterType, function.typeParameters) {
-                            function.contextParameters.map { it.type } + function.valueParameters.map { it.type } + function.returnType
+                            function.contextParameters.map { it.type } + function.valueParameters.map { it.type }
                         }
                     }
             },
@@ -4026,7 +4026,7 @@ internal class DefaultKotlinIntrospector(
                 (memberName == null || extension.property.name == memberName) &&
                     extension.property.let { property ->
                         supertypes.isCallableOn(property.receiverParameterType, property.typeParameters) {
-                            property.contextParameters.map { it.type } + property.returnType
+                            property.contextParameters.map { it.type }
                         }
                     }
             }
@@ -4895,7 +4895,8 @@ internal class DefaultKotlinIntrospector(
      * or else for its supertype, which satisfies all the bounds, like `User` of `T : Entity<T>` for `class Admin : User()`,
      * where `class User : Entity<User>()`, told by the type arguments of the bounds.
      * The type parameters the receiver refers to must be inferred from the class, or from the [otherTypes],
-     * see [ReceiverMatcher.isInferred], and an extension without a receiver can be called on it as well.
+     * the ones of the context and value parameters, not of the return type, see [ReceiverMatcher.isInferred],
+     * and an extension without a receiver can be called on it as well.
      * Only what is told by the Kotlin metadata, or by the generic signatures of the Java supertypes, is matched,
      * any other extension can be called, like on a supertype reached through a raw Java type,
      * or on a type parameter whose other bounds are not checked.
@@ -5188,9 +5189,10 @@ internal class DefaultKotlinIntrospector(
          * A type parameter the receiver does not refer to, like `T` of `fun <reified T> Registry.register()`,
          * is given explicitly, like on any other class.
          *
-         * @param inferredOtherwise the ones the types of the context and value parameters, and the return type, of the extension
-         *   refer to, which a call can infer them from, the return type from the expected type,
-         *   like `T` of `fun <T> Box<List<T>>.put(value: T)`, or of `fun <T> Box<List<T>>.get(): T`.
+         * @param inferredOtherwise the ones the types of the context and value parameters of the extension refer to,
+         *   which a call can infer them from, like `T` of `fun <T> Box<List<T>>.put(value: T)`,
+         *   but not the return type, which only an expected type tells, so that `fun <T> Box<List<T>>.get(): T`
+         *   is not callable on `Box<Nothing>`, as `box.get()` is not, like kotlinc.
          */
         fun isInferred(referred: Lazy<Set<Int>>, inferredOtherwise: Lazy<Set<Int>>): Boolean {
             if (isUntold || typeParameters.isEmpty()) return true
