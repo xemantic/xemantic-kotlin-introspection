@@ -9432,6 +9432,43 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve enum class with entry bodies without extension on type parameter pinned to it shadowed by its member`() {
+        // T : Comparable<T> is pinned to the enum class, whose entries are of its type, so that the member is called instead
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.pinning.PinnedMemberEnum"
+        ) should {
+            have("    fun between(low: PinnedMemberEnum, high: PinnedMemberEnum): Boolean" in lines())
+            have("fun <T : Comparable<T>> T.between(low: T, high: T): Boolean" !in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve enum class with entry bodies without extension on type parameter pinned to it shadowed by extension on it`() {
+        // like for the member, the extension on the enum class itself, of the same package, is called instead
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.pinning.PinnedExtensionEnum"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.pinning.PinnedExtensionEnum [page 1/1]
+            enum class PinnedExtensionEnum {
+                LOW,
+                HIGH;
+                abstract fun weight(): Int
+            }
+            // from com.xemantic.kotlin.introspection.test.pinning
+            fun PinnedExtensionEnum.between(low: PinnedExtensionEnum, high: PinnedExtensionEnum): Boolean
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve enum class with entry bodies with extension on type parameter pinned to it without more specific overload`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.pinning.UnpinnedEnum"
+        ) should {
+            have("fun <T : Comparable<T>> T.between(low: T, high: T): Boolean" in lines())
+        }
+    }
+
+    @Test
     fun `should not resolve stdlib extension on Comparable as member of enum class`() {
         // BoundedReceiverLevel.HIGH.coerceAtLeast(BoundedReceiverLevel.LOW) compiles, but it is not listed
         assert(resolver.resolve("com.xemantic.kotlin.introspection.test.BoundedReceiverLevel.coerceAtLeast") == null)
