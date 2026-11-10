@@ -386,6 +386,14 @@ class BoundedReceiverThrowable : Throwable(), BoundedReceiverA
 
 enum class BoundedReceiverEnum : BoundedReceiverA { ENTRY }
 
+// an enum class, comparable to itself through kotlin.Enum, listing the extensions on Comparable of its package,
+// like isBetween, but not the ones of the standard library, like coerceAtLeast
+enum class BoundedReceiverLevel { LOW, HIGH }
+
+fun Comparable<BoundedReceiverLevel>.isAboveLow(): Boolean = compareTo(BoundedReceiverLevel.LOW) > 0
+
+val Comparable<BoundedReceiverLevel>.isBelowHigh: Boolean get() = compareTo(BoundedReceiverLevel.HIGH) < 0
+
 // the extensions on Comparable declared in an object of the package of a class, imported from it
 object BoundedReceiverComparisons {
     fun Comparable<BoundedReceiverVersion>.isNewerThan(version: BoundedReceiverVersion): Boolean = compareTo(version) > 0

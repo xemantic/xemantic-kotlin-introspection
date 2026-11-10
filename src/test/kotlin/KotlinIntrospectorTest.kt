@@ -727,6 +727,8 @@ class KotlinIntrospectorTest {
                 SECOND,
                 THIRD
             }
+            // from com.xemantic.kotlin.introspection.test
+            fun <E : Comparable<in E>> E.isBetween(low: E, high: E): Boolean
         """.trimIndent()
     }
 
@@ -744,6 +746,8 @@ class KotlinIntrospectorTest {
                 val displayName: String
                 fun isFirst(): Boolean
             }
+            // from com.xemantic.kotlin.introspection.test
+            fun <E : Comparable<in E>> E.isBetween(low: E, high: E): Boolean
         """.trimIndent()
     }
 
@@ -761,6 +765,8 @@ class KotlinIntrospectorTest {
                     fun default(): CompanionOnlyEnum
                 }
             }
+            // from com.xemantic.kotlin.introspection.test
+            fun <E : Comparable<in E>> E.isBetween(low: E, high: E): Boolean
         """.trimIndent()
     }
 
@@ -837,6 +843,8 @@ class KotlinIntrospectorTest {
                     fun x(): Int
                 }
             }
+            // from com.xemantic.kotlin.introspection.test
+            fun <E : Comparable<in E>> E.isBetween(low: E, high: E): Boolean
         """.trimIndent()
     }
 
@@ -852,6 +860,8 @@ class KotlinIntrospectorTest {
                 fun f1()
                 fun f2()
             }
+            // from com.xemantic.kotlin.introspection.test
+            fun <E : Comparable<in E>> E.isBetween(low: E, high: E): Boolean
         """.trimIndent()
     }
 
@@ -883,6 +893,8 @@ class KotlinIntrospectorTest {
                 ;
                 fun f2()
             }
+            // from com.xemantic.kotlin.introspection.test
+            fun <E : Comparable<in E>> E.isBetween(low: E, high: E): Boolean
         """.trimIndent()
     }
 
@@ -896,6 +908,8 @@ class KotlinIntrospectorTest {
                 ;
                 class Nested
             }
+            // from com.xemantic.kotlin.introspection.test
+            fun <E : Comparable<in E>> E.isBetween(low: E, high: E): Boolean
         """.trimIndent()
     }
 
@@ -926,6 +940,7 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.test.EntrylessExtendedEnum [page 2/2]
             // from com.xemantic.kotlin.introspection.test
             fun EntrylessExtendedEnum.e2()
+            fun <E : Comparable<in E>> E.isBetween(low: E, high: E): Boolean
         """.trimIndent()
     }
 
@@ -937,7 +952,7 @@ class KotlinIntrospectorTest {
             page = 2,
             pageSize = 1
         ) sameAsKotlin """
-            // com.xemantic.kotlin.introspection.test.BacktickedEntryEnum [page 2/4]
+            // com.xemantic.kotlin.introspection.test.BacktickedEntryEnum [page 2/5]
             enum class BacktickedEntryEnum {
                 ` SECOND`,
             }
@@ -951,7 +966,7 @@ class KotlinIntrospectorTest {
             page = 2,
             pageSize = 2
         ) sameAsKotlin """
-            // com.xemantic.kotlin.introspection.test.BacktickedEntryEnum [page 2/2]
+            // com.xemantic.kotlin.introspection.test.BacktickedEntryEnum [page 2/3]
             enum class BacktickedEntryEnum {
                 `}`;
                 fun f()
@@ -1911,6 +1926,8 @@ class KotlinIntrospectorTest {
                 ;
                 fun isFirst(): Boolean
             }
+            // from com.xemantic.kotlin.introspection.test
+            fun <E : Comparable<in E>> E.isBetween(low: E, high: E): Boolean
         """.trimIndent()
     }
 
@@ -3080,6 +3097,8 @@ class KotlinIntrospectorTest {
                 override fun f(): Int
                 override fun g()
             }
+            // from com.xemantic.kotlin.introspection.test
+            fun <E : Comparable<in E>> E.isBetween(low: E, high: E): Boolean
         """.trimIndent()
     }
 
@@ -3144,6 +3163,8 @@ class KotlinIntrospectorTest {
                 override fun f(): Int
                 override fun g()
             }
+            // from com.xemantic.kotlin.introspection.test
+            fun <E : Comparable<in E>> E.isBetween(low: E, high: E): Boolean
         """.trimIndent()
     }
 
@@ -3156,6 +3177,8 @@ class KotlinIntrospectorTest {
             enum class PlainConstructorOverrideEnum(override val u: UInt) : HasU {
                 A
             }
+            // from com.xemantic.kotlin.introspection.test
+            fun <E : Comparable<in E>> E.isBetween(low: E, high: E): Boolean
         """.trimIndent()
     }
 
@@ -4149,8 +4172,10 @@ class KotlinIntrospectorTest {
                 fun compareTo(other: String): Int
             }
             // from com.xemantic.kotlin.introspection.test
+            val Comparable<BoundedReceiverLevel>.isBelowHigh: Boolean
             fun Comparable<BoundedReceiverMoney>.atLeastMoney()
             fun Comparable<Int>.comparedToZero(): Int
+            fun Comparable<BoundedReceiverLevel>.isAboveLow(): Boolean
             fun <E : Comparable<in E>> E.isBetween(low: E, high: E): Boolean
             // from com.xemantic.kotlin.introspection.test.BoundedReceiverComparisons
             fun Comparable<BoundedReceiverVersion>.isNewerThan(version: BoundedReceiverVersion): Boolean
@@ -8131,6 +8156,8 @@ class KotlinIntrospectorTest {
                 `object`,
                 data
             }
+            // from com.xemantic.kotlin.introspection.test
+            fun <E : Comparable<in E>> E.isBetween(low: E, high: E): Boolean
         """.trimIndent()
     }
 
@@ -8576,6 +8603,8 @@ class KotlinIntrospectorTest {
                 GREEN;
                 class Palette
             }
+            // from com.xemantic.kotlin.introspection.test
+            fun <E : Comparable<in E>> E.isBetween(low: E, high: E): Boolean
         """.trimIndent()
     }
 
@@ -9355,6 +9384,94 @@ class KotlinIntrospectorTest {
             have("operator fun <T : Comparable<T>> T.rangeTo(that: T): ClosedRange<T>" in lines())
             have("operator fun <T : Comparable<T>> T.rangeUntil(that: T): OpenEndRange<T>" in lines())
         }
+    }
+
+    @Test
+    fun `should resolve enum class with extensions on Comparable of its package without stdlib ones`() {
+        // like next to it, BoundedReceiverLevel.HIGH.isBetween(BoundedReceiverLevel.LOW, BoundedReceiverLevel.HIGH),
+        // while the ones of the standard library, like coerceAtLeast, are rarely called on the enum entries
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverLevel"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverLevel [page 1/1]
+            enum class BoundedReceiverLevel {
+                LOW,
+                HIGH
+            }
+            // from com.xemantic.kotlin.introspection.test
+            val Comparable<BoundedReceiverLevel>.isBelowHigh: Boolean
+            fun Comparable<BoundedReceiverLevel>.isAboveLow(): Boolean
+            fun <E : Comparable<in E>> E.isBetween(low: E, high: E): Boolean
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension on Comparable of its package as member of enum class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverLevel.isBetween"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverLevel.isBetween [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            fun <E : Comparable<in E>> E.isBetween(low: E, high: E): Boolean
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve enum class of kotlin package without stdlib extension on Comparable of its package`() {
+        // inline infix fun <T> Comparable<T>.compareTo(other: T) of the kotlin package is of the standard library
+        resolver.resolve(
+            "kotlin.DeprecationLevel"
+        ) sameAsKotlin """
+            // kotlin.DeprecationLevel [page 1/1]
+            enum class DeprecationLevel {
+                WARNING,
+                ERROR,
+                HIDDEN
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve enum class with entry bodies without extension on type parameter pinned to it shadowed by its member`() {
+        // T : Comparable<T> is pinned to the enum class, whose entries are of its type, so that the member is called instead
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.pinning.PinnedMemberEnum"
+        ) should {
+            have("    fun between(low: PinnedMemberEnum, high: PinnedMemberEnum): Boolean" in lines())
+            have("fun <T : Comparable<T>> T.between(low: T, high: T): Boolean" !in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve enum class with entry bodies without extension on type parameter pinned to it shadowed by extension on it`() {
+        // like for the member, the extension on the enum class itself, of the same package, is called instead
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.pinning.PinnedExtensionEnum"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.pinning.PinnedExtensionEnum [page 1/1]
+            enum class PinnedExtensionEnum {
+                LOW,
+                HIGH;
+                abstract fun weight(): Int
+            }
+            // from com.xemantic.kotlin.introspection.test.pinning
+            fun PinnedExtensionEnum.between(low: PinnedExtensionEnum, high: PinnedExtensionEnum): Boolean
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve enum class with entry bodies with extension on type parameter pinned to it without more specific overload`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.pinning.UnpinnedEnum"
+        ) should {
+            have("fun <T : Comparable<T>> T.between(low: T, high: T): Boolean" in lines())
+        }
+    }
+
+    @Test
+    fun `should not resolve stdlib extension on Comparable as member of enum class`() {
+        // BoundedReceiverLevel.HIGH.coerceAtLeast(BoundedReceiverLevel.LOW) compiles, but it is not listed
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.BoundedReceiverLevel.coerceAtLeast") == null)
     }
 
     @Test
@@ -12295,6 +12412,8 @@ class KotlinIntrospectorTest {
                 A,
                 B
             }
+            // from com.xemantic.kotlin.introspection.test
+            fun <E : Comparable<in E>> E.isBetween(low: E, high: E): Boolean
         """.trimIndent()
     }
 
@@ -12928,6 +13047,8 @@ class KotlinIntrospectorTest {
                 A;
                 fun codeOf(): Int
             }
+            // from com.xemantic.kotlin.introspection.test
+            fun <E : Comparable<in E>> E.isBetween(low: E, high: E): Boolean
         """.trimIndent()
     }
 
@@ -14649,6 +14770,8 @@ class KotlinIntrospectorTest {
             enum class DeprecatedConstructorEnum(val v: Int) {
                 A
             }
+            // from com.xemantic.kotlin.introspection.test
+            fun <E : Comparable<in E>> E.isBetween(low: E, high: E): Boolean
         """.trimIndent()
     }
 
