@@ -3060,7 +3060,7 @@ internal class DefaultKotlinIntrospector(
         }
         return inherited.map { candidate ->
             ListingItem.InheritedMember(
-                inheritedFromName(candidate, superclass),
+                inheritedFromName(candidate, superclass, declarations),
                 formatMember(
                     candidate.renderedMember(isOpenForOverrides), candidate.kmClass, candidate.declarations, scope, contextPackage,
                     isOwnerOpenForOverrides = isOpenForOverrides,
@@ -3078,9 +3078,11 @@ internal class DefaultKotlinIntrospector(
      * like `java.util.ArrayList`: the class declaring it, but of a Java class which the user code cannot name,
      * like a package-private one, or one nested in it, the public JVM class extending it, closest to it, if any,
      * among the [superclass] of the inheriting class and its superclasses,
-     * which inherits its public members, like the public subclass of a package-private class, which javac bridges them in.
+     * which inherits its public members, like the public subclass of a package-private class, which javac bridges them in,
+     * named by the name the Kotlin metadata of the inheriting class, of the [declarations], refers to it by, see [unlocatedName],
+     * like the other classes, when relocated, like by shading.
      */
-    private fun inheritedFromName(candidate: InheritedCandidate, superclass: Lazy<Class<*>?>): String {
+    private fun inheritedFromName(candidate: InheritedCandidate, superclass: Lazy<Class<*>?>, declarations: ClassDeclarations): String {
         // a public nested class of a package-private class cannot be named either
         fun Class<*>.isNameable() = generateSequence(this) { it.enclosingClass }.all { Modifier.isPublic(it.modifiers) }
         val declaring = (candidate.declarations as? JavaClass)?.clazz
@@ -3091,7 +3093,7 @@ internal class DefaultKotlinIntrospector(
                 .takeWhile { it != declaring }
                 .lastOrNull { it.isNameable() && declaring.isAssignableFrom(it) }
         }
-        return (nearest?.let { kotlinClassName(it) } ?: candidate.className).replace('/', '.')
+        return (nearest?.let { unlocatedName(declarations, kotlinClassName(it)) } ?: candidate.className).replace('/', '.')
     }
 
     /**
@@ -3136,7 +3138,7 @@ internal class DefaultKotlinIntrospector(
             if (superDeclarations == null || superKmClass == null) {
                 // named by the names the metadata refers to them by, like the supertypes of a Kotlin class,
                 // so that a class reached also from a Kotlin supertype is not walked again under its relocated name
-                val javaSupertypes = rawJavaSupertypes(foundName) { it.unlocated(declarations) }
+                val javaSupertypes = rawJavaSupertypes(foundName, supertype) { it.unlocated(declarations) }
                 javaClasses += name
                 directSupertypes[name] = javaSupertypes.classNames()
                 pending += javaSupertypes
@@ -4076,39 +4078,59 @@ internal class DefaultKotlinIntrospector(
      * The direct supertypes of the Java class named like `com/example/Base`, whose members cannot be described,
      * see [inheritedDeclarations], as raw types, without their type arguments, mapped to the built-in types:
      * the ones of its JVM class, if loaded, named like [javaSupertypeNames] does,
-     * but with the type arguments of a generic one which does not refer to a type variable, see [concreteJavaSupertype],
+     * but with the type arguments of a generic one, see [concreteJavaSupertype],
      * like `Outer<Event>.Inner` of a Java class kotlin-reflect cannot describe, like a relocated one,
+     * the type arguments of the [type] the class is reached by substituted for its type variables,
      * or else the ones its class file declares, see [OverrideResolver.unloadableJavaSupertypeNames],
      * given by the [named] of these types.
      */
-    private fun rawJavaSupertypes(name: String, named: (KmType) -> KmType): List<KmType> {
+    private fun rawJavaSupertypes(name: String, type: KmType, named: (KmType) -> KmType): List<KmType> {
         val javaClass = findClassByMetadataName(name)?.clazz
             ?: return overrideResolver.unloadableJavaSupertypeNames(name).map { named(classType(it)) }
         val genericSupertypes = reflectedValue(default = emptyList()) {
             listOfNotNull(javaClass.genericSuperclass) + javaClass.genericInterfaces
         }.filterIsInstance<ParameterizedType>()
         return javaSupertypeClasses(javaClass).map { (supertype, metadataName) ->
-            val generic = genericSupertypes.firstOrNull { it.rawType == supertype }?.let { concreteJavaSupertype(it, metadataName) }
+            val generic = genericSupertypes.firstOrNull { it.rawType == supertype }
+                ?.let { concreteJavaSupertype(it, metadataName, javaClass, type) }
             named(generic ?: classType(metadataName))
         }
     }
 
     /**
-     * The [genericSupertype] of a Java class, named [metadataName], converted from the Java reflection, see [toKmJavaType],
-     * or `null` if it refers to a type variable, like of the Java class, which is not substituted when walked through,
-     * see [rawJavaSupertypes], or one of its classes cannot be reflected.
+     * The [genericSupertype] of the [javaClass], named [metadataName], converted from the Java reflection, see [toKmJavaType],
+     * with the type arguments of the [type] the class is reached by substituted for its type variables,
+     * like `Outer<Event>.Inner` of `class Mid<T> extends Outer<T>.Inner`, reached by `Mid<Event>`,
+     * or `null` if it refers to a type variable which is given no type argument, like when the [type] is raw, or star-projected,
+     * or to one of an outer class, which is not substituted when walked through, see [rawJavaSupertypes],
+     * or one of its classes cannot be reflected.
      */
-    private fun concreteJavaSupertype(genericSupertype: ParameterizedType, metadataName: String): KmType? {
-        fun JavaType.refersToTypeVariable(): Boolean = when (this) {
-            is TypeVariable<*> -> true
-            is ParameterizedType -> actualTypeArguments.any { it.refersToTypeVariable() } || ownerType?.refersToTypeVariable() == true
-            is GenericArrayType -> genericComponentType.refersToTypeVariable()
-            is WildcardType -> (upperBounds + lowerBounds).any { it.refersToTypeVariable() }
-            else -> false
+    private fun concreteJavaSupertype(
+        genericSupertype: ParameterizedType,
+        metadataName: String,
+        javaClass: Class<*>,
+        type: KmType
+    ): KmType? {
+        fun JavaType.typeVariables(): List<TypeVariable<*>> = when (this) {
+            is TypeVariable<*> -> listOf(this)
+            is ParameterizedType -> actualTypeArguments.flatMap { it.typeVariables() } + ownerType?.typeVariables().orEmpty()
+            is GenericArrayType -> genericComponentType.typeVariables()
+            is WildcardType -> (upperBounds + lowerBounds).flatMap { it.typeVariables() }
+            else -> emptyList()
         }
         return reflectedValue(default = null) {
-            if (genericSupertype.refersToTypeVariable()) return@reflectedValue null
-            genericSupertype.toKmJavaType(ReflectedTypeParameters(emptyMap())).also { it.classifier = KmClassifier.Class(metadataName) }
+            val referred = genericSupertype.typeVariables()
+            val typeVariables = if (referred.isEmpty()) emptyList() else javaClass.typeParameters.toList()
+            if (referred.any { it !in typeVariables } || (referred.isNotEmpty() && type.arguments.size != typeVariables.size)) {
+                return@reflectedValue null
+            }
+            val substitution = referred.associate { typeVariable ->
+                val index = typeVariables.indexOf(typeVariable)
+                index to (type.arguments[index].type ?: return@reflectedValue null)
+            }
+            val scope = ReflectedTypeParameters(typeVariables.withIndex().associate { (index, typeVariable) -> typeVariable.name to index })
+            genericSupertype.toKmJavaType(scope).also { it.classifier = KmClassifier.Class(metadataName) }
+                .let { if (substitution.isEmpty()) it else it.substituted(substitution) }
         }
     }
 

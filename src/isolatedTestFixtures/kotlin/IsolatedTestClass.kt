@@ -126,6 +126,8 @@ interface RelocatedDefaultInterface {
 
 class RelocatedJavaBaseImpl : RelocatedJavaBase(), RelocatedDefaultInterface
 
+class RelocatedOverridingJavaBaseImpl : RelocatedOverridingJavaBase()
+
 // tests relocate it, like shading, together with the Java class implementing it, and its type argument, but not the subclass
 interface RelocatedGenericInterface<T> {
     fun kg(value: T) {}
@@ -149,6 +151,8 @@ class RelocatedInnerOuter<T> {
 
 class RelocatedJavaInnerImpl(outer: RelocatedInnerOuter<RelocatedEvent>) : RelocatedJavaInner(outer)
 
+class RelocatedGenericJavaInnerImpl(outer: RelocatedInnerOuter<RelocatedEvent>) : RelocatedGenericJavaInner<RelocatedEvent>(outer)
+
 // tests relocate them, like shading, together with the Java classes refining the return type, but not their subclasses
 open class RelocatedProduct
 
@@ -165,3 +169,19 @@ abstract class RelocatedJavaProdImpl : RelocatedJavaProd()
 abstract class RelocatedJavaProdKImpl : RelocatedJavaProdK()
 
 abstract class RelocatedJavaOuterInnerImpl(outer: RelocatedJavaOuter<RelocatedEvent>) : RelocatedJavaOuterInner(outer)
+
+// tests relocate, like shading, the public Java class it extends, with its package-private superclass, but not the class itself
+class RelocatedGreeterImpl : PublicGreeterJavaMid()
+
+// tests relocate, like shading, the Java interface they implement through a class of the app, next to an older original one
+abstract class RelocatedListenerMid : RelocatedListener
+
+class RelocatedListenerDeepImpl : RelocatedListenerMid() {
+    override fun on(event: RelocatedEvent) {}
+    fun on(event: RelocatedOther) {}
+}
+
+abstract class RelocatedListenerDeepInheriting : RelocatedListenerMid()
+
+// tests relocate, like shading, the Java class it extends, and the Kotlin class of the subpackage its method takes, to the root package
+class RelocatedSubEventJavaBaseImpl : RelocatedSubEventJavaBase()

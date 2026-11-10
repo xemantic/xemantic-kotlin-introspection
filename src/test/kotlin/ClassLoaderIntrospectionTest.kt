@@ -408,6 +408,46 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should list member of Kotlin interface overridden by Java supertype taking Kotlin class`() {
+        // given
+        val classLoader = URLClassLoader(isolatedTestFixtures.map { it.toURI().toURL() }.toTypedArray(), javaClass.classLoader)
+        val introspector = KotlinIntrospector(classLoader)
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.RelocatedOverridingJavaBaseImpl.kf")
+
+        // then
+        // the member of the Kotlin interface stands for the Java method implementing it
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.RelocatedOverridingJavaBaseImpl.kf [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.isolated.RelocatedDefaultInterface
+            open fun kf(event: RelocatedEvent)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should list member of relocated Kotlin interface overridden by relocated Java supertype taking relocated Kotlin class`() {
+        // given
+        val dependencies = arrayOf("RelocatedOverridingJavaBase.class", "RelocatedDefaultInterface.class", "RelocatedEvent.class")
+        val root = isolatedTestFixturesCopy("relocatedOverridingJavaBase", *dependencies, "RelocatedOverridingJavaBaseImpl.class")
+        relocatedCopy(root, *dependencies, dependents = listOf("RelocatedOverridingJavaBaseImpl.class"))
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.RelocatedOverridingJavaBaseImpl.kf")
+
+        // then
+        // the Java method, taking the Kotlin class by its relocated JVM name, is told as the override of the member
+        // of the Kotlin interface, taking it by the name its metadata tells, though listed in its place, with its own types,
+        // which the overridden member does not enhance, as kotlin-reflect cannot describe the relocated Java class
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.RelocatedOverridingJavaBaseImpl.kf [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.isolated.RelocatedOverridingJavaBase
+            override fun kf(arg0: RelocatedEvent?)
+        """.trimIndent()
+    }
+
+    @Test
     fun `should list member inherited from relocated Kotlin interface of relocated Java supertype with relocated type argument`() {
         // given
         val dependencies = arrayOf("RelocatedGenericJavaBase.class", "RelocatedGenericInterface.class", "RelocatedEvent.class")
@@ -495,6 +535,103 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should name relocated public Java subclass of package-private Java class declaring inherited member by its metadata name`() {
+        // given
+        val dependencies = arrayOf("PublicGreeterJavaMid.class", "PackagePrivateGreeterJavaBase.class")
+        val root = isolatedTestFixturesCopy("relocatedGreeter", *dependencies, "RelocatedGreeterImpl.class")
+        relocatedCopy(root, *dependencies, dependents = listOf("RelocatedGreeterImpl.class"))
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.RelocatedGreeterImpl.hello")
+
+        // then
+        // the package-private class cannot be named, and its public subclass is named like the supertype of the class
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.RelocatedGreeterImpl.hello [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.isolated.PublicGreeterJavaMid
+            fun hello(): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should name Kotlin class relocated to the root package taken by member of relocated Java supertype by its metadata name`() {
+        // given
+        val dependencies = arrayOf("RelocatedSubEventJavaBase.class", "sub/RelocatedEvent.class")
+        val root = isolatedTestFixturesCopy("rootSubEventJavaBase", *dependencies, "RelocatedSubEventJavaBaseImpl.class")
+        relocatedCopy(root, *dependencies, dependents = listOf("RelocatedSubEventJavaBaseImpl.class"), toRootPackage = true)
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.RelocatedSubEventJavaBaseImpl.js")
+
+        // then
+        // the Kotlin class of the root package tells the name its metadata refers to it by, which the relocation does not,
+        // as a class of the root package might not be relocated; named RelocatedEvent, it would read as the one of the package of the class
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.RelocatedSubEventJavaBaseImpl.js [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.isolated.RelocatedSubEventJavaBase
+            fun js(arg0: com.xemantic.kotlin.introspection.isolated.sub.RelocatedEvent?)
+        """.trimIndent()
+    }
+
+    /**
+     * An introspector of the classes implementing the Java interface `RelocatedListener` through the class `RelocatedListenerMid`
+     * of the app, the interface relocated, like by shading, with the types its method takes, next to an older version
+     * of the original one, whose method is named differently.
+     */
+    private fun introspectorOfRelocatedListenerNextToOlder(name: String): KotlinIntrospector {
+        val dependencies = arrayOf("RelocatedListener.class", "RelocatedEvent.class", "RelocatedOther.class")
+        val dependents = listOf(
+            "RelocatedListenerMid.class", "RelocatedListenerDeepImpl.class", "RelocatedListenerDeepInheriting.class"
+        )
+        val shadedRoot = tempDir.resolve("${name}Shaded")
+        relocatedCopy(shadedRoot, *dependencies, dependents = dependents)
+        val root = isolatedTestFixturesCopy(name, isAbsent = { it in dependents }) { fileName, bytes ->
+            if (fileName == "RelocatedListener.class") withMethodRenamed(bytes, "on", "onOld") else bytes
+        }
+        return KotlinIntrospector(URLClassLoader(arrayOf(shadedRoot.toUri().toURL(), root.toUri().toURL()), javaClass.classLoader))
+    }
+
+    @Test
+    fun `should tell override of relocated Java supertype of indirect supertype next to older original one`() {
+        // given
+        val introspector = introspectorOfRelocatedListenerNextToOlder("olderListenerOverride")
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.RelocatedListenerDeepImpl")
+
+        // then
+        // the Java interface is the relocated one the class file of RelocatedListenerMid refers to,
+        // not the original one its metadata names, of another version
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.RelocatedListenerDeepImpl [page 1/1]
+            class RelocatedListenerDeepImpl : RelocatedListenerMid {
+                override fun on(event: RelocatedEvent)
+                fun on(event: RelocatedOther)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should list member inherited from relocated Java supertype of indirect supertype next to older original one`() {
+        // given
+        val introspector = introspectorOfRelocatedListenerNextToOlder("olderListenerInherited")
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.RelocatedListenerDeepInheriting.on")
+        val oldSignature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.RelocatedListenerDeepInheriting.onOld")
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.RelocatedListenerDeepInheriting.on [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.isolated.RelocatedListener
+            fun on(arg0: RelocatedEvent?)
+        """.trimIndent()
+        assert(oldSignature == null)
+    }
+
+    @Test
     fun `should list members inherited from relocated Java supertype which kotlin-reflect cannot describe next to older original one`() {
         // given
         val shadedRoot = tempDir.resolve("relocatedJavaBaseNextToOlder")
@@ -561,6 +698,44 @@ class ClassLoaderIntrospectionTest {
         """.trimIndent()
     }
 
+    private val genericJavaInnerKo = /* language=kotlin */ """
+        // com.xemantic.kotlin.introspection.isolated.RelocatedGenericJavaInnerImpl.ko [page 1/1]
+        // inherited from com.xemantic.kotlin.introspection.isolated.RelocatedInnerOuter.Inner
+        fun ko(value: RelocatedEvent?)
+    """.trimIndent()
+
+    @Test
+    fun `should list member inherited through generic Java class from inner class of generic outer class given its type variable`() {
+        // given
+        val classLoader = URLClassLoader(isolatedTestFixtures.map { it.toURI().toURL() }.toTypedArray(), javaClass.classLoader)
+        val introspector = KotlinIntrospector(classLoader)
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.RelocatedGenericJavaInnerImpl.ko")
+
+        // then
+        signature sameAsKotlin genericJavaInnerKo
+    }
+
+    @Test
+    fun `should list member inherited through relocated generic Java class from relocated inner class of generic outer class given its type variable`() {
+        // given
+        val dependencies = arrayOf(
+            "RelocatedInnerOuter.class", "RelocatedInnerOuter\$Inner.class", "RelocatedGenericJavaInner.class", "RelocatedEvent.class"
+        )
+        val root = isolatedTestFixturesCopy("relocatedGenericJavaInner", *dependencies, "RelocatedGenericJavaInnerImpl.class")
+        relocatedCopy(root, *dependencies, dependents = listOf("RelocatedGenericJavaInnerImpl.class"))
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.RelocatedGenericJavaInnerImpl.ko")
+
+        // then
+        // the type argument of the Java class, which kotlin-reflect cannot describe, is substituted for its type variable,
+        // given to the outer type of its superclass
+        signature sameAsKotlin genericJavaInnerKo
+    }
+
     @Test
     fun `should list member refining return type of relocated Kotlin supertype through relocated Java class`() {
         // given
@@ -584,14 +759,13 @@ class ClassLoaderIntrospectionTest {
             // inherited from com.xemantic.kotlin.introspection.isolated.RelocatedJavaProd
             override fun make(): RelocatedProdSub
         """.trimIndent()
-        // only the Java method refining the return type is listed, though not told as an override,
-        // as the relocated Java class does not find the Kotlin interface of its relocated superclass by its metadata name
-        signatureThroughClass should {
-            have(this!!.lines().drop(1) == listOf(
-                "// inherited from com.xemantic.kotlin.introspection.isolated.RelocatedJavaProdK",
-                "open fun make(): RelocatedProdSub"
-            ))
-        }
+        // the relocated Java class finds the Kotlin interface of its relocated Kotlin superclass, named by its metadata name,
+        // relocated with the superclass
+        signatureThroughClass sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.RelocatedJavaProdKImpl.make [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.isolated.RelocatedJavaProdK
+            override fun make(): RelocatedProdSub
+        """.trimIndent()
     }
 
     @Test

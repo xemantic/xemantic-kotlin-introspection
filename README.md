@@ -380,6 +380,13 @@ com.example.AnnotationTestClass
   is resolved, found, and listed by its relocated name,
   together with its enclosing classes, its nested classes, its companion object, and its sealed subclasses,
   while the types its declarations refer to keep their original names.
+  So do the types of the members inherited from a relocated Java class,
+  and the class named in their `// inherited from` header,
+  as far as the relocation is told by the class files,
+  or by a relocated Kotlin class itself, whose metadata keeps its original name,
+  also when it is relocated to the root package,
+  unlike a Java class relocated there, which cannot be told from a class of the root package,
+  and keeps its relocated name.
   A declaration within a protected class, like a protected companion object,
   resolved directly, follows a comment telling that class,
   like `// in protected companion object Outer.Named`,
@@ -486,7 +493,10 @@ com.example.AnnotationTestClass
     or one of a Kotlin supertype without the metadata, is marked `override`,
     as the shrinker might have removed the overridden JVM method as well,
     unless it is a member of a JDK class, like `Throwable.toString()`, which is never shrunk,
-    or an override of one, like `toString()` of an application Java exception.
+    or an override of one, like `toString()` of an application Java exception,
+    or the class still declares a JVM method of the same name, and of types of the same simple names,
+    which is the JVM method of none of its members, like the one of a `@JvmOverloads` or a `@JvmStatic` function,
+    next to which the member is not marked.
 * The whole classpath visible to the given class loader is scanned on creation, which takes a while,
   so the instance should be created once and reused.
   The scan can be disabled with `KotlinIntrospector(scanEntireClasspath = false)`,
