@@ -449,7 +449,8 @@ internal class DefaultKotlinIntrospector(
          */
         private const val INHERITING_TYPE_PARAMETER_IDS = 1_000_000
 
-        private const val METADATA_DESCRIPTOR = "Lkotlin/Metadata;"
+        // also told by the OverrideResolver
+        internal const val METADATA_DESCRIPTOR = "Lkotlin/Metadata;"
 
         private const val DEPRECATED_DESCRIPTOR = "Lkotlin/Deprecated;"
 

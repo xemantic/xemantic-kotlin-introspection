@@ -450,16 +450,27 @@ class OverrideResolverTest {
      * The class file of a class of the [internalName], like `app/Owner`, extending the [superName], implementing the [interfaces],
      * and declaring the [methods], names followed by descriptors, like `on(Lapp/shaded/lib/Event;)V`,
      * or of a Java interface, if it [isInterface], telling the JVM names, which shading rewrites, unlike the Kotlin metadata.
+     *
+     * @param isAnnotated whether the class is annotated with `lib/Marker`, of the single element `count`,
+     *   the `RuntimeVisibleAnnotations` attribute being the only one of the class then, ending the class file,
+     *   see [withAnnotationsAttribute].
      */
     private fun classFile(
         internalName: String,
         methods: List<String>,
         superName: String = "java/lang/Object",
         interfaces: List<String> = emptyList(),
-        isInterface: Boolean = false
+        isInterface: Boolean = false,
+        isAnnotated: Boolean = false
     ): ByteArray = ClassWriter(0).apply {
         val access = if (isInterface) Opcodes.ACC_ABSTRACT or Opcodes.ACC_INTERFACE else 0
         visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC or access, internalName, null, superName, interfaces.toTypedArray())
+        if (isAnnotated) {
+            visitAnnotation("Llib/Marker;", true).apply {
+                visit("count", 1)
+                visitEnd()
+            }
+        }
         methods.forEach { method ->
             val descriptor = method.indexOf('(')
             visitMethod(
@@ -834,23 +845,26 @@ class OverrideResolverTest {
         assert(overrides == listOf(true, false))
     }
 
+    private fun ByteArray.writeShort(offset: Int, value: Int) {
+        this[offset] = (value shr 8).toByte()
+        this[offset + 1] = value.toByte()
+    }
+
     /**
-     * The [classFile] with the constant pool index of its superclass, and of its interfaces, by their positions, replaced,
-     * like a malformed one, the index `0xFFFF` out of the constant pool,
-     * and the one of [utf8IndexOfName] not of a `Class` entry.
+     * The [classFile] with the constant pool index of the class itself, of its superclass,
+     * and of its interfaces, by their positions, replaced, like a malformed one,
+     * the index `0xFFFF` out of the constant pool, and the one of [utf8IndexOfName] not of a `Class` entry.
      */
     private fun withSupertypeIndexes(
         classFile: ByteArray,
         superclass: Int? = null,
-        interfaces: Map<Int, Int> = emptyMap()
+        interfaces: Map<Int, Int> = emptyMap(),
+        thisClass: Int? = null
     ): ByteArray {
         // the offset of the access flags, followed by this class, the superclass, the interface count, and the interfaces
         val header = ClassReader(classFile).header
-        fun ByteArray.writeShort(offset: Int, value: Int) {
-            this[offset] = (value shr 8).toByte()
-            this[offset + 1] = value.toByte()
-        }
         return classFile.copyOf().apply {
+            thisClass?.let { writeShort(header + 2, it) }
             superclass?.let { writeShort(header + 4, it) }
             interfaces.forEach { (position, index) -> writeShort(header + 8 + 2 * position, index) }
         }
@@ -865,11 +879,46 @@ class OverrideResolverTest {
     }
 
     @Test
-    fun `should keep methods and other supertypes of owner whose class file too new to be parsed has malformed supertype indexes`() {
+    fun `should keep methods of owner whose class file too new to be parsed has malformed supertype indexes`() {
         // given
-        // like an app shading its dependencies, the Java interface lib/Listener taking lib2/Event, and lib2 itself,
+        // like relocated by shading from test/ to shaded/test/, and obfuscated, test/Event to a/b,
+        // while the overload takes other/Event, which the relocation does not change,
         // the class file of the owner of a version ASM cannot parse, its superclass index out of the constant pool,
         // and the index of its second interface not of a Class entry
+        val owner = kmClass("test/Owner", supertype = "test/Listener").apply {
+            functions += functionTaking("sh", "test/Event")
+            functions += functionTaking("sh", "other/Event")
+        }
+        val ownerClassFile = classFile(
+            "shaded/test/Owner",
+            listOf("sh(La/b;)V", "sh(Lother/Event;)V"),
+            interfaces = listOf("shaded/test/Listener", "shaded/test/Malformed")
+        )
+        val resolver = overrideResolver(
+            classFiles = mapOf(
+                "shaded/test/Owner" to tooNew(
+                    withSupertypeIndexes(ownerClassFile, superclass = 0xFFFF, interfaces = mapOf(1 to utf8IndexOfName(ownerClassFile)))
+                )
+            ),
+            unloadableClassFiles = mapOf(
+                "shaded/test/Listener" to classFile("shaded/test/Listener", listOf("sh(La/b;)V"), isInterface = true)
+            )
+        )
+
+        // when
+        val overrides = owner.functions.map { resolver.isOverride(OverrideResolver.Owner(owner, "shaded/test/Owner"), it) }
+
+        // then
+        // only the malformed supertypes are left out, the methods are read all the same:
+        // the JVM method of the overload, taking other/Event, cannot be the relocated sh(test/Event)
+        assert(overrides == listOf(true, false))
+    }
+
+    @Test
+    fun `should keep methods and supertypes of owner whose class file too new to be parsed has malformed class index`() {
+        // given
+        // like an app shading its dependencies, the Java interface lib/Listener taking lib2/Event, and lib2 itself,
+        // the class file of the owner of a version ASM cannot parse, the index of the class itself out of the constant pool
         val owner = kmClass("app/Owner", supertype = "lib/Listener").apply {
             functions += functionTaking("on", "lib2/Event")
             functions += functionTaking("on", "lib2/Other")
@@ -877,14 +926,10 @@ class OverrideResolverTest {
         val ownerClassFile = classFile(
             "app/Owner",
             listOf("on(Lapp/shaded/lib2/Event;)V", "on(Lapp/shaded/lib2/Other;)V"),
-            interfaces = listOf("app/shaded/lib/Listener", "app/Malformed")
+            interfaces = listOf("app/shaded/lib/Listener")
         )
         val resolver = overrideResolver(
-            classFiles = mapOf(
-                "app/Owner" to tooNew(
-                    withSupertypeIndexes(ownerClassFile, superclass = 0xFFFF, interfaces = mapOf(1 to utf8IndexOfName(ownerClassFile)))
-                )
-            ),
+            classFiles = mapOf("app/Owner" to tooNew(withSupertypeIndexes(ownerClassFile, thisClass = 0xFFFF))),
             unloadableClassFiles = mapOf(
                 "app/shaded/lib/Listener" to classFile(
                     "app/shaded/lib/Listener", listOf("on(Lapp/shaded/lib2/Event;)V"), isInterface = true
@@ -896,9 +941,90 @@ class OverrideResolverTest {
         val overrides = owner.functions.map { resolver.isOverride(OverrideResolver.Owner(owner), it) }
 
         // then
-        // only the malformed supertypes are dropped: the first interface tells lib/ relocated to app/shaded/lib/,
-        // and the JVM method of the overload, taking the relocated type, is not taken for a shrunk one
+        // only the name of the class is unknown, which the class file is not looked up by
         assert(overrides == listOf(true, false))
+    }
+
+    /**
+     * The [classFile] ending with its only class attribute, the `RuntimeVisibleAnnotations` one,
+     * of a single annotation of a single `Int` element, see [classFile], changed in place, like a malformed one,
+     * by its offsets from the end of the class file: the attribute count at -19, the index of the attribute name at -17,
+     * the attribute length at -15, followed by the annotation count, the index of the annotation type,
+     * the element count at -7, the index of the element name, the tag of the element at -3, and the index of its value.
+     */
+    private fun withAnnotationsAttribute(classFile: ByteArray, change: ByteArray.(end: Int) -> Unit): ByteArray =
+        classFile.copyOf().apply { change(size) }
+
+    @Test
+    fun `should keep methods and supertypes of owner whose class file too new to be parsed has malformed class attributes`() {
+        // given
+        // like above, the supertype indexes intact, the class file of the owner of a version ASM cannot parse
+        val owner = kmClass("app/Owner", supertype = "lib/Listener").apply {
+            functions += functionTaking("on", "lib2/Event")
+            functions += functionTaking("on", "lib2/Other")
+        }
+        val methods = listOf("on(Lapp/shaded/lib2/Event;)V", "on(Lapp/shaded/lib2/Other;)V")
+        val interfaces = listOf("app/shaded/lib/Listener")
+        val annotated = classFile("app/Owner", methods, interfaces = interfaces, isAnnotated = true)
+        val ownerClassFiles = listOf(
+            // cut before the count of the class attributes, following the method table
+            classFile("app/Owner", methods, interfaces = interfaces).let { it.copyOf(it.size - 2) },
+            // the index of the attribute name out of the constant pool
+            withAnnotationsAttribute(annotated) { end -> writeShort(end - 17, 0xFFFF) },
+            // the attribute longer than the class file, its length of 4 GB
+            withAnnotationsAttribute(annotated) { end -> (end - 15 until end - 11).forEach { this[it] = 0xFF.toByte() } },
+            // the attribute cut
+            annotated.copyOf(annotated.size - 1)
+        )
+
+        // when
+        val overrides = ownerClassFiles.map { ownerClassFile ->
+            val resolver = overrideResolver(
+                classFiles = mapOf("app/Owner" to tooNew(ownerClassFile)),
+                unloadableClassFiles = mapOf(
+                    "app/shaded/lib/Listener" to classFile(
+                        "app/shaded/lib/Listener", listOf("on(Lapp/shaded/lib2/Event;)V"), isInterface = true
+                    )
+                )
+            )
+            owner.functions.map { resolver.isOverride(OverrideResolver.Owner(owner), it) }
+        }
+
+        // then
+        // the supertypes and the method table, preceding the class attributes, are read all the same
+        assert(overrides == List(4) { listOf(true, false) })
+    }
+
+    @Test
+    fun `should not pair supertypes of owner by simple names when its class file too new to be parsed has malformed supertype index`() {
+        // given
+        // like an app shading its dependencies, a/Base and b/Base, of the same simple name,
+        // the class file of the owner of a version ASM cannot parse, the index of its first interface out of the constant pool
+        val owner = kmClass("app/Owner", supertype = "a/Base").apply { supertypes += type("b/Base") }
+        val resolver = overrideResolver(
+            classes = mapOf(
+                "app/shaded/a/Base" to kmClass("a/Base", null, "fromA"),
+                "app/shaded/b/Base" to kmClass("b/Base", null, "fromB")
+            ),
+            classFiles = mapOf(
+                "app/Owner" to tooNew(
+                    withSupertypeIndexes(
+                        classFile("app/Owner", "app/shaded/a/Base", "app/shaded/b/Base"), interfaces = mapOf(0 to 0xFFFF)
+                    )
+                )
+            )
+        )
+
+        // when
+        val overrides = listOf(
+            resolver.isOverride(OverrideResolver.Owner(owner), function("fromA")),
+            resolver.isOverride(OverrideResolver.Owner(owner), function("fromB"))
+        )
+
+        // then
+        // the only supertype left, app/shaded/b/Base, is not taken for the relocated a/Base, nor for any other one,
+        // as the supertype left out might be of the same simple name
+        assert(overrides == listOf(false, false))
     }
 
     @Test
@@ -1011,9 +1137,11 @@ class OverrideResolverTest {
     fun `should not take class file of malformed supertype index for Java class which cannot be loaded`() {
         // given
         // the index of the interface out of the constant pool, in a class file ASM can parse otherwise, and in one it cannot
-        val malformed = withSupertypeIndexes(annotatedClassFile("lib/Mid"), interfaces = mapOf(0 to 0xFFFF))
         val resolver = overrideResolver(
-            unloadableClassFiles = mapOf("lib/Mid" to malformed, "lib/New" to tooNew(malformed))
+            unloadableClassFiles = mapOf(
+                "lib/Mid" to withSupertypeIndexes(annotatedClassFile("lib/Mid"), interfaces = mapOf(0 to 0xFFFF)),
+                "lib/New" to tooNew(withSupertypeIndexes(annotatedClassFile("lib/New"), interfaces = mapOf(0 to 0xFFFF)))
+            )
         )
 
         // when
@@ -1022,6 +1150,96 @@ class OverrideResolverTest {
         // then
         // a Java class of a supertype left out would miss the members it inherits, so it stays unknown
         assert(supertypes == List(2) { emptyList<String>() })
+    }
+
+    @Test
+    fun `should not take class file too new to be parsed of malformed class index for Java class which cannot be loaded`() {
+        // given
+        // the index of the class itself out of the constant pool, so that the class file does not tell whose it is
+        val resolver = overrideResolver(
+            unloadableClassFiles = mapOf("lib/Mid" to tooNew(withSupertypeIndexes(annotatedClassFile("lib/Mid"), thisClass = 0xFFFF)))
+        )
+
+        // when
+        val supertypes = resolver.unloadableJavaSupertypeNames("lib/Mid")
+
+        // then
+        assert(supertypes == emptyList<String>())
+    }
+
+    @Test
+    fun `should not take class file too new to be parsed whose annotations cannot be read for Java class which cannot be loaded`() {
+        // given
+        // the annotations of a class which might be the Kotlin metadata, as they cannot be told
+        val annotated = classFile("lib/Mid", listOf(), superName = "lib/Base", interfaces = listOf("lib/Listener"), isAnnotated = true)
+        // an annotation nested deeper than any annotation is, like in a malformed attribute nesting without an end
+        val nested = ClassWriter(0).apply {
+            visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC, "lib/Mid", null, "lib/Base", arrayOf("lib/Listener"))
+            generateSequence(visitAnnotation("Llib/Marker;", true)) { it.visitAnnotation("nested", "Llib/Marker;") }
+                .take(20)
+                .toList()
+                .asReversed()
+                .forEach { it.visitEnd() }
+            visitEnd()
+        }.toByteArray()
+        val classFiles = listOf(
+            // an element of an unknown kind, whose size is unknown
+            withAnnotationsAttribute(annotated) { end -> this[end - 3] = '?'.code.toByte() },
+            // more elements than the attribute holds
+            withAnnotationsAttribute(annotated) { end -> writeShort(end - 7, 2) },
+            nested,
+            // the attribute cut
+            annotated.copyOf(annotated.size - 1)
+        )
+
+        // when
+        val supertypes = (listOf(annotated) + classFiles).map { classFile ->
+            overrideResolver(unloadableClassFiles = mapOf("lib/Mid" to tooNew(classFile))).unloadableJavaSupertypeNames("lib/Mid")
+        }
+
+        // then
+        // the class file as it is tells a Java class, the others might be of a Kotlin class, whose JVM methods are not its members
+        assert(supertypes == listOf(listOf("lib/Base", "lib/Listener")) + List(4) { emptyList<String>() })
+    }
+
+    @Test
+    fun `should tell relocated Java supertype of indirect supertype next to overloads of the same shape relocated by the same package prefix`() {
+        // given
+        // like an app shading its dependencies, its class app/Mid implementing the relocated Java interface lib/Listener,
+        // the overloads of the owner all of the same shape, so that their JVM methods cannot tell the relocation,
+        // with only the shaded jar on the classpath
+        val owner = kmClass("app/Owner", supertype = "app/Mid").apply {
+            functions += functionTaking("on", "lib/Event", "ext/Event")
+            functions += functionTaking("on", "ext/Event", "lib/Event")
+            functions += functionTaking("on", "lib/sub/Event", "ext/Event")
+        }
+        val resolver = overrideResolver(
+            classes = mapOf("app/Mid" to kmClass("app/Mid", supertype = "lib/Listener")),
+            classFiles = mapOf(
+                "app/Owner" to classFile(
+                    "app/Owner",
+                    listOf(
+                        "on(Lapp/shaded/lib/Event;Lext/Event;)V",
+                        "on(Lext/Event;Lapp/shaded/lib/Event;)V",
+                        "on(Lapp/shaded/lib/sub/Event;Lext/Event;)V"
+                    ),
+                    superName = "app/Mid"
+                ),
+                "app/Mid" to classFile("app/Mid", listOf(), interfaces = listOf("app/shaded/lib/Listener"))
+            ),
+            unloadableClassFiles = mapOf(
+                "app/shaded/lib/Listener" to classFile(
+                    "app/shaded/lib/Listener", listOf("on(Lapp/shaded/lib/Event;Lext/Event;)V"), isInterface = true
+                )
+            )
+        )
+
+        // when
+        val overrides = owner.functions.map { resolver.isOverride(OverrideResolver.Owner(owner), it) }
+
+        // then
+        // lib/ is told relocated to app/shaded/lib/, by the package prefix pairing the overloads, or by the class file of app/Mid
+        assert(overrides == listOf(true, false, false))
     }
 
     @Test
