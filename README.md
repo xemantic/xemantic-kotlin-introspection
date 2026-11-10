@@ -272,6 +272,11 @@ com.example.AnnotationTestClass
   like of `R.contains(element: T?)` where `R : ClosedRange<T>, R : Iterable<T>`,
   or the bound is `Comparable`, whose few extensions are listed for a class comparable to itself,
   like `class Version : Comparable<Version>`, as told by the Kotlin metadata, but not for an enum class.
+  The extensions declared in the package of the class itself are listed on any of its supertypes, though,
+  also the `kotlin.*` and `java.*` ones, including `Any`, but `Comparable` of an enum class, like next to it,
+  like `fun List<Order>.total()` for `interface Orders : List<Order>`, or for `class OrderList : ArrayList<Order>()`,
+  or `fun <T : List<Order>> T.largestFirst()`,
+  when the type arguments of the supertype are told, by the Kotlin metadata, or by the generic signatures of the Java supertypes.
   The ones on `T : Comparable<T>` are not listed for a final type comparable only to itself, which pins `T` to it,
   like `Int`, when it declares a more specific overload, a member, or an extension on the type itself,
   taking the same parameters, of the same names, where `T` stands for the type,

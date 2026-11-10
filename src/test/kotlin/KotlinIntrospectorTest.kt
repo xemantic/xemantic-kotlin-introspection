@@ -3815,6 +3815,7 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should mark overrides of CharSequence members mapped to differently named JVM methods`() {
+        // with the extension of its package on CharSequence, unlike the ones of the standard library
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.Chars"
         ) sameAsKotlin """
@@ -3823,6 +3824,8 @@ class KotlinIntrospectorTest {
                 override val length: Int
                 override operator fun get(index: Int): Char
             }
+            // from com.xemantic.kotlin.introspection.test
+            fun CharSequence.charCount(): Int
         """.trimIndent()
     }
 
@@ -8637,6 +8640,80 @@ class KotlinIntrospectorTest {
             fun TestIntermediateType.describeIntermediate(): String
             fun TestSubtype.describeSubtype(): String
             fun TestSupertype.describeSupertype(): String
+        """.trimIndent()
+    }
+
+    // TestCollectionSupertypeExtensions tests
+
+    @Test
+    fun `should resolve user collection interface with extensions of its package on its standard library supertypes`() {
+        // only the ones which can be called on it, not refundedAmount() on a List<CollectionRefund>,
+        // nor the ones of the other packages, like otherTotalAmount(), or of the standard library, which can still be called
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.CollectionOrders"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.CollectionOrders [page 1/1]
+            interface CollectionOrders : List<CollectionOrder>
+            // from com.xemantic.kotlin.introspection.test
+            val Collection<CollectionOrder>.orderCount: Int
+            fun List<CollectionOrder>.totalAmount(): Int
+            fun <T : List<CollectionOrder>> T.withLargestFirst(): T
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve subclass of ArrayList with extensions of its package on its standard library supertypes`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.CollectionOrderList"
+        ) should {
+            have("val Collection<CollectionOrder>.orderCount: Int" in lines())
+            have("fun List<CollectionOrder>.totalAmount(): Int" in lines())
+            have("fun <T : List<CollectionOrder>> T.withLargestFirst(): T" in lines())
+            have(lines().none { "refundedAmount" in it || "otherTotalAmount" in it || "orderById" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve subclass of HashMap with extensions of its package on its standard library supertypes`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.CollectionOrderMap"
+        ) should {
+            have("fun Map<String, CollectionOrder>.orderById(id: String): CollectionOrder?" in lines())
+            have(lines().none { "totalAmount" in it || "orderCount" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve Kotlin subclass of Java list with extensions of its package on its standard library supertypes`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.CollectionOrderJavaList"
+        ) should {
+            have("val Collection<CollectionOrder>.orderCount: Int" in lines())
+            have("fun List<CollectionOrder>.totalAmount(): Int" in lines())
+            have("fun <T : List<CollectionOrder>> T.withLargestFirst(): T" in lines())
+            have(lines().none { "refundedAmount" in it || "otherTotalAmount" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve class implementing JDK list named directly without extensions of its package on untold supertypes`() {
+        // the java.util.Collection<E> of java.util.List<String> is not told, so that Collection<CollectionOrder> might be callable
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaListSubclass"
+        ) should {
+            have(lines().none { "orderCount" in it || "totalAmount" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface extending only Java interface with extension of its package on Any`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.task.TaskRunnable"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.task.TaskRunnable [page 1/1]
+            interface TaskRunnable : java.lang.Runnable
+            // from com.xemantic.kotlin.introspection.test.task
+            fun Any.describeTask(): String
         """.trimIndent()
     }
 

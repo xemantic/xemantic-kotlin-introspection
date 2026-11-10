@@ -4081,7 +4081,9 @@ internal class DefaultKotlinIntrospector(
      * For any other class, all of them, on the class and its [userSupertypes],
      * not to flood its listing with the generic extensions of the standard library,
      * but the ones of the standard library on `Comparable` for a class comparable to itself, see [isComparableToItself],
-     * and the ones of its package on `Comparable` for a comparable class, see [isComparable].
+     * and the ones of its package on any of its supertypes, like `fun List<Order>.total()` for `interface Orders : List<Order>`,
+     * when the type arguments of the supertype are told, see [ClassSupertypes.types], on `Comparable` only for a comparable class,
+     * see [isComparable], and for a class of the `kotlin.*` or `java.*` packages only on `Comparable`.
      * Either way, the ones on a type parameter with multiple bounds only when the class satisfies all of them,
      * see [receiverBoundsOf], also when none of them is among the [userSupertypes], see [listedFor],
      * and only the ones which can be called on the class, as told by the type arguments, see [isCallableOn],
@@ -4126,26 +4128,57 @@ internal class DefaultKotlinIntrospector(
         } else {
             val ownReceiverNames = ownExtensionReceiverNames(className)
             val satisfiedBounds = ownReceiverNames.toSet() + supertypes.names
-            val listed = extensionsListedFor(ownReceiverNames + userSupertypes(kmClass) + companionReceiverNames, satisfiedBounds)
-            if (supertypes.isComparable) {
-                val isComparableToItself = supertypes.isComparableToItself
-                // only the ones of the standard library, like on the other types of the standard library, see userSupertypes,
-                // for a class comparable to itself, satisfying their bounds,
-                // and of the package of the class, like next to it, but not the ones of the other libraries,
-                // while the ones with multiple bounds, satisfied by the class, are already listed
-                // also the ones of an object of the package, imported from it, told by the JVM package of their class,
-                // like the one of the class
-                val classPackage = contextPackageOf(declarations, kmClass)
-                fun ReceiverBounded.isListed() =
-                    ((isComparableToItself && isBuiltinExtension) || sourceClass.substringBeforeLast('.', "") == classPackage) &&
-                        receiverBounds.all { it in satisfiedBounds }
-                ListedExtensions(
-                    (listed.functions + extensionIndex[COMPARABLE_CLASS_NAME].orEmpty().filter { it.isListed() }).distinct(),
-                    (listed.properties + extensionPropertyIndex[COMPARABLE_CLASS_NAME].orEmpty().filter { it.isListed() }).distinct()
-                )
-            } else {
-                listed
+            val userSupertypes = userSupertypes(kmClass)
+            val listed = extensionsListedFor(ownReceiverNames + userSupertypes + companionReceiverNames, satisfiedBounds)
+            // also the ones of an object of the package, imported from it, told by the JVM package of their class,
+            // like the one of the class
+            val classPackage = contextPackageOf(declarations, kmClass)
+            // the other supertypes, from the kotlin.* and java.* packages, whose extensions are listed only
+            // when of the package of the class, like next to it, but not the ones of the other libraries,
+            // like fun List<Order>.total() for interface Orders : List<Order>, also on Any,
+            // which an interface extending only Java interfaces does not reach, like interface Task : Runnable,
+            // and on Comparable, only for a comparable class, see isComparable,
+            // also the ones of the standard library for a class comparable to itself,
+            // unless the class is of these packages itself, whose extensions are the ones of the standard library,
+            // listed then only on Comparable,
+            // while the ones with multiple bounds, satisfied by the class, are already listed
+            val isOfStandardPackage = "$classPackage.".let { it.startsWith("kotlin.") || it.startsWith("java.") }
+            val otherSupertypes = when {
+                isOfStandardPackage -> listOf(COMPARABLE_CLASS_NAME)
+                else -> (supertypes.names + "kotlin.Any").filter { it !in userSupertypes }
+            }.filter { it != COMPARABLE_CLASS_NAME || supertypes.isComparable }
+            val isComparableToItself = supertypes.isComparableToItself
+            fun ReceiverBounded.isListedOn(supertype: String) =
+                (sourceClass.substringBeforeLast('.', "") == classPackage ||
+                    (supertype == COMPARABLE_CLASS_NAME && isComparableToItself && isBuiltinExtension)) &&
+                    receiverBounds.all { it in satisfiedBounds }
+            // a supertype taking type arguments only when they are told, see ClassSupertypes.types,
+            // like not java.util.Collection<E> of the JDK interface java.util.List<String> named as a supertype,
+            // which an extension on Collection<Order> would be told callable on, see isCallableOn
+            fun isTold(supertype: String, receiver: KmType?, typeParameters: List<KmTypeParameter>): Boolean {
+                if (supertype in supertypes.types) return true
+                val receiverTypes = when (val classifier = receiver?.classifier) {
+                    is KmClassifier.TypeParameter -> receiverBoundTypes(classifier.id, typeParameters)
+                    else -> listOfNotNull(receiver)
+                }
+                return receiverTypes.all { classReceiverIndexKey(it) != supertype || it.arguments.isEmpty() }
             }
+            fun <E : ReceiverBounded> Map<String, List<E>>.listedOnOtherSupertypes(
+                receiverOf: (E) -> Pair<KmType?, List<KmTypeParameter>>
+            ): List<E> = otherSupertypes.flatMap { supertype ->
+                this[supertype].orEmpty().filter { extension ->
+                    extension.isListedOn(supertype) &&
+                        receiverOf(extension).let { (receiver, typeParameters) -> isTold(supertype, receiver, typeParameters) }
+                }
+            }
+            ListedExtensions(
+                (listed.functions + extensionIndex.listedOnOtherSupertypes {
+                    it.function.receiverParameterType to it.function.typeParameters
+                }).distinct(),
+                (listed.properties + extensionPropertyIndex.listedOnOtherSupertypes {
+                    it.property.receiverParameterType to it.property.typeParameters
+                }).distinct()
+            )
         }
         val callable = ListedExtensions(
             listed.functions.filter { extension ->
@@ -4821,7 +4854,7 @@ internal class DefaultKotlinIntrospector(
      * nor with the ones of any other library on these types, like on `java.lang.AutoCloseable`,
      * or `java.util.function.Function`, which can still be called on the class,
      * also on `kotlin.Comparable`, like `fun Comparable<Money>.atLeast()` of another package than
-     * `class Price : Comparable<Money>`, but the ones of the package of a comparable class, see [isComparable],
+     * `class Price : Comparable<Money>`, but the ones of the package of the class, on any of these types, see [listedExtensions],
      * and the ones of the standard library for a class comparable to itself, see [isComparableToItself],
      * except the function types, like `(String) -> Unit`, and their supertype `kotlin.Function`,
      * whose extensions are listed for a class implementing them, like for a function type class,
