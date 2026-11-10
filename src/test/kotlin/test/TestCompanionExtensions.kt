@@ -165,6 +165,9 @@ class DeprecatedSharedSupertypeCompanionHolder : CompanionSupertype {
     companion object : CompanionSupertype
 }
 
+// called only on the name of the class, DeprecatedSharedSupertypeCompanionHolder.onCompanion(), reporting the deprecation
+fun DeprecatedSharedSupertypeCompanionHolder.Companion.onCompanion(): Int = 0
+
 // called as ProtectedSupertypeCompanionHolder.onSupertype() only within its subclasses, as elsewhere,
 // while kotlinc 2.4.21 compiles it, it fails with an IllegalAccessError of the protected companion object field
 open class ProtectedSupertypeCompanionHolder {

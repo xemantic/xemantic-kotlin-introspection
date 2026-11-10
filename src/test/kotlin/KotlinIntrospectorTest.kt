@@ -765,6 +765,66 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve enum entry by its name`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.EnumTestClass.FIRST") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.EnumTestClass.FIRST [page 1/1]
+            FIRST
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve enum entry with a body by its name`() {
+        // compiled to a class nested in the enum class, still rendered as the entry
+        resolver.resolve("com.xemantic.kotlin.introspection.test.EntryBodiesEnum.A") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.EntryBodiesEnum.A [page 1/1]
+            A
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve entries of enum class`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.EnumTestClass.entries") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.EnumTestClass.entries [page 1/1]
+            val entries: EnumEntries<EnumTestClass>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve valueOf of enum class`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.EnumTestClass.valueOf") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.EnumTestClass.valueOf [page 1/1]
+            fun valueOf(value: String): EnumTestClass
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve values of enum class`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.EnumTestClass.values") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.EnumTestClass.values [page 1/1]
+            fun values(): Array<EnumTestClass>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve valueOf of enum class next to functions of the same name of its companion object`() {
+        // EnumWithCompanionValueOf.valueOf("A") calls the generated one, while the companion object one
+        // of the same signature is called only as EnumWithCompanionValueOf.Companion.valueOf("A")
+        resolver.resolve("com.xemantic.kotlin.introspection.test.EnumWithCompanionValueOf.valueOf") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.EnumWithCompanionValueOf.valueOf [page 1/1]
+            fun valueOf(value: String): EnumWithCompanionValueOf
+            companion object {
+                fun valueOf(value: String): Int
+                fun valueOf(ordinal: Int): EnumWithCompanionValueOf
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve unknown member of enum class`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.EnumTestClass.FOURTH") == null)
+    }
+
+    @Test
     fun `should resolve enum class without entries but with a companion object`() {
         // without entries, the members still have to be preceded by a semicolon, otherwise the rendered Kotlin is invalid
         resolver.resolve(
@@ -1091,13 +1151,37 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve extension of supertype of both class and its deprecated companion object with its deprecation`() {
-        // Kotlin reports the deprecation of the companion object for DeprecatedSharedSupertypeCompanionHolder.onSupertype()
+        // Kotlin reports the deprecation of the companion object for DeprecatedSharedSupertypeCompanionHolder.onSupertype(),
+        // but not for holder.onSupertype(), called on an instance of the class
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.DeprecatedSharedSupertypeCompanionHolder.onSupertype"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.DeprecatedSharedSupertypeCompanionHolder.onSupertype [page 1/1]
             // from com.xemantic.kotlin.introspection.test
-            /* companion object deprecated: "Use the constructor" */ fun CompanionSupertype.onSupertype(): Int
+            /* companion object deprecated: "Use the constructor" (when called on the class name) */ fun CompanionSupertype.onSupertype(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension property of supertype of both class and its deprecated companion object with its deprecation`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.DeprecatedSharedSupertypeCompanionHolder.onSupertypeProperty"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DeprecatedSharedSupertypeCompanionHolder.onSupertypeProperty [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            /* companion object deprecated: "Use the constructor" (when called on the class name) */ val CompanionSupertype.onSupertypeProperty: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension of deprecated companion object with supertype shared with class with unqualified deprecation`() {
+        // called only on the name of the class, DeprecatedSharedSupertypeCompanionHolder.onCompanion()
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.DeprecatedSharedSupertypeCompanionHolder.onCompanion"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DeprecatedSharedSupertypeCompanionHolder.onCompanion [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            /* companion object deprecated: "Use the constructor" */ fun DeprecatedSharedSupertypeCompanionHolder.Companion.onCompanion(): Int
         """.trimIndent()
     }
 
@@ -13926,6 +14010,34 @@ class KotlinIntrospectorTest {
             // in @Deprecated("Use DeprecationTarget.create()") object DeprecatedObject
             // from com.xemantic.kotlin.introspection.test
             fun DeprecatedObject.objectExtension(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve entry of deprecated enum class with its deprecation`() {
+        // DeprecatedEnum.A writes the name of the enum class
+        resolver.resolve("com.xemantic.kotlin.introspection.test.DeprecatedEnum.A") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DeprecatedEnum.A [page 1/1]
+            // in @Deprecated("Use DeprecationTarget") enum class DeprecatedEnum
+            A
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve entries of deprecated enum class with its deprecation`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.DeprecatedEnum.entries") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DeprecatedEnum.entries [page 1/1]
+            // in @Deprecated("Use DeprecationTarget") enum class DeprecatedEnum
+            val entries: EnumEntries<DeprecatedEnum>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve valueOf of deprecated enum class with its deprecation`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.DeprecatedEnum.valueOf") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.DeprecatedEnum.valueOf [page 1/1]
+            // in @Deprecated("Use DeprecationTarget") enum class DeprecatedEnum
+            fun valueOf(value: String): DeprecatedEnum
         """.trimIndent()
     }
 

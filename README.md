@@ -90,6 +90,13 @@ com.example.AnnotationTestClass
   which finds everything of that name the listing of the class shows:
   its members, the members of its companion object, and the extensions of the class and its supertypes,
   paged by signatures, one item each.
+  An entry of an enum class is resolved by its name too, like `com.example.Color.RED`, rendered as a bare `RED` line,
+  and so are the members the compiler generates for every enum class, which its listing implies, and does not show:
+  `val entries: EnumEntries<Color>`, when the metadata of the class tells it has one,
+  `fun valueOf(value: String): Color`, and `fun values(): Array<Color>`,
+  followed by the members of the same name of its companion object, if any,
+  even when one of the same signature is called only as `Color.Companion.valueOf("RED")`,
+  as Kotlin calls the generated one for `Color.valueOf("RED")`.
   The extensions of its companion object, like `fun Foo.Companion.parse()`, called as `Foo.parse()`,
   are listed, and resolved, with the extensions of the class, like `String.Companion.format()` with `String.format()`,
   unless the companion object is deprecated as hidden, like by an upgrade of its library after compiling the extension,
@@ -110,10 +117,12 @@ com.example.AnnotationTestClass
   The deprecation of a companion object deprecated with the `WARNING` or the `ERROR` level,
   which Kotlin reports for `Foo.parse()`, and `Foo.Companion.parse()`,
   is told on its extensions listed with the class, or resolved by the name of the class, like `com.example.Foo.parse`,
-  also on the ones on its supertypes resolved so, even when the class extends the supertype too, also called as `foo.parse()`,
+  also on the ones on its supertypes resolved so,
   in a comment, as no annotation compiles there,
   after the deprecation of the extension itself, if any,
-  like `/* companion object deprecated: "Use the constructor", level = DeprecationLevel.ERROR */ fun Foo.Companion.parse(): Foo`.
+  like `/* companion object deprecated: "Use the constructor", level = DeprecationLevel.ERROR */ fun Foo.Companion.parse(): Foo`,
+  qualified when the class extends the supertype too, as Kotlin reports nothing for `foo.parse()` called on its instance,
+  like `/* companion object deprecated: "Use the constructor" (when called on the class name) */ fun Parser.parse(): Foo`.
   The deprecation of the class itself, which Kotlin reports for `Foo.parse()` too, on the name of the class the caller writes,
   is told by the header of the class when the class itself is resolved,
   and by a comment on every page of whatever is resolved by a name going through it,
@@ -122,6 +131,7 @@ com.example.AnnotationTestClass
   like `// in @Deprecated("Use Bar", level = DeprecationLevel.ERROR) class Foo` for `com.example.Foo.Nested.create`,
   also for a companion object resolved by its own name, like `com.example.Foo.Companion.parse`,
   or an object, also of its extensions, like `Obj.ext()`, or of an enum class, like `Color.RED.ext()`,
+  also of its entries, and its generated members, like `Color.RED`, or `Color.valueOf("RED")`,
   as Kotlin reports each of them, like for `Foo.Nested.create()`,
   merged with the comment telling a protected class, like `// in @Deprecated("Use Bar") protected class Outer.Foo`,
   but, of a member resolved by its name, not on a page with only the members, and the extensions, of the class called on its instance,

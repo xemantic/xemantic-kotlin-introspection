@@ -112,6 +112,18 @@ enum class BacktickedEntryEnum {
     fun f() {}
 }
 
+// Enum class whose companion object declares functions named like the generated valueOf,
+// one of the same signature, which EnumWithCompanionValueOf.valueOf("A") does not call, calling the generated one,
+// and an overload, which EnumWithCompanionValueOf.valueOf(0) calls
+enum class EnumWithCompanionValueOf {
+    A;
+
+    companion object {
+        fun valueOf(value: String): Int = value.length
+        fun valueOf(ordinal: Int): EnumWithCompanionValueOf = entries[ordinal]
+    }
+}
+
 // Annotation class
 annotation class AnnotationTestClass(
     val message: String = ""
