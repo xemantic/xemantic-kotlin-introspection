@@ -812,6 +812,73 @@ abstract class JavaImplementingInternalInterfaceFaceSub :
 
 class JavaImplementingInternalInterfaceFaceConcrete : JavaImplementingInternalInterfaceFaceSub()
 
+// and an abstract member of an internal class, or interface, which a Java class leaves unimplemented, inherited through it,
+// so that a concrete subclass has to override it, checked by the build, alone, or next to an unrelated interface declaring it too
+abstract class JavaNotImplementingInternalSub : com.xemantic.kotlin.introspection.test.other.JavaNotImplementingInternal()
+
+class JavaNotImplementingInternalConcrete : JavaNotImplementingInternalSub() {
+    override fun f(): Int = 1
+}
+
+abstract class JavaNotImplementingInternalFaceSub : com.xemantic.kotlin.introspection.test.other.JavaNotImplementingInternal(), NearestClassFace
+
+abstract class JavaNotImplementingInternalInterfaceSub : com.xemantic.kotlin.introspection.test.other.JavaNotImplementingInternalInterface()
+
+class JavaNotImplementingInternalInterfaceConcrete : JavaNotImplementingInternalInterfaceSub() {
+    override fun f(): Int = 1
+}
+
+abstract class JavaNotImplementingInternalPropertySub : com.xemantic.kotlin.introspection.test.other.JavaNotImplementingInternalProperty()
+
+class JavaNotImplementingInternalPropertyConcrete : JavaNotImplementingInternalPropertySub() {
+    override val x: Int = 1
+}
+
+// unless a Java class below implements it, or a Kotlin class overrides it
+abstract class JavaImplementingBelowNotImplementingInternalSub : com.xemantic.kotlin.introspection.test.other.JavaImplementingBelowNotImplementingInternal()
+
+class JavaImplementingBelowNotImplementingInternalConcrete : JavaImplementingBelowNotImplementingInternalSub()
+
+abstract class JavaNotImplementingInternalOverride : com.xemantic.kotlin.introspection.test.other.JavaNotImplementingInternal() {
+    override fun f(): Int = 1
+}
+
+abstract class JavaNotImplementingInternalOverrideSub : JavaNotImplementingInternalOverride()
+
+// also next to the method of the Java class overloading it, of another JVM type, primitive or boxed, a JVM method of its own
+internal abstract class InternalBoxedPut {
+    abstract fun put(k: Int?): Int
+}
+
+abstract class JavaPrimitivePutBelowInternalBoxedSub : com.xemantic.kotlin.introspection.test.other.JavaPrimitivePutBelowInternalBoxed()
+
+class JavaPrimitivePutBelowInternalBoxedConcrete : JavaPrimitivePutBelowInternalBoxedSub() {
+    override fun put(k: Int?): Int = k ?: 0
+}
+
+internal abstract class InternalPrimitivePut {
+    abstract fun put(k: Int): Int
+}
+
+abstract class JavaBoxedPutBelowInternalPrimitiveSub : com.xemantic.kotlin.introspection.test.other.JavaBoxedPutBelowInternalPrimitive()
+
+class JavaBoxedPutBelowInternalPrimitiveConcrete : JavaBoxedPutBelowInternalPrimitiveSub() {
+    override fun put(k: Int): Int = k
+}
+
+// taking the type argument the Java class gives as a platform type, so that put(null) compiles
+internal abstract class InternalGenericPut<T> {
+    abstract fun put(t: T): Int
+}
+
+abstract class JavaNotImplementingInternalGenericPutSub : com.xemantic.kotlin.introspection.test.other.JavaNotImplementingInternalGenericPut()
+
+fun JavaNotImplementingInternalGenericPutSub.putNull(): Int = put(null)
+
+// while a Kotlin class exposes an internal supertype only with an error suppressed, the members of which are not inherited
+@Suppress("EXPOSED_SUPER_CLASS")
+abstract class KotlinNotImplementingInternal : HiddenMergedInternalAbstract()
+
 // A Kotlin class extending java.util.AbstractList and implementing MutableList, whose members K2 merges,
 // picking the Java method of AbstractList, first, when not returning a platform type
 abstract class InheritedJavaListDiamond : java.util.AbstractList<String>(), MutableList<String>

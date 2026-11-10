@@ -98,6 +98,10 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   `x.getOrDefault("", null)` compiles on a `HashMap<String, String>` subclass through the extension.
   Probe the member only, shadowing the extension by one of the same name in the probe's own package, returning a marker type.
 
+- When probing kotlinc with an internal declaration of another module, give the modules different `-module-name`s,
+  as both are `main` otherwise, and the internal one is visible —
+  while a public member of an internal class is visible anyway through a public subclass, like a Java one, which needs no suppressed error.
+
 - Kotlin never passes named arguments to a Java method, even one compiled with `-parameters`, so a Java method taking parameters never shadows an extension — see `isShadowingJavaMethod`.
 
 ## Anti-patterns to avoid

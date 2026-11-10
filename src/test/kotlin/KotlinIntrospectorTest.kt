@@ -16166,7 +16166,11 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve member of interface implemented by Java class implementing abstract member of internal class as open`() {
-        // the method of the Java class stands for the implementation of the abstract f() of HiddenMergedInternalAbstract
+        // the method of the Java class stands for the implementation of the abstract f() of HiddenMergedInternalAbstract,
+        // listed as the member of the interface, also with the Java class declared first, as K2 intersects both, picking neither:
+        // kotlinc 2.4.21 prohibits naming the argument of such a member whose parameters are named differently by either name,
+        // "named argument is prohibited for parameter with an ambiguous name", in either order of the supertypes,
+        // like for a Kotlin class in place of the Java one, and takes the name the interface gives next to a plain Java method
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.JavaImplementingInternalSub.f"
         ) sameAsKotlin """
@@ -16208,6 +16212,119 @@ class KotlinIntrospectorTest {
             // inherited from com.xemantic.kotlin.introspection.test.NearestClassFace
             open fun f(): Int
         """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve abstract member of internal class left unimplemented by Java class as abstract`() {
+        // the f() of HiddenMergedInternalAbstract, public on the JVM, is inherited through the Java class extending it,
+        // which the user code can name, so that a concrete subclass has to override it
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaNotImplementingInternalSub.f"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaNotImplementingInternalSub.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNotImplementingInternal
+            abstract fun f(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve abstract member of internal class left unimplemented by Java class next to its overload taking primitive type`() {
+        // put(int) is another JVM method than the put(k: Int?) of InternalBoxedPut, which a concrete subclass has to override
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaPrimitivePutBelowInternalBoxedSub.put"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaPrimitivePutBelowInternalBoxedSub.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaPrimitivePutBelowInternalBoxed
+            open fun put(arg0: Int): Int
+            abstract fun put(k: Int?): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve abstract member of internal class left unimplemented by Java class next to its overload taking boxed type`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaBoxedPutBelowInternalPrimitiveSub.put"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaBoxedPutBelowInternalPrimitiveSub.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedPutBelowInternalPrimitive
+            open fun put(arg0: Int?): Int
+            abstract fun put(k: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of internal interface left unimplemented by Java class as abstract`() {
+        // rendered as within the Java class it is inherited through, not as within an interface
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaNotImplementingInternalInterfaceSub.f"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaNotImplementingInternalInterfaceSub.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNotImplementingInternalInterface
+            abstract fun f(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve abstract property of internal class left unimplemented by Java class as abstract`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaNotImplementingInternalPropertySub.x"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaNotImplementingInternalPropertySub.x [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNotImplementingInternalProperty
+            abstract val x: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve abstract member of internal class left unimplemented by Java class giving its type argument as taking platform type`() {
+        // the String given by the Java class for T is the platform type String!, so that put(null) compiles
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaNotImplementingInternalGenericPutSub.put"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaNotImplementingInternalGenericPutSub.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNotImplementingInternalGenericPut
+            abstract fun put(t: String?): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of interface merged with abstract member of internal class left unimplemented by Java class once`() {
+        // the abstract member of the interface stands for the one of HiddenMergedInternalAbstract, merged with it
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaNotImplementingInternalFaceSub.f"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaNotImplementingInternalFaceSub.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.NearestClassFace
+            fun f(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve abstract member of internal class implemented by Java class below the one leaving it unimplemented once`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaImplementingBelowNotImplementingInternalSub.f"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaImplementingBelowNotImplementingInternalSub.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaImplementingBelowNotImplementingInternal
+            override fun f(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve abstract member of internal class left unimplemented by Java class overridden by Kotlin class once`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaNotImplementingInternalOverrideSub.f"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaNotImplementingInternalOverrideSub.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.JavaNotImplementingInternalOverride
+            override fun f(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve abstract member of internal class exposed by Kotlin class`() {
+        // only a suppressed error lets a public Kotlin class expose an internal supertype, of unspecified compiler behavior
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.KotlinNotImplementingInternal.f") == null)
     }
 
     @Test

@@ -171,6 +171,10 @@ com.example.AnnotationTestClass
   or `final` when implemented by a final Java method,
   or `abstract` when the Java class declares it abstract again,
   like `abstract fun hashCode(): Int` for a class extending `java.security.Permission`.
+  An abstract member of a Kotlin supertype which is not part of the API, like an internal class, public on the JVM,
+  which a Java class extending it leaves unimplemented, is inherited from that Java class, as `abstract`,
+  as a concrete subclass has to implement it,
+  like `abstract fun put(k: Int?): Int` next to the `open fun put(arg0: Int): Int` the Java class declares, a JVM method of its own.
   The synthetic property which Kotlin reads a Java getter as is not listed as a member of its own,
   as Kotlin does not let it be referenced, like `Thread::name`, and it would repeat every getter,
   but hinted on the line above the getter, like `// also property: var name` above `fun getName(): String` of `java.lang.Thread`,

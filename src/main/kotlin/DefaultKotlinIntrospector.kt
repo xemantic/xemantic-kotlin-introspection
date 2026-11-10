@@ -2568,6 +2568,13 @@ internal class DefaultKotlinIntrospector(
         var implementingJvmMethod: JvmMethod? = null
 
         /**
+         * The name of the Java class through which the abstract [member] is inherited, of a [kmClass] which is not part of the API,
+         * see [isApi], like an internal class which the Java class extends, leaving the [member] unimplemented,
+         * see [inheritedCandidates], which it is listed as inherited from, see [inheritedFromName], or `null`.
+         */
+        var inheritedThrough: String? = null
+
+        /**
          * The modality of the method of the nearest Java interface declaring the [member] again, like abstract,
          * which the [implementationModality] of a Java class wins over, wherever walked, see [inheritedCandidates], or `null`.
          */
@@ -2941,6 +2948,9 @@ internal class DefaultKotlinIntrospector(
      * A Kotlin supertype which is not part of the API, see [ApiClasses], is walked through too,
      * its members not inherited, so that the members it overrides stand for its overrides, which the user code cannot see,
      * of their modality, see [InheritedCandidate.implementationModality],
+     * but its abstract members which a Java class extending it leaves unimplemented, like the ones of an internal class,
+     * public on the JVM, which a concrete subclass has to implement, inherited from the Java class,
+     * see [InheritedCandidate.inheritedThrough],
      * also the methods of a Java supertype, like `run()` of `java.lang.Thread` overridden by an internal subclass,
      * while its hidden ones still hide the members they override, like of a supertype deprecated as hidden,
      * unless its visible ones override them again.
@@ -2978,10 +2988,14 @@ internal class DefaultKotlinIntrospector(
                 }
         }
         return inherited.map { candidate ->
+            // a member inherited through a Java class is rendered as within it, see InheritedCandidate.inheritedThrough,
+            // like the member of an internal interface as abstract, when the Java class implementing it is no interface
+            val renderedIn = candidate.inheritedThrough?.let { inheritedDeclarations(inheritedName(declarations, it))?.kmClass }
+                ?: candidate.kmClass
             ListingItem.InheritedMember(
                 inheritedFromName(candidate, superclass),
                 formatMember(
-                    candidate.renderedMember(isOpenForOverrides), candidate.kmClass, candidate.declarations, scope, contextPackage,
+                    candidate.renderedMember(isOpenForOverrides), renderedIn, candidate.declarations, scope, contextPackage,
                     isOwnerOpenForOverrides = isOpenForOverrides,
                     inheritedBy = kmClass.kind,
                     typeParameters = candidate.typeParameters,
@@ -2997,9 +3011,12 @@ internal class DefaultKotlinIntrospector(
      * like `java.util.ArrayList`: the class declaring it, but of a Java class which the user code cannot name,
      * like a package-private one, or one nested in it, the public JVM class extending it, closest to it, if any,
      * among the [superclass] of the inheriting class and its superclasses,
-     * which inherits its public members, like the public subclass of a package-private class, which javac bridges them in.
+     * which inherits its public members, like the public subclass of a package-private class, which javac bridges them in,
+     * and of a Kotlin class which is not part of the API, the Java class it is inherited through,
+     * see [InheritedCandidate.inheritedThrough].
      */
     private fun inheritedFromName(candidate: InheritedCandidate, superclass: Lazy<Class<*>?>): String {
+        candidate.inheritedThrough?.let { return it.replace('/', '.') }
         // a public nested class of a package-private class cannot be named either
         fun Class<*>.isNameable() = generateSequence(this) { it.enclosingClass }.all { Modifier.isPublic(it.modifiers) }
         val declaring = (candidate.declarations as? JavaClass)?.clazz
@@ -3048,6 +3065,8 @@ internal class DefaultKotlinIntrospector(
         }
         // the names of the supertypes walked which are classes, not interfaces, see reachedThroughSuperclass
         val classNames = HashSet<String>()
+        // the names of the Kotlin supertypes walked which are not part of the API, see withUnimplemented
+        val notApiClasses = HashSet<String>()
         fun collect(name: String, supertype: KmType) {
             val foundName = inheritedName(declarations, name)
             val superDeclarations = inheritedDeclarations(foundName)
@@ -3090,6 +3109,7 @@ internal class DefaultKotlinIntrospector(
             // like a function type class, which no class file declares, see functionTypeClassDeclarations
             val isApi = superDeclarations is JavaClass || apiClasses.apiClass(foundName) != null ||
                 superDeclarations === functionTypeClasses[name]
+            if (!isApi) notApiClasses += name
             val jvmOnlyFunctions = (superDeclarations as? BuiltinClass)?.jvmOnlyFunctions.orEmpty()
             val jvmOnlyFunctionsNotHidden = if (!isApi) {
                 emptyList()
@@ -3154,6 +3174,8 @@ internal class DefaultKotlinIntrospector(
             if (visited.add(name)) collect(name, supertype)
         }
         if (kmClass.name != ANY_CLASS_NAME) collect(ANY_CLASS_NAME, classType(ANY_CLASS_NAME))
+        // all the candidates walked, also the Java ones removed below, see withUnimplemented
+        val walked = candidates.toList()
         // the members of a JDK class reached only through a Java class of the user code lose the enhancement of their return types,
         // like the get() of java.util.function.Supplier for a subclass of a Java class implementing it without declaring it again,
         // unless reached also directly, or through the JDK, or a Kotlin class not overriding them, whatever the order of the supertypes
@@ -3679,7 +3701,70 @@ internal class DefaultKotlinIntrospector(
         // taking the primitive types, which a Kotlin override overrides, see InheritedCandidate.isShadowedBy,
         // unless a hidden member is picked in its place, see below
         fun List<InheritedCandidate>.withoutCalledInstead() = filter { candidate -> none { it !== candidate && candidate.isShadowedBy(it) } }
-        if (candidates.none { it.isHidden }) return listed(notOverridden).withoutCalledInstead()
+        // an abstract member of a Kotlin supertype which is not part of the API, like an internal class, public on the JVM,
+        // is inherited through a Java class extending it, which the user code can name, when nothing below implements it,
+        // nor overrides it, like the put(k: Int?) of an internal class next to the put(int) of its Java subclass,
+        // a JVM method of its own, see isMergedJvmParameter, so that a concrete subclass has to implement it,
+        // unless a listed member is merged with it, standing for it, abstract then, see unlistedOverrides above,
+        // taking platform types where the Java class gives the type arguments, like the Java members above,
+        // while through a Kotlin class it is never inherited, as only a suppressed error lets a public class expose such a supertype
+        val inheritedThroughJava by lazy(LazyThreadSafetyMode.NONE) {
+            val through = HashMap<String, String>()
+            val visited = HashSet<String>()
+            val pending = ArrayDeque(listOf(kmClass.name))
+            while (pending.isNotEmpty()) {
+                val name = pending.removeFirst()
+                if (!visited.add(name)) continue
+                val supertypes = directSupertypes[name].orEmpty()
+                if (name in javaClasses || (name == kmClass.name && declarations is JavaClass)) {
+                    val exposed = ArrayDeque(supertypes.filter { it in notApiClasses })
+                    while (exposed.isNotEmpty()) {
+                        val notApi = exposed.removeFirst()
+                        if (through.putIfAbsent(notApi, name) == null) {
+                            exposed += directSupertypes[notApi].orEmpty().filter { it in notApiClasses }
+                        }
+                    }
+                }
+                pending += supertypes
+            }
+            through
+        }
+        fun isImplementedBelow(candidate: InheritedCandidate): Boolean = when (val member = candidate.member) {
+            is Member.Property -> javaGetterModality(member.declaration, candidate.declarations.clazz, declarations.clazz) != null
+            is Member.Function -> reflectedValue(default = null) {
+                val signature = member.declaration.signature
+                candidate.declarations.clazz?.declaredMethods?.firstOrNull {
+                    it.name == signature?.name && AsmType.getMethodDescriptor(it) == signature.descriptor
+                }
+            }?.let { overridingBelow(it, declarations.clazz) } != null
+        }
+        fun withUnimplemented(listed: List<InheritedCandidate>): List<InheritedCandidate> {
+            if (notApiClasses.isEmpty() || (javaClasses.isEmpty() && declarations !is JavaClass)) return listed
+            val unimplemented = ArrayList<InheritedCandidate>()
+            candidates.forEach { candidate ->
+                val javaClass = inheritedThroughJava[candidate.name]
+                if (javaClass == null || candidate.isApi || candidate.isHidden || candidate.member.modality != Modality.ABSTRACT ||
+                    candidate.key in overridden || candidate.signature in untoldOverrideSignatures ||
+                    walked.any { it !== candidate && (it.overrides(candidate) || (it.isHidden && it.isMergedWith(candidate))) } ||
+                    (listed + unimplemented).any { it.isMergedWith(candidate) } ||
+                    isImplementedBelow(candidate)
+                ) {
+                    return@forEach
+                }
+                candidate.inheritedThrough = javaClass.takeUnless { it == kmClass.name }
+                if (candidate.classTypeParameterPositions.isNotEmpty()) {
+                    val reached = reaches(setOf(candidate.name))
+                    val picked = reached.firstOrNull { !it.isPlatform || !candidate.returnsClassTypeParameter } ?: reached.firstOrNull()
+                    candidate.takesPlatformTypes = picked?.isPlatform == true
+                }
+                unimplemented += candidate
+            }
+            if (unimplemented.isEmpty()) return listed
+            // in the order walked, like the listed ones
+            val listing = (listed + unimplemented).toCollection(Collections.newSetFromMap(IdentityHashMap()))
+            return walked.filter { it in listing }
+        }
+        if (candidates.none { it.isHidden }) return withUnimplemented(listed(notOverridden).withoutCalledInstead())
         val candidatesByClass = candidates.groupBy { it.name }
         val contributions = HashMap<Pair<String, InheritedCandidate>, List<InheritedCandidate>>()
         // the members merged with the listed candidate which the class named name contributes to its subclasses:
@@ -3718,8 +3803,10 @@ internal class DefaultKotlinIntrospector(
                 picked === candidate || (picked != null && !picked.isApi && !picked.isHidden && picked.overrides(candidate))
             }
         }
-        return listed(survivors).filter { candidate -> contribution(kmClass.name, candidate).singleOrNull()?.isHidden != true }
-            .withoutCalledInstead()
+        return withUnimplemented(
+            listed(survivors).filter { candidate -> contribution(kmClass.name, candidate).singleOrNull()?.isHidden != true }
+                .withoutCalledInstead()
+        )
     }
 
     /**
