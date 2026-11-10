@@ -26,6 +26,7 @@ import org.objectweb.asm.Opcodes
 import org.objectweb.asm.signature.SignatureReader
 import org.objectweb.asm.signature.SignatureVisitor
 import java.io.DataInputStream
+import java.io.EOFException
 import java.io.IOException
 import java.lang.invoke.MethodHandles
 import java.lang.invoke.MethodType
@@ -1307,19 +1308,35 @@ internal class OverrideResolver(
     ): OwnerClassFile = OwnerClassFile(isServed = bytes != null, methods = declared?.mapTo(HashSet()) { it.name + it.descriptor })
 
     /**
-     * A class file, parsed, or scanned, see [readClass], telling the JVM internal names of the direct [supertypes],
-     * and the declared [methods].
+     * What a class file tells, see [readClass]: the JVM internal [name] of the class,
+     * or `null` if the class file does not tell it, like when it is malformed, its generic [signature], if any,
+     * the JVM internal names of the superclass, see [superName], which `java/lang/Object` has none, and of the [interfaces],
+     * the declared [methods], and whether the class is annotated with the Kotlin metadata, see [isKotlin],
+     * also when its annotations cannot be read, so that it cannot be told.
+     *
+     * @param hasMalformedSupertype whether a direct supertype is left out, as the class file does not tell its name.
      */
-    private class ParsedClass(val supertypes: List<String>, val methods: List<DeclaredMethod>)
+    private class ClassFileContent(
+        val name: String?,
+        val signature: String?,
+        val superName: String?,
+        val interfaces: List<String>,
+        val methods: List<DeclaredMethod>,
+        val isKotlin: Boolean,
+        val hasMalformedSupertype: Boolean = false
+    ) {
+        val supertypes: List<String> get() = listOfNotNull(superName) + interfaces
+    }
 
     /**
-     * Reads the direct supertypes and the methods of a class file, with their generic signatures,
+     * Reads the name, the direct supertypes and the methods of a class file, with their generic signatures,
      * parsed by ASM, or else scanned, when it cannot be parsed, like when it is too new for ASM, see [scanClass],
      * or `null` if it can be neither parsed nor scanned, like when it is malformed.
      * Only the parsing is guarded, so that a failure of the code processing the methods is not mistaken for it.
      */
-    private fun readClass(bytes: ByteArray): ParsedClass? {
-        val supertypes = mutableListOf<String>()
+    private fun readClass(bytes: ByteArray): ClassFileContent? {
+        var content: ClassFileContent? = null
+        var isKotlin = false
         val methods = mutableListOf<DeclaredMethod>()
         try {
             ClassReader(bytes).accept(object : ClassVisitor(Opcodes.ASM9) {
@@ -1331,7 +1348,12 @@ internal class OverrideResolver(
                     superName: String?,
                     interfaces: Array<out String>?
                 ) {
-                    supertypes += listOfNotNull(superName) + interfaces.orEmpty()
+                    content = ClassFileContent(name, signature, superName, interfaces?.toList().orEmpty(), methods, isKotlin = false)
+                }
+
+                override fun visitAnnotation(descriptor: String, visible: Boolean): AnnotationVisitor? {
+                    if (descriptor == "Lkotlin/Metadata;") isKotlin = true
+                    return null
                 }
 
                 override fun visitMethod(
@@ -1348,20 +1370,23 @@ internal class OverrideResolver(
         } catch (_: Exception) {
             return scanClass(bytes)
         }
-        return ParsedClass(supertypes, methods)
+        return content?.let { ClassFileContent(it.name, it.signature, it.superName, it.interfaces, methods, isKotlin) }
     }
 
     /**
-     * The direct supertypes and the methods of a class file which cannot be parsed, like when it is too new for ASM,
+     * The name, the direct supertypes and the methods of a class file which cannot be parsed, like when it is too new for ASM,
      * see [readClass], read from the class names of its constant pool, and from its method table,
      * by the access flags, names, descriptors, and generic signatures of the methods,
      * the `Synthetic` attribute read into the access flags, like ASM does, as a class file before Java 5 tells it so,
+     * and from the attributes of the class, its generic signature, and its annotations, see [hasMetadataAnnotation],
      * which, like the constant pool they refer to, keep their format across the class file versions,
      * so that the methods are known without loading the types of their descriptors, unlike when reflected,
      * or `null` if they cannot be read either, like when the constant pool has an entry of an unknown kind,
      * whose size is unknown then, or the class file is malformed.
+     * A malformed index of the class itself, or of a supertype, which is out of the constant pool,
+     * or not of a `Class` entry, only leaves that name out, the methods being read all the same.
      */
-    private fun scanClass(bytes: ByteArray): ParsedClass? = try {
+    private fun scanClass(bytes: ByteArray): ClassFileContent? = try {
         val input = DataInputStream(bytes.inputStream())
         if (input.readInt() != 0xCAFEBABE.toInt()) return null
         // the minor and the major version
@@ -1392,30 +1417,39 @@ internal class OverrideResolver(
             }
             index++
         }
-        // the name of the Class entry of the index, the entry 0 of no name, as is any entry of another kind
-        fun className(index: Int): String? = utf8[classNameIndexes[index]]
-        // the access flags, and this class
-        input.skipNBytes(4)
+        // the name of the Class entry of the index, the entry 0 of no name, as is any entry of another kind,
+        // or an index out of the constant pool
+        fun className(index: Int): String? = classNameIndexes.getOrNull(index)?.let { utf8.getOrNull(it) }
+        // the access flags
+        input.skipNBytes(2)
+        val name = className(input.readUnsignedShort())
         // the superclass, of the entry 0 for java/lang/Object, which has none
         val superclass = input.readUnsignedShort()
-        val supertypes = listOfNotNull(if (superclass == 0) null else className(superclass) ?: return null) +
-            List(input.readUnsignedShort()) { className(input.readUnsignedShort()) ?: return null }
-        // the attributes, each skipped by its length, but the Signature one,
-        // telling whether the Synthetic one is there, and the generic signature, if any
-        fun readAttributes(): Pair<Boolean, String?> {
+        val superName = className(superclass)
+        val interfaces = List(input.readUnsignedShort()) { className(input.readUnsignedShort()) }
+        // the attributes, each skipped by its length, but the Signature one, and the annotations of the class,
+        // telling whether the Synthetic one is there, the generic signature, if any,
+        // and whether an annotation is the Kotlin metadata, or might be
+        fun readAttributes(ofClass: Boolean = false): Triple<Boolean, String?, Boolean> {
             var isSynthetic = false
             var signature: String? = null
+            var isKotlin = false
             repeat(input.readUnsignedShort()) {
-                val name = utf8[input.readUnsignedShort()]
+                val attribute = utf8[input.readUnsignedShort()]
                 val length = input.readInt().toUInt().toLong()
-                if (name == "Signature" && length == 2L) {
+                if (attribute == "Signature" && length == 2L) {
                     signature = utf8[input.readUnsignedShort()]
+                } else if (ofClass && (attribute == "RuntimeVisibleAnnotations" || attribute == "RuntimeInvisibleAnnotations")) {
+                    if (length > bytes.size) throw EOFException()
+                    val annotations = input.readNBytes(length.toInt())
+                    if (annotations.size < length) throw EOFException()
+                    if (hasMetadataAnnotation(annotations, utf8)) isKotlin = true
                 } else {
-                    if (name == "Synthetic") isSynthetic = true
+                    if (attribute == "Synthetic") isSynthetic = true
                     input.skipNBytes(length)
                 }
             }
-            return isSynthetic to signature
+            return Triple(isSynthetic, signature, isKotlin)
         }
         // the fields, by their access flags, names and descriptors, followed by their attributes
         repeat(input.readUnsignedShort()) {
@@ -1424,16 +1458,65 @@ internal class OverrideResolver(
         }
         val methods = List(input.readUnsignedShort()) {
             val access = input.readUnsignedShort()
-            val name = utf8[input.readUnsignedShort()] ?: return null
+            val methodName = utf8[input.readUnsignedShort()] ?: return null
             val descriptor = utf8[input.readUnsignedShort()] ?: return null
             val (isSynthetic, signature) = readAttributes()
-            DeclaredMethod(access or (if (isSynthetic) Opcodes.ACC_SYNTHETIC else 0), name, descriptor, signature)
+            DeclaredMethod(access or (if (isSynthetic) Opcodes.ACC_SYNTHETIC else 0), methodName, descriptor, signature)
         }
-        ParsedClass(supertypes, methods)
+        val (_, signature, isKotlin) = readAttributes(ofClass = true)
+        ClassFileContent(
+            name, signature, superName, interfaces.filterNotNull(), methods, isKotlin,
+            hasMalformedSupertype = (superclass != 0 && superName == null) || interfaces.any { it == null }
+        )
     } catch (_: IOException) {
         null
     } catch (_: IndexOutOfBoundsException) {
         null
+    }
+
+    /**
+     * Whether an annotation of the [annotations], the content of a `RuntimeVisibleAnnotations`,
+     * or a `RuntimeInvisibleAnnotations`, attribute of a class file which cannot be parsed, see [scanClass],
+     * is the Kotlin metadata, told by the types of the annotations, their elements skipped,
+     * or might be, when the annotations cannot be read, like when an element is of an unknown kind, whose size is unknown then.
+     *
+     * @param utf8 the `Utf8` entries of the constant pool, by their indexes.
+     */
+    private fun hasMetadataAnnotation(annotations: ByteArray, utf8: Array<String?>): Boolean = try {
+        val input = DataInputStream(annotations.inputStream())
+        // the nesting is bounded, as the elements of a malformed attribute might nest without an end
+        fun skipElement(depth: Int) {
+            if (depth > 16) throw IOException("annotation elements nested too deep")
+            when (input.readUnsignedByte().toChar()) {
+                // a constant, of a primitive type or a String, and a class, by the index of its value
+                'B', 'C', 'D', 'F', 'I', 'J', 'S', 'Z', 's', 'c' -> input.skipNBytes(2)
+                // an enum constant, by the indexes of its type and its name
+                'e' -> input.skipNBytes(4)
+                // an annotation, by the index of its type, followed by its elements, each by the index of its name
+                '@' -> {
+                    input.skipNBytes(2)
+                    repeat(input.readUnsignedShort()) {
+                        input.skipNBytes(2)
+                        skipElement(depth + 1)
+                    }
+                }
+                '[' -> repeat(input.readUnsignedShort()) { skipElement(depth + 1) }
+                else -> throw IOException("unknown annotation element")
+            }
+        }
+        var isKotlin = false
+        repeat(input.readUnsignedShort()) {
+            if (utf8[input.readUnsignedShort()] == "Lkotlin/Metadata;") isKotlin = true
+            repeat(input.readUnsignedShort()) {
+                input.skipNBytes(2)
+                skipElement(depth = 0)
+            }
+        }
+        isKotlin
+    } catch (_: IOException) {
+        true
+    } catch (_: IndexOutOfBoundsException) {
+        true
     }
 
     private val Visibility.isOverridable: Boolean
@@ -1734,7 +1817,7 @@ internal class OverrideResolver(
         val own = owner.relocation
         if (builtinClasses()[owner.kmClass.name] === owner.kmClass) return OwnerRelocation(own)
         fun classFile(declared: List<DeclaredMethod>?) = if (reader.isRead) ownerClassFile(owner.name, reader.bytes, declared) else null
-        val jvmSupertypes = jvmSupertypeNames(owner.name) { reader.parsed() }
+        val jvmSupertypes = jvmSupertypeNames(owner.name) { reader.content() }
             ?: return OwnerRelocation(own, classFile(reader.declaredMethods()))
         val metadataSupertypes = owner.kmClass.relocatableSupertypes()
         val jvmSupertypeNames = jvmSupertypes.toHashSet()
@@ -1827,7 +1910,7 @@ internal class OverrideResolver(
     )
 
     /**
-     * Reads, and parses, the class file of the class of the [name], whose members are checked, only once,
+     * Reads the class file of the class of the [name], whose members are checked, see [readClass], only once,
      * for its relocated dependencies, see [relocation], and for its JVM methods, see [ownerClassFile].
      */
     private inner class OwnerClassFileReader(private val name: String) {
@@ -1838,22 +1921,22 @@ internal class OverrideResolver(
         var isRead: Boolean = false
             private set
 
-        private var parsed: ParsedClass? = null
+        private var content: ClassFileContent? = null
 
-        fun parsed(): ParsedClass? {
+        fun content(): ClassFileContent? {
             if (!isRead) {
                 bytes = readClassBytesByMetadataName(name)
-                parsed = bytes?.let { readClass(it) }
+                content = bytes?.let { readClass(it) }
                 isRead = true
             }
-            return parsed
+            return content
         }
 
         /**
-         * The methods declared by the class, see [declaredMethods], read from the class file once, see [parsed],
+         * The methods declared by the class, see [declaredMethods], read from the class file once, see [content],
          * as the relocation might be told more than once, see [collectOverridables].
          */
-        fun declaredMethods(): List<DeclaredMethod>? = declaredMethods(name, parsed()?.methods)
+        fun declaredMethods(): List<DeclaredMethod>? = declaredMethods(name, content()?.methods)
 
     }
 
@@ -1873,12 +1956,12 @@ internal class OverrideResolver(
 
     /**
      * The JVM internal names of the direct supertypes of the class of the [name], as reflected, if it can be loaded,
-     * or else as its class file, [parsed] only then, tells, or `null` if they can be neither reflected nor read.
+     * or else as its class file, whose [content] is read only then, tells, or `null` if they can be neither reflected nor read.
      */
-    private fun jvmSupertypeNames(name: String, parsed: () -> ParsedClass?): List<String>? =
+    private fun jvmSupertypeNames(name: String, content: () -> ClassFileContent?): List<String>? =
         loadClassByMetadataName(name)
             ?.let { clazz -> reflectOrNull { (listOfNotNull(clazz.superclass) + clazz.interfaces).map { it.name.replace('.', '/') } } }
-            ?: parsed()?.supertypes
+            ?: content()?.supertypes
 
     /**
      * The names of the supertypes of this class which might be relocated, see [isRelocatable],
@@ -2199,47 +2282,16 @@ internal class OverrideResolver(
     }
 
     /**
-     * Reads the class file of a Java class of the Kotlin class [name], which cannot be loaded,
-     * or returns `null` if it cannot be parsed, or it is of another class, like one of a name differing only in case,
-     * or it is a Kotlin class, whose metadata cannot be read, as its JVM methods are not its Kotlin members.
+     * Reads the class file of a Java class of the Kotlin class [name], which cannot be loaded, see [readClass],
+     * also when it cannot be parsed, like when it is too new for ASM,
+     * or returns `null` if it cannot be read, or it is of another class, like one of a name differing only in case,
+     * or it is a Kotlin class, whose metadata cannot be read, as its JVM methods are not its Kotlin members,
+     * or a supertype of it is malformed, and left out, whose members the class would then miss.
      */
     private fun readJavaClassFile(bytes: ByteArray, name: String): JavaClassFile? {
-        var classFile: JavaClassFile? = null
-        var isKotlin = false
-        val methods = mutableListOf<DeclaredMethod>()
-        try {
-            ClassReader(bytes).accept(object : ClassVisitor(Opcodes.ASM9) {
-                override fun visit(
-                    version: Int,
-                    access: Int,
-                    name: String,
-                    signature: String?,
-                    superName: String?,
-                    interfaces: Array<out String>?
-                ) {
-                    classFile = JavaClassFile(name, methods, signature, superName, interfaces?.toList().orEmpty())
-                }
-
-                override fun visitAnnotation(descriptor: String, visible: Boolean): AnnotationVisitor? {
-                    if (descriptor == "Lkotlin/Metadata;") isKotlin = true
-                    return null
-                }
-
-                override fun visitMethod(
-                    access: Int,
-                    name: String,
-                    descriptor: String,
-                    signature: String?,
-                    exceptions: Array<out String>?
-                ): MethodVisitor? {
-                    methods += DeclaredMethod(access, name, descriptor, signature)
-                    return null
-                }
-            }, ClassReader.SKIP_CODE or ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES)
-        } catch (_: Exception) {
-            return null
-        }
-        return classFile?.takeIf { !isKotlin && it.internalName == binaryNameOf(name).replace('.', '/') }
+        val content = readClass(bytes)?.takeIf { !it.isKotlin && !it.hasMalformedSupertype } ?: return null
+        val internalName = content.name?.takeIf { it == binaryNameOf(name).replace('.', '/') } ?: return null
+        return JavaClassFile(internalName, content.methods, content.signature, content.superName, content.interfaces)
     }
 
     /**
