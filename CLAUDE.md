@@ -105,6 +105,9 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 - A Java method and a Kotlin member of unrelated supertypes, of the same JVM signature, are merged only when their Kotlin types agree but for the platform ones:
   a Java `accept(@NotNull String)` next to a Kotlin `accept(s: String?)` is rejected with `inherited platform declarations clash`, so such a join is no valid fixture.
 
+- kotlinc 2.4.21 rejects an enum entry named `entries` (`conflicting declarations`, KT-48872), also one deprecated as `HIDDEN`,
+  so the entry shadowing the `entries` property can be neither probed, nor compiled as a fixture.
+
 - Kotlin never passes named arguments to a Java method, even one compiled with `-parameters`, so a Java method taking parameters never shadows an extension — see `isShadowingJavaMethod`.
 
 ## Anti-patterns to avoid

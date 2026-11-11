@@ -32,6 +32,7 @@ import kotlin.metadata.KmPackage
 import kotlin.metadata.KmType
 import kotlin.metadata.KmTypeProjection
 import kotlin.metadata.KmVariance
+import kotlin.metadata.hasEnumEntries
 import kotlin.metadata.jvm.KotlinClassMetadata
 import kotlin.metadata.jvm.Metadata
 
@@ -162,6 +163,17 @@ internal fun withSupertypesInMetadata(bytes: ByteArray, vararg types: KmType): B
 }
 
 /**
+ * Removes the flag telling the `entries` property from the metadata of an enum class,
+ * like of one compiled before Kotlin 1.9, which the current compiler no longer compiles.
+ */
+internal fun withoutEnumEntriesInMetadata(bytes: ByteArray): ByteArray = withMetadata(bytes) {
+    val metadata = KotlinClassMetadata.readStrict(it) as KotlinClassMetadata.Class
+    check(metadata.kmClass.hasEnumEntries)
+    metadata.kmClass.hasEnumEntries = false
+    metadata.write()
+}
+
+/**
  * Declares the file facade of the class bytes in the Kotlin [packageName], other than its JVM package,
  * like `@JvmPackageName` of the standard library does, with its declarations [transformed][transform].
  */
@@ -190,6 +202,19 @@ internal fun withoutMetadata(bytes: ByteArray): ByteArray {
             if (descriptor == METADATA_DESCRIPTOR) null else super.visitAnnotation(descriptor, visible)
     }, 0)
     return writer.toByteArray()
+}
+
+/**
+ * The class [bytes] of an unsupported major version, like a class file too new for ASM to parse,
+ * whose constant pool, supertypes, methods and attributes keep their format,
+ * unless the [constantPool] is not to be read either, its first entry of an unknown kind then.
+ */
+internal fun tooNew(bytes: ByteArray, constantPool: Boolean = true): ByteArray = bytes.copyOf().apply {
+    // the major version, following the magic number and the minor version
+    this[6] = 0x7F
+    this[7] = 0x7F
+    // the tag of the first constant pool entry, following the constant pool count
+    if (!constantPool) this[10] = 0x7F
 }
 
 /**

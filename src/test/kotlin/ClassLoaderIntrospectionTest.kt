@@ -2729,6 +2729,51 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should resolve entries of enum class whose metadata does not tell them`() {
+        // given
+        // like an enum class compiled before Kotlin 1.9, for which kotlinc still resolves LegacyEntriesEnum.entries
+        val root = isolatedTestFixturesCopy("legacyEnumEntries") { fileName, bytes ->
+            if (fileName == "LegacyEntriesEnum.class") withoutEnumEntriesInMetadata(bytes) else bytes
+        }
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val entries = introspector.resolve("com.xemantic.kotlin.introspection.isolated.LegacyEntriesEnum.entries")
+
+        // then
+        entries sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.LegacyEntriesEnum.entries [page 1/1]
+            val entries: EnumEntries<LegacyEntriesEnum>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should reflect deprecations of enum entries, when the class file is not served`() {
+        // given
+        val root = isolatedTestFixturesCopy("unservedDeprecatedEntries")
+        val classLoader = object : URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader) {
+            override fun getResourceAsStream(name: String): InputStream? =
+                if (name.endsWith("/UnservedDeprecatedEntriesEnum.class")) null else super.getResourceAsStream(name)
+        }
+        val introspector = KotlinIntrospector(classLoader)
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.UnservedDeprecatedEntriesEnum")
+        val hidden = introspector.resolve("com.xemantic.kotlin.introspection.isolated.UnservedDeprecatedEntriesEnum.GONE")
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.UnservedDeprecatedEntriesEnum [page 1/1]
+            enum class UnservedDeprecatedEntriesEnum {
+                CURRENT,
+                @Deprecated("Use CURRENT") OLD,
+                @Deprecated("Gone", level = DeprecationLevel.HIDDEN) GONE
+            }
+        """.trimIndent()
+        assert(hidden == null)
+    }
+
+    @Test
     fun `should mark overrides of raw Java superclass which cannot be loaded, as read from its class file without generic signature`() {
         // given
         val introspector = introspectorWithoutAbsentClass()
@@ -3154,13 +3199,7 @@ class ClassLoaderIntrospectionTest {
             override fun getResourceAsStream(name: String): InputStream? {
                 val stream = super.getResourceAsStream(name)
                 return if (stream != null && name in unreadableResources) {
-                    val bytes = stream.use { it.readBytes() }
-                    // the major version, following the magic number and the minor version
-                    bytes[6] = 0x7F
-                    bytes[7] = 0x7F
-                    // the tag of the first constant pool entry, following the constant pool count
-                    if (!methodTables) bytes[10] = 0x7F
-                    bytes.inputStream()
+                    tooNew(stream.use { it.readBytes() }, constantPool = methodTables).inputStream()
                 } else stream
             }
         }
@@ -3176,11 +3215,7 @@ class ClassLoaderIntrospectionTest {
             override fun getResourceAsStream(name: String): InputStream? {
                 val stream = super.getResourceAsStream(name)
                 return if (stream != null && name == unreadableResource) {
-                    val bytes = stream.use { it.readBytes() }
-                    // the major version, following the magic number and the minor version
-                    bytes[6] = 0x7F
-                    bytes[7] = 0x7F
-                    bytes.inputStream()
+                    tooNew(stream.use { it.readBytes() }).inputStream()
                 } else stream
             }
         }
@@ -3296,13 +3331,7 @@ class ClassLoaderIntrospectionTest {
             override fun getResourceAsStream(name: String): InputStream? {
                 val stream = super.getResourceAsStream(name)
                 return if (stream != null && name in unreadableResources) {
-                    val bytes = stream.use { it.readBytes() }
-                    // the major version, following the magic number and the minor version
-                    bytes[6] = 0x7F
-                    bytes[7] = 0x7F
-                    // the tag of the first constant pool entry, following the constant pool count
-                    if (!methodTables) bytes[10] = 0x7F
-                    bytes.inputStream()
+                    tooNew(stream.use { it.readBytes() }, constantPool = methodTables).inputStream()
                 } else stream
             }
         }
@@ -3921,6 +3950,33 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should mark overrides of Java superclass which cannot be loaded, as read from its class file too new to be parsed`() {
+        // given
+        val introspector = introspectorWithUnreadableClassFiles(
+            "com.xemantic.kotlin.introspection.isolated.AbsentGenericJavaMid"
+        )
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.AbsentGenericJavaLeaf"
+        )
+
+        // then
+        // the name, the generic signature, and the supertypes of the superclass are read from its class file all the same
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.AbsentGenericJavaLeaf [page 1/1]
+            abstract class AbsentGenericJavaLeaf : AbsentGenericJavaMid<String> {
+                override fun process(item: String)
+                fun process(item: Int)
+                override fun run()
+                fun finish(code: Int)
+                override operator fun compareTo(other: String): Int
+                fun compareTo(other: Int): Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve class whose Java superclass can be neither reflected nor read`() {
         // given
         val introspector = introspectorWithUnreadableClassFiles(
@@ -4240,13 +4296,8 @@ class ClassLoaderIntrospectionTest {
                     interfaceResource -> withoutMethods(bytes) { methodName, descriptor ->
                         methodName == "greet" && descriptor == "(I)Ljava/lang/String;"
                     }
-                    // the major version, following the magic number and the minor version, unsupported,
-                    // and unless its method table is readable, the tag of the first constant pool entry, unknown
-                    defaultImplsName.replace('.', '/') + ".class" -> bytes.also {
-                        it[6] = 0x7F
-                        it[7] = 0x7F
-                        if (!methodTable) it[10] = 0x7F
-                    }
+                    // of an unsupported version, and unless its method table is readable, of an unreadable constant pool
+                    defaultImplsName.replace('.', '/') + ".class" -> tooNew(bytes, constantPool = methodTable)
                     else -> bytes
                 }.inputStream()
             }
