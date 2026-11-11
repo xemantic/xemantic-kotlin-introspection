@@ -38,4 +38,6 @@ public interface JavaNullableChainPaths {
     interface Chain5<T> extends BoundedReceiverNullableChain4<BoundedReceiverWrap<T>> {}
 
     interface Chain6<T> extends BoundedReceiverNullableChain5<BoundedReceiverWrap<T>> {}
+
+    interface Chain7<T> extends BoundedReceiverNullableChain6<BoundedReceiverWrap<T>> {}
 }

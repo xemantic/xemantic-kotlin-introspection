@@ -1117,6 +1117,40 @@ class BoundedReceiverDoublingPadChain : BoundedReceiverDoubling5<String>, Bounde
 
 class BoundedReceiverShortDoublingChain : BoundedReceiverDoubling5<String>
 
+// and so beyond the limit of the types of a supertype which are walked, 2^7 of them, reached only through Java,
+// or else through Kotlin late, after them
+fun BoundedReceiverDoublingRows<MutableList<MutableList<MutableList<MutableList<MutableList<MutableList<MutableList<MutableList<String>>>>>>>>>.doublingMutableLongRows() {}
+
+class BoundedReceiverLongDoublingChain : BoundedReceiverDoubling7<String>
+
+interface BoundedReceiverDoublingLongPad0 : BoundedReceiverDoublingRows<List<MutableList<MutableList<MutableList<MutableList<MutableList<MutableList<MutableList<String>>>>>>>>>
+
+interface BoundedReceiverDoublingLongPad1 : BoundedReceiverDoublingLongPad0
+
+interface BoundedReceiverDoublingLongPad2 : BoundedReceiverDoublingLongPad1
+
+interface BoundedReceiverDoublingLongPad3 : BoundedReceiverDoublingLongPad2
+
+interface BoundedReceiverDoublingLongPad4 : BoundedReceiverDoublingLongPad3
+
+interface BoundedReceiverDoublingLongPad5 : BoundedReceiverDoublingLongPad4
+
+interface BoundedReceiverDoublingLongPad6 : BoundedReceiverDoublingLongPad5
+
+interface BoundedReceiverDoublingLongPad7 : BoundedReceiverDoublingLongPad6
+
+interface BoundedReceiverDoublingLongPad8 : BoundedReceiverDoublingLongPad7
+
+interface BoundedReceiverDoublingLongPad9 : BoundedReceiverDoublingLongPad8
+
+interface BoundedReceiverDoublingLongPad10 : BoundedReceiverDoublingLongPad9
+
+interface BoundedReceiverDoublingLongPad11 : BoundedReceiverDoublingLongPad10
+
+interface BoundedReceiverDoublingLongPad12 : BoundedReceiverDoublingLongPad11
+
+class BoundedReceiverLongDoublingPadChain : BoundedReceiverDoubling7<String>, BoundedReceiverDoublingLongPad12
+
 // a raw Kotlin supertype of a Java one erased to a not nullable bound, like CharSequence of T : CharSequence,
 // or through the bound of a type parameter, like Any? of B : A
 interface BoundedReceiverCharSequenceListPaths<T : CharSequence> : BoundedReceiverPaths<List<T>>
@@ -1191,6 +1225,11 @@ fun BoundedReceiverDoubling0<MutableList<MutableList<MutableList<List<List<List<
 
 class BoundedReceiverDoubling6Chain : BoundedReceiverDoubling6<String>
 
+// and one of the 2^8 of them, beyond the limit of the ones walked
+fun BoundedReceiverDoubling0<MutableList<MutableList<MutableList<MutableList<List<List<List<List<String>>>>>>>>>.doublingLongLatePaths() {}
+
+class BoundedReceiverDoubling8Chain : BoundedReceiverDoubling8<String>
+
 // the type arguments of an erased bound are not platform types either, like String of MutableList<String> of T : MutableList<String>
 interface BoundedReceiverMutableBoundPaths<T : MutableList<String>> : BoundedReceiverPaths<T>
 
@@ -1225,6 +1264,13 @@ fun BoundedReceiverNullableChain0<BoundedReceiverWrap<BoundedReceiverWrap<Bounde
 fun <T> BoundedReceiverNullableChain0<BoundedReceiverWrap<BoundedReceiverWrap<BoundedReceiverWrap<BoundedReceiverWrap<BoundedReceiverWrap<BoundedReceiverWrap<T>>>>>>>.nonNullChainPaths() {}
 
 class BoundedReceiverIntNullableChain : BoundedReceiverNullableChain6<Int>
+
+// one of the 2^7 types of a level more, reached through Java first, and through Kotlin at last, among the last ones walked
+interface BoundedReceiverNullableChain7<T> : BoundedReceiverNullableChain6<BoundedReceiverWrap<T?>>, JavaNullableChainPaths.Chain7<T>
+
+fun BoundedReceiverNullableChain0<BoundedReceiverWrap<BoundedReceiverWrap<BoundedReceiverWrap<BoundedReceiverWrap<BoundedReceiverWrap<BoundedReceiverWrap<BoundedReceiverWrap<String>>>>>>?>>.lateNullableChainStrings() {}
+
+class BoundedReceiverStringNullableChain : BoundedReceiverNullableChain7<String>
 
 // a type parameter of more bounds, each reached through Kotlin and through Java, than the combinations of paths matched,
 // see matchesThroughAnyPaths, none of which takes E of Int
@@ -1264,6 +1310,20 @@ interface BoundedReceiverIntManyPaths :
     BoundedReceiverManyPaths7<List<String>>, JavaManyListPaths.Strings7,
     BoundedReceiverManyPaths8<List<String>>, JavaManyListPaths.Strings8,
     BoundedReceiverPathsOf<Int>
+
+// while the platform type String! of each bound, chosen bound by bound, like kotlinc, takes the E of String?,
+// which only one of these combinations does
+interface BoundedReceiverNullableStringManyPaths :
+    BoundedReceiverManyPaths0<List<String>>, JavaManyListPaths.Strings0,
+    BoundedReceiverManyPaths1<List<String>>, JavaManyListPaths.Strings1,
+    BoundedReceiverManyPaths2<List<String>>, JavaManyListPaths.Strings2,
+    BoundedReceiverManyPaths3<List<String>>, JavaManyListPaths.Strings3,
+    BoundedReceiverManyPaths4<List<String>>, JavaManyListPaths.Strings4,
+    BoundedReceiverManyPaths5<List<String>>, JavaManyListPaths.Strings5,
+    BoundedReceiverManyPaths6<List<String>>, JavaManyListPaths.Strings6,
+    BoundedReceiverManyPaths7<List<String>>, JavaManyListPaths.Strings7,
+    BoundedReceiverManyPaths8<List<String>>, JavaManyListPaths.Strings8,
+    BoundedReceiverPathsOf<String?>
 
 // a platform type substituted for a nullable type parameter, like String! for T of BoundedReceiverWrap<T?>,
 // is nullable for a type it is matched against, but infers a type parameter of a nullable type, like T of T?, as not nullable

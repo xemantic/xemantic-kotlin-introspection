@@ -285,6 +285,14 @@ com.example.AnnotationTestClass
   is listed for `interface Orders : List<Order>`, and for `class OrderList : ArrayList<Order>()`.
   This holds only when the type arguments of the supertype are known,
   from the Kotlin metadata, or from the generic signatures of the Java supertypes.
+  A type argument passed through a Java supertype is a platform type, of either nullability,
+  like `String!` of `Box<String!>`, unless the supertype uses its type parameter as `T & Any`, or as `T?`.
+  A JDK interface named as a supertype, like `abstract class Orders : java.util.List<Order>`,
+  is the Java one, with the supertypes Java declares,
+  so that `fun Collection<Order>.count()` is listed for it, but not `fun List<Order>.total()`, as the compiler tells.
+  For a generic class, an extension is listed when it can be called for some type arguments of the class,
+  like `fun <T : Comparable<T>> Map<T, T>.sorted()` for `class SameMap<V> : HashMap<V, V>()`,
+  a `Map<String, String>` for `V` of `String`.
   An extension declaring type parameters is listed when a call without arguments, like `orders.ext()`, compiles,
   that is when the compiler infers them from the receiver, and from their bounds,
   also the bounds referring to each other, like `<A : Comparable<A>, B : A> Sink<B, A>.ext()`,

@@ -19,6 +19,7 @@
 package com.xemantic.kotlin.introspection.test
 
 import com.xemantic.kotlin.introspection.test.other.JavaFirstList
+import com.xemantic.kotlin.introspection.test.other.JavaSameKeyMap
 
 // User collections of the types of this package, whose extensions of this package on kotlin.* and java.* supertypes
 // are listed, like next to them, unlike the ones of the standard library, or of the other packages
@@ -63,3 +64,18 @@ fun CollectionKeyed<String, CharSequence>.keyedText() {}
 interface CollectionComparableMap<V> : Map<V, Comparable<V>>
 
 fun <T : Comparable<T>> Map<T, T>.sameComparables() {}
+
+// a type parameter of the class passed through a Java supertype is a platform type, like V! of JavaSameKeyMap<V>,
+// of either nullability in each of its positions, and one used as definitely not nullable, like V & Any, is not nullable,
+// while the V of HashMap<V, V> is nullable in all its positions, or in none
+
+class CollectionJavaSameKeyMap<V> : JavaSameKeyMap<V>()
+
+interface CollectionNotNullValueMap<V> : Map<V, V & Any>
+
+fun Map<String?, String>.nullableKeyMap() {}
+
+// a JDK interface named as a supertype is the Java one, no List of Kotlin, of the supertypes of Java,
+// like (Mutable)Collection<CollectionOrder!>, through java.util.SequencedCollection since JDK 21
+
+abstract class CollectionOrderJdkList : java.util.List<CollectionOrder>

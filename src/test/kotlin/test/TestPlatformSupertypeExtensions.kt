@@ -1,0 +1,62 @@
+/*
+ * xemantic-kotlin-introspection - Kotlin API introspection of the classpath, rendering LLM-friendly signatures
+ * Copyright (C) 2026  Kazimierz Pogoda / Xemantic
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+package com.xemantic.kotlin.introspection.test
+
+import com.xemantic.kotlin.introspection.test.other.JavaPlatformBoxes
+
+// A platform type of Java given for a type parameter used as definitely not nullable, like String! for T of T & Any,
+// is not nullable, like String, and for one used as nullable, like T?, it is nullable, like String?,
+// neither of them a platform type any more, unlike its own type arguments, like String! of PlatformWrap<String!>,
+// see PlatformNotNullBox, and PlatformNullableBox, of the other module, which the interfaces of JavaPlatformBoxes extend
+
+fun PlatformBox<PlatformWrap<String>>.wrapOfString() {}
+
+fun PlatformBox<PlatformWrap<String?>>.wrapOfNullableString() {}
+
+fun PlatformBox<PlatformWrap<String>?>.nullableWrapOfString() {}
+
+fun PlatformBox<PlatformWrap<String?>?>.nullableWrapOfNullableString() {}
+
+fun <T> PlatformBox<PlatformWrap<T?>>.wrapOfNullable() {}
+
+fun <T> PlatformBox<PlatformWrap<T & Any>>.wrapOfNotNull() {}
+
+fun <T> PlatformBox<T & Any>.boxOfNotNull() {}
+
+class PlatformJavaNotNullStringBox : JavaPlatformBoxes.NotNullString
+
+class PlatformJavaNotNullWrapBox : JavaPlatformBoxes.NotNullWrap
+
+class PlatformJavaNullableWrapBox : JavaPlatformBoxes.NullableWrap
+
+// reached also through Kotlin, of no platform type, kotlinc keeps both, the class being either of them
+interface PlatformBothNotNullWrapBox : PlatformNotNullBox<PlatformWrap<String>>, JavaPlatformBoxes.NotNullWrap
+
+interface PlatformBothNullableWrapBox : PlatformNullableBox<PlatformWrap<String>>, JavaPlatformBoxes.NullableWrap
+
+// a nullable type is no definitely not nullable one, like String? for T & Any, also of Kotlin alone,
+// nor is a type parameter of the class used as definitely not nullable, like V & Any, a nullable type
+
+class PlatformNullableStringBox : PlatformBox<String?>
+
+class PlatformNotNullParameterBox<V> : PlatformBox<V & Any>
+
+fun PlatformBox<String?>.boxOfNullableString() {}
+
+fun PlatformBox<String>.boxOfString() {}

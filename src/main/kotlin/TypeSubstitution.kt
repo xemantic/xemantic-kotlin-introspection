@@ -82,6 +82,9 @@ internal fun KmType.substituted(substitution: Map<Int, KmType>): KmType {
             // only a type parameter can be definitely not nullable, and not when used as nullable, (U & Any)? being U?
             type.isDefinitelyNonNull = argument.classifier is KmClassifier.TypeParameter && !type.isNullable &&
                 (isDefinitelyNonNull || argument.isDefinitelyNonNull)
+            // a platform type of Java is not nullable when used as definitely not nullable, like String of String! & Any,
+            // no longer flexible, but for what its markers tell, like the mutability of (Mutable)List<String!>
+            if (isDefinitelyNonNull) type.flexibleTypeUpperBound = null
         }
     }
     val arguments = arguments.map { projection ->

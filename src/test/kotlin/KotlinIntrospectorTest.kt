@@ -8950,12 +8950,58 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should resolve class implementing JDK list named directly without extensions of its package on untold supertypes`() {
-        // the java.util.Collection<E> of java.util.List<String> is not told, so that Collection<CollectionOrder> might be callable
+    fun `should resolve class implementing JDK list named directly without extensions of its package on other type arguments`() {
+        // the (Mutable)Collection<String!> of java.util.List<String> is no Collection<CollectionOrder>
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.JavaListSubclass"
         ) should {
             have(lines().none { "orderCount" in it || "totalAmount" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve class implementing JDK list named directly with extensions of its package on supertypes of Java interface`() {
+        // java.util.List<CollectionOrder> is a (Mutable)Collection<CollectionOrder!>, but no List<CollectionOrder> of Kotlin
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.CollectionOrderJdkList"
+        ) should {
+            have("val Collection<CollectionOrder>.orderCount: Int" in lines())
+            have(lines().none { "totalAmount" in it || "withLargestFirst" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve class with repeated type parameter in JDK map supertype with extension on recursively bounded type parameter`() {
+        // a CollectionSameKeyMap<String> is a Map<T, T> of T : Comparable<T>, while no V makes a Map<V, V> a Map<String?, String>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.CollectionSameKeyMap"
+        ) should {
+            have("fun <T : Comparable<T>> Map<T, T>.sameComparables()" in lines())
+            have(lines().none { "nullableKeyMap" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve class with repeated type parameter passed through Java map with extension on other nullability of key`() {
+        // the V! of MutableMap<V!, V!> is String? as the key, and String as the value, of a CollectionJavaSameKeyMap<String>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.CollectionJavaSameKeyMap"
+        ) should {
+            have("fun Map<String?, String>.nullableKeyMap()" in lines())
+            have("fun <T : Comparable<T>> Map<T, T>.sameComparables()" in lines())
+            have(lines().none { "orderById" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface with type parameter repeated as definitely not nullable with extension on nullable key`() {
+        // a CollectionNotNullValueMap<String?> is a Map<String?, String>, of String? & Any
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.CollectionNotNullValueMap"
+        ) should {
+            have("fun Map<String?, String>.nullableKeyMap()" in lines())
+            have("fun <T : Comparable<T>> Map<T, T>.sameComparables()" in lines())
+            have(lines().none { "orderById" in it })
         }
     }
 
@@ -10452,6 +10498,47 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve class with extension on supertype reached only through Java through more paths than the limit walked`() {
+        // 2^7 distinct types of BoundedReceiverDoublingRows, each one of a platform type argument, all of them kept by kotlinc
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverLongDoublingChain"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverLongDoublingChain [page 1/1]
+            class BoundedReceiverLongDoublingChain : BoundedReceiverDoubling7<String>
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverDoublingRows<MutableList<MutableList<MutableList<MutableList<MutableList<MutableList<MutableList<MutableList<String>>>>>>>>>.doublingMutableLongRows()
+            fun BoundedReceiverDoubling0<*>.doublingPaths()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extension on supertype reached through Kotlin after more paths through Java than the limit walked`() {
+        // BoundedReceiverDoublingRows<List<…>> of BoundedReceiverDoublingLongPad12, reached after 2^7 platform ones, is the only one kotlinc keeps
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverLongDoublingPadChain"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverLongDoublingPadChain [page 1/1]
+            class BoundedReceiverLongDoublingPadChain : BoundedReceiverDoubling7<String>, BoundedReceiverDoublingLongPad12
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverDoubling0<*>.doublingPaths()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extension on supertype reached through more paths without platform type arguments than the limit walked`() {
+        // 2^8 distinct types of BoundedReceiverDoubling0, the ones beyond the limit generalized, still telling the one matching only a late one
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverDoubling8Chain"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedReceiverDoubling8Chain [page 1/1]
+            class BoundedReceiverDoubling8Chain : BoundedReceiverDoubling8<String>
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedReceiverDoubling0<MutableList<MutableList<MutableList<MutableList<List<List<List<List<String>>>>>>>>>.doublingLongLatePaths()
+            fun BoundedReceiverDoubling0<*>.doublingPaths()
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve class without extension on supertype reached through Kotlin after more paths through Java than walked`() {
         // BoundedReceiverDoublingRows<List<…>> of BoundedReceiverDoublingPad24, reached after 2^5 platform ones, is the only one kotlinc keeps
         resolver.resolve(
@@ -10697,6 +10784,28 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve interface with extension on type parameter of more bounds reached through several paths than matched one by one`() {
+        // of the 2^9 combinations of the paths of the bounds, only the one of Java for each of them takes E of String?,
+        // found by choosing the paths bound by bound
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverNullableStringManyPaths"
+        ) should {
+            have(lines().any { ".manyPaths()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve class with extension on supertype reached through one of the last of more paths than 16`() {
+        // 2^7 distinct types of BoundedReceiverNullableChain0, of nullable and platform type arguments, the one matched among the last ones
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverStringNullableChain"
+        ) should {
+            have(lines().any { ".lateNullableChainStrings()" in it })
+            have(lines().any { ".nullableChainPaths()" in it })
+        }
+    }
+
+    @Test
     fun `should resolve class with extension on not nullable type parameter of nullable type matching platform type made nullable`() {
         // BoundedReceiverPaths<BoundedReceiverWrap<String!?>>, of String! substituted for T?, is no BoundedReceiverWrap<String>,
         // while T of T? is inferred as String, satisfying T : Any
@@ -10719,6 +10828,106 @@ class KotlinIntrospectorTest {
             class BoundedReceiverJavaNullableWrapWrapPaths : com.xemantic.kotlin.introspection.test.other.JavaStringNullableWrapPaths.WrapWrap
             // from com.xemantic.kotlin.introspection.test
             fun <T : Any> BoundedReceiverPaths<BoundedReceiverWrap<BoundedReceiverWrap<T?>>>.nonNullWrapWrapPaths()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extensions on not nullable type of platform type given for definitely not nullable type parameter`() {
+        // PlatformBox<String! & Any>, of String! given for T & Any, is PlatformBox<String>, no PlatformBox<String?>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.PlatformJavaNotNullStringBox"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PlatformJavaNotNullStringBox [page 1/1]
+            class PlatformJavaNotNullStringBox : com.xemantic.kotlin.introspection.test.other.JavaPlatformBoxes.NotNullString
+            // from com.xemantic.kotlin.introspection.test
+            fun <T> PlatformBox<T & Any>.boxOfNotNull()
+            fun PlatformBox<String>.boxOfString()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extensions on platform type arguments of platform type given for definitely not nullable type parameter`() {
+        // PlatformBox<PlatformWrap<String!>! & Any> is PlatformBox<PlatformWrap<String!>>, no PlatformBox<PlatformWrap<String>?>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.PlatformJavaNotNullWrapBox"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PlatformJavaNotNullWrapBox [page 1/1]
+            class PlatformJavaNotNullWrapBox : com.xemantic.kotlin.introspection.test.other.JavaPlatformBoxes.NotNullWrap
+            // from com.xemantic.kotlin.introspection.test
+            fun <T> PlatformBox<T & Any>.boxOfNotNull()
+            fun <T> PlatformBox<PlatformWrap<T & Any>>.wrapOfNotNull()
+            fun <T> PlatformBox<PlatformWrap<T?>>.wrapOfNullable()
+            fun PlatformBox<PlatformWrap<String?>>.wrapOfNullableString()
+            fun PlatformBox<PlatformWrap<String>>.wrapOfString()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extension on definitely not nullable type parameter for platform type made nullable`() {
+        // PlatformBox<PlatformWrap<String!>!?>, of PlatformWrap<String!>! given for T?, is PlatformBox<PlatformWrap<String!>?>, no PlatformBox<T & Any>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.PlatformJavaNullableWrapBox"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PlatformJavaNullableWrapBox [page 1/1]
+            class PlatformJavaNullableWrapBox : com.xemantic.kotlin.introspection.test.other.JavaPlatformBoxes.NullableWrap
+            // from com.xemantic.kotlin.introspection.test
+            fun PlatformBox<PlatformWrap<String?>?>.nullableWrapOfNullableString()
+            fun PlatformBox<PlatformWrap<String>?>.nullableWrapOfString()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve interface with extensions on not nullable supertype reached through Java next to one reached through Kotlin`() {
+        // PlatformBox<PlatformWrap<String!>> of Java, no platform type itself, is kept by kotlinc next to PlatformBox<PlatformWrap<String>>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.PlatformBothNotNullWrapBox"
+        ) should {
+            have("fun PlatformBox<PlatformWrap<String?>>.wrapOfNullableString()" in lines())
+            have("fun PlatformBox<PlatformWrap<String>>.wrapOfString()" in lines())
+            have(lines().none { "nullableWrapOf" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface with extensions on nullable supertype reached through Java next to one reached through Kotlin`() {
+        // PlatformBox<PlatformWrap<String!>?> of Java, no platform type itself, is kept by kotlinc next to PlatformBox<PlatformWrap<String>?>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.PlatformBothNullableWrapBox"
+        ) should {
+            have("fun PlatformBox<PlatformWrap<String?>?>.nullableWrapOfNullableString()" in lines())
+            have("fun PlatformBox<PlatformWrap<String>?>.nullableWrapOfString()" in lines())
+            have(lines().none { ".wrapOf" in it || ".boxOf" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve class of nullable type argument without extension on definitely not nullable type parameter`() {
+        // no T makes T & Any a String?
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.PlatformNullableStringBox"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PlatformNullableStringBox [page 1/1]
+            class PlatformNullableStringBox : PlatformBox<String?>
+            // from com.xemantic.kotlin.introspection.test
+            fun PlatformBox<String?>.boxOfNullableString()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class of definitely not nullable type parameter without extensions on nullable types`() {
+        // no V makes V & Any a String?, nor a PlatformWrap<String>?
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.PlatformNotNullParameterBox"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PlatformNotNullParameterBox [page 1/1]
+            class PlatformNotNullParameterBox<V> : PlatformBox<V & Any>
+            // from com.xemantic.kotlin.introspection.test
+            fun <T> PlatformBox<T & Any>.boxOfNotNull()
+            fun PlatformBox<String>.boxOfString()
+            fun <T> PlatformBox<PlatformWrap<T & Any>>.wrapOfNotNull()
+            fun <T> PlatformBox<PlatformWrap<T?>>.wrapOfNullable()
+            fun PlatformBox<PlatformWrap<String?>>.wrapOfNullableString()
+            fun PlatformBox<PlatformWrap<String>>.wrapOfString()
         """.trimIndent()
     }
 

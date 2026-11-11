@@ -374,10 +374,13 @@ private fun KType.refersToJavaType(): Boolean =
  * like `kotlin/collections/MutableList` of `java.util.List`, as kotlin-reflect tells only its read-only counterpart,
  * and the wildcards bounded by `Object` in their type arguments, at the positions given by [objectWildcards],
  * are `out Any`, like `? extends Object`, which kotlin-reflect tells as a star projection, like the wildcard `?`.
+ * The type arguments of its raw Kotlin supertypes are erased as their declarations tell, given by [kmClassOf],
+ * see [eraseRawKotlinArguments], read from the Kotlin metadata of their classes by default, or else the ones already read.
  */
 internal fun KClass<*>.toKmJavaClassHeader(
     name: String,
     objectWildcards: (supertype: Class<*>) -> Set<List<Int>> = { emptySet() },
+    kmClassOf: (Class<*>) -> KmClass? = ::readKmClass,
     supertypeName: (Class<*>) -> String
 ): KmClass =
     toKmClassHeader(name, outerTypeParameterNames = java.outerTypeParameterNames(), isInner = java.isInnerClass()) { typeParameters ->
@@ -390,14 +393,58 @@ internal fun KClass<*>.toKmJavaClassHeader(
                     type.classifier = KmClassifier.Class(supertypeName(supertypeClass.java))
                     objectWildcards(supertypeClass.java).forEach { path -> type.projectObjectWildcard(path) }
                     val genericSupertype = genericSupertypes[supertypeClass.java]
-                    if (genericSupertype != null) type.markRawTypeArguments(genericSupertype) else type.eraseRawKotlinArguments(supertypeClass)
+                    if (genericSupertype != null) {
+                        type.markRawTypeArguments(genericSupertype)
+                    } else {
+                        type.eraseRawKotlinArguments(kmClassOf(supertypeClass.java))
+                    }
                 }
             }
         }
     }
 
 /**
- * Erases the type arguments of this raw supertype of a Java class, when its [supertypeClass] is a Kotlin class,
+ * The supertypes of this Java class, as its generic signature tells them, named by their JVM classes, see [supertypeName],
+ * their type arguments the type parameters of the class, by their indices, like the ones of [toKmJavaClassHeader],
+ * like `java.util.SequencedCollection<E>` of `java.util.List<E>`, or `java.util.Collection<E>` before JDK 21,
+ * the ones Kotlin sees of a JDK class named as a supertype, like `abstract class X : java.util.List<String>`,
+ * which kotlin-reflect describes as a built-in type, like `List`, of the supertypes of that one,
+ * or `null` when they take other type arguments than its type parameters.
+ */
+internal fun Class<*>.javaSignatureSupertypes(supertypeName: (Class<*>) -> String): List<KmType>? {
+    val ids = typeParameters.withIndex().associate { (index, typeVariable) -> typeVariable as Type to index }
+    return (listOfNotNull(genericSuperclass) + genericInterfaces).map { supertype ->
+        when (supertype) {
+            is Class<*> -> classType(supertypeName(supertype)).takeIf { supertype.typeParameters.isEmpty() } ?: return null
+            is ParameterizedType -> {
+                val rawType = supertype.rawType as? Class<*> ?: return null
+                classType(supertypeName(rawType)).also { type ->
+                    supertype.actualTypeArguments.mapTo(type.arguments) { argument ->
+                        val id = ids[argument] ?: return null
+                        KmTypeProjection(KmVariance.INVARIANT, KmType().also { it.classifier = KmClassifier.TypeParameter(id) })
+                    }
+                }
+            }
+            else -> return null
+        }
+    }
+}
+
+/**
+ * The declaration of the Kotlin [clazz], read from its Kotlin metadata, or `null` if it has none, like a Java class,
+ * or if it cannot be read, see [toKmJavaClassHeader].
+ */
+internal fun readKmClass(clazz: Class<*>): KmClass? {
+    val metadata = clazz.getAnnotation(Metadata::class.java) ?: return null
+    return try {
+        (KotlinClassMetadata.readLenient(metadata) as? KotlinClassMetadata.Class)?.kmClass
+    } catch (_: IllegalArgumentException) {
+        null
+    }
+}
+
+/**
+ * Erases the type arguments of this raw supertype of a Java class, when it is a Kotlin class, declared by the [supertypeClass],
  * to the bounds of its type parameters, as kotlinc erases them, see [rawErasure], like `Any?` of `T`,
  * or `CharSequence` of `T : CharSequence`, like `Box<List<Any?>>` of the raw `ListBox`, where `interface ListBox<T> : Box<List<T>>`,
  * unlike kotlin-reflect, which tells them as not nullable, made platform types then, see [JAVA_ERASURE_MARKER],
@@ -405,13 +452,8 @@ internal fun KClass<*>.toKmJavaClassHeader(
  * or else marks them as not told exactly, see [JAVA_INEXACT_ERASURE_MARKER],
  * while the ones of a Java class, like `Any!` of the raw `java.util.List`, are platform types in kotlinc too.
  */
-private fun KmType.eraseRawKotlinArguments(supertypeClass: KClass<*>) {
-    val metadata = supertypeClass.java.getAnnotation(Metadata::class.java) ?: return
-    val typeParameters = try {
-        (KotlinClassMetadata.readLenient(metadata) as? KotlinClassMetadata.Class)?.kmClass?.typeParameters
-    } catch (_: IllegalArgumentException) {
-        null
-    }
+private fun KmType.eraseRawKotlinArguments(supertypeClass: KmClass?) {
+    val typeParameters = supertypeClass?.typeParameters
     if (typeParameters?.size != arguments.size) return
     arguments.forEachIndexed { index, argument ->
         val type = argument.type ?: return@forEachIndexed
