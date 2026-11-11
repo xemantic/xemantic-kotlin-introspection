@@ -1053,7 +1053,9 @@ abstract class InheritedJavaDisagreeingOverriding : com.xemantic.kotlin.introspe
 abstract class InheritedJavaBridgedGet : com.xemantic.kotlin.introspection.test.other.JavaBridgedGet()
 
 // A Kotlin class extending a generic Java class, reached raw through a Java subclass, see JavaRawThroughKotlinMid
-abstract class KotlinRawThroughBase<T> : com.xemantic.kotlin.introspection.test.other.JavaRawThroughKotlinBase<T>()
+abstract class KotlinRawThroughBase<T> : com.xemantic.kotlin.introspection.test.other.JavaRawThroughKotlinBase<T>() {
+    fun <U> pick(value: T, other: U): U = other
+}
 
 abstract class InheritedJavaRawThroughKotlin : com.xemantic.kotlin.introspection.test.other.JavaRawThroughKotlinMid()
 
@@ -1139,3 +1141,56 @@ class SyntheticPropertyDiamondOverride : com.xemantic.kotlin.introspection.test.
 }
 
 class SyntheticPropertyJavaDiamondSub : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyDiamond()
+
+// The members of a Java class marked by @NullMarked, inherited through Java classes not overriding them,
+// giving its type variables type arguments, their own type variables, or none
+abstract class InheritedJavaNullMarkedArguments : com.xemantic.kotlin.introspection.test.other.JavaNullMarkedArguments()
+
+abstract class InheritedJavaNullMarkedArgumentsGeneric :
+    com.xemantic.kotlin.introspection.test.other.JavaNullMarkedArgumentsGeneric<String>()
+
+abstract class InheritedJavaNullMarkedArgumentsMid : com.xemantic.kotlin.introspection.test.other.JavaNullMarkedArgumentsMid<String>()
+
+abstract class InheritedJavaNullMarkedArgumentsBottom : com.xemantic.kotlin.introspection.test.other.JavaNullMarkedArgumentsBottom()
+
+// The type variable of a Java class not marked, kept as given, see InheritedJavaGenericPassing, given String
+abstract class InheritedJavaGenericPassingNotNull : com.xemantic.kotlin.introspection.test.other.JavaGenericPassing<String>()
+
+// The members of a generic Java class, inherited through Java classes giving its type variable a type argument annotated nullable
+abstract class InheritedJavaNullableArguments : com.xemantic.kotlin.introspection.test.other.JavaNullableArguments()
+
+abstract class InheritedJavaNullableArgumentsOverriding : com.xemantic.kotlin.introspection.test.other.JavaNullableArgumentsOverriding()
+
+abstract class InheritedJavaNestedNullableArguments : com.xemantic.kotlin.introspection.test.other.JavaNestedNullableArguments()
+
+// The bar(String) of a Java superclass, which Java classes join with the one of interfaces annotating its parameter,
+// unlike a Kotlin class joining them itself
+abstract class InheritedJavaBarImpl : com.xemantic.kotlin.introspection.test.other.JavaBarImpl()
+
+abstract class InheritedJavaBarImplJSpecify : com.xemantic.kotlin.introspection.test.other.JavaBarImplJSpecify()
+
+abstract class InheritedJavaBarImplDisagreeing : com.xemantic.kotlin.introspection.test.other.JavaBarImplDisagreeing()
+
+abstract class InheritedJavaBarImplBottom : com.xemantic.kotlin.introspection.test.other.JavaBarImplBottom()
+
+abstract class InheritedJavaNullableFirstBar : com.xemantic.kotlin.introspection.test.other.JavaNullableFirstBar()
+
+abstract class KotlinBarJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaBarBase(), com.xemantic.kotlin.introspection.test.other.JavaNotNullBar
+
+// The generic methods of a Java class taking their type variables, also joined with a Kotlin member of the same signature
+abstract class InheritedJavaTypeVariables : com.xemantic.kotlin.introspection.test.other.JavaTypeVariables()
+
+interface KotlinRec {
+    fun <T : Comparable<T>> rec(value: T)
+}
+
+abstract class JavaTypeVariablesRecJoin : com.xemantic.kotlin.introspection.test.other.JavaTypeVariables(), KotlinRec
+
+// A property of another type than the getter of the Java superclass named like its synthetic property, unrelated to it
+class KotlinIntTitle : com.xemantic.kotlin.introspection.test.other.JavaTitled() {
+    val title: Int = 0
+}
+
+// The methods of a Java class named with $
+abstract class InheritedJavaDollarNames : com.xemantic.kotlin.introspection.test.other.JavaDollarNames()

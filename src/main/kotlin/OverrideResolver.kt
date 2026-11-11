@@ -765,8 +765,22 @@ internal class OverrideResolver(
                 it.parameters.size == (if (property.receiverParameterType != null) 1 else 0)
             }
         }
-        return javaGetters.any { it.matches(signature) } ||
+        return (getter != null && javaGetters.any { it.matches(signature) && overridables.isGetterOverriding(it, getter) }) ||
             overridables.shrunkOverridden(evidence, owner.kmClass, property.modality, property.getterSignature).any()
+    }
+
+    /**
+     * Whether the [getter] of a property of the owner overrides the Java method [javaGetter] of its name, on the JVM:
+     * of the same JVM descriptor, or, returning another type, bridged by the owner, see [Overridables.ownerJvmMethods],
+     * unlike the `getTitle()I` of a `val title: Int` next to the `String getTitle()` of a Java superclass,
+     * which the compiler treats as unrelated, a primitive type never being bridged,
+     * while a getter whose bridge cannot be told is still taken to override.
+     */
+    private fun Overridables.isGetterOverriding(javaGetter: Overridable, getter: JvmMethodSignature): Boolean {
+        val descriptor = javaGetter.javaKey?.substringAfter('#')?.removePrefix(getter.name) ?: return true
+        if (descriptor == getter.descriptor || descriptor.substringBefore(')') != getter.descriptor.substringBefore(')')) return true
+        val isPrimitive = descriptor.substringAfter(')').length == 1 || getter.descriptor.substringAfter(')').length == 1
+        return !isPrimitive && ownerJvmMethods?.contains(getter.name + descriptor) != false
     }
 
     /**

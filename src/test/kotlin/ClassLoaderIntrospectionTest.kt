@@ -533,7 +533,7 @@ class ClassLoaderIntrospectionTest {
                 "// inherited from com.xemantic.kotlin.introspection.isolated.RelocatedJavaIntPut",
                 "open fun put(arg0: Int?): String",
                 "// inherited from com.xemantic.kotlin.introspection.isolated.RelocatedGenericPut",
-                "fun put(t: Int?): String"
+                "fun put(t: Int): String"
             ))
         }
     }

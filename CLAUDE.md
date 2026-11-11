@@ -116,6 +116,13 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 - kotlinc 2.4.21 rejects an enum entry named `entries` (`conflicting declarations`, KT-48872), also one deprecated as `HIDDEN`,
   so the entry shadowing the `entries` property can be neither probed, nor compiled as a fixture.
 
+- K2 enhances a method a Java class inherits without declaring it, by the methods of its other supertypes, like an override,
+  but only where the inherited one tells nothing, and not in a Kotlin class joining the same supertypes — see `joinedParameterNullability`.
+  A probe of it: `val r: Marker = x::bar` names the function type with its platform types, like `KFunction1<String!, Unit>`.
+
+- kotlinc rejects `rec<String>(null)` of a Java `<T extends Comparable<T>> void rec(T t)` with `actual type is 'Nothing?', but 'String!' was expected`,
+  though the message names a platform type; `<T extends Enum<T>>`, or `<T extends Comparable<List<T>>>`, accept it — see `givenTypeVariableNames`.
+
 - Kotlin never passes named arguments to a Java method, even one compiled with `-parameters`, so a Java method taking parameters never shadows an extension — see `isShadowingJavaMethod`.
 
 ## Anti-patterns to avoid
