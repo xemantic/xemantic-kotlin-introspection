@@ -1369,9 +1369,10 @@ internal fun isNotNullClassTypeParameter(method: Method, position: Int, isConver
 /**
  * The names of the type parameters of the Java [method] which the compiler takes as given where a value parameter is of one,
  * unlike a platform type, like `U!`, accepting `null` whatever the type argument, so that `id<String>(null)` does not compile:
- * the ones of a bound told nullable, or not, by an annotation, like `<U extends @NonNull Object>`,
+ * the ones of a single bound, told nullable, or not, by an annotation, like `<U extends @NonNull Object>`,
+ * unlike an annotated bound among several ones, like of `<T extends Serializable & @NonNull Cloneable>`, which the compiler ignores,
  * or all of them, when the class of the method is marked by `@NullMarked`, see [enhanceJavaBounds],
- * whatever the mark of the method itself, whoever declares the type argument.
+ * whatever the mark of the method itself, and the number of the bounds, whoever declares the type argument.
  * A type parameter in a contravariant position of its bound, like the `T` of `<T extends Comparable<T>>`, stays a platform type,
  * though the compiler rejects `sort<String>(null)`, as it accepts `null` for a type argument declared by Java,
  * like `sort<BigDecimal>(null)`, whose own supertype names it as a platform type, which no signature tells.
@@ -1382,7 +1383,8 @@ private fun givenTypeVariableNames(method: Method): Set<String> {
     if (typeParameters.isEmpty() || declaring.isJdkClass || declaring.isKotlinClass) return emptySet()
     if (nullMarking(declaring) == true) return typeParameters.mapTo(HashSet()) { it.name }
     val annotated = javaNullabilities.get(declaring).methods[method.name + AsmType.getMethodDescriptor(method)]?.nullability?.bounds
-    return typeParameters.indices.filter { !annotated?.get(it).isNullOrEmpty() }.mapTo(HashSet()) { typeParameters[it].name }
+    return typeParameters.indices.filter { typeParameters[it].bounds.size == 1 && !annotated?.get(it).isNullOrEmpty() }
+        .mapTo(HashSet()) { typeParameters[it].name }
 }
 
 /**

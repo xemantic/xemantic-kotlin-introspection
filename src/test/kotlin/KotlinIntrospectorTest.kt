@@ -8024,6 +8024,18 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve parameter of type variable of Java method of annotated bound among several bounds as platform type`() {
+        // the compiler honours the annotation of a single bound only, so that severalBounds<Date>(null) compiles
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariables.severalBounds"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariables.severalBounds [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypeVariables
+            open fun <T> severalBounds(arg0: T?) where T : java.io.Serializable?, T : Cloneable
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve parameter of type variable of Java method of bound not annotated as platform type`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariables.bounded"

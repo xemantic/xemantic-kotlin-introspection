@@ -21,7 +21,8 @@ package com.xemantic.kotlin.introspection.test.other;
 /**
  * A Java class of generic methods taking their type variables: platform types, also the ones bounded by a {@code Comparable}
  * of themselves, for which the compiler rejects {@code null} only for a type argument declared by Kotlin,
- * unlike the one of an annotated bound, which the compiler takes as given, whatever the type argument.
+ * unlike the one of an annotated bound, which the compiler takes as given, whatever the type argument,
+ * when it is its single bound.
  */
 public class JavaTypeVariables {
 
@@ -36,6 +37,9 @@ public class JavaTypeVariables {
     }
 
     public <T extends @org.jspecify.annotations.Nullable CharSequence> void nullableBound(T value) {
+    }
+
+    public <T extends java.io.Serializable & @org.jspecify.annotations.NonNull Cloneable> void severalBounds(T value) {
     }
 
 }
