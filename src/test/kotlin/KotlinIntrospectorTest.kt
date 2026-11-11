@@ -11602,6 +11602,16 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve class without extension of violated recursive bound next to type parameter given explicitly`() {
+        // W is given explicitly, which makes String, no Map<String, String>, an error, unlike when all the type parameters are inferred
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InferredReceiverStringStringBiSink"
+        ) should {
+            have("fun <W, V, T : Map<T, V>> InferredReceiverBiSink<V, T>.biSinkExplicit()" !in lines())
+        }
+    }
+
+    @Test
     fun `should resolve class without extension on type parameter constrained only by Nothing`() {
         // Nothing is a List<T>, and a List<E>, of any T, and E, which kotlinc cannot infer then,
         // also not when the return type refers to it, like of produceFirst returning T?, as x.produceFirst() fails,

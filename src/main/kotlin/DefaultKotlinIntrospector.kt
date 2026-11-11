@@ -6752,7 +6752,7 @@ internal class DefaultKotlinIntrospector(
          * a type parameter is inferred as an intersection no type can be a subtype of, see [isEmptyIntersection],
          * which kotlinc only warns about, also of the contradiction then.
          * A type parameter the receiver does not refer to, nor a bound of one it does, is inferred as well, when its bounds
-         * refer to the other ones, like `C` of `C : A`, and else it is left out, as given explicitly.
+         * refer to the other ones, like `C` of `C : A`, and else it has to be given explicitly, which is not modelled.
          * What is not modelled throws [InferenceNotModelled], like a type argument which is a projection matched against
          * a type referring to a type parameter, a common supertype of unrelated classes, or a constraint system which does not settle,
          * like the one of `<T : U, U : R, R> Mx<List<T>, R>`, which kotlinc does not finish either.
@@ -6784,13 +6784,16 @@ internal class DefaultKotlinIntrospector(
             fun isInferred(referred: Set<Int>): Boolean {
                 // a type parameter the receiver does not refer to, nor a bound of one it does, is inferred as well,
                 // when its bounds refer to an inferred one, like C of C : A, or else it is given explicitly,
-                // see ReceiverMatcher.isInferred, whatever the other ones are inferred as
+                // see ReceiverMatcher.isInferred
                 val inferable = referred.filterTo(LinkedHashSet()) { it in typeParameters }
                 do {
                     val bounded = typeParameters.values.filter { typeParameter ->
                         typeParameter.id !in inferable && typeParameter.upperBounds.any { bound -> !bound.refersOnlyTo { it !in inferable } }
                     }
                 } while (inferable.addAll(bounded.map { it.id }))
+                // with a type parameter given explicitly, kotlinc reports the violated bound of an inferred one as an error,
+                // where it only warns when all of them are inferred, which is not modelled
+                if (inferable.size < typeParameters.size) throw InferenceNotModelled
                 typeParameters.keys.forEach { if (it in inferable) constraints[it] = ArrayList() }
                 typeParameters.values.filter { it.id in inferable }.forEach { typeParameter ->
                     typeParameter.upperBounds.forEach { bound ->
@@ -6827,10 +6830,6 @@ internal class DefaultKotlinIntrospector(
                     if (!hasProperConstraint(id)) return false
                     fix(id, resultTypeOf(id))
                 }
-                // with a type parameter given explicitly, kotlinc reports the contradiction as an error also next to
-                // an empty intersection, in a way which is not modelled
-                val isWarning = isContradictedByFixing && hasEmptyIntersection
-                if (isWarning && inferable.size < typeParameters.size) throw InferenceNotModelled
                 return !isContradictedByReceiver && (!isContradictedByFixing || hasEmptyIntersection)
             }
 

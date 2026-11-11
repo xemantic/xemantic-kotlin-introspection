@@ -1419,3 +1419,9 @@ interface InferredReceiverTriple<out A, in B, in C>
 fun <T, U : T> InferredReceiverTriple<T, U, U>.tripleUnder() {}
 
 class InferredReceiverNullableNothingTriple : InferredReceiverTriple<Nothing?, CharSequence, Comparable<String>>
+
+// a type parameter which has to be given explicitly, like W, makes the violated bound of an inferred one an error,
+// like String, no Map<String, String>, of T, which is only a warning when all of them are inferred
+fun <W, V, T : Map<T, V>> InferredReceiverBiSink<V, T>.biSinkExplicit() {}
+
+class InferredReceiverStringStringBiSink : InferredReceiverBiSink<String, String>
