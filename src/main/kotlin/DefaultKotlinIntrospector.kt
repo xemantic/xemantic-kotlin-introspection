@@ -1343,17 +1343,22 @@ internal class DefaultKotlinIntrospector(
      * or, of a public [method], the one resolved on the [inheriting] class being declared by a subtype of its class,
      * as a JVM class, whose superclasses can be told, tells it, unlike the Kotlin view of its methods.
      * Neither a bridge, like the one javac generates in a public class for a public method of its package-private superclass,
-     * nor a private, or a static, method of the same signature overrides it, nor one returning an unrelated type.
+     * nor a private, or a static, method of the same signature overrides it, nor one returning another type without a bridge.
      */
     private fun overridingBelow(method: Method, inheriting: Class<*>?): Method? = reflectedValue(default = null) {
         if (inheriting == null) return@reflectedValue null
         val declaring = method.declaringClass
         val parameterTypes = method.parameterTypes
-        // nor a method returning an unrelated type, a JVM method of its own, like the `getTitle()I` of a Kotlin `val title: Int`
-        // next to the `String getTitle()` of a Java superclass, while `Nothing` is returned as `java.lang.Void`
+        // nor a method returning another type, a JVM method of its own, like the `getTitle()I` of a Kotlin `val title: Int`
+        // next to the `String getTitle()` of a Java superclass, or the getter of a `val obj: String` next to `Object getObj()`,
+        // unless its class bridges it, like the compiler does for an override returning a subtype,
+        // see OverrideResolver.isOverride of a property
         fun Method.overrides() = !isBridge && !Modifier.isPrivate(modifiers) && !Modifier.isStatic(modifiers) &&
             name == method.name && this.parameterTypes.contentEquals(parameterTypes) &&
-            (method.returnType.isAssignableFrom(returnType) || returnType == Void::class.java)
+            (returnType == method.returnType || declaringClass.declaredMethods.any { bridge ->
+                bridge.isBridge && bridge.name == name && bridge.returnType == method.returnType &&
+                    bridge.parameterTypes.contentEquals(parameterTypes)
+            })
         // the method of a superclass not implementing the interface declaring the method is merged with it, not overriding it,
         // by a Kotlin class, implementing both, but implements it in a Java class between them, implementing the interface,
         // unless the method of the interface returns a type its nullability annotations tell, which K2 picks among the merged ones

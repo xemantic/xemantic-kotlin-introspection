@@ -19,11 +19,16 @@
 package com.xemantic.kotlin.introspection.test.other;
 
 /**
- * A Java class of a getter, which a Kotlin subclass declares a property of another type next to, named like its synthetic property.
+ * A Java class of getters, which a Kotlin subclass declares a property of another type next to, named like its synthetic property,
+ * also of a subtype of the type the getter returns, which the compiler bridges only for an override.
  */
 public class JavaTitled {
 
     public String getTitle() {
+        return "";
+    }
+
+    public Object getSubject() {
         return "";
     }
 

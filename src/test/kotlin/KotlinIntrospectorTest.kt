@@ -8175,6 +8175,97 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve parameter of type variable of Java method nested in Comparable of Comparable bounding it as platform type`() {
+        // covariant again, so that twice<C>(null) compiles
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariables.twice"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariables.twice [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypeVariables
+            open fun <T : Comparable<Comparable<T>>?> twice(arg0: T?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve parameter of type variable of Java method given for Comparable nested in Java collection bounding it as platform type`() {
+        // the type argument of java.util.List is an invariant position
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariables.listed"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariables.listed [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypeVariables
+            open fun <T : List<Comparable<T>>?> listed(arg0: T?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve parameter of type variable of Java method nested in two contravariant type arguments as platform type`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariables.sinkOfSink"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariables.sinkOfSink [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypeVariables
+            open fun <T : KotlinSink<KotlinSink<T>>?> sinkOfSink(arg0: T?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve parameter of type variable of Java method given for covariant type parameter nested in contravariant one as given`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariables.sinkOfSource"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariables.sinkOfSource [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypeVariables
+            open fun <T : KotlinSink<KotlinSource<T>>?> sinkOfSource(arg0: T)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve parameter of method of Java superclass as platform type through Java class extending Kotlin class joining it with interface`() {
+        // KotlinBarJoin joins bar(String) with bar(@NotNull String) itself, which the Java class extending it does not enhance
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaBarKotlinJoinBottom.bar"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaBarKotlinJoinBottom.bar [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaBarBase
+            open fun bar(arg0: String?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve property of subtype of type returned by getter of Java superclass as override`() {
+        // the compiler bridges no getSubject()Ljava/lang/Object; to the getter of the property, unrelated to the one of JavaTitled
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.KotlinStringSubject.subject"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.KotlinStringSubject.subject [page 1/1]
+            val subject: String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve getter of Java superclass next to property of subtype of its type named like its synthetic property`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.KotlinStringSubject.getSubject"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.KotlinStringSubject.getSubject [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTitled
+            fun getSubject(): Any
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve type argument annotated not nullable given by Java class not marked for type variable of nullable bound as not nullable`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaNotNullArgument.nullable"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaNotNullArgument.nullable [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNullMarkedBase
+            abstract fun nullable(arg0: String): String
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve Java override of type variable of class not marked of method marked by NullMarked as platform type`() {
         // the N of JavaMethodNullMarked, not marked itself, is not inherited as not nullable, though its put is marked
         resolver.resolve(

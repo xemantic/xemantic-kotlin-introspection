@@ -1194,3 +1194,19 @@ class KotlinIntTitle : com.xemantic.kotlin.introspection.test.other.JavaTitled()
 
 // The methods of a Java class named with $
 abstract class InheritedJavaDollarNames : com.xemantic.kotlin.introspection.test.other.JavaDollarNames()
+
+// A Java class extending the Kotlin class joining bar(String) with bar(@NotNull String), see KotlinBarJoin
+abstract class InheritedJavaBarKotlinJoinBottom : com.xemantic.kotlin.introspection.test.other.JavaBarKotlinJoinBottom()
+
+// The type parameters the bounds of the type variables of JavaTypeVariables are given for
+interface KotlinSink<in T>
+
+interface KotlinSource<out T>
+
+// A property of a subtype of the type the getter of the Java superclass named like its synthetic property returns, unrelated to it
+class KotlinStringSubject : com.xemantic.kotlin.introspection.test.other.JavaTitled() {
+    val subject: String = ""
+}
+
+// A type argument annotated not nullable, given by a Java class not marked for a type variable of a nullable bound
+abstract class InheritedJavaNotNullArgument : com.xemantic.kotlin.introspection.test.other.JavaNotNullArgument()

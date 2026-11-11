@@ -20,8 +20,9 @@ package com.xemantic.kotlin.introspection.test.other;
 
 /**
  * A Java class of generic methods taking their type variables, which the compiler takes as given, not as platform types,
- * when given directly for a contravariant type parameter in a bound, like the {@code T} of {@code Comparable<T>},
- * also through another type variable, unlike the ones of the other bounds.
+ * when in a contravariant position of a bound, like the {@code T} of {@code Comparable<T>},
+ * or of a {@code KotlinSink<KotlinSource<T>>}, also through another type variable, unlike the ones of the other bounds,
+ * like the {@code T} of {@code Comparable<Comparable<T>>}, covariant again.
  */
 public class JavaTypeVariables {
 
@@ -61,6 +62,20 @@ public class JavaTypeVariables {
     }
 
     public <T extends @org.jspecify.annotations.Nullable CharSequence> void nullableBound(T value) {
+    }
+
+    public <T extends Comparable<Comparable<T>>> void twice(T value) {
+    }
+
+    public <T extends java.util.List<Comparable<T>>> void listed(T value) {
+    }
+
+    public <T extends com.xemantic.kotlin.introspection.test.KotlinSink<com.xemantic.kotlin.introspection.test.KotlinSink<T>>>
+    void sinkOfSink(T value) {
+    }
+
+    public <T extends com.xemantic.kotlin.introspection.test.KotlinSink<com.xemantic.kotlin.introspection.test.KotlinSource<T>>>
+    void sinkOfSource(T value) {
     }
 
 }

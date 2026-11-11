@@ -421,7 +421,8 @@ private fun KmType.enhanceSupertypeArguments(type: Class<*>, supertype: Class<*>
  * the ones of a supertype given none, the ones given by a class marked by `@NullMarked`, see [nullMarking],
  * and the ones given for the type parameters of a supertype marked by it, of bounds which are not nullable,
  * see [JavaClassNullability.nullableBounds], like the `T` of a marked `Base<T>`, whose `take(T)` takes `String`
- * for a class not marked extending `Base<String>`: all of them, or the one of the type parameter at the [index], when given.
+ * for a class not marked extending `Base<String>`: all of them, or the one of the type parameter at the [index], when given,
+ * which is neither a platform type when annotated.
  */
 internal fun givesPlatformTypeArguments(type: Class<*>, supertype: Class<*>, index: Int? = null): Boolean = reflectedValue(default = true) {
     if (supertype.typeParameters.isEmpty() && (supertype.enclosingClass == null || Modifier.isStatic(supertype.modifiers))) {
@@ -429,6 +430,11 @@ internal fun givesPlatformTypeArguments(type: Class<*>, supertype: Class<*>, ind
     }
     if (type.isJdkClass) return@reflectedValue true
     if (nullMarking(type) == true) return@reflectedValue false
+    // or the one annotated, like the `@NonNull String` of `Base<String, @NonNull String>`, see enhanceSupertypeArguments
+    if (index != null) {
+        val supertypeIndex = if (type.superclass == supertype) -1 else type.interfaces.indexOf(supertype)
+        if ("$index;" in javaNullabilities.get(type).supertypeArguments[supertypeIndex].orEmpty()) return@reflectedValue false
+    }
     supertype.isJdkClass || supertype.isKotlinClass || nullMarking(supertype) != true ||
         javaNullabilities.get(supertype).nullableBounds.let { if (index == null) it.isNotEmpty() else index in it }
 }
@@ -1366,10 +1372,12 @@ internal fun isNotNullClassTypeParameter(method: Method, position: Int, isConver
  * - the ones of a bound told nullable, or not, by an annotation, like `<U extends @NonNull Object>`,
  *   or all of them, when the class of the method is marked by `@NullMarked`, see [enhanceJavaBounds],
  *   whatever the mark of the method itself,
- * - the ones given directly for a contravariant type parameter in a bound of any of them, also as the lower bound of a wildcard,
+ * - the ones in a contravariant position of a bound of any of them, by the variances the type parameters are declared of,
+ *   multiplied along the type arguments leading to it, see [declaredVariances], also as the bound of a wildcard,
  *   like the `T` of `<T extends Comparable<T>>`, or of `<T extends Comparable<? super T>>`, `Comparable<in T>` in Kotlin,
- *   which the compiler never infers nullable, unlike the `T` of `<T extends Comparable<List<T>>>`,
- *   or of a `Consumer<? super T>` of Java,
+ *   which the compiler never infers nullable, or the one of `Sink<Src<T>>` of a Kotlin `Sink<in T>`, and `Src<out T>`,
+ *   unlike the `T` of `<T extends Comparable<Comparable<T>>>`, covariant again, or the one of an invariant position,
+ *   like of `<T extends Comparable<List<T>>>`, of `<T extends List<Comparable<T>>>`, or of a `Consumer<? super T>` of Java,
  * - and the ones bounded by one of these, like the `U` of `<T extends Comparable<T>, U extends T>`.
  */
 private fun givenTypeVariableNames(method: Method): Set<String> {
@@ -1382,27 +1390,26 @@ private fun givenTypeVariableNames(method: Method): Set<String> {
         val annotated = javaNullabilities.get(declaring).methods[method.name + AsmType.getMethodDescriptor(method)]?.nullability?.bounds
         typeParameters.forEachIndexed { index, typeParameter -> if (!annotated?.get(index).isNullOrEmpty()) given += typeParameter }
     }
-    fun visit(type: Type, isContravariant: Boolean) {
+    // the variance of the position of the type: 1 of a covariant one, -1 of a contravariant one, 0 of an invariant one
+    fun visit(type: Type, variance: Int) {
         when (type) {
-            is TypeVariable<*> -> if (isContravariant && type.genericDeclaration == method) given += type
+            is TypeVariable<*> -> if (variance < 0 && type.genericDeclaration == method) given += type
             is ParameterizedType -> {
-                val variances = reflectedValue(default = emptyList()) {
-                    (type.rawType as? Class<*>)?.kotlin?.typeParameters.orEmpty().map { it.variance }
-                }
+                val variances = declaredVariances(type.rawType as? Class<*>)
                 type.actualTypeArguments.forEachIndexed { index, argument ->
-                    val isIn = variances.getOrNull(index) == KVariance.IN
+                    val declared = variances.getOrNull(index) ?: KVariance.INVARIANT
                     if (argument is WildcardType) {
-                        argument.lowerBounds.forEach { visit(it, isIn) }
-                        argument.upperBounds.forEach { visit(it, isContravariant = false) }
+                        // a wildcard against the declared variance is a star projection
+                        if (declared != KVariance.OUT) argument.lowerBounds.forEach { visit(it, variance * declared.sign) }
+                        if (declared == KVariance.OUT) argument.upperBounds.forEach { visit(it, variance) }
                     } else {
-                        visit(argument, isIn)
+                        visit(argument, variance * declared.sign)
                     }
                 }
             }
-            is GenericArrayType -> visit(type.genericComponentType, isContravariant = false)
         }
     }
-    typeParameters.forEach { typeParameter -> typeParameter.bounds.forEach { visit(it, isContravariant = false) } }
+    typeParameters.forEach { typeParameter -> typeParameter.bounds.forEach { visit(it, variance = 1) } }
     while (true) {
         val bounded = typeParameters.filter { typeParameter -> typeParameter !in given && typeParameter.bounds.any { it in given } }
         if (bounded.isEmpty()) break
@@ -1410,6 +1417,23 @@ private fun givenTypeVariableNames(method: Method): Set<String> {
     }
     return given.mapTo(HashSet()) { it.name }
 }
+
+/**
+ * The variances the type parameters of the [type] are declared of in Kotlin, see [givenTypeVariableNames],
+ * like `in` of `java.lang.Comparable`, seen as `Comparable<in T>`, or of a Kotlin `Sink<in T>`,
+ * all invariant of a Java class, and of a Java collection, like `java.util.List`, seen as flexible from `MutableList<E>` to `List<out E>`.
+ */
+private fun declaredVariances(type: Class<*>?): List<KVariance> = reflectedValue(default = emptyList()) {
+    val kClass = type?.kotlin ?: return@reflectedValue emptyList()
+    if (kClass.qualifiedName?.startsWith("kotlin.collections.") == true) emptyList() else kClass.typeParameters.map { it.variance }
+}
+
+private val KVariance.sign: Int
+    get() = when (this) {
+        KVariance.IN -> -1
+        KVariance.OUT -> 1
+        KVariance.INVARIANT -> 0
+    }
 
 /**
  * Marks the return type of the [function], converted from this one, nullable, when K2 enhances it so,
@@ -2264,7 +2288,8 @@ private fun typeArgumentNullability(from: Class<*>, target: Class<*>, index: Int
  * like one overriding them, so that a value parameter of a platform type takes the nullability the other ones agree on,
  * like the `String` of the `bar(@NotNull String)` of an interface the `bar(String)` of the superclass, for a class
  * extending the one, and implementing the other, also for its subclasses, see [JoinedJavaMethod].
- * None is told when the [type] inherits another method in its place, or a method of a Kotlin, or a JDK, class next to it.
+ * None is told when the [type] inherits another method in its place, or a method of a Kotlin, or a JDK, class next to it,
+ * or through a Kotlin class joining the methods itself, which enhances none of them.
  */
 internal fun joinedParameterNullability(type: Class<*>, method: Method): Map<Int, Boolean> = reflectedValue(default = emptyMap()) {
     if (type.isJdkClass || type.isKotlinClass || type == method.declaringClass) return@reflectedValue emptyMap()
@@ -2318,6 +2343,8 @@ private fun computeJoinedJavaMethod(type: Class<*>, key: String): JoinedJavaMeth
     val picked = contributions.firstOrNull() ?: return null
     val others = contributions.drop(1).filter { it.method != picked.method }
     if (picked.isOpaque || others.isEmpty()) return picked
+    // a Kotlin class joins the methods of its supertypes otherwise, enhancing none of them
+    if (type.isKotlinClass) return JoinedJavaMethod(picked.method, picked.parameters, isOpaque = true)
     if (others.any { it.isOpaque }) return JoinedJavaMethod(picked.method, picked.parameters, isOpaque = true)
     val parameters = HashMap(picked.parameters)
     picked.method.parameterTypes.forEachIndexed { position, parameterType ->
