@@ -493,6 +493,21 @@ interface StringAcceptor {
 // the compiler picks the accept(String) of the Java class, declared first, taking String!, so that accept(null) compiles
 abstract class StringJavaAcceptorJoin : com.xemantic.kotlin.introspection.test.other.JavaStringAcceptor(), StringAcceptor
 
+// and so does a subclass of the join, inheriting the member the join picks
+abstract class StringJavaAcceptorJoinSubclass : StringJavaAcceptorJoin()
+
+// while the accept(s: String) of the Kotlin interface, declared first, is inherited as declared, also by a subclass of the join
+abstract class StringAcceptorJavaJoin : StringAcceptor, com.xemantic.kotlin.introspection.test.other.JavaStringAcceptor()
+
+abstract class StringAcceptorJavaJoinSubclass : StringAcceptorJavaJoin()
+
+// the compiler picks the accept(String) of a Java interface declared first alike
+abstract class StringJavaAcceptorInterfaceJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaStringAcceptorInterface, StringAcceptor
+
+abstract class StringAcceptorJavaInterfaceJoin :
+    StringAcceptor, com.xemantic.kotlin.introspection.test.other.JavaStringAcceptorInterface
+
 // the type parameter of the interface numbers the ones of its members apart from the ones of the Java methods
 interface GenericMethodTaker<E> {
     fun <T> take2(value: T, type: Class<T>)
@@ -963,6 +978,31 @@ abstract class InheritedJavaBiFunctionDiamond :
 // java.util.function.Consumer reached alike, whose accept returns no platform type, so that K2 takes the first one
 abstract class InheritedJavaConsumerDiamond :
     com.xemantic.kotlin.introspection.test.other.JavaTypeConsumer<String>, java.util.function.Consumer<String>
+
+// java.util.function.Function implemented by a Java class, whose apply returns String!, and declared again,
+// whose apply K2 takes of the second one, not returning a platform type
+abstract class InheritedJavaFunctionImplementationDiamond :
+    com.xemantic.kotlin.introspection.test.other.JavaSameTypeFunctionImplementation<String>(),
+    java.util.function.Function<String, String>
+
+// given nullable type arguments when declared again, which the apply K2 takes is of
+abstract class InheritedJavaNullableFunctionImplementationDiamond :
+    com.xemantic.kotlin.introspection.test.other.JavaSameTypeFunctionImplementation<String>(),
+    java.util.function.Function<String?, String?>
+
+// java.util.function.Consumer implemented alike, whose accept returns no platform type, so that K2 takes the first one
+abstract class InheritedJavaConsumerImplementationDiamond :
+    com.xemantic.kotlin.introspection.test.other.JavaTypeConsumerImplementation<String>(), java.util.function.Consumer<String>
+
+abstract class InheritedJavaConsumerFirstImplementationDiamond :
+    java.util.function.Consumer<String>, com.xemantic.kotlin.introspection.test.other.JavaTypeConsumerImplementation<String>()
+
+// the get() of the Java class returns String!, more specific than the CharSequence of the Supplier declared again, so that K2 takes it
+abstract class InheritedJavaCovariantSupplierImplementationDiamond :
+    com.xemantic.kotlin.introspection.test.other.JavaStringReturningSupplier(), java.util.function.Supplier<CharSequence>
+
+// java.util.TreeMap inherits the default remove(Object, Object) of java.util.Map, taking platform types
+abstract class InheritedStringTreeMap : java.util.TreeMap<String, String>()
 
 // The bounds of the type parameters of the methods of Java classes, marked by @NullMarked, or annotated not nullable
 abstract class InheritedJavaNullMarkedBounds : com.xemantic.kotlin.introspection.test.other.JavaNullMarkedBounds()

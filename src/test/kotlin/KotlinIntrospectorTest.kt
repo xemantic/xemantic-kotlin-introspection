@@ -5639,6 +5639,53 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve Kotlin member taking platform type of Java member merged with it declared first by superclass`() {
+        // the subclass inherits the member its superclass picks, the accept(String) of the Java class, declared first there
+        resolver.resolve("com.xemantic.kotlin.introspection.test.StringJavaAcceptorJoinSubclass.accept") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.StringJavaAcceptorJoinSubclass.accept [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.StringAcceptor
+            open fun accept(s: String?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member as declared when declared before Java member merged with it`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.StringAcceptorJavaJoin.accept") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.StringAcceptorJavaJoin.accept [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.StringAcceptor
+            open fun accept(s: String)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member as declared when declared before Java member merged with it by superclass`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.StringAcceptorJavaJoinSubclass.accept") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.StringAcceptorJavaJoinSubclass.accept [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.StringAcceptor
+            open fun accept(s: String)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member taking platform type of member of Java interface merged with it declared first`() {
+        // accept(null) compiles, as the compiler picks the accept(String) of the Java interface, declared first
+        resolver.resolve("com.xemantic.kotlin.introspection.test.StringJavaAcceptorInterfaceJoin.accept") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.StringJavaAcceptorInterfaceJoin.accept [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.StringAcceptor
+            fun accept(s: String?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member as declared when declared before member of Java interface merged with it`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.StringAcceptorJavaInterfaceJoin.accept") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.StringAcceptorJavaInterfaceJoin.accept [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.StringAcceptor
+            fun accept(s: String)
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve generic Kotlin member taking types of generic Java member declared first by its own type parameter`() {
         // the T of the take2 of JavaGenericMethodTaker is the T of the one of GenericMethodTaker, numbered after its E:
         // take2(null, null) compiles
@@ -6233,6 +6280,79 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.test.InheritedJavaConsumerDiamond.accept [page 1/1]
             // inherited from java.util.function.Consumer
             fun accept(arg0: String?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve implementation of Java class returning platform type as member of its interface declared again`() {
+        // the apply of the Java class returns String!, so that K2 picks the one of Function<String, String>,
+        // the second direct supertype, which the Java class implements, and apply(null) does not compile
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaFunctionImplementationDiamond.apply"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaFunctionImplementationDiamond.apply [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaSameTypeFunctionImplementation
+            override fun apply(arg0: String): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve implementation of Java class returning platform type as member of its interface declared again of nullable type arguments`() {
+        // K2 picks the apply of Function<String?, String?>, so that it returns String?, not the String! of the Java class
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaNullableFunctionImplementationDiamond.apply"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaNullableFunctionImplementationDiamond.apply [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaSameTypeFunctionImplementation
+            override fun apply(arg0: String?): String?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve implementation of Java class returning no platform type declared before its interface as taking platform type`() {
+        // the accept of the Java class returns Unit, so that K2 picks it, of the first direct supertype, and accept(null) compiles
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaConsumerImplementationDiamond.accept"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaConsumerImplementationDiamond.accept [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypeConsumerImplementation
+            override fun accept(arg0: String?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve implementation of Java class returning no platform type declared after its interface as member of interface`() {
+        // K2 picks the accept of Consumer<String>, the first direct supertype, so that accept(null) does not compile
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaConsumerFirstImplementationDiamond.accept"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaConsumerFirstImplementationDiamond.accept [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypeConsumerImplementation
+            override fun accept(arg0: String)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve implementation of Java class returning more specific platform type as declared next to its interface declared again`() {
+        // K2 picks the get() of the Java class, returning String!, more specific than the CharSequence of Supplier<CharSequence>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaCovariantSupplierImplementationDiamond.get"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaCovariantSupplierImplementationDiamond.get [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaStringReturningSupplier
+            override fun get(): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve JVM-only member of mutable map not overridden by its JDK implementation as taking platform types`() {
+        // java.util.TreeMap does not override the remove(Object, Object) of java.util.Map, so that remove(null, null) compiles,
+        // unlike remove(null), of the remove(key: K) of MutableMap
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedStringTreeMap.remove") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedStringTreeMap.remove [page 1/1]
+            // inherited from kotlin.collections.MutableMap
+            open fun remove(key: String): String?
+            open fun remove(key: String?, value: String?): Boolean
         """.trimIndent()
     }
 
