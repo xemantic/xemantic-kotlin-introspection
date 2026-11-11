@@ -5399,7 +5399,7 @@ internal class DefaultKotlinIntrospector(
                 // first as kotlinc infers the type parameters, from all the types matched, when that is modelled,
                 // and only when it is not, also for a supertype matched, as each of them is inferred while matching
                 val isModelled = isCallInferenceModelled(receiver, typeParameters, inferredOtherwise) &&
-                    reached.none { it.refersToFunctionType() }
+                    reached.none { it.refersToFunctionType() || it.refersToNothingClass() }
                 var isNotModelled = !isModelled
                 val isInferredByCall = isModelled && matches(isCollecting = true) {
                     isInferredByCall(referred) ?: false.also { isNotModelled = true }
@@ -5425,7 +5425,8 @@ internal class DefaultKotlinIntrospector(
      * see [ReceiverMatcher.CallInference], as far as the extension tells: when a bound refers to a type parameter,
      * like `B : A`, or `T : Comparable<T>`, as they are told one by one without it, when neither the receiver, nor a bound,
      * refers to a function type, which is matched leniently against a class which is none, like one of a supertype
-     * of the class matched, and when no type parameter is told by the context, or value, parameters, the [inferredOtherwise] ones.
+     * of the class matched, which neither refers to `Nothing`, or `Nothing?`, anywhere, inferred by kotlinc
+     * in a way which is not modelled, and when no type parameter is told by the context, or value, parameters, the [inferredOtherwise] ones.
      */
     private fun isCallInferenceModelled(
         receiver: KmType,
@@ -5438,6 +5439,10 @@ internal class DefaultKotlinIntrospector(
             !receiver.refersToFunctionType() && bounds.none { it.refersToFunctionType() } &&
             ids.none { it in inferredOtherwise.value }
     }
+
+    // whether this type, or a type argument of it, is Nothing, or Nothing?
+    private fun KmType.refersToNothingClass(): Boolean =
+        (classifier as? KmClassifier.Class)?.name == NOTHING_CLASS_NAME || arguments.any { it.type?.refersToNothingClass() == true }
 
     // whether this type, or a type argument of it, is a function type, like (String) -> Unit, or kotlin.Function
     private fun KmType.refersToFunctionType(): Boolean =
@@ -6795,14 +6800,8 @@ internal class DefaultKotlinIntrospector(
                     }
                 }
                 position = InferencePosition.RECEIVER
-                // Nothing, or Nothing?, next to type parameters bounded by each other through type arguments,
-                // like T : List<U>, is inferred by kotlinc in a way which is not modelled
-                val isBoundedThroughArguments = typeParameters.values.any { typeParameter ->
-                    typeParameter.id in inferable && typeParameter.upperBounds.any { bound ->
-                        bound.arguments.isNotEmpty() && !bound.refersOnlyTo { it == typeParameter.id || it !in typeParameters }
-                    }
-                }
-                if (isBoundedThroughArguments && constrainedBy.any { (_, type, _) -> type.isNothingClass }) throw InferenceNotModelled
+                // Nothing, or Nothing?, is inferred by kotlinc in a way which is not modelled, see isCallableOn
+                if (constrainedBy.any { (_, type, _) -> type.refersToNothingClass() }) throw InferenceNotModelled
                 constrainedBy.forEach { (id, type, variance) ->
                     if (!type.isModelled() || !type.refersToNoTypeParameter() || type.refersToFunctionType()) throw InferenceNotModelled
                     val kind = when (variance) {
@@ -7176,7 +7175,9 @@ internal class DefaultKotlinIntrospector(
                 if (name == NOTHING_CLASS_NAME || supertypeName == ANY_CLASS_NAME) return true
                 if (name != supertypeName && !supertypes.isSubclass(name, supertypeName)) return false
                 val reached = if (name == supertypeName) subtype else {
-                    supertypes.supertypesOf(subtype, supertypeName)?.singleOrNull() ?: throw InferenceNotModelled
+                    // also a supertype of Nothing type arguments, like Co<Nothing> of interface NCo : Co<Nothing>, is not modelled
+                    supertypes.supertypesOf(subtype, supertypeName)?.singleOrNull()?.takeIf { !it.refersToNothingClass() }
+                        ?: throw InferenceNotModelled
                 }
                 val variances = declaredVariances(supertypeName)?.takeIf { it.size == supertype.arguments.size && it.size == reached.arguments.size }
                     ?: throw InferenceNotModelled
@@ -7230,7 +7231,8 @@ internal class DefaultKotlinIntrospector(
                 val variances = declaredVariances(supertypeName) ?: throw InferenceNotModelled
                 val reached = candidates.map { candidate ->
                     if ((candidate.classifier as KmClassifier.Class).name == supertypeName) candidate else {
-                        supertypes.supertypesOf(candidate, supertypeName)?.singleOrNull() ?: throw InferenceNotModelled
+                        supertypes.supertypesOf(candidate, supertypeName)?.singleOrNull()?.takeIf { !it.refersToNothingClass() }
+                            ?: throw InferenceNotModelled
                     }
                 }
                 val isCovariant = variances.all { it == KmVariance.OUT } && reached.all { type ->

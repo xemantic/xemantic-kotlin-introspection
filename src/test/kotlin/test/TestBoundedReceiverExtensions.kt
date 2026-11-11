@@ -1403,3 +1403,19 @@ class InferredReceiverAnyNullableNothingBiSink : InferredReceiverBiSink<Any, Not
 class InferredReceiverNothingStringBiSink : InferredReceiverBiSink<Nothing, String>
 
 class InferredReceiverAnyStringBiSink : InferredReceiverBiSink<Any, String>
+
+// Nothing, or Nothing?, anywhere in the types matched, like in a type argument, or in a supertype of one,
+// is inferred by kotlinc in a way which is not modelled, the type parameters inferred one by one then
+class InferredReceiverNullableNothingListsBiSink : InferredReceiverBiSink<List<Nothing?>, List<Nothing?>>
+
+interface InferredReceiverNothingSource : InferredReceiverSource<Nothing>
+
+fun <T : InferredReceiverSource<U>, U : InferredReceiverSource<T>> InferredReceiverBiSink<T, U>.biSinkMutualSources() {}
+
+class InferredReceiverNothingSourcesBiSink : InferredReceiverBiSink<InferredReceiverNothingSource, InferredReceiverNothingSource>
+
+interface InferredReceiverTriple<out A, in B, in C>
+
+fun <T, U : T> InferredReceiverTriple<T, U, U>.tripleUnder() {}
+
+class InferredReceiverNullableNothingTriple : InferredReceiverTriple<Nothing?, CharSequence, Comparable<String>>

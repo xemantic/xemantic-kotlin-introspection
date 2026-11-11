@@ -11567,6 +11567,41 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve class with extension on mutually bounded type parameters for nullable Nothing type arguments`() {
+        // which kotlinc accepts without a warning
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InferredReceiverNullableNothingListsBiSink"
+        ) should {
+            have("fun <T : List<U>, U : List<T>> InferredReceiverBiSink<T, U>.biSinkMutualLists()" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve class with extension on type parameter under covariant one for nullable Nothing`() {
+        // which kotlinc accepts without a warning
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InferredReceiverNullableNothingTriple"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InferredReceiverNullableNothingTriple [page 1/1]
+            class InferredReceiverNullableNothingTriple : InferredReceiverTriple<Nothing?, CharSequence, Comparable<String>>
+            // from com.xemantic.kotlin.introspection.test
+            fun <T, U : T> InferredReceiverTriple<T, U, U>.tripleUnder()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extension on mutually bounded type parameters for supertype of Nothing type argument`() {
+        // InferredReceiverNothingSource is an InferredReceiverSource<Nothing>, which kotlinc accepts without a warning
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InferredReceiverNothingSourcesBiSink"
+        ) should {
+            have(
+                "fun <T : InferredReceiverSource<U>, U : InferredReceiverSource<T>> InferredReceiverBiSink<T, U>.biSinkMutualSources()" in lines()
+            )
+        }
+    }
+
+    @Test
     fun `should resolve class without extension on type parameter constrained only by Nothing`() {
         // Nothing is a List<T>, and a List<E>, of any T, and E, which kotlinc cannot infer then,
         // also not when the return type refers to it, like of produceFirst returning T?, as x.produceFirst() fails,
