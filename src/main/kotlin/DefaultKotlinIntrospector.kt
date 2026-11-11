@@ -6504,8 +6504,10 @@ internal class DefaultKotlinIntrospector(
                             // a platform type, like String!, is either String, or String?, as the type parameter can be
                             actual.flexibleTypeUpperBound != null -> infer(classifier.id, actual, variance, isStrict)
                             // and a not nullable one, like String, is T & Any of T of String, or of String?,
-                            // a supertype of String, and a subtype of String?
-                            else -> (variance == KmVariance.IN || infer(classifier.id, actual, KmVariance.OUT, isStrict)) &&
+                            // a supertype of String, and a subtype of String?, satisfying the bounds as String itself
+                            // in an invariant position, where no supertype of it can be inferred instead
+                            else -> (variance != KmVariance.INVARIANT || satisfiesBounds(classifier.id, actual, variance, isStrict)) &&
+                                (variance == KmVariance.IN || infer(classifier.id, actual, KmVariance.OUT, isStrict)) &&
                                 (variance == KmVariance.OUT ||
                                     infer(classifier.id, actual.copy().also { it.isNullable = true }, KmVariance.IN, isStrict))
                         }

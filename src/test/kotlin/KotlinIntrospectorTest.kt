@@ -10932,6 +10932,29 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve class without extension on definitely not nullable type parameter of invariant position not satisfying its bound`() {
+        // T is List<PlatformSelfSubList>, no List<List<PlatformSelfSubList>>, and no supertype of it in an invariant position
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.PlatformSelfSubListsBox"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PlatformSelfSubListsBox [page 1/1]
+            class PlatformSelfSubListsBox : PlatformSelfBox<List<PlatformSelfSubList>>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extension on definitely not nullable type parameter of invariant position satisfying its bound`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.PlatformSelfListBox"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PlatformSelfListBox [page 1/1]
+            class PlatformSelfListBox : PlatformSelfBox<PlatformSelfList>
+            // from com.xemantic.kotlin.introspection.test
+            fun <T : List<T>?> PlatformSelfBox<T & Any>.selfListOfNotNull()
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve class comparable through raw Java supertype without extensions on comparable of its package`() {
         // the Comparable of the raw JavaGenericComparable, told only by its name, is comparable to the raw type,
         // so that kotlinc accepts none of the extensions on Comparable of the package, like Comparable<BoundedReceiverMoney>,

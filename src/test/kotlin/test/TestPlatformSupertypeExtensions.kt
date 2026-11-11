@@ -60,3 +60,19 @@ class PlatformNotNullParameterBox<V> : PlatformBox<V & Any>
 fun PlatformBox<String?>.boxOfNullableString() {}
 
 fun PlatformBox<String>.boxOfString() {}
+
+// a type parameter used as definitely not nullable in an invariant position is the type itself, nullable or not,
+// satisfying its bounds as such, like not List<PlatformSelfSubList>, no List<List<PlatformSelfSubList>>,
+// while no supertype of it can be inferred instead, unlike in a covariant position
+
+interface PlatformSelfBox<T>
+
+interface PlatformSelfList : List<PlatformSelfList>
+
+interface PlatformSelfSubList : PlatformSelfList
+
+fun <T : List<T>?> PlatformSelfBox<T & Any>.selfListOfNotNull() {}
+
+class PlatformSelfSubListsBox : PlatformSelfBox<List<PlatformSelfSubList>>
+
+class PlatformSelfListBox : PlatformSelfBox<PlatformSelfList>
