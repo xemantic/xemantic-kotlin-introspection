@@ -7973,86 +7973,47 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should resolve parameter of type variable of Java method bounded by Comparable of itself as given`() {
-        // rec<String>(null) does not compile
+    fun `should resolve parameter of type variable of Java method bounded by Comparable of itself as platform type`() {
+        // the compiler rejects rec<String>(null), but accepts rec<BigDecimal>(null): the verdict depends on the type argument,
+        // whether its own supertype names it as a platform type, like the Comparable<BigDecimal!> of a Java class,
+        // so that the signature stays the one never rejecting a call the compiler accepts
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariables.rec"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariables.rec [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypeVariables
-            open fun <T : Comparable<T>?> rec(arg0: T)
+            open fun <T : Comparable<T>?> rec(arg0: T?)
         """.trimIndent()
     }
 
     @Test
-    fun `should resolve parameters of type variable of Java method bounded by Comparable of its supertypes as given`() {
+    fun `should resolve parameters of type variable of Java method bounded by Comparable of its supertypes as platform types`() {
+        // like rec, the verdict of the compiler on max<String>("", null) depends on the type argument
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariables.max"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariables.max [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypeVariables
-            open fun <T : Comparable<in T>?> max(arg0: T, arg1: T): T
+            open fun <T : Comparable<in T>?> max(arg0: T?, arg1: T?): T
         """.trimIndent()
     }
 
     @Test
-    fun `should resolve parameter of type variable of Java method bounded by type variable bounded by Comparable of itself as given`() {
+    fun `should resolve Java method of type parameter taken as given next to declared overload of another bound`() {
+        // the declared sort, of the same signature as rendered, does not override the one of JavaNotNullSortBase
         resolver.resolve(
-            "com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariables.via"
+            "com.xemantic.kotlin.introspection.test.NotNullCharSequenceSorter.sort"
         ) sameAsKotlin """
-            // com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariables.via [page 1/1]
-            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypeVariables
-            open fun <T : Comparable<T>?, U : T?> via(arg0: U)
-        """.trimIndent()
-    }
-
-    @Test
-    fun `should resolve vararg elements of type variable of Java method bounded by Comparable of itself as given`() {
-        resolver.resolve(
-            "com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariables.all"
-        ) sameAsKotlin """
-            // com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariables.all [page 1/1]
-            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypeVariables
-            fun <T : Comparable<T>?> all(vararg arg0: T)
-        """.trimIndent()
-    }
-
-    @Test
-    fun `should resolve parameter annotated nullable of type variable of Java method bounded by Comparable of itself as nullable`() {
-        resolver.resolve(
-            "com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariables.annotated"
-        ) sameAsKotlin """
-            // com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariables.annotated [page 1/1]
-            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypeVariables
-            open fun <T : Comparable<T>?> annotated(arg0: T?)
-        """.trimIndent()
-    }
-
-    @Test
-    fun `should resolve parameter of type variable of Java method given for Comparable bounding another one as given`() {
-        // unlike the one of the type variable it bounds, a platform type
-        resolver.resolve(
-            "com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariables.other"
-        ) sameAsKotlin """
-            // com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariables.other [page 1/1]
-            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypeVariables
-            open fun <T, U : Comparable<T>?> other(arg0: T, arg1: U?)
-        """.trimIndent()
-    }
-
-    @Test
-    fun `should resolve parameter of type variable of Java method bounded by function type taking itself as given`() {
-        resolver.resolve(
-            "com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariables.function"
-        ) sameAsKotlin """
-            // com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariables.function [page 1/1]
-            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypeVariables
-            open fun <T : ((T) -> Unit)?> function(arg0: T)
+            // com.xemantic.kotlin.introspection.test.NotNullCharSequenceSorter.sort [page 1/1]
+            fun <T : CharSequence> sort(x: T)
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNotNullSortBase
+            fun <T : Comparable<T>> sort(arg0: T)
         """.trimIndent()
     }
 
     @Test
     fun `should resolve parameter of type variable of Java method of bound annotated nullable as given`() {
+        // nullableBound<String>(null) does not compile, whoever declares the type argument
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariables.nullableBound"
         ) sameAsKotlin """
@@ -8070,50 +8031,6 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariables.bounded [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypeVariables
             open fun <T : CharSequence?> bounded(arg0: T?)
-        """.trimIndent()
-    }
-
-    @Test
-    fun `should resolve parameter of type variable of Java method nested in type argument of Comparable bounding it as platform type`() {
-        resolver.resolve(
-            "com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariables.nested"
-        ) sameAsKotlin """
-            // com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariables.nested [page 1/1]
-            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypeVariables
-            open fun <T : Comparable<List<T>>?> nested(arg0: T?)
-        """.trimIndent()
-    }
-
-    @Test
-    fun `should resolve parameter of type variable of Java method bounded by Java interface of its supertypes as platform type`() {
-        resolver.resolve(
-            "com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariables.consumer"
-        ) sameAsKotlin """
-            // com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariables.consumer [page 1/1]
-            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypeVariables
-            open fun <T : java.util.function.Consumer<in T>?> consumer(arg0: T?)
-        """.trimIndent()
-    }
-
-    @Test
-    fun `should resolve parameter of type variable of Java method bounded by Enum of itself as platform type`() {
-        resolver.resolve(
-            "com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariables.enumerated"
-        ) sameAsKotlin """
-            // com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariables.enumerated [page 1/1]
-            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypeVariables
-            open fun <T : Enum<T>?> enumerated(arg0: T?)
-        """.trimIndent()
-    }
-
-    @Test
-    fun `should resolve parameter of type variable bounded by Comparable of itself of Kotlin member joined with Java method as given`() {
-        resolver.resolve(
-            "com.xemantic.kotlin.introspection.test.JavaTypeVariablesRecJoin.rec"
-        ) sameAsKotlin """
-            // com.xemantic.kotlin.introspection.test.JavaTypeVariablesRecJoin.rec [page 1/1]
-            // inherited from com.xemantic.kotlin.introspection.test.KotlinRec
-            open fun <T : Comparable<T>> rec(value: T)
         """.trimIndent()
     }
 
@@ -8171,52 +8088,6 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.test.InheritedJavaRawThroughKotlin.pick [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.KotlinRawThroughBase
             fun <U> pick(value: Any?, other: Any?): Any?
-        """.trimIndent()
-    }
-
-    @Test
-    fun `should resolve parameter of type variable of Java method nested in Comparable of Comparable bounding it as platform type`() {
-        // covariant again, so that twice<C>(null) compiles
-        resolver.resolve(
-            "com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariables.twice"
-        ) sameAsKotlin """
-            // com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariables.twice [page 1/1]
-            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypeVariables
-            open fun <T : Comparable<Comparable<T>>?> twice(arg0: T?)
-        """.trimIndent()
-    }
-
-    @Test
-    fun `should resolve parameter of type variable of Java method given for Comparable nested in Java collection bounding it as platform type`() {
-        // the type argument of java.util.List is an invariant position
-        resolver.resolve(
-            "com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariables.listed"
-        ) sameAsKotlin """
-            // com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariables.listed [page 1/1]
-            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypeVariables
-            open fun <T : List<Comparable<T>>?> listed(arg0: T?)
-        """.trimIndent()
-    }
-
-    @Test
-    fun `should resolve parameter of type variable of Java method nested in two contravariant type arguments as platform type`() {
-        resolver.resolve(
-            "com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariables.sinkOfSink"
-        ) sameAsKotlin """
-            // com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariables.sinkOfSink [page 1/1]
-            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypeVariables
-            open fun <T : KotlinSink<KotlinSink<T>>?> sinkOfSink(arg0: T?)
-        """.trimIndent()
-    }
-
-    @Test
-    fun `should resolve parameter of type variable of Java method given for covariant type parameter nested in contravariant one as given`() {
-        resolver.resolve(
-            "com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariables.sinkOfSource"
-        ) sameAsKotlin """
-            // com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariables.sinkOfSource [page 1/1]
-            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypeVariables
-            open fun <T : KotlinSink<KotlinSource<T>>?> sinkOfSource(arg0: T)
         """.trimIndent()
     }
 

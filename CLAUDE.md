@@ -121,7 +121,9 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   A probe of it: `val r: Marker = x::bar` names the function type with its platform types, like `KFunction1<String!, Unit>`.
 
 - kotlinc rejects `rec<String>(null)` of a Java `<T extends Comparable<T>> void rec(T t)` with `actual type is 'Nothing?', but 'String!' was expected`,
-  though the message names a platform type; `<T extends Enum<T>>`, or `<T extends Comparable<List<T>>>`, accept it — see `givenTypeVariableNames`.
+  though the message names a platform type, but accepts `rec<BigDecimal>(null)`, or a Java `JCS implements Comparable<JCS>`:
+  the verdict depends on who declares the type argument, not on the bound, so probe such a shape with Java-declared type arguments too —
+  see `givenTypeVariableNames`.
 
 - Kotlin never passes named arguments to a Java method, even one compiled with `-parameters`, so a Java method taking parameters never shadows an extension — see `isShadowingJavaMethod`.
 

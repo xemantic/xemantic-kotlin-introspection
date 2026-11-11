@@ -1110,8 +1110,8 @@ private fun KParameter.toKmValueParameter(
         val classifier = type.classifier
         val isClassTypeParameter = classifier is KTypeParameter && classifier !in ownTypeParameters &&
             isNotNullClassTypeParameter.value
-        // or of a type parameter of the Java method itself, which the compiler takes as given, like the T of
-        // `<T extends Comparable<T>> void sort(T value)`, so that `sort<String>(null)` does not compile
+        // or of a type parameter of the Java method itself, which the compiler takes as given, like the U of
+        // `<U extends @NonNull Object> void id(U value)`, so that `id<String>(null)` does not compile
         fun KType.isGivenTypeVariable(): Boolean = (this.classifier as? KTypeParameter)
             ?.let { it in ownTypeParameters && it.name in givenTypeVariables.value } == true
         val type = type.toKmType(scope, platformAsNullable = !isVararg && !isClassTypeParameter && !type.isGivenTypeVariable())
@@ -1368,72 +1368,22 @@ internal fun isNotNullClassTypeParameter(method: Method, position: Int, isConver
 
 /**
  * The names of the type parameters of the Java [method] which the compiler takes as given where a value parameter is of one,
- * unlike a platform type, like `T!`, accepting `null` whatever the type argument, so that `sort<String>(null)` does not compile:
- * - the ones of a bound told nullable, or not, by an annotation, like `<U extends @NonNull Object>`,
- *   or all of them, when the class of the method is marked by `@NullMarked`, see [enhanceJavaBounds],
- *   whatever the mark of the method itself,
- * - the ones in a contravariant position of a bound of any of them, by the variances the type parameters are declared of,
- *   multiplied along the type arguments leading to it, see [declaredVariances], also as the bound of a wildcard,
- *   like the `T` of `<T extends Comparable<T>>`, or of `<T extends Comparable<? super T>>`, `Comparable<in T>` in Kotlin,
- *   which the compiler never infers nullable, or the one of `Sink<Src<T>>` of a Kotlin `Sink<in T>`, and `Src<out T>`,
- *   unlike the `T` of `<T extends Comparable<Comparable<T>>>`, covariant again, or the one of an invariant position,
- *   like of `<T extends Comparable<List<T>>>`, of `<T extends List<Comparable<T>>>`, or of a `Consumer<? super T>` of Java,
- * - and the ones bounded by one of these, like the `U` of `<T extends Comparable<T>, U extends T>`.
+ * unlike a platform type, like `U!`, accepting `null` whatever the type argument, so that `id<String>(null)` does not compile:
+ * the ones of a bound told nullable, or not, by an annotation, like `<U extends @NonNull Object>`,
+ * or all of them, when the class of the method is marked by `@NullMarked`, see [enhanceJavaBounds],
+ * whatever the mark of the method itself, whoever declares the type argument.
+ * A type parameter in a contravariant position of its bound, like the `T` of `<T extends Comparable<T>>`, stays a platform type,
+ * though the compiler rejects `sort<String>(null)`, as it accepts `null` for a type argument declared by Java,
+ * like `sort<BigDecimal>(null)`, whose own supertype names it as a platform type, which no signature tells.
  */
 private fun givenTypeVariableNames(method: Method): Set<String> {
     val typeParameters = method.typeParameters
-    if (typeParameters.isEmpty()) return emptySet()
-    val given = HashSet<TypeVariable<*>>()
     val declaring = method.declaringClass
-    if (!declaring.isJdkClass && !declaring.isKotlinClass) {
-        if (nullMarking(declaring) == true) return typeParameters.mapTo(HashSet()) { it.name }
-        val annotated = javaNullabilities.get(declaring).methods[method.name + AsmType.getMethodDescriptor(method)]?.nullability?.bounds
-        typeParameters.forEachIndexed { index, typeParameter -> if (!annotated?.get(index).isNullOrEmpty()) given += typeParameter }
-    }
-    // the variance of the position of the type: 1 of a covariant one, -1 of a contravariant one, 0 of an invariant one
-    fun visit(type: Type, variance: Int) {
-        when (type) {
-            is TypeVariable<*> -> if (variance < 0 && type.genericDeclaration == method) given += type
-            is ParameterizedType -> {
-                val variances = declaredVariances(type.rawType as? Class<*>)
-                type.actualTypeArguments.forEachIndexed { index, argument ->
-                    val declared = variances.getOrNull(index) ?: KVariance.INVARIANT
-                    if (argument is WildcardType) {
-                        // a wildcard against the declared variance is a star projection
-                        if (declared != KVariance.OUT) argument.lowerBounds.forEach { visit(it, variance * declared.sign) }
-                        if (declared == KVariance.OUT) argument.upperBounds.forEach { visit(it, variance) }
-                    } else {
-                        visit(argument, variance * declared.sign)
-                    }
-                }
-            }
-        }
-    }
-    typeParameters.forEach { typeParameter -> typeParameter.bounds.forEach { visit(it, variance = 1) } }
-    while (true) {
-        val bounded = typeParameters.filter { typeParameter -> typeParameter !in given && typeParameter.bounds.any { it in given } }
-        if (bounded.isEmpty()) break
-        given += bounded
-    }
-    return given.mapTo(HashSet()) { it.name }
+    if (typeParameters.isEmpty() || declaring.isJdkClass || declaring.isKotlinClass) return emptySet()
+    if (nullMarking(declaring) == true) return typeParameters.mapTo(HashSet()) { it.name }
+    val annotated = javaNullabilities.get(declaring).methods[method.name + AsmType.getMethodDescriptor(method)]?.nullability?.bounds
+    return typeParameters.indices.filter { !annotated?.get(it).isNullOrEmpty() }.mapTo(HashSet()) { typeParameters[it].name }
 }
-
-/**
- * The variances the type parameters of the [type] are declared of in Kotlin, see [givenTypeVariableNames],
- * like `in` of `java.lang.Comparable`, seen as `Comparable<in T>`, or of a Kotlin `Sink<in T>`,
- * all invariant of a Java class, and of a Java collection, like `java.util.List`, seen as flexible from `MutableList<E>` to `List<out E>`.
- */
-private fun declaredVariances(type: Class<*>?): List<KVariance> = reflectedValue(default = emptyList()) {
-    val kClass = type?.kotlin ?: return@reflectedValue emptyList()
-    if (kClass.qualifiedName?.startsWith("kotlin.collections.") == true) emptyList() else kClass.typeParameters.map { it.variance }
-}
-
-private val KVariance.sign: Int
-    get() = when (this) {
-        KVariance.IN -> -1
-        KVariance.OUT -> 1
-        KVariance.INVARIANT -> 0
-    }
 
 /**
  * Marks the return type of the [function], converted from this one, nullable, when K2 enhances it so,

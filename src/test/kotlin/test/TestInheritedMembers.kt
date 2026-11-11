@@ -1178,14 +1178,13 @@ abstract class InheritedJavaNullableFirstBar : com.xemantic.kotlin.introspection
 abstract class KotlinBarJoin :
     com.xemantic.kotlin.introspection.test.other.JavaBarBase(), com.xemantic.kotlin.introspection.test.other.JavaNotNullBar
 
-// The generic methods of a Java class taking their type variables, also joined with a Kotlin member of the same signature
+// The generic methods of a Java class taking their type variables
 abstract class InheritedJavaTypeVariables : com.xemantic.kotlin.introspection.test.other.JavaTypeVariables()
 
-interface KotlinRec {
-    fun <T : Comparable<T>> rec(value: T)
+// An overload of the sort(T) of a Java superclass, of the same signature as rendered, but of another bound of its type parameter
+class NotNullCharSequenceSorter : com.xemantic.kotlin.introspection.test.other.JavaNotNullSortBase() {
+    fun <T : CharSequence> sort(x: T) {}
 }
-
-abstract class JavaTypeVariablesRecJoin : com.xemantic.kotlin.introspection.test.other.JavaTypeVariables(), KotlinRec
 
 // A property of another type than the getter of the Java superclass named like its synthetic property, unrelated to it
 class KotlinIntTitle : com.xemantic.kotlin.introspection.test.other.JavaTitled() {
@@ -1197,11 +1196,6 @@ abstract class InheritedJavaDollarNames : com.xemantic.kotlin.introspection.test
 
 // A Java class extending the Kotlin class joining bar(String) with bar(@NotNull String), see KotlinBarJoin
 abstract class InheritedJavaBarKotlinJoinBottom : com.xemantic.kotlin.introspection.test.other.JavaBarKotlinJoinBottom()
-
-// The type parameters the bounds of the type variables of JavaTypeVariables are given for
-interface KotlinSink<in T>
-
-interface KotlinSource<out T>
 
 // A property of a subtype of the type the getter of the Java superclass named like its synthetic property returns, unrelated to it
 class KotlinStringSubject : com.xemantic.kotlin.introspection.test.other.JavaTitled() {

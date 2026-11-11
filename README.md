@@ -192,9 +192,10 @@ com.example.AnnotationTestClass
   unless the class giving it, or the supertype, of a type parameter of a bound which is not nullable, is marked by `@NullMarked`,
   like `take(arg0: String)`, or the type argument is annotated, like the `String?` of the `get(): T` of a `Base<@Nullable String>`.
   A parameter of a type parameter of the Java method itself is nullable too, like `fun <T : CharSequence?> take(arg0: T?)`,
-  unless the compiler takes the type parameter as given, so that `sort<String>(null)` does not compile:
-  one of an annotated bound, or of a class marked by `@NullMarked`,
-  or one bounded by a `Comparable`, or a function type, of itself, like `fun <T : Comparable<T>?> sort(arg0: T)`.
+  unless the compiler takes the type parameter as given, whatever the type argument, so that `id<String>(null)` does not compile:
+  one of an annotated bound, like `fun <U : Any> id(arg0: U): U` of `<U extends @NotNull Object>`, or of a class marked by `@NullMarked`.
+  One bounded by a `Comparable` of itself stays nullable, like `fun <T : Comparable<T>?> sort(arg0: T?)`,
+  though `sort<String>(null)` does not compile, as `null` is accepted for a type argument declared by Java, like `sort<BigDecimal>(null)`.
   A method named with `$`, like `get$x()`, is rendered in backticks, like `` fun `get$x`(): String ``.
   The synthetic property which Kotlin reads a Java getter as is not listed as a member of its own,
   as Kotlin does not let it be referenced, like `Thread::name`, and it would repeat every getter,
