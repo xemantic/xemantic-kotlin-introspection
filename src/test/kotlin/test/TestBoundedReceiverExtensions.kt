@@ -1368,3 +1368,38 @@ class InferredReceiverStarCell : InferredReceiverCell<MutableList<*>>
 class InferredReceiverInNothingCell : InferredReceiverCell<MutableList<in Nothing>>
 
 class InferredReceiverOutAnyCell : InferredReceiverCell<MutableList<out Any?>>
+
+// where the inference of kotlinc is not modelled, the type parameters are inferred one by one while matching, see #292:
+// a function type matched against a class which is none is no receiver for kotlinc, whatever the bounds infer
+interface InferredReceiverMixed<out A, in B>
+
+fun <T : Comparable<T>, U : T> InferredReceiverMixed<T, (T) -> U>.mixedFunction() {}
+
+class InferredReceiverStringStringMixed : InferredReceiverMixed<String, String>
+
+// nor is Nothing next to a function type the same type in invariant positions
+interface InferredReceiverPair<A, B>
+
+fun <A, B : (A) -> Unit> InferredReceiverPair<B, B>.pairOfFunction() {}
+
+class InferredReceiverNothingFunctionPair : InferredReceiverPair<Nothing, (String) -> Unit>
+
+// a type parameter given explicitly, like W, makes the violated bound of another one an error,
+// also next to one inferred as an empty intersection, where it is only a warning when all of them are inferred
+fun <V : T, W, T : List<V>> InferredReceiverSink<T>.sinkListExplicit() {}
+
+// type parameters bounded by each other through type arguments, next to Nothing, or Nothing?,
+// which kotlinc accepts, also with a warning of an empty intersection, like of the final String and Map
+interface InferredReceiverBiSink<in A, in B>
+
+fun <T : List<U>, U : List<T>> InferredReceiverBiSink<T, U>.biSinkMutualLists() {}
+
+fun <T : Map<U, T>, U : T> InferredReceiverBiSink<U, T>.biSinkMap() {}
+
+fun <A : Comparable<A>, B : (A) -> A> InferredReceiverBiSink<A, B>.biSinkFunction() {}
+
+class InferredReceiverAnyNullableNothingBiSink : InferredReceiverBiSink<Any, Nothing?>
+
+class InferredReceiverNothingStringBiSink : InferredReceiverBiSink<Nothing, String>
+
+class InferredReceiverAnyStringBiSink : InferredReceiverBiSink<Any, String>

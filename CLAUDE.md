@@ -111,9 +111,8 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   so `x.ext()` compiles with `A` inferred as `Any` for `A : Comparable<A>`.
   A probe compiled with `-nowarn` does not tell the two apart.
 
-- A type parameter neither the receiver nor the value parameters refer to is still inferred by kotlinc, when its bound refers to one which is,
-  like `C` of `<A, B : A, C : A> Sink<A, B>`, fixed after `A`, and it takes part in the order of fixing the other ones —
-  only one whose bounds refer to none of them, like `<reified T>`, has to be given explicitly.
+- With a type argument given explicitly, like `x.ext<_, Nothing, _>()`, kotlinc reports the violated bound of an inferred type parameter
+  as an error also next to an empty intersection, unlike when all of them are inferred, see `CallInference`.
 
 - Kotlin never passes named arguments to a Java method, even one compiled with `-parameters`, so a Java method taking parameters never shadows an extension — see `isShadowingJavaMethod`.
 

@@ -11505,6 +11505,68 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve class without extension on function type of bounded type parameters for class which is no function type`() {
+        // String is no (T) -> U, a receiver type mismatch for kotlinc, although the bounds would infer U
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InferredReceiverStringStringMixed"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InferredReceiverStringStringMixed [page 1/1]
+            class InferredReceiverStringStringMixed : InferredReceiverMixed<String, String>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extension on type parameter of invariant positions for Nothing and function type`() {
+        // B cannot be both Nothing, and (String) -> Unit
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InferredReceiverNothingFunctionPair"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InferredReceiverNothingFunctionPair [page 1/1]
+            class InferredReceiverNothingFunctionPair : InferredReceiverPair<Nothing, (String) -> Unit>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extension of violated bound next to type parameter given explicitly`() {
+        // W is given explicitly, which makes String, no List<V>, an error, unlike when all the type parameters are inferred
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InferredReceiverStringSink"
+        ) should {
+            have("fun <V : T, W, T : List<V>> InferredReceiverSink<T>.sinkListExplicit()" !in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve class with extension on mutually bounded type parameters for nullable Nothing`() {
+        // which kotlinc accepts without a warning
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InferredReceiverAnyNullableNothingBiSink"
+        ) should {
+            have("fun <T : List<U>, U : List<T>> InferredReceiverBiSink<T, U>.biSinkMutualLists()" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve class with extension on type parameters bounded through type arguments for Nothing`() {
+        // which kotlinc accepts, warning that String, a final class, and Map are possibly incompatible
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InferredReceiverNothingStringBiSink"
+        ) should {
+            have("fun <T : Map<U, T>, U : T> InferredReceiverBiSink<U, T>.biSinkMap()" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve class with extension on type parameter bounded by function type for final class`() {
+        // which kotlinc accepts, warning that String, a final class, and (A) -> A are possibly incompatible
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InferredReceiverAnyStringBiSink"
+        ) should {
+            have("fun <A : Comparable<A>, B : (A) -> A> InferredReceiverBiSink<A, B>.biSinkFunction()" in lines())
+        }
+    }
+
+    @Test
     fun `should resolve class without extension on type parameter constrained only by Nothing`() {
         // Nothing is a List<T>, and a List<E>, of any T, and E, which kotlinc cannot infer then,
         // also not when the return type refers to it, like of produceFirst returning T?, as x.produceFirst() fails,
