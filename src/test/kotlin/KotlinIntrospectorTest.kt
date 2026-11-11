@@ -5902,6 +5902,34 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve Kotlin member as declared when Java interface joins it with member of Java interface declared first`() {
+        // the Java interface inherits the types of the Kotlin member, so that accept(null) does not compile
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaJoinedStringAcceptorInterface.accept") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaJoinedStringAcceptorInterface.accept [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.StringAcceptor
+            fun accept(s: String)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member as declared when Java class joins it with member of its Java superclass`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaJoinedStringAcceptor.accept") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaJoinedStringAcceptor.accept [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.StringAcceptor
+            open fun accept(s: String)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member as declared when Java class joins it with member of its Java superclass by superclass`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaJoinedStringAcceptorSubclass.accept") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaJoinedStringAcceptorSubclass.accept [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.StringAcceptor
+            open fun accept(s: String)
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve Kotlin member as declared when declared before member of Java interface merged with it`() {
         resolver.resolve("com.xemantic.kotlin.introspection.test.StringAcceptorJavaInterfaceJoin.accept") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.StringAcceptorJavaInterfaceJoin.accept [page 1/1]
@@ -6528,6 +6556,30 @@ class KotlinIntrospectorTest {
             "com.xemantic.kotlin.introspection.test.InheritedJavaNullableFunctionImplementationDiamond.apply"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.InheritedJavaNullableFunctionImplementationDiamond.apply [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaSameTypeFunctionImplementation
+            override fun apply(arg0: String?): String?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve implementation of Java class as member of its interface declared again by Kotlin interface of nullable type arguments`() {
+        // K2 picks the apply of Function<String?, String?>, as the Kotlin interface gives it, not the Function<String!, String!>
+        // of the Java class, walked first, so that apply(null) compiles, and returns String?
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaFunctionImplementationNullableInterfaceJoin.apply"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaFunctionImplementationNullableInterfaceJoin.apply [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaSameTypeFunctionImplementation
+            override fun apply(arg0: String?): String?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve implementation of Java class as member of its interface declared again by generic Kotlin interface of nullable type argument`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaFunctionImplementationGenericInterfaceJoin.apply"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaFunctionImplementationGenericInterfaceJoin.apply [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.other.JavaSameTypeFunctionImplementation
             override fun apply(arg0: String?): String?
         """.trimIndent()

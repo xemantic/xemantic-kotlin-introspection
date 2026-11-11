@@ -508,6 +508,15 @@ abstract class StringJavaAcceptorInterfaceJoin :
 abstract class StringAcceptorJavaInterfaceJoin :
     StringAcceptor, com.xemantic.kotlin.introspection.test.other.JavaStringAcceptorInterface
 
+// a Java interface, or class, joining them inherits the types of the Kotlin member, whatever the order of its supertypes,
+// and so do its Kotlin subclasses, so that accept(null) does not compile
+abstract class InheritedJavaJoinedStringAcceptorInterface :
+    com.xemantic.kotlin.introspection.test.other.JavaJoinedStringAcceptorInterface
+
+abstract class InheritedJavaJoinedStringAcceptor : com.xemantic.kotlin.introspection.test.other.JavaJoinedStringAcceptor()
+
+abstract class InheritedJavaJoinedStringAcceptorSubclass : InheritedJavaJoinedStringAcceptor()
+
 // the type parameter of the interface numbers the ones of its members apart from the ones of the Java methods
 interface GenericMethodTaker<E> {
     fun <T> take2(value: T, type: Class<T>)
@@ -993,6 +1002,18 @@ abstract class InheritedJavaNullableFunctionImplementationDiamond :
 // java.util.function.Consumer implemented alike, whose accept returns no platform type, so that K2 takes the first one
 abstract class InheritedJavaConsumerImplementationDiamond :
     com.xemantic.kotlin.introspection.test.other.JavaTypeConsumerImplementation<String>(), java.util.function.Consumer<String>
+
+// declared again by a Kotlin interface giving nullable type arguments, which the apply K2 takes is of,
+// not of the ones given through the Java class
+interface NullableStringFunction : java.util.function.Function<String?, String?>
+
+abstract class InheritedJavaFunctionImplementationNullableInterfaceJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaSameTypeFunctionImplementation<String>(), NullableStringFunction
+
+interface TypeFunction<T> : java.util.function.Function<T, T>
+
+abstract class InheritedJavaFunctionImplementationGenericInterfaceJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaSameTypeFunctionImplementation<String>(), TypeFunction<String?>
 
 abstract class InheritedJavaConsumerFirstImplementationDiamond :
     java.util.function.Consumer<String>, com.xemantic.kotlin.introspection.test.other.JavaTypeConsumerImplementation<String>()
