@@ -113,6 +113,9 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   like `addAll(Collection<out String>?)` or `removeIf(Predicate<in String>?)`, while kotlinc rejects `addAll(null)` and `removeIf(null)` there,
   as kotlin-reflect tells of the same subclass of `java.util.TreeSet`.
 
+- kotlinc 2.4.21 rejects an enum entry named `entries` (`conflicting declarations`, KT-48872), also one deprecated as `HIDDEN`,
+  so the entry shadowing the `entries` property can be neither probed, nor compiled as a fixture.
+
 - Kotlin never passes named arguments to a Java method, even one compiled with `-parameters`, so a Java method taking parameters never shadows an extension — see `isShadowingJavaMethod`.
 
 ## Anti-patterns to avoid

@@ -168,6 +168,25 @@ class DeprecatedSharedSupertypeCompanionHolder : CompanionSupertype {
 // called only on the name of the class, DeprecatedSharedSupertypeCompanionHolder.onCompanion(), reporting the deprecation
 fun DeprecatedSharedSupertypeCompanionHolder.Companion.onCompanion(): Int = 0
 
+// the supertype of both a deprecated class and its companion object, whose extension is called both as
+// DeprecatedClassSharedSupertypeCompanionHolder.onSupertype(), reporting the deprecation of the class, and as holder.onSupertype()
+@Deprecated("Use CompanionExtensionHolder")
+class DeprecatedClassSharedSupertypeCompanionHolder : CompanionSupertype {
+    companion object : CompanionSupertype
+}
+
+// both the class and its companion object deprecated, each reported for
+// DeprecatedClassAndSharedSupertypeCompanionHolder.onSupertype(), and neither for holder.onSupertype()
+@Deprecated("Use CompanionExtensionHolder")
+class DeprecatedClassAndSharedSupertypeCompanionHolder : CompanionSupertype {
+    @Deprecated("Use the constructor")
+    companion object : CompanionSupertype
+}
+
+// called only on the name of the class, DeprecatedClassSharedSupertypeCompanionHolder.onDeprecatedClassCompanion()
+@Suppress("DEPRECATION")
+fun DeprecatedClassSharedSupertypeCompanionHolder.Companion.onDeprecatedClassCompanion(): Int = 0
+
 // called as ProtectedSupertypeCompanionHolder.onSupertype() only within its subclasses, as elsewhere,
 // while kotlinc 2.4.21 compiles it, it fails with an IllegalAccessError of the protected companion object field
 open class ProtectedSupertypeCompanionHolder {
@@ -321,3 +340,147 @@ object ShadowingInheritingObject : ShadowingObjectBase()
 
 @Suppress("EXTENSION_SHADOWED_BY_MEMBER")
 fun ShadowingInheritingObject.inherited(): Int = 1
+
+// members of an object accepting every argument of the extension of the same name on its supertype, always called instead:
+// a generic one, like WideningShadowingObject.generic(1), also when its type parameter cannot be inferred,
+// like WideningShadowingObject.uninferred(1), which does not compile, one taking a nullable parameter, a supertype of the parameter,
+// or the bound of its type parameter, like WideningShadowingObject.bounded(other), a property of a function type,
+// like WideningShadowingObject.functionProperty(), and one taking the type argument of the supertype of the object,
+// which the type parameter of the receiver of the extension stands for, like WideningShadowingObject.substituted("")
+interface WideningSupertype
+
+interface WideningBase<T>
+
+interface WideningConsumer<in T>
+
+interface WideningProducer<out T>
+
+object WideningShadowingObject : WideningSupertype, WideningBase<String>, WideningConsumer<String>, WideningProducer<String> {
+    val functionProperty: () -> Int = { 0 }
+    fun <T> generic(x: T): Int = 0
+    fun <T> uninferred(x: Int): T? = null
+    fun nullable(x: Int?): Int = 0
+    fun supertype(x: CharSequence): Int = 0
+    fun bounded(x: WideningSupertype): Int = 0
+    fun substituted(x: String): Int = 0
+    fun consumed(x: String): Int = 0
+}
+
+fun WideningSupertype.functionProperty(): Int = 1
+
+fun WideningSupertype.generic(x: Int): Int = 1
+
+fun WideningSupertype.uninferred(x: Int): Int = x
+
+fun WideningSupertype.nullable(x: Int): Int = 1
+
+fun WideningSupertype.supertype(x: String): Int = 1
+
+fun <T : WideningSupertype> T.bounded(x: T): Int = 1
+
+fun <T> WideningBase<T>.substituted(x: T): Int = 1
+
+fun <T> WideningConsumer<T>.consumed(x: T): Int = 1
+
+// and the ones which do not accept every argument, so that the extension is still called:
+// with null, like NarrowingUnshadowingObject.notNull(null), or NarrowingUnshadowingObject.boundedGeneric(null),
+// with a named argument, which a function type does not take, like NarrowingUnshadowingObject.functionProperty(x = 1),
+// when the property might be null, or its function type has a receiver, with a subtype of the parameter,
+// or with any argument, like NarrowingUnshadowingObject.produced(1), where T of the covariant supertype is inferred as Any
+object NarrowingUnshadowingObject : WideningSupertype, WideningProducer<String> {
+    val functionProperty: (Int) -> Int = { it }
+    val nullableFunctionProperty: (() -> Int)? = null
+    val receiverFunctionProperty: WideningSupertype.() -> Int = { 0 }
+    fun notNull(x: Any): Int = 0
+    fun <T : Any> boundedGeneric(x: T): Int = 0
+    fun subtype(x: String): Int = 0
+    fun produced(x: String): Int = 0
+}
+
+fun WideningSupertype.functionProperty(x: Int): Int = x
+
+fun WideningSupertype.nullableFunctionProperty(): Int = 1
+
+fun WideningSupertype.receiverFunctionProperty(): Int = 1
+
+fun <T> WideningSupertype.notNull(x: T): Int = 1
+
+fun WideningSupertype.boundedGeneric(x: Int?): Int = 1
+
+fun WideningSupertype.subtype(x: CharSequence): Int = 1
+
+fun <T> WideningProducer<T>.produced(x: T): Int = 1
+
+// members of a class called instead of the extensions of the same name on the class, or on its supertype,
+// like shadowing.shadowed(), or shadowing.inherited(), by the rule of the members of an object,
+// unless the extension can be called on a nullable receiver, like nullableShadowing.onNullable(),
+// with other arguments, like shadowing.shadowed(1), or the member cannot be called, like a protected one,
+// or a property with a context parameter outside its context, like shadowing.contextualProperty,
+// or with the type arguments of the extension, which only they tell, like shadowing.explicit<Int>(),
+// while shadowing.explicitSame<Int>() calls the member, taking as many type arguments, whatever they are
+interface InstanceShadowedSupertype
+
+open class InstanceShadowingBase {
+    fun inherited(): Int = 0
+    protected fun protectedMember(): Int = 0
+}
+
+open class InstanceShadowing : InstanceShadowingBase(), InstanceShadowedSupertype {
+    val shadowedProperty: Int = 0
+    context(text: String) val contextualProperty: Int get() = text.length
+    fun shadowed(): Int = 0
+    fun onNullable(): Int = 0
+    fun onNullableBound(): Int = 0
+    fun onDefinitelyNotNull(): Int = 0
+    fun explicit(): Int = 0
+    fun <T> explicitSame(): Int = 0
+    fun <T : Number> explicitBounded(): Int = 0
+    fun <T> explicitInferred(x: T): Int = 0
+    fun named(x: Int): Int = x
+    fun <T> generic(x: T): Int = 0
+}
+
+fun InstanceShadowedSupertype.shadowed(): Int = 1
+
+fun InstanceShadowedSupertype.shadowed(x: Int): Int = x
+
+val InstanceShadowedSupertype.shadowedProperty: Int get() = 1
+
+fun InstanceShadowedSupertype?.onNullable(): Int = 1
+
+fun <T : InstanceShadowedSupertype?> T.onNullableBound(): Int = 1
+
+// never called on a nullable receiver, unlike the one on T itself
+fun <T : InstanceShadowedSupertype?> (T & Any).onDefinitelyNotNull(): Int = 1
+
+val InstanceShadowedSupertype.contextualProperty: Int get() = 1
+
+fun <R> InstanceShadowedSupertype.explicit(): Int = 1
+
+fun <R> InstanceShadowedSupertype.explicitSame(): Int = 1
+
+// shadowing.explicitBounded<String>() calls the extension, as String is no Number
+fun <R> InstanceShadowedSupertype.explicitBounded(): Int = 1
+
+// shadowing.explicitInferred<String>(1) calls the extension, as 1 is no String
+fun <R> InstanceShadowedSupertype.explicitInferred(x: Int): Int = 1
+
+fun InstanceShadowedSupertype.named(y: Int): Int = y
+
+fun InstanceShadowedSupertype.generic(x: String): Int = 1
+
+fun InstanceShadowedSupertype.inherited(): Int = 1
+
+fun InstanceShadowedSupertype.protectedMember(): Int = 1
+
+@Suppress("EXTENSION_SHADOWED_BY_MEMBER")
+fun InstanceShadowing.shadowed(): Int = 2
+
+// a member taking the type parameter of its class, which might not accept the argument of the extension,
+// like GenericInstanceShadowing<Int>().typed(""), next to one which always does, like GenericInstanceShadowing<Int>().shadowed()
+class GenericInstanceShadowing<T> : InstanceShadowedSupertype {
+    fun shadowed(): Int = 0
+    fun typed(x: T): Int = 0
+}
+
+fun InstanceShadowedSupertype.typed(x: String): Int = 1

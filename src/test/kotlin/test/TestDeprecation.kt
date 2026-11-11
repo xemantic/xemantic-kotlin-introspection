@@ -256,3 +256,16 @@ open class AccessorDeprecationBase {
 }
 
 class AccessorDeprecationSub : AccessorDeprecationBase()
+
+// enum entries deprecated themselves, which Kotlin reports for DeprecatedEntriesEnum.OLD,
+// while DeprecatedEntriesEnum.GONE is an unresolved reference, which a when expression still has to cover
+enum class DeprecatedEntriesEnum {
+    CURRENT,
+    @Deprecated("Use CURRENT", ReplaceWith("CURRENT"))
+    OLD,
+    @Deprecated("Removed", level = DeprecationLevel.ERROR)
+    REMOVED,
+    @Deprecated("Gone", level = DeprecationLevel.HIDDEN)
+    GONE
+}
+
