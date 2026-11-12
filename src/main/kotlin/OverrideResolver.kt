@@ -282,6 +282,11 @@ internal class OverrideResolver(
      *   when its JVM methods can be neither read nor reflected, see [declaresResolvedJvmMethod],
      *   the outcome not final after a transient failure.
      * @param kotlinSupertypes the names of the supertypes of each Kotlin class walked, by its name, see [isSubclass].
+     * @param locatedSupertypes the names the supertypes walked are found by, other than the ones the Kotlin metadata
+     *   refers to them by, by these names, see [locatedName].
+     * @param comparesOwnerJvmMethods whether the JVM methods of the owner class are compared with the JVM signatures of its metadata,
+     *   as it refers to relocated classes, or might, see [collectOverridables], which only then tells a JVM method of no member,
+     *   see [isShrunk], so that a class which nothing suggests relocated is told as if they were not compared.
      */
     private class Overridables(
         val relocation: Relocation?,
@@ -291,6 +296,8 @@ internal class OverrideResolver(
         val hiddenPlatformFunctions: Map<String, List<Overridable>>,
         private val readOwnerJvmMethods: FinalOnce<OwnerJvmMethods?>,
         val kotlinSupertypes: Map<String, List<String>> = emptyMap(),
+        val locatedSupertypes: Map<String, String> = emptyMap(),
+        val comparesOwnerJvmMethods: Boolean = false,
         private val resolveOwnerJvmMethod: (String) -> TransientFailures.Outcome<Boolean?>
     ) {
 
@@ -314,10 +321,11 @@ internal class OverrideResolver(
          * These overridables, with the JVM methods of the owner class read by [readOwnerJvmMethods] instead,
          * like from its class file read only after they are collected, see [collectOverridables].
          */
-        fun withOwnerJvmMethods(readOwnerJvmMethods: FinalOnce<OwnerJvmMethods?>): Overridables = Overridables(
-            relocation, substitution, functions, properties, hiddenPlatformFunctions, readOwnerJvmMethods, kotlinSupertypes,
-            resolveOwnerJvmMethod
-        )
+        fun withOwnerJvmMethods(readOwnerJvmMethods: FinalOnce<OwnerJvmMethods?>, comparesOwnerJvmMethods: Boolean): Overridables =
+            Overridables(
+                relocation, substitution, functions, properties, hiddenPlatformFunctions, readOwnerJvmMethods, kotlinSupertypes,
+                locatedSupertypes, comparesOwnerJvmMethods, resolveOwnerJvmMethod
+            )
 
         /**
          * The final outcomes of [resolvedOwnerDeclares], computed once, as the overridables are cached.
@@ -343,18 +351,30 @@ internal class OverrideResolver(
         val ownerJvmMethodsByShape: Map<String, List<List<String>>>? get() = readOwnerJvmMethods.value?.byShape
 
         /**
+         * The [ownerJvmMethods] which are neither synthetic, nor bridges, as the class file names them, by their shapes,
+         * see [methodShape] and [hasOwnerJvmMethodOfNoMember].
+         */
+        val ownerDeclaredJvmMethodsByShape: Map<String, List<String>>? get() = readOwnerJvmMethods.value?.declaredByShape
+
+        /**
          * The results of [shrinkableJava] by the function names, computed once, as the overridables are cached.
          */
         val shrinkableJava = ConcurrentHashMap<String, List<Overridable>>()
     }
 
     /**
-     * The JVM [methods] of a class whose members are checked, as names followed by descriptors, see [jvmMethods].
+     * The JVM [methods] of a class whose members are checked, as names followed by descriptors, see [jvmMethods],
+     * also as the Kotlin metadata would name them, when the class refers to relocated classes, see [Relocation.unlocatedDescriptor].
+     *
+     * @param declared the ones the class declares, as its class file names them, which are neither synthetic, nor bridges,
+     *   see [hasOwnerJvmMethodOfNoMember].
      */
-    private class OwnerJvmMethods(val methods: Set<String>) {
+    private class OwnerJvmMethods(val methods: Set<String>, declared: Set<String>) {
 
         // grouped once, and only when needed, as the overridables are cached, with the class names of each method
         val byShape: Map<String, List<List<String>>> by lazy { methods.groupBy({ methodShape(it) }, { methodClassNames(it) }) }
+
+        val declaredByShape: Map<String, List<String>> by lazy { declared.groupBy { methodShape(it) } }
 
     }
 
@@ -533,11 +553,20 @@ internal class OverrideResolver(
 
     /**
      * The signature of the [function], of the platform types of Java, see [platform], when it is the one of a Java method
-     * of the [jvmDescriptor], telling the primitive types of its parameters on the JVM, see [primitivesMatch].
+     * of the [jvmDescriptor], telling the primitive types of its parameters on the JVM, see [primitivesMatch],
+     * its Kotlin classes matched also by the names their metadata tells, see [kotlinNamed].
      */
     private fun Overridables.signature(function: KmFunction, jvmDescriptor: String? = null): FunctionSignature {
         val typeParameters = memberTypeParameters(function.typeParameters)
-        fun type(type: KmType) = kotlinType(type, substitution, typeParameters).let { if (jvmDescriptor != null) it.platform() else it }
+        fun type(type: KmType) =
+            kotlinType(type, substitution, typeParameters).let { memberType ->
+                when {
+                    jvmDescriptor == null -> memberType
+                    // only a class whose supertype is found by another name than the one of the metadata might take relocated classes
+                    relocation == null && locatedSupertypes.isEmpty() -> memberType.platform()
+                    else -> memberType.platform().kotlinNamed()
+                }
+            }
         return FunctionSignature(
             contexts = function.contextParameters.map { type(it.type) },
             receiver = function.receiverParameterType?.let { type(it) },
@@ -557,6 +586,21 @@ internal class OverrideResolver(
         is ClassType -> copy(nullable = null, arguments = arguments.map { TypeArgument(it.variance, it.type.platform()) })
         is TypeParameterType -> copy(nullable = null)
         UnknownType -> this
+    }
+
+    /**
+     * This type of a Java method, its classes named by their JVM names, with each Kotlin class matched also by the name
+     * its own metadata tells, see [ClassType.unlocatedName], when it is another one, like `lib/Event` of `shaded/lib/Event`,
+     * relocated, like by shading, which does not rewrite the metadata, with the Java class of the method,
+     * which a member of a relocated Kotlin supertype, overridden by the method, still takes by the name of the metadata.
+     */
+    private fun MemberType.kotlinNamed(): MemberType = when (this) {
+        is ClassType -> copy(
+            arguments = arguments.map { it.copy(type = it.type.kotlinNamed()) },
+            outer = outer?.kotlinNamed() as ClassType?,
+            unlocatedName = unlocatedName ?: name.takeIf { it.isRelocatable }?.let { declaration(it).kotlin?.name }?.takeIf { it != name }
+        )
+        else -> this
     }
 
     private fun Overridable.matches(signature: FunctionSignature, onlyKnownTypes: Boolean = false): Boolean = matches(
@@ -585,19 +629,30 @@ internal class OverrideResolver(
     /**
      * The name the class of the [metadataName], a supertype of the [owner], or of its supertypes, is found by,
      * like when collecting the overridable members, see [foundDeclaration]: its located name, when relocated with the [owner],
-     * or as a dependency of it, like by shading, see [relocation], or `null` if it is not known to be relocated,
+     * or as a dependency of it, like by shading, see [relocation], or as the class file of a Kotlin class extending it tells,
+     * see [Overridables.locatedSupertypes], or `null` if it is not known to be relocated,
      * or found by the [metadataName], or by no name.
      */
     fun locatedName(owner: Owner, metadataName: String): String? {
-        val (name, declaration) = foundDeclaration(overridables(owner).relocation, metadataName)
+        val overridables = overridables(owner)
+        overridables.locatedSupertypes[metadataName]?.let { return it }
+        val (name, declaration) = foundDeclaration(overridables.relocation, metadataName)
         return name.takeIf { it != metadataName && declaration.isFound }
     }
 
     /**
      * The name the Kotlin metadata refers to the class of the [jvmName] by, like a supertype of a Java supertype of the [owner],
-     * see [Relocation.unlocated], or the [jvmName], if it is not known to be relocated.
+     * see [Relocation.unlocated], or else the one the Kotlin class found there is named by its own metadata,
+     * which a relocation does not rewrite, like `lib/Event` of the `Event` of the root package,
+     * whose names are never translated back, as a class of the root package might not be relocated,
+     * or the [jvmName], if it is not known to be relocated, like when the [owner] refers to no relocated class at all.
      */
-    fun unlocatedName(owner: Owner, jvmName: String): String = overridables(owner).relocation?.unlocated(jvmName) ?: jvmName
+    fun unlocatedName(owner: Owner, jvmName: String): String {
+        val relocation = overridables(owner).relocation ?: return jvmName
+        val unlocated = relocation.unlocated(jvmName)
+        if (unlocated != jvmName || !jvmName.isRelocatable) return unlocated
+        return declaration(jvmName).kotlin?.name ?: jvmName
+    }
 
     /**
      * Whether the classes the [owner] refers to are known to be relocated, see [unlocatedName].
@@ -689,6 +744,22 @@ internal class OverrideResolver(
         val primitives = primitives ?: javaKey?.let { jvmPrimitives(it.substring(it.indexOf('(', it.indexOf('#')))) } ?: return true
         return primitives.size <= javaPrimitives.size && javaPrimitives.takeLast(primitives.size) == primitives
     }
+
+    /**
+     * Whether each value parameter of the Kotlin [function] is of a primitive type on the JVM, see [jvmPrimitives],
+     * as the compiler matching a Java method sees it, with the substituted [parameters]:
+     * also the one of a type parameter given a not nullable primitive type by Kotlin, like the `put(t: T)` of `IntPut : GenericPut<Int>`,
+     * erased to `Object`, which a Java `put(int)` implements, unlike a `put(Integer)`, see [primitivesMatch],
+     * but not the one given by Java, like by `GenericPut<Integer>`, of a flexible type, nor a nullable one, like of `GenericPut<Int?>`.
+     */
+    private fun substitutedJvmPrimitives(function: KmFunction, parameters: List<MemberType>): List<Boolean> =
+        jvmPrimitives(function).mapIndexed { index, isPrimitive ->
+            isPrimitive || function.valueParameters.getOrNull(index)?.let { parameter ->
+                val type = parameters[index]
+                parameter.varargElementType == null && parameter.type.classifier is KmClassifier.TypeParameter &&
+                    type is ClassType && type.nullable == false && type.name in PRIMITIVE_CLASS_NAMES
+            } == true
+        }
 
     /**
      * The keys of the properties of the Kotlin supertypes of the [owner] which its [property] overrides,
@@ -839,7 +910,7 @@ internal class OverrideResolver(
         signature: JvmMethodSignature?
     ): Sequence<Overridable> {
         val visible = evidence.asSequence().filter { isVisible(it, owner, modality, isShrunk = true) }
-        return if (visible.any() && isShrunk(signature)) visible else emptySequence()
+        return if (visible.any() && isShrunk(signature, owner)) visible else emptySequence()
     }
 
     /**
@@ -881,12 +952,21 @@ internal class OverrideResolver(
      * like by R8, so that it cannot be told from an overload of a supertype member,
      * which is then assumed to be overridden, as one of the same signature, or a Java one of the same name, is known,
      * see [shrunkOverridden].
-     * A member whose owner JVM methods can be neither read nor reflected is not considered shrunk.
+     * A member whose owner JVM methods can be neither read nor reflected is not considered shrunk,
+     * and neither is one next to a JVM method of its shape, see [methodShape], which is the JVM method of no member of the [owner],
+     * see [hasOwnerJvmMethodOfNoMember], like the one of a `@JvmOverloads` or a `@JvmStatic` function,
+     * of other classes of the same simple names: the class still declares a JVM method of this very shape,
+     * so the member is as likely an overload which is not used, removed alone, as an override removed with the member it overrides,
+     * while a false override is worse than one which is not told.
+     * Such a JVM method is told only when the JVM methods are compared with the JVM signatures of the metadata anyway,
+     * see [Overridables.comparesOwnerJvmMethods], as they were paired with the members before, also when of no member,
+     * so that a member of a class which nothing suggests relocated stays a shrunk override next to it.
      */
-    private fun Overridables.isShrunk(signature: JvmMethodSignature?): Boolean {
+    private fun Overridables.isShrunk(signature: JvmMethodSignature?, owner: KmClass): Boolean {
         val method = signature?.toString() ?: return false
         val methods = ownerJvmMethods ?: return false
         if (method in methods) return false
+        if (comparesOwnerJvmMethods && hasOwnerJvmMethodOfNoMember(method, owner)) return false
         val relocation = relocation ?: return true
         // a JVM method of a relocated class file of the same shape, its class types each named as in the metadata,
         // or by a name the relocation might have given it, like of an overload whose types differ only by the packages,
@@ -897,6 +977,47 @@ internal class OverrideResolver(
                 relocation.mightBeRelocated(metadataName, jvmName)
             }
         }
+    }
+
+    /**
+     * Whether the [owner] class declares a JVM method of the shape of the [method], see [methodShape], the JVM signature of a member
+     * which the class does not declare, see [isShrunk], which is surely the JVM method of none of its members:
+     * neither of a member whose JVM signature, as the metadata tells, see [jvmSignatures], it is, also when named by the relocation,
+     * nor of any other one of this shape, whose classes it would name against the names
+     * the JVM methods of the members name them by, see [KnownNames], like `on(Lp/ext/Event;Lp/lib/sub/Event;)V`
+     * of `on(Lp/lib/Event;Lp/ext/Event;)V`, next to `on(Lp/ext/Event;Lp/lib/Event;)V` declared as the metadata tells,
+     * or else there are more such JVM methods than the members they might be the ones of,
+     * while the [method] itself is surely the one of none of the JVM methods of its shape, likewise.
+     * A JVM method which might still be the one of the [method], its classes relocated in a way which is not told,
+     * like `on(LEvent;)V` of `on(Lp/lib/Event;)V`, tells nothing,
+     * and neither does a synthetic one, nor a bridge, which are the JVM methods of no member either way.
+     */
+    private fun Overridables.hasOwnerJvmMethodOfNoMember(method: String, owner: KmClass): Boolean {
+        val shape = methodShape(method)
+        val declared = ownerDeclaredJvmMethodsByShape ?: return false
+        if (shape !in declared) return false
+        val signatures = owner.jvmSignatures().toHashSet()
+        val known = KnownNames()
+        val declaredSignatures = HashSet<String>()
+        val unknownJvmMethods = declared.getValue(shape).toMutableList()
+        declared.values.forEach { jvmMethods ->
+            jvmMethods.forEach { jvmMethod ->
+                val signature = jvmMethod.takeIf { it in signatures } ?: relocation?.unlocatedDescriptor(jvmMethod)?.takeIf { it in signatures }
+                if (signature != null) {
+                    known.add(methodClassNames(signature), methodClassNames(jvmMethod))
+                    declaredSignatures += signature
+                    unknownJvmMethods -= jvmMethod
+                }
+            }
+        }
+        if (unknownJvmMethods.isEmpty()) return false
+        val classNames = methodClassNames(method)
+        val unknownClassNames = unknownJvmMethods.map { methodClassNames(it) }
+        known.addKotlinClasses(signatures, unknownJvmMethods)
+        if (unknownClassNames.any { !known.contradicts(classNames, it) }) return false
+        // fewer members than the JVM methods of the shape which might be theirs leave one of them the JVM method of no member
+        val undeclaredClassNames = signatures.filter { it !in declaredSignatures && methodShape(it) == shape }.map { methodClassNames(it) }
+        return undeclaredClassNames.count { names -> unknownClassNames.any { !known.contradicts(names, it) } } < unknownClassNames.size
     }
 
     /**
@@ -952,31 +1073,48 @@ internal class OverrideResolver(
      * and walks it again, if the JVM methods of the [owner] tell its relocated dependencies, see [relocation],
      * which they are read for only when the walk suggests them: when a supertype is not found,
      * or when a Java member of the name of a member of the [owner] takes a class which might be relocated,
-     * like the original one of a relocated Java supertype of an indirect supertype, see [mightBeRelocated].
+     * like the original one of a relocated Java supertype of an indirect supertype, see [mightBeRelocated],
+     * or when a Kotlin supertype walked refers to its own supertypes by relocated names,
+     * see [CollectedOverridables.supertypeDependencies], which are then relocated dependencies of the [owner] too.
      */
     private fun collectOverridables(owner: Owner): Overridables {
         val reader = OwnerClassFileReader(owner.name)
         val ownerRelocation = relocation(owner, reader)
-        val collected = collectOverridables(owner, ownerRelocation)
-        if (ownerRelocation.hasDependencies || !collected.mightBeRelocated(owner)) return collected.overridables
-        val signatureRelocation =
-            relocation(owner, reader, scanSignatures = true, collected.supertypeClasses, collected.isRelocatableMissing)
-        if (signatureRelocation.hasDependencies) return collectOverridables(owner, signatureRelocation).overridables
+        val collected = collectOverridables(owner, ownerRelocation, comparesOwnerJvmMethods = ownerRelocation.hasDependencies)
+        if (ownerRelocation.hasDependencies) return collected.overridables
+        // the ones the relocation of the owner already tells call for nothing more
+        val supertypeDependencies = collected.supertypeDependencies.filter { (metadataName, jvmName) ->
+            ownerRelocation.relocation?.located(metadataName)?.let { internalNameOf(it) } != jvmName
+        }
+        val mightBeRelocated = collected.mightBeRelocated(owner)
+        if (supertypeDependencies.isEmpty() && !mightBeRelocated) return collected.overridables
+        val signatureRelocation = relocation(
+            owner, reader, scanSignatures = true, collected.supertypeClasses, collected.isRelocatableMissing, supertypeDependencies
+        )
+        if (signatureRelocation.hasDependencies) {
+            return collectOverridables(owner, signatureRelocation, comparesOwnerJvmMethods = true).overridables
+        }
         // the class file, read in vain, is still the one of the JVM methods of the owner, not read again
         val classFile = signatureRelocation.classFile ?: return collected.overridables
-        return collected.overridables.withOwnerJvmMethods(ownerJvmMethods(owner, collected.overridables.relocation, classFile))
+        return collected.overridables.withOwnerJvmMethods(
+            ownerJvmMethods(owner, collected.overridables.relocation, classFile), comparesOwnerJvmMethods = mightBeRelocated
+        )
     }
 
     /**
      * The [overridables] collected with a relocation, telling whether a supertype [isMissing], see [collectOverridables],
      * and whether one which might be relocated, see [isRelocatable], [isRelocatableMissing],
      * and the Kotlin [supertypeClasses] reached, by the names they are found by, see [relocatedSupertypeNames].
+     *
+     * @param supertypeDependencies the JVM internal names the Kotlin supertypes reached, which can be loaded,
+     *   refer to their own relocated supertypes by, by the names their metadata refers to them by, see [reflectedRelocatedSupertypes].
      */
     private class CollectedOverridables(
         val overridables: Overridables,
         val isMissing: Boolean,
         val isRelocatableMissing: Boolean,
-        val supertypeClasses: List<Pair<String, KmClass>>
+        val supertypeClasses: List<Pair<String, KmClass>>,
+        val supertypeDependencies: Map<String, String>
     )
 
     /**
@@ -1005,7 +1143,11 @@ internal class OverrideResolver(
      * Walks the whole supertype hierarchy of the [owner] once, with the classes looked up by the [ownerRelocation],
      * its class file telling the JVM methods of the [owner], unless read only when needed.
      */
-    private fun collectOverridables(owner: Owner, ownerRelocation: OwnerRelocation): CollectedOverridables {
+    private fun collectOverridables(
+        owner: Owner,
+        ownerRelocation: OwnerRelocation,
+        comparesOwnerJvmMethods: Boolean
+    ): CollectedOverridables {
         val ownerClass = owner.kmClass
         // the Java types, named by their JVM names, might be relocated, unlike the types of the Kotlin metadata,
         // so they are looked up, and matched, also by the names the metadata would refer to them by, see unlocated
@@ -1021,12 +1163,39 @@ internal class OverrideResolver(
         val properties = mutableMapOf<String, MutableList<Overridable>>()
         // the methods of Object, as Any, a supertype of every class, has no Java class, see findDeclaration
         val hiddenPlatformFunctions = objectMethods.mapValuesTo(mutableMapOf()) { (_, methods) -> methods.toMutableList() }
-        val pending = ArrayDeque(ownerClass.supertypes.mapNotNull { kotlinType(it, ownerSubstitution) as? ClassType })
+        // the type arguments a Java class gives are platform types, like the Integer of GenericPut<Integer>, see javaSupertypes,
+        // which kotlin-reflect describes as not nullable, so that a Kotlin member given them takes no primitive type, see primitivesMatch
+        val isJavaOwner = declaration(owner.name).let { it.kotlin == null && it.java != null }
+        val pending = ArrayDeque(ownerClass.supertypes.mapNotNull { supertype ->
+            val type = kotlinType(supertype, ownerSubstitution) as? ClassType
+            if (type == null || !isJavaOwner || ownerClass.name in PURE_IMPLEMENTATIONS) type
+            else type.copy(arguments = type.arguments.map { TypeArgument(it.variance, it.type.flexible()) })
+        })
         // every class and interface is a subtype of Any, also when it is reached only through Java interfaces
         pending += ClassType("kotlin/Any")
         // a class is never its own supertype, which matters for Any itself
         val visited = mutableSetOf(ownerClass.name)
         val kotlinSupertypes = HashMap<String, List<String>>()
+        // the relocation of each Kotlin class found by another name than the one of its metadata, by the names of its supertypes,
+        // which are relocated with it, see Owner.relocation, like the Kotlin interface p/lib/Listener of p/lib/Base,
+        // the superclass a relocated Java class names shaded/p/lib/Base, which tells no relocation itself, see relocation
+        val supertypeRelocations = HashMap<String, Relocation>()
+        // the names the supertypes of each Kotlin class reached are found by, as its JVM class refers to them, by their metadata names,
+        // like app/shaded/lib/Listener of the lib/Listener implemented by app/Mid, looked up first, as an original lib/Listener
+        // next to the relocated one might be of another version
+        val reflectedSupertypeNames = HashMap<String, String>()
+        val supertypeDependencies = mutableListOf<Pair<String, String>>()
+        val locatedSupertypes = HashMap<String, String>()
+        // a supertype of a Java class, named by its JVM name, named as the metadata would, see unlocated, or else, when the relocation
+        // does not tell it, by the name the metadata of the Kotlin class found there tells, like unlocatedName names it,
+        // found then by its JVM name, so that the members inherited from it are, see locatedName
+        fun metadataNamedSupertype(supertype: ClassType): ClassType {
+            val unlocated = supertype.unlocated(relocation)
+            if (relocation == null || unlocated.name != supertype.name || !supertype.name.isRelocatable) return unlocated
+            val metadataName = declaration(supertype.name).kotlin?.name?.takeIf { it != supertype.name } ?: return unlocated
+            reflectedSupertypeNames.putIfAbsent(metadataName, supertype.name)
+            return unlocated.copy(name = metadataName)
+        }
 
         while (pending.isNotEmpty()) {
             val supertype = pending.removeFirst()
@@ -1047,15 +1216,39 @@ internal class OverrideResolver(
                 continue
             }
 
-            val (foundName, declaration) = foundDeclaration(relocation, supertype.name)
+            val reflectedName = reflectedSupertypeNames[supertype.name]
+            // unless the class file of the owner itself tells the name it is found by, or that it is not relocated
+            val told = if (reflectedName == null || relocation?.tells(supertype.name) != true) null else {
+                foundDeclaration(relocation, supertype.name).takeIf { (name, declaration) ->
+                    declaration.isFound && (name != supertype.name || located(relocation, supertype.name) == null)
+                }
+            }
+            val reflected = told ?: reflectedName?.let { it to declaration(it) }?.takeIf { it.second.isFound }
+            val (foundName, declaration) = reflected ?: foundDeclaration(relocation, supertype.name).let { found ->
+                val supertypeRelocation = supertypeRelocations[supertype.name]?.takeIf { !found.second.isFound } ?: return@let found
+                foundDeclaration(supertypeRelocation, supertype.name).takeIf { it.second.isFound } ?: found
+            }
+            if (declaration.isFound && foundName != supertype.name) locatedSupertypes[supertype.name] = foundName
             if (!declaration.isFound) {
                 isMissing = true
                 if (supertype.name.isRelocatable) isRelocatableMissing = true
             }
 
             declaration.kotlin?.let { kmClass ->
-                if (foundName.isRelocatable) supertypeClasses += foundName to kmClass
+                if (foundName.isRelocatable) {
+                    supertypeClasses += foundName to kmClass
+                    reflectedRelocatedSupertypes(foundName, kmClass).forEach { (metadataName, jvmName) ->
+                        supertypeDependencies += internalNameOf(metadataName) to jvmName
+                        reflectedSupertypeNames.putIfAbsent(metadataName, inPackage(packageOf(jvmName), metadataName.substringAfterLast('/')))
+                    }
+                }
                 kotlinSupertypes[kmClass.name] = kmClass.supertypes.mapNotNull { (it.classifier as? KmClassifier.Class)?.name }
+                if (foundName != kmClass.name) {
+                    locatedSupertypes.putIfAbsent(kmClass.name, foundName)
+                    Relocation.of(kmClass.name, foundName)?.let { supertypeRelocation ->
+                        kotlinSupertypes.getValue(kmClass.name).forEach { supertypeRelocations.putIfAbsent(it, supertypeRelocation) }
+                    }
+                }
                 val substitution = supertypeSubstitution(relocation, kmClass, supertype)
                 val isSameModuleName = kmClass.moduleName == ownerClass.moduleName
                 // the JVM name of an internal member is mangled with the module name, sanitized like by the compiler,
@@ -1074,6 +1267,7 @@ internal class OverrideResolver(
                 kmClass.functions.filter { it.visibility.isOverridable }.forEach { function ->
                     val memberVisibility = visibility(function.visibility, function.signature)
                     val typeParameters = memberTypeParameters(function.typeParameters)
+                    val parameters = function.valueParameters.map { kotlinType(it.type, substitution, typeParameters) }
                     functions.getOrPut(function.name) { mutableListOf() } += Overridable(
                         contexts = function.contextParameters.map {
                             kotlinType(it.type, substitution, typeParameters)
@@ -1081,9 +1275,7 @@ internal class OverrideResolver(
                         receiver = function.receiverParameterType?.let {
                             kotlinType(it, substitution, typeParameters)
                         },
-                        parameters = function.valueParameters.map {
-                            kotlinType(it.type, substitution, typeParameters)
-                        },
+                        parameters = parameters,
                         typeParameterCount = function.typeParameters.size,
                         isJava = false,
                         visibility = memberVisibility,
@@ -1091,7 +1283,7 @@ internal class OverrideResolver(
                             function.valueParameters[it].declaresDefaultValue
                         }.toSet(),
                         key = memberKey(kmClass, function),
-                        primitives = jvmPrimitives(function)
+                        primitives = substitutedJvmPrimitives(function, parameters)
                     )
                 }
                 kmClass.properties.filter { it.visibility.isOverridable }.forEach { property ->
@@ -1127,7 +1319,7 @@ internal class OverrideResolver(
                 }
                 // the supertypes of a built-in type are known from its Kotlin declaration
                 if (declaration.kotlin == null) {
-                    javaSupertypes(javaClass, substitution).forEach { pending += it.unlocated(relocation) }
+                    javaSupertypes(javaClass, substitution).forEach { pending += metadataNamedSupertype(it) }
                 }
             }
 
@@ -1137,7 +1329,7 @@ internal class OverrideResolver(
                 asmMethods(classFile.methods, classFile.packageName, ownerPackage, substitution).forEach { (name, method) ->
                     functions.getOrPut(name) { mutableListOf() } += method.withUnlocated(relocation)
                 }
-                classFileSupertypes(classFile, signature, substitution).forEach { pending += it.unlocated(relocation) }
+                classFileSupertypes(classFile, signature, substitution).forEach { pending += metadataNamedSupertype(it) }
             }
         }
 
@@ -1145,14 +1337,29 @@ internal class OverrideResolver(
         val ownerName = owner.name
         val overridables = Overridables(
             relocation, ownerSubstitution, functions, properties, hiddenPlatformFunctions,
-            ownerJvmMethods(owner, relocation, ownerRelocation.classFile), kotlinSupertypes
+            ownerJvmMethods(owner, relocation, ownerRelocation.classFile), kotlinSupertypes, locatedSupertypes,
+            comparesOwnerJvmMethods
         ) { jvmMethod ->
             val failureCount = transientFailures.count()
             // the descriptors of the metadata are not relocated, unlike the ones of a relocated class
             val declares = if (relocation == null) declaresResolvedJvmMethod(ownerName, jvmMethod) else null
             TransientFailures.Outcome(declares, isFinal = transientFailures.count() == failureCount)
         }
-        return CollectedOverridables(overridables, isMissing, isRelocatableMissing, supertypeClasses)
+        return CollectedOverridables(overridables, isMissing, isRelocatableMissing, supertypeClasses, supertypeDependencies.uniquePairs())
+    }
+
+    /**
+     * The JVM internal names the JVM class of the Kotlin class [kmClass], found by the [name], refers to its relocated supertypes by,
+     * see [relocatedNames], by the names its metadata refers to them by, like `app/shaded/lib/Listener` of `lib/Listener`,
+     * or none, if the class cannot be loaded: only reflected, as the class of a supertype reached is loaded for its metadata anyway,
+     * while its class file is read only when the JVM methods of the class whose members are checked call for it,
+     * see [relocatedSupertypeNames].
+     */
+    private fun reflectedRelocatedSupertypes(name: String, kmClass: KmClass): Map<String, String> {
+        val metadataSupertypes = kmClass.relocatableSupertypes()
+        if (metadataSupertypes.isEmpty()) return emptyMap()
+        val jvmSupertypes = reflectedSupertypeNames(name) ?: return emptyMap()
+        return relocatedNames(metadataSupertypes.keys, jvmSupertypes).mapKeys { (metadataName, _) -> metadataSupertypes.getValue(metadataName) }
     }
 
     /**
@@ -1168,9 +1375,11 @@ internal class OverrideResolver(
             val failureCount = transientFailures.count()
             // the descriptors of a relocated class file, compared with the JVM signatures of its metadata, which are not,
             // also as they are, as a type of a package starting like the relocation prefix might not be relocated
-            val jvmMethods = jvmMethods(ownerName, hasDefaultImpls, classFile ?: ownerClassFile(ownerName))?.let { methods ->
+            val ownerClassFile = classFile ?: ownerClassFile(ownerName)
+            val jvmMethods = jvmMethods(ownerName, hasDefaultImpls, ownerClassFile)?.let { methods ->
                 OwnerJvmMethods(
-                    if (relocation == null) methods else methods.flatMapTo(HashSet()) { listOf(it, relocation.unlocatedDescriptor(it)) }
+                    if (relocation == null) methods else methods.flatMapTo(HashSet()) { listOf(it, relocation.unlocatedDescriptor(it)) },
+                    declared = methods - ownerClassFile.syntheticMethods
                 )
             }
             TransientFailures.Outcome(jvmMethods, isFinal = transientFailures.count() == failureCount)
@@ -1237,7 +1446,10 @@ internal class OverrideResolver(
         val name: String,
         val descriptor: String,
         val signature: String? = null
-    )
+    ) {
+        // neither a synthetic method, like lambda${'$'}run${'$'}0 or access${'$'}getValue, nor a bridge, is in the metadata
+        val isSynthetic: Boolean get() = access and (Opcodes.ACC_SYNTHETIC or Opcodes.ACC_BRIDGE) != 0
+    }
 
     /**
      * The methods declared by a class, [read] from its class file, see [readClass], whether the class can be loaded or not,
@@ -1311,15 +1523,20 @@ internal class OverrideResolver(
     /**
      * The class file of a class whose members are checked, read once for all its uses, see [relocation]:
      * whether it [isServed], and the [methods] the class declares, see [declaredMethods],
-     * as names followed by descriptors, or `null` if they can be neither read nor reflected.
+     * as names followed by descriptors, or `null` if they can be neither read nor reflected,
+     * and which of them are synthetic, or bridges, the [syntheticMethods].
      */
-    private class OwnerClassFile(val isServed: Boolean, val methods: Set<String>?)
+    private class OwnerClassFile(val isServed: Boolean, val methods: Set<String>?, val syntheticMethods: Set<String>)
 
     private fun ownerClassFile(
         className: String,
         bytes: ByteArray? = readClassBytesByMetadataName(className),
         declared: List<DeclaredMethod>? = declaredMethods(className, bytes?.let { readClass(it)?.methods })
-    ): OwnerClassFile = OwnerClassFile(isServed = bytes != null, methods = declared?.mapTo(HashSet()) { it.name + it.descriptor })
+    ): OwnerClassFile = OwnerClassFile(
+        isServed = bytes != null,
+        methods = declared?.mapTo(HashSet()) { it.name + it.descriptor },
+        syntheticMethods = declared.orEmpty().filter { it.isSynthetic }.mapTo(HashSet()) { it.name + it.descriptor }
+    )
 
     /**
      * What a class file tells, see [readClass]: the JVM internal [name] of the class,
@@ -1831,7 +2048,9 @@ internal class OverrideResolver(
      * like of an app class extending another one, or implementing a Java interface of the app, taking the relocated types,
      * when [scanSignatures], and the metadata signatures refer to a class which might be relocated, see [collectOverridables],
      * and only then by the class files of the [supertypeClasses] too, when the JVM methods tell a relocation they cannot pair,
-     * or tell some, while a supertype which might be relocated [isMissing] still, see [relocatedSupertypeNames].
+     * or tell some, while a supertype which might be relocated [isMissing] still, see [relocatedSupertypeNames],
+     * and by the [indirectSupertypeDependencies], which the Kotlin supertypes reached tell of their own supertypes,
+     * see [CollectedOverridables.supertypeDependencies].
      * The direct supertypes the class file refers to by their metadata names are excluded from the relocation,
      * so that they are not looked up by a guessed relocated name first, like the one of the prefix of the [owner].
      *
@@ -1842,7 +2061,8 @@ internal class OverrideResolver(
         reader: OwnerClassFileReader,
         scanSignatures: Boolean = false,
         supertypeClasses: List<Pair<String, KmClass>> = emptyList(),
-        isMissing: Boolean = false
+        isMissing: Boolean = false,
+        indirectSupertypeDependencies: Map<String, String> = emptyMap()
     ): OwnerRelocation {
         val own = owner.relocation
         if (builtinClasses()[owner.kmClass.name] === owner.kmClass) return OwnerRelocation(own)
@@ -1856,7 +2076,9 @@ internal class OverrideResolver(
         fun Map<String, String>.notRelocatedByOwner() = filter { (metadataName, jvmName) ->
             own?.located(metadataName)?.let { packageOf(it) } != packageOf(jvmName)
         }
-        val supertypeDependencies = jvmSupertypes.relocatedFrom(metadataSupertypes.keys).notRelocatedByOwner()
+        // the ones the Kotlin supertypes reached tell, of the supertypes they have in common, are told by the class itself
+        val supertypeDependencies =
+            (indirectSupertypeDependencies + jvmSupertypes.relocatedFrom(metadataSupertypes.keys)).notRelocatedByOwner()
         val signatures = owner.kmClass.jvmSignatures()
         // neither a built-in type, nor a JDK class, nor a class the relocation of the owner already tells, is told,
         // the prefix of the owner only guessing the relocation of the other packages, like not of one relocated to the root package
@@ -1989,10 +2211,15 @@ internal class OverrideResolver(
      * or else as its class file, whose [content] is read only then, tells, or `null` if they can be neither reflected nor read.
      */
     private fun jvmSupertypeNames(name: String, content: () -> ClassFileContent?): JvmSupertypes? =
-        loadClassByMetadataName(name)
-            ?.let { clazz -> reflectOrNull { (listOfNotNull(clazz.superclass) + clazz.interfaces).map { it.name.replace('.', '/') } } }
-            ?.let { JvmSupertypes(it.toHashSet()) }
+        reflectedSupertypeNames(name)?.let { JvmSupertypes(it) }
             ?: content()?.let { JvmSupertypes(it.supertypes.toHashSet(), isComplete = !it.hasMalformedSupertype) }
+
+    /**
+     * The JVM internal names of the direct supertypes of the class of the [name], as reflected, or `null` if it cannot be loaded.
+     */
+    private fun reflectedSupertypeNames(name: String): Set<String>? =
+        loadClassByMetadataName(name)
+            ?.let { clazz -> reflectOrNull { (listOfNotNull(clazz.superclass) + clazz.interfaces).mapTo(HashSet()) { it.name.replace('.', '/') } } }
 
     /**
      * The JVM internal [names] of the direct supertypes of a class, see [jvmSupertypeNames].
@@ -2061,36 +2288,63 @@ internal class OverrideResolver(
         isExplained: (metadataName: String, jvmName: String) -> Boolean
     ): SignatureNames {
         val signatureSet = signatures.toHashSet()
-        // neither a synthetic method, like lambda${'$'}run${'$'}0 or access${'$'}getValue, nor a bridge, is in the metadata
-        val jvmMethods = methods.filter { it.access and (Opcodes.ACC_SYNTHETIC or Opcodes.ACC_BRIDGE) == 0 }
-            .map { it.name + it.descriptor }
-            .let { methods -> if (own == null) methods else methods.map { own.unlocatedDescriptor(it).takeIf { it in signatureSet } ?: it } }
+        val declaredJvmMethods = methods.filter { !it.isSynthetic }.map { it.name + it.descriptor }
+        val jvmMethods =
+            if (own == null) declaredJvmMethods else declaredJvmMethods.map { own.unlocatedDescriptor(it).takeIf { it in signatureSet } ?: it }
         val jvmMethodSet = jvmMethods.toHashSet()
         val undeclaredJvmMethods = jvmMethods.filter { it !in signatureSet }
         val undeclaredSignatures = signatures.filter { it !in jvmMethodSet }
-        val explained = explainedPairs(undeclaredSignatures, undeclaredJvmMethods, isExplained)
+        val explainedByRelocation = explainedPairs(undeclaredSignatures, undeclaredJvmMethods, isExplained)
+        // the names the JVM methods of the members told so far name their classes by, also the ones which are not relocated,
+        // which no other JVM method is paired against, like the one of no member, of a @JvmOverloads function, with a shrunk overload
+        // of its shape, naming p/lib/Event as p/ext/Event next to the JVM method of an override naming them both as the metadata does
+        val known = KnownNames()
+        declaredJvmMethods.forEachIndexed { index, jvmMethod ->
+            jvmMethods[index].takeIf { it in signatureSet }?.let { known.add(methodClassNames(it), methodClassNames(jvmMethod)) }
+        }
+        explainedByRelocation.forEach { (signature, jvmMethod) -> known.add(methodClassNames(signature), methodClassNames(jvmMethod)) }
+        known.addKotlinClasses(signatures, undeclaredJvmMethods)
+        // a signature and a JVM method of its shape, whose classes are all known to be named so, like told by the Kotlin classes
+        // themselves, are paired like the ones the relocation explains
+        val explained = explainedByRelocation + explainedPairs(
+            undeclaredSignatures.filter { it !in explainedByRelocation },
+            undeclaredJvmMethods.filter { it !in explainedByRelocation.values },
+            known::names
+        )
         val explainedJvmMethods = explained.values.toHashSet()
-        val unknownJvmMethods = undeclaredJvmMethods.filter { it !in explainedJvmMethods }.groupBy { methodShape(it) }
-        if (unknownJvmMethods.isEmpty()) return SignatureNames(emptyMap(), isAmbiguous = false)
+        val classNames = HashMap<String, List<String>>()
+        fun classNamesOf(method: String) = classNames.getOrPut(method) { methodClassNames(method) }
+        fun isContradicted(signature: String, jvmMethod: String) = known.contradicts(classNamesOf(signature), classNamesOf(jvmMethod))
+        val unexplainedJvmMethods = undeclaredJvmMethods.filter { it !in explainedJvmMethods }.groupBy { methodShape(it) }
+        val unexplainedSignatures = undeclaredSignatures.filter { it !in explained }.groupBy { methodShape(it) }
+        // neither a signature whose every JVM method of its shape is contradicted, like a shrunk one, nor such a JVM method, is paired
+        val unknownJvmMethods = unexplainedJvmMethods.mapValues { (shape, jvmMethods) ->
+            jvmMethods.filter { jvmMethod -> unexplainedSignatures[shape].orEmpty().any { !isContradicted(it, jvmMethod) } }
+        }.filterValues { it.isNotEmpty() }
+        val explainedNames = explained.flatMap { (signature, jvmMethod) -> relocatedClassNames(methodClassNames(signature), methodClassNames(jvmMethod)) }
+        if (unknownJvmMethods.isEmpty()) return SignatureNames(explainedNames.uniquePairs(), isAmbiguous = false)
         // paired one to one, as a JVM method of the same shape as more than one signature might be the one of any of them,
         // like of an overload next to a shrunk one
-        val unknownSignatures = undeclaredSignatures.filter { it !in explained }.groupBy { methodShape(it) }
+        val unknownSignatures = unexplainedSignatures.mapValues { (shape, signatures) ->
+            signatures.filter { signature -> unknownJvmMethods[shape].orEmpty().any { !isContradicted(signature, it) } }
+        }.filterValues { it.isNotEmpty() }
         val pairs = unknownSignatures.values.mapNotNull { it.singleOrNull() }.flatMap { signature ->
             val jvmMethod = unknownJvmMethods[methodShape(signature)]?.singleOrNull() ?: return@flatMap emptyList()
             relocatedClassNames(methodClassNames(signature), methodClassNames(jvmMethod))
-        } + explained.flatMap { (signature, jvmMethod) -> relocatedClassNames(methodClassNames(signature), methodClassNames(jvmMethod)) }
+        } + explainedNames
         val ambiguous = unknownSignatures.filter { (shape, signatures) ->
             unknownJvmMethods[shape]?.let { jvmMethods -> signatures.size > 1 || jvmMethods.size > 1 } == true
         }
         val overloads = ambiguous.mapValues { (shape, signatures) -> signatures to unknownJvmMethods.getValue(shape) }
-        val prefixPaired = prefixRelocatedPairs(overloads, isExplained)
+        val prefixPaired = prefixRelocatedPairs(overloads, isExplained, ::isContradicted)
         // the only signature, and the only JVM method, of a shape left unpaired by the package prefix, are paired one to one,
         // like the only ones of their shape above, like on(Llib/sub/Event;)V and on(Lshaded/lib/sub/Event;)V next to the overloads taking lib/Event,
         // relocated to the root package, while lib/sub/ is relocated to shaded/lib/sub/
         val prefixPairedJvmMethods = prefixPaired.values.mapTo(HashSet()) { it.jvmMethod }
         val leftPaired = overloads.values.mapNotNull { (signatures, jvmMethods) ->
             val signature = signatures.filter { it !in prefixPaired }.singleOrNull() ?: return@mapNotNull null
-            val jvmMethod = jvmMethods.filter { it !in prefixPairedJvmMethods }.singleOrNull() ?: return@mapNotNull null
+            val jvmMethod = jvmMethods.filter { it !in prefixPairedJvmMethods }.singleOrNull()
+                ?.takeUnless { isContradicted(signature, it) } ?: return@mapNotNull null
             signature to relocatedClassNames(methodClassNames(signature), methodClassNames(jvmMethod))
         }.toMap()
         // a class told by a JVM method of its own shape is not told otherwise by the package prefix
@@ -2099,6 +2353,60 @@ internal class OverrideResolver(
         // the class files of the supertypes are read only for the signatures which are paired by neither
         val isAmbiguous = ambiguous.values.any { signatures -> signatures.any { it !in prefixPaired && it !in leftPaired } }
         return SignatureNames((pairs + prefixPairs).uniquePairs(), isAmbiguous)
+    }
+
+    /**
+     * The names the JVM methods of a class name the classes of the JVM signatures of its metadata by, as told so far,
+     * see [relocatedSignatureNames], each class named by one name, and each name naming one class,
+     * as a relocation renames a class, like by shading, to one name, of no other class.
+     */
+    private class KnownNames {
+
+        private val jvmNames = HashMap<String, String>()
+
+        private val metadataNames = HashMap<String, String>()
+
+        /**
+         * Adds the [jvmClassNames] of a JVM method naming the [classNames] of a JVM signature of the metadata, see [methodClassNames].
+         */
+        fun add(classNames: List<String>, jvmClassNames: List<String>) = classNames.zip(jvmClassNames).forEach { (metadataName, jvmName) ->
+            jvmNames.putIfAbsent(metadataName, jvmName)
+            metadataNames.putIfAbsent(jvmName, metadataName)
+        }
+
+        /**
+         * Whether the class of the [metadataName] is known to be named by the [jvmName].
+         */
+        fun names(metadataName: String, jvmName: String): Boolean = jvmNames[metadataName] == jvmName
+
+        /**
+         * Whether a JVM method of the [jvmClassNames] would name a class of the [classNames] of a JVM signature of the metadata
+         * by another name than known, or another class by a known name.
+         */
+        fun contradicts(classNames: List<String>, jvmClassNames: List<String>): Boolean =
+            classNames.zip(jvmClassNames).any { (metadataName, jvmName) ->
+                jvmNames[metadataName].let { it != null && it != jvmName } || metadataNames[jvmName].let { it != null && it != metadataName }
+            }
+
+    }
+
+    /**
+     * Adds the names the [jvmMethods] name the Kotlin classes of the JVM [signatures] of the metadata by,
+     * each told by the Kotlin class found by the JVM name itself, whose own metadata, which a relocation does not rewrite,
+     * names it as a signature does, like `p/lib/Event` of the class found by `p/app/shaded/p/lib/Event`,
+     * or by `p/lib/Event`, when it is not relocated; no name is taken for the one of a class otherwise,
+     * like for the one a relocation known would give it, as another class might be relocated to that very name,
+     * like `p/ext/Event` to `p/app/shaded/p/lib/sub/Event`, next to `p/lib/` relocated to `p/app/shaded/p/lib/`,
+     * and neither is the name of a Java class, or of a class which is not found, which tell nothing.
+     */
+    private fun KnownNames.addKotlinClasses(signatures: Collection<String>, jvmMethods: Collection<String>) {
+        if (jvmMethods.isEmpty()) return
+        val metadataClassNames = signatures.flatMapTo(HashSet()) { methodClassNames(it) }
+        jvmMethods.flatMapTo(HashSet()) { methodClassNames(it) }.forEach { jvmName ->
+            if (!jvmName.isRelocatable) return@forEach
+            val metadataName = declaration(jvmName).kotlin?.name?.let { internalNameOf(it) } ?: return@forEach
+            if (metadataName in metadataClassNames) add(listOf(metadataName), listOf(jvmName))
+        }
     }
 
     /**
@@ -2146,11 +2454,16 @@ internal class OverrideResolver(
      * by the signature.
      * The classes which the relocation already known [isExplained], like the one of the class itself, are not told by the prefix,
      * like `shaded/app/Event` of `app/Event` of a class relocated from `app/` to `shaded/app/`,
-     * telling `on(Lapp/Event;Llib/Event;)V` as `on(Lshaded/app/Event;LEvent;)V` by `lib/` to the root package.
+     * telling `on(Lapp/Event;Llib/Event;)V` as `on(Lshaded/app/Event;LEvent;)V` by `lib/` to the root package,
+     * and neither are the classes which the signatures of a shape all name alike, and their JVM methods do too,
+     * named so whichever JVM method is the one of a signature, like `ext/Event` named `shaded/ext/Event` by them all,
+     * unless they are the only ones a JVM method names otherwise,
+     * and a signature is not paired with a JVM method when [isContradicted], see [KnownNames].
      */
     private fun prefixRelocatedPairs(
         overloads: Map<String, Pair<List<String>, List<String>>>,
-        isExplained: (metadataName: String, jvmName: String) -> Boolean
+        isExplained: (metadataName: String, jvmName: String) -> Boolean,
+        isContradicted: (signature: String, jvmMethod: String) -> Boolean
     ): Map<String, PrefixPaired> {
         // the class names of each method parsed once, as each signature is compared with each JVM method of its shape
         val classNames = HashMap<String, List<String>>()
@@ -2158,10 +2471,17 @@ internal class OverrideResolver(
         // each pair of a signature and a JVM method of its shape, whose classes differ by the same prefix relocation,
         // with the relocated class names
         val explained = overloads.values.flatMap { (signatures, jvmMethods) ->
+            // the classes every signature of the shape names alike, and every JVM method does too, at the same position
+            val alike = classNamesOf(signatures.first()).indices.filterTo(HashSet()) { index ->
+                signatures.all { classNamesOf(it)[index] == classNamesOf(signatures.first())[index] } &&
+                    jvmMethods.all { classNamesOf(it)[index] == classNamesOf(jvmMethods.first())[index] }
+            }
             signatures.flatMap { signature ->
-                jvmMethods.mapNotNull { jvmMethod ->
+                jvmMethods.filter { !isContradicted(signature, it) }.mapNotNull { jvmMethod ->
                     val names = relocatedClassNames(classNamesOf(signature), classNamesOf(jvmMethod))
-                    names.filter { (metadataName, jvmName) -> !isExplained(metadataName, jvmName) }
+                    val unexplained = names.filter { (metadataName, jvmName) -> !isExplained(metadataName, jvmName) }
+                    val told = classNamesOf(signature).zip(classNamesOf(jvmMethod)).filterIndexed { index, name -> index !in alike && name in unexplained }
+                    told.ifEmpty { unexplained }
                         .map { (metadataName, jvmName) -> prefixRelocation(metadataName, jvmName) }.distinct().singleOrNull()
                         ?.let { prefix -> prefix to PrefixPaired(signature, jvmMethod, names) }
                 }
