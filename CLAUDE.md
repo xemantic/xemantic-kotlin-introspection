@@ -108,6 +108,14 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 - kotlinc 2.4.21 rejects an enum entry named `entries` (`conflicting declarations`, KT-48872), also one deprecated as `HIDDEN`,
   so the entry shadowing the `entries` property can be neither probed, nor compiled as a fixture.
 
+- In a kotlinc probe `import java.util.function.*` does not bring `Function`: the default import of `kotlin.Function` wins over a star import,
+  so `Function<String, String>` fails with `one type argument expected` — import `java.util.function.Function` explicitly.
+
+- A Java subclass of a JDK class which kotlin-reflect cannot describe, like of `java.util.LinkedHashSet`, cannot simply keep its overrides
+  of the members of the built-in types when converted, see `javaMembersOf`: they would be listed as taking platform types,
+  like `addAll(Collection<out String>?)` or `removeIf(Predicate<in String>?)`, while kotlinc rejects `addAll(null)` and `removeIf(null)` there,
+  as kotlin-reflect tells of the same subclass of `java.util.TreeSet`.
+
 - Kotlin never passes named arguments to a Java method, even one compiled with `-parameters`, so a Java method taking parameters never shadows an extension — see `isShadowingJavaMethod`.
 
 ## Anti-patterns to avoid
