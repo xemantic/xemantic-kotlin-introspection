@@ -852,6 +852,21 @@ abstract class HiddenPrimitiveNotNullBoxedJavaPutBelowJoin :
 abstract class GenericBoxedJavaHiddenGenericPutJoin :
     com.xemantic.kotlin.introspection.test.other.JavaIntegerPut(), HiddenPrimitivePut, GenericPut<Int>
 
+// the put(t: T) of GenericPut<Int> is picked of the ones merged with the put(int) of the Java class, which implements it,
+// though the hidden put(key: Int) of HiddenPrimitivePut overrides the put(int) on the JVM, and is called in place of its put(@NotNull Integer)
+abstract class PrimitiveAndNotNullBoxedJavaGenericHiddenPutJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaPrimitiveAndNotNullBoxedPut(), GenericPut<Int>, HiddenPrimitivePut
+
+interface HiddenNullablePrimitivePut {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    fun put(key: Int?): String
+}
+
+// the hidden put(key: Int?) of HiddenNullablePrimitivePut, returning String, is picked over the put(Integer) of JavaBoxedPutBelow,
+// a method of its own, returning the platform type String!, so that put(null) does not compile
+abstract class BoxedJavaPutBelowHiddenNullablePutJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaBoxedPutBelow(), HiddenNullablePrimitivePut
+
 interface HiddenPrimitivePutRedeclaring : HiddenPrimitivePut
 
 abstract class BoxedJavaPutBelowHiddenInterface : com.xemantic.kotlin.introspection.test.other.JavaBoxedPutBelowHiddenInterface()

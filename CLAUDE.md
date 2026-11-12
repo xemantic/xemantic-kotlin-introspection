@@ -98,6 +98,13 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   `x.getOrDefault("", null)` compiles on a `HashMap<String, String>` subclass through the extension.
   Probe the member only, shadowing the extension by one of the same name in the probe's own package, returning a marker type.
 
+- When probing kotlinc with an internal declaration of another module, give the modules different `-module-name`s,
+  as both are `main` otherwise, and the internal one is visible —
+  while a public member of an internal class is visible anyway through a public subclass, like a Java one, which needs no suppressed error.
+
+- A Java method and a Kotlin member of unrelated supertypes, of the same JVM signature, are merged only when their Kotlin types agree but for the platform ones:
+  a Java `accept(@NotNull String)` next to a Kotlin `accept(s: String?)` is rejected with `inherited platform declarations clash`, so such a join is no valid fixture.
+
 - kotlinc 2.4.21 rejects an enum entry named `entries` (`conflicting declarations`, KT-48872), also one deprecated as `HIDDEN`,
   so the entry shadowing the `entries` property can be neither probed, nor compiled as a fixture.
 
@@ -113,6 +120,14 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 
 - With a type argument given explicitly, like `x.ext<_, Nothing, _>()`, kotlinc reports the violated bound of an inferred type parameter
   as an error also next to an empty intersection, unlike when all of them are inferred, see `CallInference`.
+
+- In a kotlinc probe `import java.util.function.*` does not bring `Function`: the default import of `kotlin.Function` wins over a star import,
+  so `Function<String, String>` fails with `one type argument expected` — import `java.util.function.Function` explicitly.
+
+- A Java subclass of a JDK class which kotlin-reflect cannot describe, like of `java.util.LinkedHashSet`, cannot simply keep its overrides
+  of the members of the built-in types when converted, see `javaMembersOf`: they would be listed as taking platform types,
+  like `addAll(Collection<out String>?)` or `removeIf(Predicate<in String>?)`, while kotlinc rejects `addAll(null)` and `removeIf(null)` there,
+  as kotlin-reflect tells of the same subclass of `java.util.TreeSet`.
 
 - Kotlin never passes named arguments to a Java method, even one compiled with `-parameters`, so a Java method taking parameters never shadows an extension — see `isShadowingJavaMethod`.
 

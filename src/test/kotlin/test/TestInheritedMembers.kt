@@ -452,6 +452,83 @@ abstract class PrimitiveAndNotNullBoxedJavaPut : com.xemantic.kotlin.introspecti
 
 abstract class NotNullBoxedJavaPutOverPrimitive : com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPutOverPrimitive()
 
+// the put(T) of JavaGenericPut, overridden by the put(Integer) of JavaIntegerPutOverride, never implements the put(t: T) of GenericPut<Int>
+abstract class GenericOverridingGenericBoxedJavaPutJoin :
+    GenericPut<Int>, com.xemantic.kotlin.introspection.test.other.JavaIntegerPutOverride()
+
+// the put(int) of the Java class implements the put(key: Int) of PrimitivePut, called in place of its put(@NotNull Integer)
+abstract class PrimitiveAndNotNullBoxedJavaPutJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaPrimitiveAndNotNullBoxedPut(), PrimitivePut
+
+abstract class NotNullBoxedJavaOverPrimitiveGenericPutJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPutOverPrimitive(), GenericPut<Int>
+
+interface ManyCollectionsTaker {
+    fun take(
+        first: MutableMap<MutableList<String>, MutableList<String>>,
+        second: MutableMap<MutableList<String>, MutableList<String>>,
+        third: MutableList<String>
+    ): String
+}
+
+abstract class ManyCollectionsJavaTakerJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaManyCollectionsTaker(), ManyCollectionsTaker
+
+interface IntCollectionAdder {
+    fun addAll2(c: Collection<Int>): Boolean
+}
+
+// the compiler picks the addAll2 of the first supertype, as both return Boolean: the Java one, so that addAll2(null) compiles
+abstract class ExtendsIntegerJavaCollectionAdderJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaExtendsIntegerCollectionAdder(), IntCollectionAdder
+
+// and the Kotlin one, so that addAll2(null) does not compile
+abstract class CollectionAdderExtendsIntegerJavaJoin :
+    IntCollectionAdder, com.xemantic.kotlin.introspection.test.other.JavaExtendsIntegerCollectionAdder()
+
+interface StringAcceptor {
+    fun accept(s: String)
+}
+
+// the compiler picks the accept(String) of the Java class, declared first, taking String!, so that accept(null) compiles
+abstract class StringJavaAcceptorJoin : com.xemantic.kotlin.introspection.test.other.JavaStringAcceptor(), StringAcceptor
+
+// and so does a subclass of the join, inheriting the member the join picks
+abstract class StringJavaAcceptorJoinSubclass : StringJavaAcceptorJoin()
+
+// while the accept(s: String) of the Kotlin interface, declared first, is inherited as declared, also by a subclass of the join
+abstract class StringAcceptorJavaJoin : StringAcceptor, com.xemantic.kotlin.introspection.test.other.JavaStringAcceptor()
+
+abstract class StringAcceptorJavaJoinSubclass : StringAcceptorJavaJoin()
+
+// the compiler picks the accept(String) of a Java interface declared first alike
+abstract class StringJavaAcceptorInterfaceJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaStringAcceptorInterface, StringAcceptor
+
+abstract class StringAcceptorJavaInterfaceJoin :
+    StringAcceptor, com.xemantic.kotlin.introspection.test.other.JavaStringAcceptorInterface
+
+// a Java interface, or class, joining them inherits the types of the Kotlin member, whatever the order of its supertypes,
+// and so do its Kotlin subclasses, so that accept(null) does not compile
+abstract class InheritedJavaJoinedStringAcceptorInterface :
+    com.xemantic.kotlin.introspection.test.other.JavaJoinedStringAcceptorInterface
+
+abstract class InheritedJavaJoinedStringAcceptor : com.xemantic.kotlin.introspection.test.other.JavaJoinedStringAcceptor()
+
+abstract class InheritedJavaJoinedStringAcceptorSubclass : InheritedJavaJoinedStringAcceptor()
+
+// the type parameter of the interface numbers the ones of its members apart from the ones of the Java methods
+interface GenericMethodTaker<E> {
+    fun <T> take2(value: T, type: Class<T>)
+    fun <X : CharSequence, Y> pair(first: X, second: Y)
+}
+
+abstract class GenericMethodJavaTakerJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaGenericMethodTaker(), GenericMethodTaker<String>
+
+abstract class GenericMethodJavaTakerParameterJoin<Q> :
+    com.xemantic.kotlin.introspection.test.other.JavaGenericMethodTaker(), GenericMethodTaker<Q>
+
 interface IntGenericPutRedeclaring : GenericPut<Int> {
     override fun put(t: Int): String
 }
@@ -812,6 +889,73 @@ abstract class JavaImplementingInternalInterfaceFaceSub :
 
 class JavaImplementingInternalInterfaceFaceConcrete : JavaImplementingInternalInterfaceFaceSub()
 
+// and an abstract member of an internal class, or interface, which a Java class leaves unimplemented, inherited through it,
+// so that a concrete subclass has to override it, checked by the build, alone, or next to an unrelated interface declaring it too
+abstract class JavaNotImplementingInternalSub : com.xemantic.kotlin.introspection.test.other.JavaNotImplementingInternal()
+
+class JavaNotImplementingInternalConcrete : JavaNotImplementingInternalSub() {
+    override fun f(): Int = 1
+}
+
+abstract class JavaNotImplementingInternalFaceSub : com.xemantic.kotlin.introspection.test.other.JavaNotImplementingInternal(), NearestClassFace
+
+abstract class JavaNotImplementingInternalInterfaceSub : com.xemantic.kotlin.introspection.test.other.JavaNotImplementingInternalInterface()
+
+class JavaNotImplementingInternalInterfaceConcrete : JavaNotImplementingInternalInterfaceSub() {
+    override fun f(): Int = 1
+}
+
+abstract class JavaNotImplementingInternalPropertySub : com.xemantic.kotlin.introspection.test.other.JavaNotImplementingInternalProperty()
+
+class JavaNotImplementingInternalPropertyConcrete : JavaNotImplementingInternalPropertySub() {
+    override val x: Int = 1
+}
+
+// unless a Java class below implements it, or a Kotlin class overrides it
+abstract class JavaImplementingBelowNotImplementingInternalSub : com.xemantic.kotlin.introspection.test.other.JavaImplementingBelowNotImplementingInternal()
+
+class JavaImplementingBelowNotImplementingInternalConcrete : JavaImplementingBelowNotImplementingInternalSub()
+
+abstract class JavaNotImplementingInternalOverride : com.xemantic.kotlin.introspection.test.other.JavaNotImplementingInternal() {
+    override fun f(): Int = 1
+}
+
+abstract class JavaNotImplementingInternalOverrideSub : JavaNotImplementingInternalOverride()
+
+// also next to the method of the Java class overloading it, of another JVM type, primitive or boxed, a JVM method of its own
+internal abstract class InternalBoxedPut {
+    abstract fun put(k: Int?): Int
+}
+
+abstract class JavaPrimitivePutBelowInternalBoxedSub : com.xemantic.kotlin.introspection.test.other.JavaPrimitivePutBelowInternalBoxed()
+
+class JavaPrimitivePutBelowInternalBoxedConcrete : JavaPrimitivePutBelowInternalBoxedSub() {
+    override fun put(k: Int?): Int = k ?: 0
+}
+
+internal abstract class InternalPrimitivePut {
+    abstract fun put(k: Int): Int
+}
+
+abstract class JavaBoxedPutBelowInternalPrimitiveSub : com.xemantic.kotlin.introspection.test.other.JavaBoxedPutBelowInternalPrimitive()
+
+class JavaBoxedPutBelowInternalPrimitiveConcrete : JavaBoxedPutBelowInternalPrimitiveSub() {
+    override fun put(k: Int): Int = k
+}
+
+// taking the type argument the Java class gives as a platform type, so that put(null) compiles
+internal abstract class InternalGenericPut<T> {
+    abstract fun put(t: T): Int
+}
+
+abstract class JavaNotImplementingInternalGenericPutSub : com.xemantic.kotlin.introspection.test.other.JavaNotImplementingInternalGenericPut()
+
+fun JavaNotImplementingInternalGenericPutSub.putNull(): Int = put(null)
+
+// while a Kotlin class exposes an internal supertype only with an error suppressed, the members of which are not inherited
+@Suppress("EXPOSED_SUPER_CLASS")
+abstract class KotlinNotImplementingInternal : HiddenMergedInternalAbstract()
+
 // A Kotlin class extending java.util.AbstractList and implementing MutableList, whose members K2 merges,
 // picking the Java method of AbstractList, first, when not returning a platform type
 abstract class InheritedJavaListDiamond : java.util.AbstractList<String>(), MutableList<String>
@@ -843,6 +987,43 @@ abstract class InheritedJavaBiFunctionDiamond :
 // java.util.function.Consumer reached alike, whose accept returns no platform type, so that K2 takes the first one
 abstract class InheritedJavaConsumerDiamond :
     com.xemantic.kotlin.introspection.test.other.JavaTypeConsumer<String>, java.util.function.Consumer<String>
+
+// java.util.function.Function implemented by a Java class, whose apply returns String!, and declared again,
+// whose apply K2 takes of the second one, not returning a platform type
+abstract class InheritedJavaFunctionImplementationDiamond :
+    com.xemantic.kotlin.introspection.test.other.JavaSameTypeFunctionImplementation<String>(),
+    java.util.function.Function<String, String>
+
+// given nullable type arguments when declared again, which the apply K2 takes is of
+abstract class InheritedJavaNullableFunctionImplementationDiamond :
+    com.xemantic.kotlin.introspection.test.other.JavaSameTypeFunctionImplementation<String>(),
+    java.util.function.Function<String?, String?>
+
+// java.util.function.Consumer implemented alike, whose accept returns no platform type, so that K2 takes the first one
+abstract class InheritedJavaConsumerImplementationDiamond :
+    com.xemantic.kotlin.introspection.test.other.JavaTypeConsumerImplementation<String>(), java.util.function.Consumer<String>
+
+// declared again by a Kotlin interface giving nullable type arguments, which the apply K2 takes is of,
+// not of the ones given through the Java class
+interface NullableStringFunction : java.util.function.Function<String?, String?>
+
+abstract class InheritedJavaFunctionImplementationNullableInterfaceJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaSameTypeFunctionImplementation<String>(), NullableStringFunction
+
+interface TypeFunction<T> : java.util.function.Function<T, T>
+
+abstract class InheritedJavaFunctionImplementationGenericInterfaceJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaSameTypeFunctionImplementation<String>(), TypeFunction<String?>
+
+abstract class InheritedJavaConsumerFirstImplementationDiamond :
+    java.util.function.Consumer<String>, com.xemantic.kotlin.introspection.test.other.JavaTypeConsumerImplementation<String>()
+
+// the get() of the Java class returns String!, more specific than the CharSequence of the Supplier declared again, so that K2 takes it
+abstract class InheritedJavaCovariantSupplierImplementationDiamond :
+    com.xemantic.kotlin.introspection.test.other.JavaStringReturningSupplier(), java.util.function.Supplier<CharSequence>
+
+// java.util.TreeMap inherits the default remove(Object, Object) of java.util.Map, taking platform types
+abstract class InheritedStringTreeMap : java.util.TreeMap<String, String>()
 
 // The bounds of the type parameters of the methods of Java classes, marked by @NullMarked, or annotated not nullable
 abstract class InheritedJavaNullMarkedBounds : com.xemantic.kotlin.introspection.test.other.JavaNullMarkedBounds()
