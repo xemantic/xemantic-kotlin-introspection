@@ -435,6 +435,54 @@ class ReflectedDeclarationsTest {
     }
 
     @Test
+    fun `should tell supertypes of JDK interface by its generic signature`() {
+        // given - kotlin-reflect describes java.util.List as the built-in List, of the supertypes of that one
+        val clazz = java.util.List::class.java
+
+        // when
+        val supertypes = clazz.javaSignatureSupertypes { kotlinClassName(it) }
+
+        // then - java.util.SequencedCollection<E> since JDK 21, or java.util.Collection<E>, of its type parameter E
+        val supertype = supertypes?.singleOrNull()
+        val name = (supertype?.classifier as? KmClassifier.Class)?.name
+        assert(name == "java/util/SequencedCollection" || name == "java/util/Collection")
+        assert((supertype?.arguments?.singleOrNull()?.type?.classifier as? KmClassifier.TypeParameter)?.id == 0)
+    }
+
+    @Test
+    fun `should not tell supertypes of JDK class by its generic signature when they take other type arguments than its type parameters`() {
+        // given - java.lang.Integer is a Comparable<Integer>
+        val clazz = java.lang.Integer::class.java
+
+        // when
+        val supertypes = clazz.javaSignatureSupertypes { kotlinClassName(it) }
+
+        // then
+        assert(supertypes == null)
+    }
+
+    @Test
+    fun `should read declaration of Kotlin class from its metadata`() {
+        // given
+        val clazz = GenericInnerTypes::class.java
+
+        // when
+        val kmClass = readKmClass(clazz)
+
+        // then
+        assert(kmClass?.name == "com/xemantic/kotlin/introspection/test/GenericInnerTypes")
+    }
+
+    @Test
+    fun `should read no declaration of Java class without Kotlin metadata`() {
+        // when
+        val kmClass = readKmClass(java.util.ArrayList::class.java)
+
+        // then
+        assert(kmClass == null)
+    }
+
+    @Test
     fun `should read Java class type parameter bound of platform type as nullable`() {
         // given - the implicit bound of the K and V of java.util.HashMap is Object, seen in Kotlin as Any!, admitting null
         val kClass = java.util.HashMap::class

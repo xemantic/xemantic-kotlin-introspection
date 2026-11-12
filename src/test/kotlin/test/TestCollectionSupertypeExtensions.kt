@@ -63,3 +63,8 @@ fun CollectionKeyed<String, CharSequence>.keyedText() {}
 interface CollectionComparableMap<V> : Map<V, Comparable<V>>
 
 fun <T : Comparable<T>> Map<T, T>.sameComparables() {}
+
+// a JDK interface named as a supertype is the Java one, no List of Kotlin, of the supertypes of Java,
+// like (Mutable)Collection<CollectionOrder!>, through java.util.SequencedCollection since JDK 21
+
+abstract class CollectionOrderJdkList : java.util.List<CollectionOrder>

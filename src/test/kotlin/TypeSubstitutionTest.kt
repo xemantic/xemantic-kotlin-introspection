@@ -20,6 +20,7 @@ package com.xemantic.kotlin.introspection
 
 import com.xemantic.kotlin.test.assert
 import kotlin.metadata.KmClassifier
+import kotlin.metadata.KmFlexibleTypeUpperBound
 import kotlin.metadata.KmType
 import kotlin.metadata.KmTypeParameter
 import kotlin.metadata.KmTypeProjection
@@ -65,6 +66,39 @@ class TypeSubstitutionTest {
 
         // then
         assert(notNullable == setOf(0, 1, 5))
+    }
+
+    @Test
+    fun `should substitute platform type for definitely not nullable type parameter as not nullable type which is no platform type`() {
+        // given - T & Any, and the platform type String! of Java
+        val use = typeParameterUse(0, definitelyNonNull = true)
+        val platformString = classType("kotlin/String").also {
+            it.flexibleTypeUpperBound = KmFlexibleTypeUpperBound(classType("kotlin/String", nullable = true), typeFlexibilityId = null)
+        }
+
+        // when
+        val substituted = use.substituted(mapOf(0 to platformString))
+
+        // then - String, of String! & Any
+        assert((substituted.classifier as? KmClassifier.Class)?.name == "kotlin/String")
+        assert(!substituted.isNullable && !substituted.isDefinitelyNonNull)
+        assert(substituted.flexibleTypeUpperBound == null)
+        assert(platformString.flexibleTypeUpperBound != null)
+    }
+
+    @Test
+    fun `should substitute platform type for type parameter as platform type`() {
+        // given - T, and the platform type String! of Java
+        val use = typeParameterUse(0)
+        val platformString = classType("kotlin/String").also {
+            it.flexibleTypeUpperBound = KmFlexibleTypeUpperBound(classType("kotlin/String", nullable = true), typeFlexibilityId = null)
+        }
+
+        // when
+        val substituted = use.substituted(mapOf(0 to platformString))
+
+        // then
+        assert(!substituted.isNullable && substituted.flexibleTypeUpperBound != null)
     }
 
     @Test
