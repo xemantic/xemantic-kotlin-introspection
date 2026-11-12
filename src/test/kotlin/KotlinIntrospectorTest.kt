@@ -11813,14 +11813,12 @@ class KotlinIntrospectorTest {
     fun `should resolve class without extensions on type parameter of multiple contravariant positions inferred as unsatisfying type`() {
         // T is inferred as List<String>, the intersection of List<String> and Collection<String>, no Comparable<List<String>>,
         // and A bounding B as Collection<String>, no Comparable<Collection<String>>,
-        // while A bounding both B and C is not checked, unlike by kotlinc
+        // also A bounding both B and C, fixed after B as List<String>, like by kotlinc
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.BoundedReceiverListCollectionBiConsumer"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.BoundedReceiverListCollectionBiConsumer [page 1/1]
             class BoundedReceiverListCollectionBiConsumer : BoundedReceiverBiConsumer<List<String>, Collection<String>>
-            // from com.xemantic.kotlin.introspection.test
-            fun <A : Comparable<A>, B : A, C : A> BoundedReceiverBiConsumer<B, C>.biConsumeUnder()
         """.trimIndent()
     }
 
@@ -11860,7 +11858,8 @@ class KotlinIntrospectorTest {
     fun `should resolve class with extensions on type parameters bounded by type of another one or bounding multiple ones`() {
         // T of T : List<U> is inferred as the intersection of String and List<CharSequence>, Nothing, which kotlinc accepts,
         // and U, which only the bound of T constrains, by its bound, Comparable<T>,
-        // while A, bounding B and C, is not checked, also when kotlinc infers it as CharSequence, of C declared first, unlike by kotlinc
+        // while A, bounding B and C, is inferred as String, of B declared first, fixed first, but as CharSequence,
+        // no Comparable<CharSequence>, of C declared first, like by kotlinc
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.BoundedReceiverStringCharSequencePairSink"
         ) sameAsKotlin """
@@ -11870,7 +11869,6 @@ class KotlinIntrospectorTest {
             fun <U, T : List<U>> BoundedReceiverPairSink<T, U>.sinkListOf()
             fun <T : Comparable<U>, U : Comparable<T>> BoundedReceiverPairSink<T, Nothing>.sinkMutuallyComparable()
             fun <B : A, C : A, A : Comparable<A>> BoundedReceiverPairSink<B, C>.sinkUnderLast()
-            fun <C : A, B : A, A : Comparable<A>> BoundedReceiverPairSink<B, C>.sinkUnderLastMirrored()
         """.trimIndent()
     }
 
@@ -11980,8 +11978,8 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should resolve class with extension on type parameter bounding multiple ones not checked`() {
-        // A bounds both B and C, which kotlinc accepts here, whose order of fixing them is not modelled
+    fun `should resolve class with extension on type parameter bounding multiple ones declared after one of them`() {
+        // A bounds both B and C, fixed after B, declared before it, like by kotlinc, which accepts the call
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.BoundedReceiverComparableIntAnyTripleSink"
         ) should {
@@ -11991,13 +11989,278 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve class with extension on type parameter bounded by type of type parameter fixed after it`() {
-        // T : Comparable<B> refers to B, which kotlinc fixes after T, not checked
+        // T : Comparable<B> refers to B, declared after it, fixed after T, like by kotlinc, which accepts the call
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.BoundedReceiverPlainAnyAnyTripleSink"
         ) should {
             have(
                 "fun <A : Comparable<A>, T : Comparable<B>, B : A> BoundedReceiverTripleSink<T, A, B>.tripleComparableOfLater()" in lines()
             )
+        }
+    }
+
+    @Test
+    fun `should resolve class without extension on type parameter bounding multiple ones declared first`() {
+        // A, declared first, is fixed first, as Any of its own position, no Comparable<Any>, like by kotlinc,
+        // while declared after B, or bounding it through a chain, it is fixed after B, as String
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InferredReceiverStringStringAnyTripleSink"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InferredReceiverStringStringAnyTripleSink [page 1/1]
+            class InferredReceiverStringStringAnyTripleSink : InferredReceiverTripleSink<String, String, Any>
+            // from com.xemantic.kotlin.introspection.test
+            fun <C : B, B : A, A : Comparable<A>> InferredReceiverTripleSink<A, B, C>.tripleChain()
+            fun <A : Comparable<A>, T : Comparable<B>, B : A> InferredReceiverTripleSink<T, A, B>.tripleComparableOfLater()
+            fun <B : A, A : Comparable<A>, C : A> InferredReceiverTripleSink<B, C, A>.tripleFanMiddle()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extensions on type parameter bounding multiple ones inferred as unsatisfying type`() {
+        // A is inferred as CharSequence, no Comparable<CharSequence>, whatever the order kotlinc fixes the type parameters in
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InferredReceiverCharSequenceTripleSink"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InferredReceiverCharSequenceTripleSink [page 1/1]
+            class InferredReceiverCharSequenceTripleSink : InferredReceiverTripleSink<CharSequence, CharSequence, CharSequence>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extension on type parameter bounded by type of type parameter declared later`() {
+        // B of T : Comparable<B> is inferred as Nothing, the intersection of Int, and of A, a String, which kotlinc accepts
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InferredReceiverStringComparableIntTripleSink"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InferredReceiverStringComparableIntTripleSink [page 1/1]
+            class InferredReceiverStringComparableIntTripleSink : InferredReceiverTripleSink<String, Comparable<String>, Int>
+            // from com.xemantic.kotlin.introspection.test
+            fun <C : B, B : A, A : Comparable<A>> InferredReceiverTripleSink<A, B, C>.tripleChain()
+            fun <A : Comparable<A>, T : Comparable<B>, B : A> InferredReceiverTripleSink<T, A, B>.tripleComparableOfLater()
+            fun <A : Comparable<A>, B : A, C : A> InferredReceiverTripleSink<B, C, A>.tripleFanFirst()
+            fun <B : A, A : Comparable<A>, C : A> InferredReceiverTripleSink<B, C, A>.tripleFanMiddle()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extension on type parameter bounded by one of unsatisfied recursive bound`() {
+        // T, bounding U, is inferred as String, of U, no List<String>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InferredReceiverStringSink"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InferredReceiverStringSink [page 1/1]
+            class InferredReceiverStringSink : InferredReceiverSink<String>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extension on type parameter bounded by one of recursive bound satisfied by supertype`() {
+        // T, bounding U, is inferred as BoundedReceiverSelfList, a List<BoundedReceiverSelfList>, the supertype of U
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InferredReceiverSubSelfListSink"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InferredReceiverSubSelfListSink [page 1/1]
+            class InferredReceiverSubSelfListSink : InferredReceiverSink<BoundedReceiverSubSelfList>
+            // from com.xemantic.kotlin.introspection.test
+            fun <T : List<T>, U : T> InferredReceiverSink<U>.sinkUnderSelfList()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extension on covariant type parameter of recursive bound no common supertype satisfies`() {
+        // T is inferred as the common supertype of List<List<String>>, List<String>, and String, which is no List
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InferredReceiverStringListsSource"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InferredReceiverStringListsSource [page 1/1]
+            class InferredReceiverStringListsSource : InferredReceiverSource<List<List<String>>>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extension on covariant type parameter of recursive bound satisfied by common supertype`() {
+        // T is inferred as List<List<BoundedReceiverSelfList>>, the common supertype of List<List<BoundedReceiverSubSelfList>>,
+        // List<BoundedReceiverSubSelfList>, BoundedReceiverSubSelfList, and BoundedReceiverSelfList, like by kotlinc
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InferredReceiverSubSelfListsSource"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InferredReceiverSubSelfListsSource [page 1/1]
+            class InferredReceiverSubSelfListsSource : InferredReceiverSource<List<List<BoundedReceiverSubSelfList>>>
+            // from com.xemantic.kotlin.introspection.test
+            fun <T : List<T>> InferredReceiverSource<T>.sourceSelfList()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extension on type parameter of type argument bounded by another one`() {
+        // B of List<B>, which Any does not constrain, is fixed after A, as String
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InferredReceiverAnyStringPairSink"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InferredReceiverAnyStringPairSink [page 1/1]
+            class InferredReceiverAnyStringPairSink : InferredReceiverPairSink<Any, String>
+            // from com.xemantic.kotlin.introspection.test
+            fun <A : Comparable<A>, B : A> InferredReceiverPairSink<List<B>, A>.pairSinkListBounded()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extension on type parameter of type argument not matching the receiver`() {
+        // String is no List<B>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InferredReceiverStringStringPairSink"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InferredReceiverStringStringPairSink [page 1/1]
+            class InferredReceiverStringStringPairSink : InferredReceiverPairSink<String, String>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extensions on star projection for its in Nothing projection in invariant position`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InferredReceiverInNothingCell"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InferredReceiverInNothingCell [page 1/1]
+            class InferredReceiverInNothingCell : InferredReceiverCell<MutableList<in Nothing>>
+            // from com.xemantic.kotlin.introspection.test
+            fun InferredReceiverCell<MutableList<in Nothing>>.cellOfInNothing()
+            fun InferredReceiverCell<MutableList<out Any?>>.cellOfOutAny()
+            fun InferredReceiverCell<MutableList<*>>.cellOfStar()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extensions on star projection for its out Any projection in invariant position`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InferredReceiverOutAnyCell"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InferredReceiverOutAnyCell [page 1/1]
+            class InferredReceiverOutAnyCell : InferredReceiverCell<MutableList<out Any?>>
+            // from com.xemantic.kotlin.introspection.test
+            fun InferredReceiverCell<MutableList<in Nothing>>.cellOfInNothing()
+            fun InferredReceiverCell<MutableList<out Any?>>.cellOfOutAny()
+            fun InferredReceiverCell<MutableList<*>>.cellOfStar()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extensions on projections of star projection in invariant position`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InferredReceiverStarCell"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InferredReceiverStarCell [page 1/1]
+            class InferredReceiverStarCell : InferredReceiverCell<MutableList<*>>
+            // from com.xemantic.kotlin.introspection.test
+            fun InferredReceiverCell<MutableList<in Nothing>>.cellOfInNothing()
+            fun InferredReceiverCell<MutableList<out Any?>>.cellOfOutAny()
+            fun InferredReceiverCell<MutableList<*>>.cellOfStar()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extension on function type of bounded type parameters for class which is no function type`() {
+        // String is no (T) -> U, a receiver type mismatch for kotlinc, although the bounds would infer U
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InferredReceiverStringStringMixed"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InferredReceiverStringStringMixed [page 1/1]
+            class InferredReceiverStringStringMixed : InferredReceiverMixed<String, String>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extension on type parameter of invariant positions for Nothing and function type`() {
+        // B cannot be both Nothing, and (String) -> Unit
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InferredReceiverNothingFunctionPair"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InferredReceiverNothingFunctionPair [page 1/1]
+            class InferredReceiverNothingFunctionPair : InferredReceiverPair<Nothing, (String) -> Unit>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extension of violated bound next to type parameter given explicitly`() {
+        // W is given explicitly, which makes String, no List<V>, an error, unlike when all the type parameters are inferred
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InferredReceiverStringSink"
+        ) should {
+            have("fun <V : T, W, T : List<V>> InferredReceiverSink<T>.sinkListExplicit()" !in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve class with extension on mutually bounded type parameters for nullable Nothing`() {
+        // which kotlinc accepts without a warning
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InferredReceiverAnyNullableNothingBiSink"
+        ) should {
+            have("fun <T : List<U>, U : List<T>> InferredReceiverBiSink<T, U>.biSinkMutualLists()" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve class with extension on type parameters bounded through type arguments for Nothing`() {
+        // which kotlinc accepts, warning that String, a final class, and Map are possibly incompatible
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InferredReceiverNothingStringBiSink"
+        ) should {
+            have("fun <T : Map<U, T>, U : T> InferredReceiverBiSink<U, T>.biSinkMap()" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve class with extension on type parameter bounded by function type for final class`() {
+        // which kotlinc accepts, warning that String, a final class, and (A) -> A are possibly incompatible
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InferredReceiverAnyStringBiSink"
+        ) should {
+            have("fun <A : Comparable<A>, B : (A) -> A> InferredReceiverBiSink<A, B>.biSinkFunction()" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve class with extension on mutually bounded type parameters for nullable Nothing type arguments`() {
+        // which kotlinc accepts without a warning
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InferredReceiverNullableNothingListsBiSink"
+        ) should {
+            have("fun <T : List<U>, U : List<T>> InferredReceiverBiSink<T, U>.biSinkMutualLists()" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve class with extension on type parameter under covariant one for nullable Nothing`() {
+        // which kotlinc accepts without a warning
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InferredReceiverNullableNothingTriple"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InferredReceiverNullableNothingTriple [page 1/1]
+            class InferredReceiverNullableNothingTriple : InferredReceiverTriple<Nothing?, CharSequence, Comparable<String>>
+            // from com.xemantic.kotlin.introspection.test
+            fun <T, U : T> InferredReceiverTriple<T, U, U>.tripleUnder()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extension on mutually bounded type parameters for supertype of Nothing type argument`() {
+        // InferredReceiverNothingSource is an InferredReceiverSource<Nothing>, which kotlinc accepts without a warning
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InferredReceiverNothingSourcesBiSink"
+        ) should {
+            have(
+                "fun <T : InferredReceiverSource<U>, U : InferredReceiverSource<T>> InferredReceiverBiSink<T, U>.biSinkMutualSources()" in lines()
+            )
+        }
+    }
+
+    @Test
+    fun `should resolve class without extension of violated recursive bound next to type parameter given explicitly`() {
+        // W is given explicitly, which makes String, no Map<String, String>, an error, unlike when all the type parameters are inferred
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InferredReceiverStringStringBiSink"
+        ) should {
+            have("fun <W, V, T : Map<T, V>> InferredReceiverBiSink<V, T>.biSinkExplicit()" !in lines())
         }
     }
 

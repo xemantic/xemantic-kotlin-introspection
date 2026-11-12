@@ -307,6 +307,13 @@ com.example.AnnotationTestClass
   is listed for `interface Orders : List<Order>`, and for `class OrderList : ArrayList<Order>()`.
   This holds only when the type arguments of the supertype are known,
   from the Kotlin metadata, or from the generic signatures of the Java supertypes.
+  An extension declaring type parameters is listed when a call without arguments, like `orders.ext()`, compiles,
+  that is when the compiler infers them from the receiver, and from their bounds,
+  also the bounds referring to each other, like `<A : Comparable<A>, B : A> Sink<B, A>.ext()`,
+  which depends on the order they are declared in.
+  The inference of the Kotlin compiler is modelled for that, and where it is not,
+  like for the projected type arguments, or for a type parameter the value parameters refer to,
+  the extension is rather listed than left out.
   It applies on `Comparable` of an enum class too,
   like `fun <T : Comparable<T>> T.isBetween(low: T, high: T)` declared next to `enum class Level`,
   unlike the extensions of the standard library on `Comparable`, which are never listed for an enum class.

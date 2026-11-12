@@ -108,6 +108,19 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 - kotlinc 2.4.21 rejects an enum entry named `entries` (`conflicting declarations`, KT-48872), also one deprecated as `HIDDEN`,
   so the entry shadowing the `entries` property can be neither probed, nor compiled as a fixture.
 
+- `CallInference` models the constraint system of K2 after the compiler sources
+  (`VariableReadinessCalculator`, `ConstraintIncorporator`, `ResultTypeResolver`, `NewCommonSuperTypeCalculator`, tag `v2.4.21`),
+  not after probes: the rules of the order the type parameters are fixed in, derived from probes, regressed in every round (#268, #292).
+  Change it only against a sweep of extension shapes × receivers judged by kotlinc, comparing the listings before and after.
+
+- kotlinc reports a violated bound of an inferred type parameter only as a warning,
+  when a type parameter of the same call is inferred as an empty intersection, like `Int & String`, itself only a warning —
+  so `x.ext()` compiles with `A` inferred as `Any` for `A : Comparable<A>`.
+  A probe compiled with `-nowarn` does not tell the two apart.
+
+- With a type argument given explicitly, like `x.ext<_, Nothing, _>()`, kotlinc reports the violated bound of an inferred type parameter
+  as an error also next to an empty intersection, unlike when all of them are inferred, see `CallInference`.
+
 - In a kotlinc probe `import java.util.function.*` does not bring `Function`: the default import of `kotlin.Function` wins over a star import,
   so `Function<String, String>` fails with `one type argument expected` — import `java.util.function.Function` explicitly.
 
