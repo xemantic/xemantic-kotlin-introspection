@@ -125,3 +125,41 @@ interface PlatformPassedSelfListBox<V : List<V>> : JavaPlatformBoxes.Passing<V>
 fun PlatformBox<List<String>?>.boxOfNullableStrings() {}
 
 fun PlatformBox<PlatformSelfList?>.boxOfNullableSelfList() {}
+
+// the type a type parameter of the class takes, of the ones a platform type, or a definitely not nullable one, leaves,
+// like String, or String?, is the one the other positions leave, like String? of PlatformSink<V> for PlatformSink<String?>,
+// which satisfies the bounds referring to it, or not, like no Comparable<String?>
+
+interface PlatformSink<in T>
+
+interface PlatformPassedComparableBox<V : Comparable<V>> : JavaPlatformBoxes.Passing<V>, PlatformSink<V>
+
+interface PlatformNotNullPassedComparableBox<V : Comparable<V>?> : JavaPlatformBoxes.NotNullPassing<V>, PlatformSink<V>
+
+fun <P> P.nullableBoxAndNullableSink() where P : PlatformBox<String?>, P : PlatformSink<String?> {}
+
+fun <P> P.nullableBoxAndSink() where P : PlatformBox<String?>, P : PlatformSink<String> {}
+
+fun <P> P.boxAndNullableSink() where P : PlatformBox<String>, P : PlatformSink<String?> {}
+
+fun <P> P.boxAndSink() where P : PlatformBox<String>, P : PlatformSink<String> {}
+
+// a type parameter of the class in a type argument given by Kotlin to a Java supertype, like V of PlatformPair<V, V>!,
+// is no platform type, the same type in all its positions
+
+interface PlatformPair<A, B>
+
+interface PlatformPassedPairBox<V> : JavaPlatformBoxes.Passing<PlatformPair<V, V>>, JavaPlatformBoxes.OtherPassing<V>
+
+fun <P> P.mixedPairBoxAndNullableOther() where P : PlatformBox<PlatformPair<String?, String>>, P : PlatformOther<String?> {}
+
+fun <P> P.nullablePairBoxAndNullableOther() where P : PlatformBox<PlatformPair<String?, String?>>, P : PlatformOther<String?> {}
+
+// and a nullable one, like V?, is a nullable type, like String?, of the type parameter of either nullability,
+// like the String? of List<V> for List<String?>
+
+interface PlatformPassedListBox<V> : JavaPlatformBoxes.Passing<List<V>>, PlatformOther<V?>
+
+fun <P> P.nullableListBoxAndNullableOther() where P : PlatformBox<List<String?>>, P : PlatformOther<String?> {}
+
+fun <P> P.nullableListBoxAndOther() where P : PlatformBox<List<String?>>, P : PlatformOther<String> {}

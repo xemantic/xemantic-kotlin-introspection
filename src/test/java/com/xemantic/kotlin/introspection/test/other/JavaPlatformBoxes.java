@@ -35,4 +35,8 @@ public interface JavaPlatformBoxes {
     interface NullableWrap extends PlatformNullableBox<PlatformWrap<String>> {}
 
     interface Passing<T> extends PlatformBox<T> {}
+
+    interface NotNullPassing<T> extends PlatformNotNullBox<T> {}
+
+    interface OtherPassing<T> extends PlatformOther<T> {}
 }

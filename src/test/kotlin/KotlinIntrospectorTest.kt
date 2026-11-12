@@ -11011,6 +11011,51 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve interface of type parameter passed through Java supertype without extension forcing nullable type not satisfying its bound`() {
+        // PlatformSink<V> for PlatformSink<String?> leaves only String? of the V! of PlatformBox<V!>, no Comparable<String?>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.PlatformPassedComparableBox"
+        ) should {
+            have(lines().none { ".nullableBoxAndNullableSink()" in it || ".boxAndNullableSink()" in it })
+            have(lines().any { ".nullableBoxAndSink()" in it })
+            have(lines().any { ".boxAndSink()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of definitely not nullable type parameter passed through Java without extension forcing nullable type not satisfying its bound`() {
+        // PlatformSink<V> for PlatformSink<String?> leaves only String? of the V & Any of PlatformBox<V & Any>, no Comparable<String?>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.PlatformNotNullPassedComparableBox"
+        ) should {
+            have(lines().none { ".boxAndNullableSink()" in it || ".nullableBoxAndNullableSink()" in it || ".nullableBoxAndSink()" in it })
+            have(lines().any { ".boxAndSink()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of type parameter in type argument given to Java supertype without extension on its other nullabilities`() {
+        // no V makes a PlatformPair<V, V> a PlatformPair<String?, String>, while a String? makes it a PlatformPair<String?, String?>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.PlatformPassedPairBox"
+        ) should {
+            have(lines().none { ".mixedPairBoxAndNullableOther()" in it })
+            have(lines().any { ".nullablePairBoxAndNullableOther()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of type parameter used as nullable with extension on nullable type of its other position`() {
+        // a PlatformPassedListBox<String?> is a PlatformOther<String?>, of String??, and no V makes a V? a String
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.PlatformPassedListBox"
+        ) should {
+            have(lines().any { ".nullableListBoxAndNullableOther()" in it })
+            have(lines().none { ".nullableListBoxAndOther()" in it })
+        }
+    }
+
+    @Test
     fun `should resolve class comparable through raw Java supertype without extensions on comparable of its package`() {
         // the Comparable of the raw JavaGenericComparable, told only by its name, is comparable to the raw type,
         // so that kotlinc accepts none of the extensions on Comparable of the package, like Comparable<BoundedReceiverMoney>,
