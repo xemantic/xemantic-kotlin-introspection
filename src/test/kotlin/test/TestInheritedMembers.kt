@@ -452,6 +452,59 @@ abstract class PrimitiveAndNotNullBoxedJavaPut : com.xemantic.kotlin.introspecti
 
 abstract class NotNullBoxedJavaPutOverPrimitive : com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPutOverPrimitive()
 
+// the put(T) of JavaGenericPut, overridden by the put(Integer) of JavaIntegerPutOverride, never implements the put(t: T) of GenericPut<Int>
+abstract class GenericOverridingGenericBoxedJavaPutJoin :
+    GenericPut<Int>, com.xemantic.kotlin.introspection.test.other.JavaIntegerPutOverride()
+
+// the put(int) of the Java class implements the put(key: Int) of PrimitivePut, called in place of its put(@NotNull Integer)
+abstract class PrimitiveAndNotNullBoxedJavaPutJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaPrimitiveAndNotNullBoxedPut(), PrimitivePut
+
+abstract class NotNullBoxedJavaOverPrimitiveGenericPutJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPutOverPrimitive(), GenericPut<Int>
+
+interface ManyCollectionsTaker {
+    fun take(
+        first: MutableMap<MutableList<String>, MutableList<String>>,
+        second: MutableMap<MutableList<String>, MutableList<String>>,
+        third: MutableList<String>
+    ): String
+}
+
+abstract class ManyCollectionsJavaTakerJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaManyCollectionsTaker(), ManyCollectionsTaker
+
+interface IntCollectionAdder {
+    fun addAll2(c: Collection<Int>): Boolean
+}
+
+// the compiler picks the addAll2 of the first supertype, as both return Boolean: the Java one, so that addAll2(null) compiles
+abstract class ExtendsIntegerJavaCollectionAdderJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaExtendsIntegerCollectionAdder(), IntCollectionAdder
+
+// and the Kotlin one, so that addAll2(null) does not compile
+abstract class CollectionAdderExtendsIntegerJavaJoin :
+    IntCollectionAdder, com.xemantic.kotlin.introspection.test.other.JavaExtendsIntegerCollectionAdder()
+
+interface StringAcceptor {
+    fun accept(s: String)
+}
+
+// the compiler picks the accept(String) of the Java class, declared first, taking String!, so that accept(null) compiles
+abstract class StringJavaAcceptorJoin : com.xemantic.kotlin.introspection.test.other.JavaStringAcceptor(), StringAcceptor
+
+// the type parameter of the interface numbers the ones of its members apart from the ones of the Java methods
+interface GenericMethodTaker<E> {
+    fun <T> take2(value: T, type: Class<T>)
+    fun <X : CharSequence, Y> pair(first: X, second: Y)
+}
+
+abstract class GenericMethodJavaTakerJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaGenericMethodTaker(), GenericMethodTaker<String>
+
+abstract class GenericMethodJavaTakerParameterJoin<Q> :
+    com.xemantic.kotlin.introspection.test.other.JavaGenericMethodTaker(), GenericMethodTaker<Q>
+
 interface IntGenericPutRedeclaring : GenericPut<Int> {
     override fun put(t: Int): String
 }
@@ -811,6 +864,73 @@ abstract class JavaImplementingInternalInterfaceFaceSub :
     NearestClassFace, com.xemantic.kotlin.introspection.test.other.JavaImplementingInternalInterface()
 
 class JavaImplementingInternalInterfaceFaceConcrete : JavaImplementingInternalInterfaceFaceSub()
+
+// and an abstract member of an internal class, or interface, which a Java class leaves unimplemented, inherited through it,
+// so that a concrete subclass has to override it, checked by the build, alone, or next to an unrelated interface declaring it too
+abstract class JavaNotImplementingInternalSub : com.xemantic.kotlin.introspection.test.other.JavaNotImplementingInternal()
+
+class JavaNotImplementingInternalConcrete : JavaNotImplementingInternalSub() {
+    override fun f(): Int = 1
+}
+
+abstract class JavaNotImplementingInternalFaceSub : com.xemantic.kotlin.introspection.test.other.JavaNotImplementingInternal(), NearestClassFace
+
+abstract class JavaNotImplementingInternalInterfaceSub : com.xemantic.kotlin.introspection.test.other.JavaNotImplementingInternalInterface()
+
+class JavaNotImplementingInternalInterfaceConcrete : JavaNotImplementingInternalInterfaceSub() {
+    override fun f(): Int = 1
+}
+
+abstract class JavaNotImplementingInternalPropertySub : com.xemantic.kotlin.introspection.test.other.JavaNotImplementingInternalProperty()
+
+class JavaNotImplementingInternalPropertyConcrete : JavaNotImplementingInternalPropertySub() {
+    override val x: Int = 1
+}
+
+// unless a Java class below implements it, or a Kotlin class overrides it
+abstract class JavaImplementingBelowNotImplementingInternalSub : com.xemantic.kotlin.introspection.test.other.JavaImplementingBelowNotImplementingInternal()
+
+class JavaImplementingBelowNotImplementingInternalConcrete : JavaImplementingBelowNotImplementingInternalSub()
+
+abstract class JavaNotImplementingInternalOverride : com.xemantic.kotlin.introspection.test.other.JavaNotImplementingInternal() {
+    override fun f(): Int = 1
+}
+
+abstract class JavaNotImplementingInternalOverrideSub : JavaNotImplementingInternalOverride()
+
+// also next to the method of the Java class overloading it, of another JVM type, primitive or boxed, a JVM method of its own
+internal abstract class InternalBoxedPut {
+    abstract fun put(k: Int?): Int
+}
+
+abstract class JavaPrimitivePutBelowInternalBoxedSub : com.xemantic.kotlin.introspection.test.other.JavaPrimitivePutBelowInternalBoxed()
+
+class JavaPrimitivePutBelowInternalBoxedConcrete : JavaPrimitivePutBelowInternalBoxedSub() {
+    override fun put(k: Int?): Int = k ?: 0
+}
+
+internal abstract class InternalPrimitivePut {
+    abstract fun put(k: Int): Int
+}
+
+abstract class JavaBoxedPutBelowInternalPrimitiveSub : com.xemantic.kotlin.introspection.test.other.JavaBoxedPutBelowInternalPrimitive()
+
+class JavaBoxedPutBelowInternalPrimitiveConcrete : JavaBoxedPutBelowInternalPrimitiveSub() {
+    override fun put(k: Int): Int = k
+}
+
+// taking the type argument the Java class gives as a platform type, so that put(null) compiles
+internal abstract class InternalGenericPut<T> {
+    abstract fun put(t: T): Int
+}
+
+abstract class JavaNotImplementingInternalGenericPutSub : com.xemantic.kotlin.introspection.test.other.JavaNotImplementingInternalGenericPut()
+
+fun JavaNotImplementingInternalGenericPutSub.putNull(): Int = put(null)
+
+// while a Kotlin class exposes an internal supertype only with an error suppressed, the members of which are not inherited
+@Suppress("EXPOSED_SUPER_CLASS")
+abstract class KotlinNotImplementingInternal : HiddenMergedInternalAbstract()
 
 // A Kotlin class extending java.util.AbstractList and implementing MutableList, whose members K2 merges,
 // picking the Java method of AbstractList, first, when not returning a platform type

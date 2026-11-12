@@ -98,6 +98,13 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   `x.getOrDefault("", null)` compiles on a `HashMap<String, String>` subclass through the extension.
   Probe the member only, shadowing the extension by one of the same name in the probe's own package, returning a marker type.
 
+- When probing kotlinc with an internal declaration of another module, give the modules different `-module-name`s,
+  as both are `main` otherwise, and the internal one is visible —
+  while a public member of an internal class is visible anyway through a public subclass, like a Java one, which needs no suppressed error.
+
+- A Java method and a Kotlin member of unrelated supertypes, of the same JVM signature, are merged only when their Kotlin types agree but for the platform ones:
+  a Java `accept(@NotNull String)` next to a Kotlin `accept(s: String?)` is rejected with `inherited platform declarations clash`, so such a join is no valid fixture.
+
 - kotlinc 2.4.21 rejects an enum entry named `entries` (`conflicting declarations`, KT-48872), also one deprecated as `HIDDEN`,
   so the entry shadowing the `entries` property can be neither probed, nor compiled as a fixture.
 

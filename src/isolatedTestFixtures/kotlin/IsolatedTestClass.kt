@@ -128,6 +128,20 @@ class RelocatedJavaBaseImpl : RelocatedJavaBase(), RelocatedDefaultInterface
 
 class RelocatedOverridingJavaBaseImpl : RelocatedOverridingJavaBase()
 
+// tests relocate its Java superclass, like shading, but neither it, nor its subclass, whose class file does not refer to the Java class
+open class RelocatedJavaBaseMid : RelocatedJavaBase()
+
+class RelocatedJavaBaseMidImpl : RelocatedJavaBaseMid()
+
+// tests relocate them, like shading, together with the Java class implementing the interface giving Int, and its subclass
+interface RelocatedGenericPut<T> {
+    fun put(t: T): String
+}
+
+interface RelocatedIntPut : RelocatedGenericPut<Int>
+
+abstract class RelocatedJavaIntPutImpl : RelocatedJavaIntPut()
+
 // tests relocate it, like shading, together with the Java class implementing it, and its type argument, but not the subclass
 interface RelocatedGenericInterface<T> {
     fun kg(value: T) {}

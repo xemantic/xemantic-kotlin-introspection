@@ -555,6 +555,25 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should list member inherited from relocated Java superclass of Kotlin superclass which is not relocated`() {
+        // given
+        // only the class file of the Kotlin superclass refers to the Java class by its relocated name
+        val root = isolatedTestFixturesCopy("relocatedJavaBaseOfMid", "RelocatedJavaBase.class", "RelocatedJavaBaseMid.class")
+        relocatedCopy(root, "RelocatedJavaBase.class", dependents = listOf("RelocatedJavaBaseMid.class"))
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.RelocatedJavaBaseMidImpl.jm")
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.RelocatedJavaBaseMidImpl.jm [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.isolated.RelocatedJavaBase
+            fun jm(arg0: RelocatedEvent?)
+        """.trimIndent()
+    }
+
+    @Test
     fun `should name Kotlin class relocated to the root package taken by member of relocated Java supertype by its metadata name`() {
         // given
         val dependencies = arrayOf("RelocatedSubEventJavaBase.class", "sub/RelocatedEvent.class")
@@ -663,6 +682,31 @@ class ClassLoaderIntrospectionTest {
             fun on(arg0: RelocatedEvent?)
         """.trimIndent()
         assert(oldSignature == null)
+    }
+
+    @Test
+    fun `should list abstract generic member of relocated Kotlin interface next to boxed method of relocated Java class`() {
+        // given
+        val classFiles = arrayOf(
+            "RelocatedGenericPut.class", "RelocatedIntPut.class", "RelocatedJavaIntPut.class", "RelocatedJavaIntPutImpl.class"
+        )
+        val root = isolatedTestFixturesCopy("relocatedJavaIntPut", *classFiles)
+        relocatedCopy(root, *classFiles)
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("shaded.com.xemantic.kotlin.introspection.isolated.RelocatedJavaIntPutImpl.put")
+
+        // then
+        // an empty concrete subclass does not compile, as put(Integer) does not implement the put(t: T) given Int by Kotlin
+        signature should {
+            have(this!!.lines().drop(1) == listOf(
+                "// inherited from com.xemantic.kotlin.introspection.isolated.RelocatedJavaIntPut",
+                "open fun put(arg0: Int?): String",
+                "// inherited from com.xemantic.kotlin.introspection.isolated.RelocatedGenericPut",
+                "fun put(t: Int?): String"
+            ))
+        }
     }
 
     @Test
