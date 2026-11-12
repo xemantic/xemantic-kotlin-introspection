@@ -746,6 +746,22 @@ internal class OverrideResolver(
     }
 
     /**
+     * Whether each value parameter of the Kotlin [function] is of a primitive type on the JVM, see [jvmPrimitives],
+     * as the compiler matching a Java method sees it, with the substituted [parameters]:
+     * also the one of a type parameter given a not nullable primitive type by Kotlin, like the `put(t: T)` of `IntPut : GenericPut<Int>`,
+     * erased to `Object`, which a Java `put(int)` implements, unlike a `put(Integer)`, see [primitivesMatch],
+     * but not the one given by Java, like by `GenericPut<Integer>`, of a flexible type, nor a nullable one, like of `GenericPut<Int?>`.
+     */
+    private fun substitutedJvmPrimitives(function: KmFunction, parameters: List<MemberType>): List<Boolean> =
+        jvmPrimitives(function).mapIndexed { index, isPrimitive ->
+            isPrimitive || function.valueParameters.getOrNull(index)?.let { parameter ->
+                val type = parameters[index]
+                parameter.varargElementType == null && parameter.type.classifier is KmClassifier.TypeParameter &&
+                    type is ClassType && type.nullable == false && type.name in PRIMITIVE_CLASS_NAMES
+            } == true
+        }
+
+    /**
      * The keys of the properties of the Kotlin supertypes of the [owner] which its [property] overrides,
      * like the [overriddenMembers] of a function.
      */
@@ -1133,7 +1149,14 @@ internal class OverrideResolver(
         val properties = mutableMapOf<String, MutableList<Overridable>>()
         // the methods of Object, as Any, a supertype of every class, has no Java class, see findDeclaration
         val hiddenPlatformFunctions = objectMethods.mapValuesTo(mutableMapOf()) { (_, methods) -> methods.toMutableList() }
-        val pending = ArrayDeque(ownerClass.supertypes.mapNotNull { kotlinType(it, ownerSubstitution) as? ClassType })
+        // the type arguments a Java class gives are platform types, like the Integer of GenericPut<Integer>, see javaSupertypes,
+        // which kotlin-reflect describes as not nullable, so that a Kotlin member given them takes no primitive type, see primitivesMatch
+        val isJavaOwner = declaration(owner.name).let { it.kotlin == null && it.java != null }
+        val pending = ArrayDeque(ownerClass.supertypes.mapNotNull { supertype ->
+            val type = kotlinType(supertype, ownerSubstitution) as? ClassType
+            if (type == null || !isJavaOwner || ownerClass.name in PURE_IMPLEMENTATIONS) type
+            else type.copy(arguments = type.arguments.map { TypeArgument(it.variance, it.type.flexible()) })
+        })
         // every class and interface is a subtype of Any, also when it is reached only through Java interfaces
         pending += ClassType("kotlin/Any")
         // a class is never its own supertype, which matters for Any itself
@@ -1230,6 +1253,7 @@ internal class OverrideResolver(
                 kmClass.functions.filter { it.visibility.isOverridable }.forEach { function ->
                     val memberVisibility = visibility(function.visibility, function.signature)
                     val typeParameters = memberTypeParameters(function.typeParameters)
+                    val parameters = function.valueParameters.map { kotlinType(it.type, substitution, typeParameters) }
                     functions.getOrPut(function.name) { mutableListOf() } += Overridable(
                         contexts = function.contextParameters.map {
                             kotlinType(it.type, substitution, typeParameters)
@@ -1237,9 +1261,7 @@ internal class OverrideResolver(
                         receiver = function.receiverParameterType?.let {
                             kotlinType(it, substitution, typeParameters)
                         },
-                        parameters = function.valueParameters.map {
-                            kotlinType(it.type, substitution, typeParameters)
-                        },
+                        parameters = parameters,
                         typeParameterCount = function.typeParameters.size,
                         isJava = false,
                         visibility = memberVisibility,
@@ -1247,7 +1269,7 @@ internal class OverrideResolver(
                             function.valueParameters[it].declaresDefaultValue
                         }.toSet(),
                         key = memberKey(kmClass, function),
-                        primitives = jvmPrimitives(function)
+                        primitives = substitutedJvmPrimitives(function, parameters)
                     )
                 }
                 kmClass.properties.filter { it.visibility.isOverridable }.forEach { property ->
