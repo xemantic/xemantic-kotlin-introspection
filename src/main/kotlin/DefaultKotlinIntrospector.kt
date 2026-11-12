@@ -5136,11 +5136,12 @@ internal class DefaultKotlinIntrospector(
         }
         // a JDK class which kotlin-reflect describes as a built-in type, like java.util.List as List, named as a supertype,
         // like abstract class X : java.util.List<String>, has the supertypes of its JVM class, like java.util.SequencedCollection<E>,
-        // or java.util.Collection<E>, the ones javaSupertypeNames tells, not the ones of the built-in type
-        val supertypes = when (val clazz = foundClass.clazz?.takeIf(::isDescribedAsBuiltin)) {
-            null -> header.supertypes
-            else -> reflectedValue(default = null) { clazz.javaSignatureSupertypes(::javaSupertypeMetadataName) } ?: return emptyMap()
-        }
+        // or java.util.Collection<E>, the ones javaSupertypeNames tells, not the ones of the built-in type,
+        // unless they take other type arguments than its type parameters, like Comparable<Integer> of java.lang.Integer,
+        // told by the built-in type then, like Comparable<Int>, which is no Comparable of another type either
+        val supertypes = foundClass.clazz?.takeIf(::isDescribedAsBuiltin)
+            ?.let { clazz -> reflectedValue(default = null) { clazz.javaSignatureSupertypes(::javaSupertypeMetadataName) } }
+            ?: header.supertypes
         val pureImplementation = PURE_IMPLEMENTATIONS[metadataName]?.replace('/', '.')
         val types = supertypes.associate { supertype ->
             val key = receiverIndexKeys(supertype).single()
@@ -5735,6 +5736,32 @@ internal class DefaultKotlinIntrospector(
     }
 
     /**
+     * What a [ReceiverMatcher] matched, and inferred, all the state of a match, which matching again starts anew,
+     * see [ReceiverMatcher.matchingAgain], each of them told where the matcher refers to it.
+     */
+    private class Matched {
+        val inferred = HashMap<Int, MutableList<Pair<KmType, KmVariance>>>()
+        val inferredIds = ArrayList<Int>()
+        val constrainedBy = ArrayList<Triple<Int, KmType, KmVariance>>()
+        val boundsChecked = HashSet<Int>()
+        val typesInferredFromBounds: MutableSet<KmType> = Collections.newSetFromMap(IdentityHashMap())
+        var isInferringFromBounds = false
+        var isUntold = false
+        val classTypeParameterTypes = ArrayList<ClassTypeParameterType>()
+        var isPlatformArgument = false
+        var isMatchedBeyondInference = false
+    }
+
+    /**
+     * A [type] of an extension which the type parameter of a class of the given [id] is matched against,
+     * in a position of the given [variance], see [ReceiverMatcher.isClassTypeParameterTyped],
+     * or else, when [isNotNullOf], in an invariant position, as definitely not nullable, like `V & Any`,
+     * the type parameter being the type, or the nullable one of it, like `String`, or `String?`, of `String`,
+     * like a platform type, `V!` of a Java supertype, matched against the nullable one, like `String?`.
+     */
+    private class ClassTypeParameterType(val id: Int, val type: KmType, val variance: KmVariance, val isNotNullOf: Boolean = false)
+
+    /**
      * How a type parameter of an extension is inferred through its bound, see [ReceiverMatcher.isInferred],
      * fixed by kotlinc as the bound, or else in a way not modelled, inferred as before #292 then,
      * when the return type refers to it, which neither hides, nor lists, more than before.
@@ -5762,15 +5789,18 @@ internal class DefaultKotlinIntrospector(
 
         private val typeParameters = typeParameters.associateBy { it.id }
 
+        // what is matched, all of it, forgotten as a whole when matching again, see matchingAgain
+        private var matched = Matched()
+
         // the types each type parameter is inferred from, with the variances of their positions
-        private val inferred = HashMap<Int, MutableList<Pair<KmType, KmVariance>>>()
+        private val inferred get() = matched.inferred
 
         // the type parameters, in the order of what is inferred, see forgetInferredSince
-        private val inferredIds = ArrayList<Int>()
+        private val inferredIds get() = matched.inferredIds
 
         // the types the type parameters are inferred from by the types matched, with the variances of their positions,
         // without the ones inferred from their bounds, see satisfiesBounds, the constraints kotlinc infers them by, see CallInference
-        private val constrainedBy = ArrayList<Triple<Int, KmType, KmVariance>>()
+        private val constrainedBy get() = matched.constrainedBy
 
         // telling whether a type the type parameter is inferred from is a subtype of another one, or the same type, see infer,
         // without inferring the type parameters of the extension, whose ids the type parameters of the class can take
@@ -5779,14 +5809,18 @@ internal class DefaultKotlinIntrospector(
         }
 
         // the type parameters whose bounds are being checked, see satisfiesBounds
-        private val boundsChecked = HashSet<Int>()
+        private val boundsChecked get() = matched.boundsChecked
 
         // the types inferred from the bounds of a type parameter of a contravariant position, see satisfiesBounds,
         // by their instances, which tell nothing kotlinc fixes a type parameter by, see satisfiesRecursiveBounds
-        private val typesInferredFromBounds: MutableSet<KmType> = Collections.newSetFromMap(IdentityHashMap())
+        private val typesInferredFromBounds get() = matched.typesInferredFromBounds
 
         // whether the bounds of a type parameter of a contravariant position are inferring, see typesInferredFromBounds
-        private var isInferringFromBounds = false
+        private var isInferringFromBounds
+            get() = matched.isInferringFromBounds
+            set(value) {
+                matched.isInferringFromBounds = value
+            }
 
         // the ids of the type parameters bounding each type parameter, also through others, like B, and A, of C for C : B, B : A
         private val boundingClosures by lazy(LazyThreadSafetyMode.NONE) {
@@ -5816,11 +5850,14 @@ internal class DefaultKotlinIntrospector(
 
         // whether what is not told was matched, like the type arguments of a class which cannot be loaded, see matchesUntold,
         // or a type parameter of the class, which stands for any type, so that what is inferred is not told, see isInferred
-        private var isUntold = false
+        private var isUntold
+            get() = matched.isUntold
+            set(value) {
+                matched.isUntold = value
+            }
 
-        // the types of the extension each type parameter of the class is matched against, by its id,
-        // with the variances of their positions, see isClassTypeParameterTyped
-        private val classTypeParameterTypes = ArrayList<Triple<Int, KmType, KmVariance>>()
+        // the types of the extension each type parameter of the class is matched against, see isClassTypeParameterTyped
+        private val classTypeParameterTypes get() = matched.classTypeParameterTypes
 
         /**
          * Whether each type parameter the receiver refers to, the [referred] ones, also through the bounds of the ones it refers to,
@@ -5902,24 +5939,34 @@ internal class DefaultKotlinIntrospector(
          * like `Nothing` of only covariant positions, or `Any?` of only contravariant ones.
          */
         private fun isClassTypeParameterTyped(): Boolean =
-            classTypeParameterTypes.groupBy({ it.first }, { it.second to it.third }).all { (id, positions) ->
-                fun typesOf(variance: KmVariance) = positions.filter { it.second == variance }.map { it.first }
+            classTypeParameterTypes.groupBy { it.id }.all { (id, positions) ->
+                fun typesOf(variance: KmVariance) = positions.filter { it.variance == variance && !it.isNotNullOf }.map { it.type }
                 val invariant = typesOf(KmVariance.INVARIANT)
+                // the ones it is, or is the nullable type of, like String of V & Any, a subtype of String?, and a supertype of String
+                val notNullOf = positions.filter { it.isNotNullOf }.map { it.type }
                 val bounds = supertypes.kmClass.typeParameters.find { it.id == id }?.upperBounds.orEmpty()
                 // also the bounds of the type parameter, like CharSequence of V : CharSequence, referring to no type parameter
-                val upper = typesOf(KmVariance.OUT) + bounds.filter { bound -> bound.refersOnlyTo { false } }
-                val lower = typesOf(KmVariance.IN)
+                val upper = typesOf(KmVariance.OUT) + notNullOf.map { type -> type.copy().also { it.isNullable = true } } +
+                    bounds.filter { bound -> bound.refersOnlyTo { false } }
+                val lower = typesOf(KmVariance.IN) + notNullOf
                 // whether the subtype is a subtype of the supertype, as far as told
                 fun isSubtype(subtype: KmType, supertype: KmType) = typeMatcher.matches(supertype, subtype, KmVariance.OUT, isStrict = false)
+                // the bounds referring only to itself, like Comparable<V> of V : Comparable<V>, of the type it takes
+                val selfBounds = bounds.filter { bound -> !bound.refersOnlyTo { false } && bound.refersOnlyTo { it == id } }
+                fun satisfiesSelfBounds(type: KmType) = selfBounds.all { bound -> isSubtype(type, bound.substituted(mapOf(id to type))) }
                 when (val type = invariant.firstOrNull()) {
-                    null -> lower.all { subtype -> upper.all { isSubtype(subtype, it) } }
+                    null -> lower.all { subtype -> upper.all { isSubtype(subtype, it) } } &&
+                        notNullOf.all { type -> satisfiesSelfBounds(type) || satisfiesSelfBounds(type.copy().also { it.isNullable = true }) }
                     else -> invariant.all { typeMatcher.matches(it, type, KmVariance.INVARIANT, isStrict = false) } &&
-                        upper.all { isSubtype(type, it) } && lower.all { isSubtype(it, type) } &&
-                        // and the bounds referring only to itself, like Comparable<V> of V : Comparable<V>, of the type it takes
-                        bounds.filter { bound -> !bound.refersOnlyTo { false } && bound.refersOnlyTo { it == id } }
-                            .all { bound -> isSubtype(type, bound.substituted(mapOf(id to type))) }
+                        upper.all { isSubtype(type, it) } && lower.all { isSubtype(it, type) } && satisfiesSelfBounds(type)
                 }
             }
+
+        // whether the type parameter of the class of the given id is bounded by a not nullable class, like V : Comparable<V>,
+        // never nullable then, which used as definitely not nullable, like V & Any, is just itself
+        private fun isNotNullableClassTypeParameter(id: Int?): Boolean =
+            supertypes.kmClass.typeParameters.find { it.id == id }?.upperBounds.orEmpty()
+                .any { it.classifier is KmClassifier.Class && !it.isNullable }
 
         /**
          * Whether the class of the [expected] type of the extension, like `List<T>`, can be the type parameter of the class [actual],
@@ -5951,10 +5998,14 @@ internal class DefaultKotlinIntrospector(
          * with the variances of their positions, the [expected] type referring to no type parameter of the extension,
          * or else the bound of its type parameter, like `Order` of `T : Order` for `Map<String, T>`, which it is a subtype of,
          * in a covariant, or an invariant, position,
-         * without the nullability for a platform type, when [isPlatform], like `V!` of a Java supertype,
-         * also a type argument of one, like `T` of `(Mutable)List<T!>!`, or for a nullable one, like `V?`,
-         * while one used as definitely not nullable, like `V & Any`, is a subtype of the type, of the nullable one then,
-         * like `String?` of `String`, and a supertype of it, both of them in an invariant position,
+         * a platform type, when [isPlatform], like `V!` of a Java supertype, also a type argument of one,
+         * like `T` of `(Mutable)List<T!>!`, being the type, or the nullable one of it, in an invariant position,
+         * like `String`, or `String?`, of `String?`, a supertype of `String`, and a subtype of `String?`, but only `String` of `String`,
+         * and a supertype of the not nullable one in a contravariant position,
+         * and a nullable one, like `V?`, the not nullable type of a nullable one,
+         * while one used as definitely not nullable, like `V & Any`, unless never nullable, see [isNotNullableClassTypeParameter],
+         * is a subtype of the type, of the nullable one then, like `String?` of `String`, and a supertype of it,
+         * both of them in an invariant position, see [ClassTypeParameterType.isNotNullOf],
          * or none if nothing is told, like of a nullable one for a not nullable type, or of a type parameter bounded by another.
          */
         private fun classTypeParameterTypesOf(
@@ -5962,7 +6013,8 @@ internal class DefaultKotlinIntrospector(
             actual: KmType,
             variance: KmVariance,
             isPlatform: Boolean
-        ): List<Pair<KmType, KmVariance>> {
+        ): List<ClassTypeParameterType> {
+            val id = (actual.classifier as? KmClassifier.TypeParameter)?.id ?: return emptyList()
             val typeParameterId = (expected.classifier as? KmClassifier.TypeParameter)?.id
             val (type, typeVariance) = when {
                 expected.refersToNoTypeParameter() -> expected to variance
@@ -5973,14 +6025,23 @@ internal class DefaultKotlinIntrospector(
                     (if (expected.isNullable) bound.copy().also { it.isNullable = true } else bound) to KmVariance.OUT
                 }
             }
+            fun typed(type: KmType, variance: KmVariance) = ClassTypeParameterType(id, type, variance)
             return when {
-                isPlatform -> listOf(type.notNullable() to typeVariance)
-                actual.isDefinitelyNonNull -> listOfNotNull(
-                    (type.copy().also { it.isNullable = true } to KmVariance.OUT).takeIf { typeVariance != KmVariance.IN },
-                    (type to KmVariance.IN).takeIf { typeVariance != KmVariance.OUT }
-                )
-                !actual.isNullable -> listOf(type to typeVariance)
-                type.isNullable -> listOf(type.notNullable() to typeVariance)
+                isPlatform -> when (typeVariance) {
+                    KmVariance.OUT -> listOf(typed(type, KmVariance.OUT))
+                    KmVariance.IN -> listOf(typed(type.notNullable(), KmVariance.IN))
+                    KmVariance.INVARIANT -> when {
+                        type.isNullable -> listOf(ClassTypeParameterType(id, type.notNullable(), KmVariance.INVARIANT, isNotNullOf = true))
+                        else -> listOf(typed(type, KmVariance.INVARIANT))
+                    }
+                }
+                actual.isDefinitelyNonNull && !isNotNullableClassTypeParameter(id) -> when (typeVariance) {
+                    KmVariance.OUT -> listOf(typed(type.copy().also { it.isNullable = true }, KmVariance.OUT))
+                    KmVariance.IN -> listOf(typed(type, KmVariance.IN))
+                    KmVariance.INVARIANT -> listOf(ClassTypeParameterType(id, type, KmVariance.INVARIANT, isNotNullOf = true))
+                }
+                !actual.isNullable -> listOf(typed(type, typeVariance))
+                type.isNullable -> listOf(typed(type.notNullable(), typeVariance))
                 else -> emptyList()
             }
         }
@@ -6309,16 +6370,7 @@ internal class DefaultKotlinIntrospector(
          */
         fun matchingAgain(choices: PathChoices): ReceiverMatcher {
             pathChoices = choices
-            inferred.clear()
-            inferredIds.clear()
-            constrainedBy.clear()
-            boundsChecked.clear()
-            typesInferredFromBounds.clear()
-            isInferringFromBounds = false
-            isUntold = false
-            classTypeParameterTypes.clear()
-            isPlatformArgument = false
-            isMatchedBeyondInference = false
+            matched = Matched()
             return this
         }
 
@@ -6450,7 +6502,11 @@ internal class DefaultKotlinIntrospector(
 
         // whether the types matched are the type arguments of a platform type, like T of (Mutable)List<T!>! of a Java supertype,
         // where a type parameter of the class is a platform type too, which the substitution leaves as is, see matchesType
-        private var isPlatformArgument = false
+        private var isPlatformArgument
+            get() = matched.isPlatformArgument
+            set(value) {
+                matched.isPlatformArgument = value
+            }
 
         /**
          * Whether the [expected] type matches the [actual] one, see [matches],
@@ -6480,10 +6536,7 @@ internal class DefaultKotlinIntrospector(
                         (!actual.isDefinitelyNonNull || isPlatform || variance == KmVariance.OUT || !expected.isNullable) &&
                         (variance == KmVariance.OUT || isClassOfClassTypeParameter(expected, actual)) &&
                         matchesUntold(isStrict = false).also {
-                            val id = (actual.classifier as? KmClassifier.TypeParameter)?.id
-                            if (id != null) classTypeParameterTypesOf(expected, actual, variance, isPlatform).forEach { (type, typeVariance) ->
-                                classTypeParameterTypes += Triple(id, type, typeVariance)
-                            }
+                            classTypeParameterTypes += classTypeParameterTypesOf(expected, actual, variance, isPlatform)
                         }
                 }
             return when (val classifier = expected.classifier) {
@@ -6889,7 +6942,11 @@ internal class DefaultKotlinIntrospector(
 
         // whether a type referring to a type parameter of the extension was matched as, or against, a projection,
         // or as a nullable type, like T?, whose inference is not modelled, see isInferredByCall
-        private var isMatchedBeyondInference = false
+        private var isMatchedBeyondInference
+            get() = matched.isMatchedBeyondInference
+            set(value) {
+                matched.isMatchedBeyondInference = value
+            }
 
         /**
          * Whether the type parameters of the extension are inferred from the types matched, like [isInferred],

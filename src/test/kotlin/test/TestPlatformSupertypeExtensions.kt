@@ -76,3 +76,52 @@ fun <T : List<T>?> PlatformSelfBox<T & Any>.selfListOfNotNull() {}
 class PlatformSelfSubListsBox : PlatformSelfBox<List<PlatformSelfSubList>>
 
 class PlatformSelfListBox : PlatformSelfBox<PlatformSelfList>
+
+// a JDK class named as a type argument, which kotlin-reflect describes as a built-in type, like java.lang.Integer as Int,
+// is the Java class, a Comparable<java.lang.Integer>, no Comparable<String>, nor a T : Comparable<T> for kotlinc
+
+interface PlatformSource<out T>
+
+fun PlatformSource<Comparable<String>>.sourceOfStringComparable() {}
+
+fun <T : Comparable<T>> PlatformSource<T>.sourceOfComparable() {}
+
+interface PlatformJavaIntegerSource : PlatformSource<java.lang.Integer>
+
+// a type parameter of the class passed through a Java supertype, a platform type there, like V! of PlatformBox<V!>,
+// is the nullable type of another position as well, like String? of PlatformOther<V>, or the not nullable one
+
+interface PlatformOther<T>
+
+interface PlatformPassedBox<V> : JavaPlatformBoxes.Passing<V>, PlatformOther<V>
+
+fun <P> P.nullableBoxAndOther() where P : PlatformBox<String?>, P : PlatformOther<String?> {}
+
+fun <P> P.nullableBoxAndNotNullOther() where P : PlatformBox<String?>, P : PlatformOther<String> {}
+
+fun <P> P.nullableBoxAndOtherOrder() where P : PlatformBox<String?>, P : PlatformOther<CollectionOrder> {}
+
+// a type parameter of the class used as definitely not nullable still satisfies its bounds referring to itself,
+// like no List<String> of V : List<V>?, nor is one of a not nullable bound nullable, like V : Comparable<V>
+
+interface PlatformSelfListParameterBox<V : List<V>?> : PlatformSelfBox<V & Any>
+
+fun PlatformSelfBox<List<String>>.selfBoxOfStrings() {}
+
+interface PlatformMixed<out A, in B>
+
+interface PlatformNotNullMixed<T> : PlatformMixed<T & Any, T>
+
+interface PlatformComparableMixed<V : Comparable<V>> : PlatformNotNullMixed<V>
+
+fun PlatformMixed<String, String?>.mixedNullableStrings() {}
+
+fun PlatformMixed<String, String>.mixedStrings() {}
+
+// also when passed through a Java supertype, a platform type there, the nullable type, or the not nullable one, of a nullable type
+
+interface PlatformPassedSelfListBox<V : List<V>> : JavaPlatformBoxes.Passing<V>
+
+fun PlatformBox<List<String>?>.boxOfNullableStrings() {}
+
+fun PlatformBox<PlatformSelfList?>.boxOfNullableSelfList() {}

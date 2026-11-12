@@ -10955,6 +10955,62 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve interface of JDK class type argument described as built-in type without extensions on comparable of other types`() {
+        // java.lang.Integer is a Comparable<java.lang.Integer>, which kotlinc takes neither for a Comparable<String>, nor for T : Comparable<T>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.PlatformJavaIntegerSource"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PlatformJavaIntegerSource [page 1/1]
+            interface PlatformJavaIntegerSource : PlatformSource<java.lang.Integer>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve interface with type parameter passed through Java supertype with extensions on nullable type of other positions`() {
+        // the V! of PlatformBox<V!> is String? of a PlatformPassedBox<String?>, and of a PlatformPassedBox<String>, but no CollectionOrder
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.PlatformPassedBox"
+        ) should {
+            have(lines().any { ".nullableBoxAndOther()" in it })
+            have(lines().any { ".nullableBoxAndNotNullOther()" in it })
+            have(lines().none { ".nullableBoxAndOtherOrder()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of definitely not nullable type parameter without extension not satisfying its bound referring to itself`() {
+        // no V : List<V>? makes V & Any a List<String>, while PlatformSelfList is one
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.PlatformSelfListParameterBox"
+        ) should {
+            have(lines().none { ".selfBoxOfStrings()" in it })
+            have(lines().any { ".selfListOfNotNull()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of definitely not nullable type parameter of not nullable bound without extension on nullable type`() {
+        // V : Comparable<V> is no String?, also when used as V & Any next to it
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.PlatformComparableMixed"
+        ) should {
+            have(lines().none { ".mixedNullableStrings()" in it })
+            have(lines().any { ".mixedStrings()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of type parameter passed through Java supertype without extension not satisfying its bound referring to itself`() {
+        // no V : List<V> makes the V! of PlatformBox<V!> a List<String>?, while PlatformSelfList is one
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.PlatformPassedSelfListBox"
+        ) should {
+            have(lines().none { ".boxOfNullableStrings()" in it })
+            have(lines().any { ".boxOfNullableSelfList()" in it })
+        }
+    }
+
+    @Test
     fun `should resolve class comparable through raw Java supertype without extensions on comparable of its package`() {
         // the Comparable of the raw JavaGenericComparable, told only by its name, is comparable to the raw type,
         // so that kotlinc accepts none of the extensions on Comparable of the package, like Comparable<BoundedReceiverMoney>,
