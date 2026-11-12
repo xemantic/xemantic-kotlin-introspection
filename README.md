@@ -181,6 +181,22 @@ com.example.AnnotationTestClass
   which a Java class extending it leaves unimplemented, is inherited from that Java class, as `abstract`,
   as a concrete subclass has to implement it,
   like `abstract fun put(k: Int?): Int` next to the `open fun put(arg0: Int): Int` the Java class declares, a JVM method of its own.
+  The types of a Java method are nullable, or not, as the compiler reads its nullability annotations,
+  like `@NotNull` of JetBrains, or `@Nullable`, and `@NullMarked`, of JSpecify,
+  also the ones of the methods it overrides,
+  and the ones of the other supertypes of a Java class inheriting the method without declaring it again,
+  like the `bar(arg0: String)` of a Java class extending a class declaring `bar(String)`,
+  and implementing an interface declaring `bar(@NotNull String)`,
+  while a parameter told by none of them is of a platform type, nullable, as it accepts `null`.
+  A type argument a Java class gives a supertype is a platform type as well, like the `String?` of the `take(T)` of a `Base<String>`,
+  unless the class giving it, or the supertype, of a type parameter of a bound which is not nullable, is marked by `@NullMarked`,
+  like `take(arg0: String)`, or the type argument is annotated, like the `String?` of the `get(): T` of a `Base<@Nullable String>`.
+  A parameter of a type parameter of the Java method itself is nullable too, like `fun <T : CharSequence?> take(arg0: T?)`,
+  unless the compiler takes the type parameter as given, whatever the type argument, so that `id<String>(null)` does not compile:
+  one of an annotated bound, like `fun <U : Any> id(arg0: U): U` of `<U extends @NotNull Object>`, or of a class marked by `@NullMarked`.
+  One bounded by a `Comparable` of itself stays nullable, like `fun <T : Comparable<T>?> sort(arg0: T?)`,
+  though `sort<String>(null)` does not compile, as `null` is accepted for a type argument declared by Java, like `sort<BigDecimal>(null)`.
+  A method named with `$`, like `get$x()`, is rendered in backticks, like `` fun `get$x`(): String ``.
   The synthetic property which Kotlin reads a Java getter as is not listed as a member of its own,
   as Kotlin does not let it be referenced, like `Thread::name`, and it would repeat every getter,
   but hinted on the line above the getter, like `// also property: var name` above `fun getName(): String` of `java.lang.Thread`,
@@ -195,7 +211,9 @@ com.example.AnnotationTestClass
   unlike a Java method overriding a Kotlin function, or the `isEmpty()` of `kotlin.collections.AbstractCollection`,
   whose only topmost declaration is the one of `Collection`,
   and only for a getter taking no parameters, neither generic, nor `void`,
-  of a class without a property of the same name, which Kotlin reads instead, like `key` of `java.util.Map.Entry` of `getKey()`.
+  of a class without a property of the same name, which Kotlin reads instead, like `key` of `java.util.Map.Entry` of `getKey()`,
+  also a property of another type, unrelated to the getter, like a `val title: Int` next to the `getTitle(): String`
+  of a Java superclass, which is inherited next to it.
 * A typealias is rendered as its declaration,
   like `typealias ArrayList<E> = java.util.ArrayList<E>` for `kotlin.collections.ArrayList`,
   as a Java class it might expand to is not rendered,

@@ -116,6 +116,15 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   like `addAll(Collection<out String>?)` or `removeIf(Predicate<in String>?)`, while kotlinc rejects `addAll(null)` and `removeIf(null)` there,
   as kotlin-reflect tells of the same subclass of `java.util.TreeSet`.
 
+- K2 enhances a method a Java class inherits without declaring it, by the methods of its other supertypes, like an override,
+  but only where the inherited one tells nothing, and not in a Kotlin class joining the same supertypes — see `joinedParameterNullability`.
+  A probe of it: `val r: Marker = x::bar` names the function type with its platform types, like `KFunction1<String!, Unit>`.
+
+- kotlinc rejects `rec<String>(null)` of a Java `<T extends Comparable<T>> void rec(T t)` with `actual type is 'Nothing?', but 'String!' was expected`,
+  though the message names a platform type, but accepts `rec<BigDecimal>(null)`, or a Java `JCS implements Comparable<JCS>`:
+  the verdict depends on who declares the type argument, not on the bound, so probe such a shape with Java-declared type arguments too —
+  see `givenTypeVariableNames`.
+
 - Kotlin never passes named arguments to a Java method, even one compiled with `-parameters`, so a Java method taking parameters never shadows an extension — see `isShadowingJavaMethod`.
 
 ## Anti-patterns to avoid

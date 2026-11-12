@@ -2036,4 +2036,31 @@ class OverrideResolverTest {
         assert(failedLoads.none { it.endsWith(".DefaultImpls") })
     }
 
+    @Test
+    fun `should not tell property of another JVM type than Java getter of its name as override`() {
+        // given
+        fun loadClass(name: String): Class<*>? = try {
+            Class.forName(binaryNameOf(name), false, javaClass.classLoader)
+        } catch (_: ClassNotFoundException) {
+            null
+        }
+        fun loadKmClass(name: String): KmClass? = loadClass(name)?.getAnnotation(Metadata::class.java)?.let {
+            (KotlinClassMetadata.readStrict(it) as? KotlinClassMetadata.Class)?.kmClass
+        }
+        val resolver = overrideResolver(loadClass = ::loadClass, loadKmClass = ::loadKmClass)
+        // `val title: Int` next to the `String getTitle()` of the Java superclass, a primitive type never bridged
+        val intTitle = checkNotNull(loadKmClass("com/xemantic/kotlin/introspection/test/KotlinIntTitle"))
+        // `val subject: String` next to its `Object getSubject()`, which the class does not bridge
+        val stringSubject = checkNotNull(loadKmClass("com/xemantic/kotlin/introspection/test/KotlinStringSubject"))
+
+        // when
+        val isTitleOverride = resolver.isOverride(OverrideResolver.Owner(intTitle), intTitle.properties.single { it.name == "title" })
+        val isSubjectOverride = resolver.isOverride(
+            OverrideResolver.Owner(stringSubject), stringSubject.properties.single { it.name == "subject" }
+        )
+
+        // then
+        assert(!isTitleOverride && !isSubjectOverride)
+    }
+
 }

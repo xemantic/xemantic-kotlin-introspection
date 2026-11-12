@@ -7485,7 +7485,7 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.InheritedJavaNotNullBounds.id [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.other.JavaNotNullBounds
-            abstract fun <U : Any> id(arg0: U?): U
+            abstract fun <U : Any> id(arg0: U): U
         """.trimIndent()
     }
 
@@ -7772,7 +7772,379 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.InheritedJavaNullMarkedBounds.unmarked [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.other.JavaNullMarkedBounds
-            abstract fun <U : Any> unmarked(arg0: U?): U
+            abstract fun <U : Any> unmarked(arg0: U): U
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve type argument given by Java class not marked for type variable of class marked by NullMarked as not nullable`() {
+        // JavaNullMarkedArguments, not marked, extends JavaNullMarkedBase<String, String>, not overriding first(T), of a T of a bound
+        // which is not nullable, so that first(null) does not compile
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaNullMarkedArguments.first"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaNullMarkedArguments.first [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNullMarkedBase
+            abstract fun first(arg0: String): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve type argument given by Java class not marked for type variable of nullable bound of class marked by NullMarked as platform type`() {
+        // the N of JavaNullMarkedBase is of a nullable bound, so that the String given for it is a platform type
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaNullMarkedArguments.nullable"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaNullMarkedArguments.nullable [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNullMarkedBase
+            abstract fun nullable(arg0: String?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve type variable given by Java class not marked for type variable of class marked by NullMarked as given`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaNullMarkedArgumentsGeneric.first"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaNullMarkedArgumentsGeneric.first [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNullMarkedBase
+            abstract fun first(arg0: String): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve type variable given by Java class marked by NullMarked for type variable of nullable bound as given`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaNullMarkedArgumentsMid.nullable"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaNullMarkedArgumentsMid.nullable [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNullMarkedBase
+            abstract fun nullable(arg0: String): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve type argument given by Java class not marked below Java class giving none as not nullable`() {
+        // JavaNullMarkedArgumentsBottom extends JavaNullMarkedArguments, of no type parameters, so that it gives no platform types
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaNullMarkedArgumentsBottom.first"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaNullMarkedArgumentsBottom.first [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNullMarkedBase
+            abstract fun first(arg0: String): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java override of type variable passing through type variable of class marked by NullMarked as given not nullable`() {
+        // the X of JavaGenericPassing<X> is kept as given, like the T of JavaNullMarkedPassingBase<T>, no platform type
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaGenericPassingNotNull.pass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaGenericPassingNotNull.pass [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaGenericPassing
+            abstract override fun pass(arg0: String): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve return type of type variable given type argument annotated nullable by Java class as nullable`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaNullableArguments.get"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaNullableArguments.get [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaPlainGeneric
+            abstract fun get(): String?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve type argument of return type of type variable given type argument annotated nullable by Java class as nullable`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaNullableArguments.list"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaNullableArguments.list [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaPlainGeneric
+            abstract fun list(): List<String?>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve return type of Java override of type variable given type argument annotated nullable as nullable`() {
+        // String get() of JavaNullableArgumentsOverriding inherits the nullability of the T of JavaPlainGeneric<@Nullable String>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaNullableArgumentsOverriding.get"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaNullableArgumentsOverriding.get [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNullableArgumentsOverriding
+            abstract override fun get(): String?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve type argument of return type of Java override of type variable given type argument annotated nullable as nullable`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaNullableArgumentsOverriding.list"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaNullableArgumentsOverriding.list [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNullableArgumentsOverriding
+            abstract override fun list(): List<String?>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve nested type argument annotated nullable given by Java class for type variable as nullable`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaNestedNullableArguments.put"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaNestedNullableArguments.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaPlainGeneric
+            abstract fun put(arg0: List<String?>?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve parameter of method of Java superclass as annotated not nullable by interface joined by Java class`() {
+        // JavaBarImpl extends JavaBarBase, declaring bar(String), and implements JavaNotNullBar, declaring bar(@NotNull String),
+        // so that bar(null) does not compile
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaBarImpl.bar"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaBarImpl.bar [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaBarBase
+            open fun bar(arg0: String)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve parameter of method of Java superclass as annotated not nullable by JSpecify by interface joined by Java class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaBarImplJSpecify.bar"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaBarImplJSpecify.bar [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaBarBase
+            open fun bar(arg0: String)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve parameter of method of Java superclass as annotated not nullable by interface joined by Java superclass`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaBarImplBottom.bar"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaBarImplBottom.bar [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaBarBase
+            open fun bar(arg0: String)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve parameter of method of Java superclass as platform type when interfaces joined by Java class disagree`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaBarImplDisagreeing.bar"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaBarImplDisagreeing.bar [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaBarBase
+            open fun bar(arg0: String?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve parameter of method of first Java interface as annotated when interfaces joined by Java class disagree`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaNullableFirstBar.bar"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaNullableFirstBar.bar [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNullableBar
+            fun bar(arg0: String?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve parameter of method of Java superclass as platform type next to interface annotating it joined by Kotlin class`() {
+        // unlike a Java class joining them, like JavaBarImpl, so that bar(null) compiles
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.KotlinBarJoin.bar"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.KotlinBarJoin.bar [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaBarBase
+            open fun bar(arg0: String?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve parameter of type variable of Java method bounded by Comparable of itself as platform type`() {
+        // the compiler rejects rec<String>(null), but accepts rec<BigDecimal>(null): the verdict depends on the type argument,
+        // whether its own supertype names it as a platform type, like the Comparable<BigDecimal!> of a Java class,
+        // so that the signature stays the one never rejecting a call the compiler accepts
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariables.rec"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariables.rec [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypeVariables
+            open fun <T : Comparable<T>?> rec(arg0: T?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve parameters of type variable of Java method bounded by Comparable of its supertypes as platform types`() {
+        // like rec, the verdict of the compiler on max<String>("", null) depends on the type argument
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariables.max"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariables.max [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypeVariables
+            open fun <T : Comparable<in T>?> max(arg0: T?, arg1: T?): T
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java method of type parameter taken as given next to declared overload of another bound`() {
+        // the declared sort, of the same signature as rendered, does not override the one of JavaNotNullSortBase
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.NotNullCharSequenceSorter.sort"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NotNullCharSequenceSorter.sort [page 1/1]
+            fun <T : CharSequence> sort(x: T)
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNotNullSortBase
+            fun <T : Comparable<T>> sort(arg0: T)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve parameter of type variable of Java method of bound annotated nullable as given`() {
+        // nullableBound<String>(null) does not compile, whoever declares the type argument
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariables.nullableBound"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariables.nullableBound [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypeVariables
+            open fun <T : CharSequence?> nullableBound(arg0: T)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve parameter of type variable of Java method of annotated bound among several bounds as platform type`() {
+        // the compiler honours the annotation of a single bound only, so that severalBounds<Date>(null) compiles
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariables.severalBounds"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariables.severalBounds [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypeVariables
+            open fun <T> severalBounds(arg0: T?) where T : java.io.Serializable?, T : Cloneable
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve parameter of type variable of Java method of bound not annotated as platform type`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariables.bounded"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariables.bounded [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypeVariables
+            open fun <T : CharSequence?> bounded(arg0: T?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve property of another type than getter of Java superclass as override`() {
+        // the getTitle()I of the property is unrelated to the String getTitle() of JavaTitled
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.KotlinIntTitle.title"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.KotlinIntTitle.title [page 1/1]
+            val title: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve getter of Java superclass next to property of another type named like its synthetic property`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.KotlinIntTitle.getTitle"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.KotlinIntTitle.getTitle [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTitled
+            fun getTitle(): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java getter named with dollar sign`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaDollarNames.get${'$'}x"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaDollarNames.get${'$'}x [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaDollarNames
+            // also property: val `${'$'}x`
+            open fun `get${'$'}x`(): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java method named with dollar sign`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaDollarNames.a${'$'}b"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaDollarNames.a${'$'}b [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaDollarNames
+            open fun `a${'$'}b`(arg0: String?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should erase own type parameters of generic member of Kotlin superclass reached raw through Java class`() {
+        // the compiler sees pick(Any?, Any?): Any?, as JavaRawThroughKotlinMid extends KotlinRawThroughBase raw
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaRawThroughKotlin.pick"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaRawThroughKotlin.pick [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.KotlinRawThroughBase
+            fun <U> pick(value: Any?, other: Any?): Any?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve parameter of method of Java superclass as platform type through Java class extending Kotlin class joining it with interface`() {
+        // KotlinBarJoin joins bar(String) with bar(@NotNull String) itself, which the Java class extending it does not enhance
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaBarKotlinJoinBottom.bar"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaBarKotlinJoinBottom.bar [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaBarBase
+            open fun bar(arg0: String?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve property of subtype of type returned by getter of Java superclass as override`() {
+        // the compiler bridges no getSubject()Ljava/lang/Object; to the getter of the property, unrelated to the one of JavaTitled
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.KotlinStringSubject.subject"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.KotlinStringSubject.subject [page 1/1]
+            val subject: String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve getter of Java superclass next to property of subtype of its type named like its synthetic property`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.KotlinStringSubject.getSubject"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.KotlinStringSubject.getSubject [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTitled
+            fun getSubject(): Any
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve type argument annotated not nullable given by Java class not marked for type variable of nullable bound as not nullable`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaNotNullArgument.nullable"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaNotNullArgument.nullable [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNullMarkedBase
+            abstract fun nullable(arg0: String): String
         """.trimIndent()
     }
 
