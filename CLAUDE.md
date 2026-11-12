@@ -105,6 +105,9 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 - A Java method and a Kotlin member of unrelated supertypes, of the same JVM signature, are merged only when their Kotlin types agree but for the platform ones:
   a Java `accept(@NotNull String)` next to a Kotlin `accept(s: String?)` is rejected with `inherited platform declarations clash`, so such a join is no valid fixture.
 
+- kotlinc 2.4.21 rejects an enum entry named `entries` (`conflicting declarations`, KT-48872), also one deprecated as `HIDDEN`,
+  so the entry shadowing the `entries` property can be neither probed, nor compiled as a fixture.
+
 - In a kotlinc probe `import java.util.function.*` does not bring `Function`: the default import of `kotlin.Function` wins over a star import,
   so `Function<String, String>` fails with `one type argument expected` — import `java.util.function.Function` explicitly.
 
@@ -112,9 +115,6 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   of the members of the built-in types when converted, see `javaMembersOf`: they would be listed as taking platform types,
   like `addAll(Collection<out String>?)` or `removeIf(Predicate<in String>?)`, while kotlinc rejects `addAll(null)` and `removeIf(null)` there,
   as kotlin-reflect tells of the same subclass of `java.util.TreeSet`.
-
-- kotlinc 2.4.21 rejects an enum entry named `entries` (`conflicting declarations`, KT-48872), also one deprecated as `HIDDEN`,
-  so the entry shadowing the `entries` property can be neither probed, nor compiled as a fixture.
 
 - Kotlin never passes named arguments to a Java method, even one compiled with `-parameters`, so a Java method taking parameters never shadows an extension — see `isShadowingJavaMethod`.
 
