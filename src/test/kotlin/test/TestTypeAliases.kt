@@ -110,3 +110,13 @@ interface FinallyImplemented {
 }
 
 abstract class InheritedJavaFinalImplementation : com.xemantic.kotlin.introspection.test.other.JavaFinalImplementation()
+
+// a typealias to an inner class of a generic outer class, whose type arguments the members of the inner class would not tell,
+// like StringInner.get, returning String?, not T?
+class GenericOuter<T> {
+    inner class Inner {
+        fun get(): T? = null
+    }
+}
+
+typealias StringInner = GenericOuter<String>.Inner

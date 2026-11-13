@@ -39,5 +39,6 @@ fun ExtensionOrderSubject.foxtrot(factor: Int): Int = value * factor
 
 // the one of ExtensionOrderB.kt is on the class, listed before the ones on its supertypes,
 // and its receiver, as well as its signature, sorts before this one,
-// so this one is rendered before it only when the merged extensions are sorted by the declaring file
-fun ExtensionOrderSupertype.alpha(): Int = 0
+// so this one is rendered before it only when the merged extensions are sorted by the declaring file,
+// taking a parameter, not to be shadowed by the more specific one taking none
+fun ExtensionOrderSupertype.alpha(factor: Int): Int = factor
