@@ -982,9 +982,13 @@ abstract class HiddenTakerImplementation : HiddenImplementedTaker {
     override fun take(h: String): String = ""
 }
 
-// the hidden take(h: String) declared abstract again by the Java subclass implements nothing
+// the hidden take(h: String) declared abstract again by the Java subclass implements nothing,
 abstract class HiddenReabstractedTakerJoin :
     HiddenImplementedOtherTaker, com.xemantic.kotlin.introspection.test.other.JavaReabstractedHiddenTaker()
+
+// and so does a Java subclass implementing it again
+abstract class HiddenReimplementedTakerJoin :
+    HiddenImplementedOtherTaker, com.xemantic.kotlin.introspection.test.other.JavaReimplementedHiddenTaker()
 
 interface HiddenStringPut {
     @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
