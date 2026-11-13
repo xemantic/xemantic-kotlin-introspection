@@ -34,6 +34,7 @@ import com.xemantic.kotlin.introspection.test.other.JavaListPathsOf
 import com.xemantic.kotlin.introspection.test.other.JavaListRows
 import com.xemantic.kotlin.introspection.test.other.JavaManyListPaths
 import com.xemantic.kotlin.introspection.test.other.JavaNamedLinkBase
+import com.xemantic.kotlin.introspection.test.other.JavaNestedListPairs
 import com.xemantic.kotlin.introspection.test.other.JavaNestedRows
 import com.xemantic.kotlin.introspection.test.other.JavaNullableChainPaths
 import com.xemantic.kotlin.introspection.test.other.JavaProjectedAnyRows
@@ -1150,6 +1151,22 @@ interface BoundedReceiverDoublingLongPad11 : BoundedReceiverDoublingLongPad10
 interface BoundedReceiverDoublingLongPad12 : BoundedReceiverDoublingLongPad11
 
 class BoundedReceiverLongDoublingPadChain : BoundedReceiverDoubling7<String>, BoundedReceiverDoublingLongPad12
+
+// Java lists nested 18 times, of strings, and of integers, which no one E is, each list either the read-only one, or the mutable one,
+// compared again for each combination of the supertypes reached through different paths at the other places,
+// which took minutes when told anew each time, as each nested list doubles the ways of comparing them
+interface BoundedReceiverNestedPair<A, B>
+
+interface BoundedReceiverNestedPaths<out A, out B, out C>
+
+abstract class BoundedReceiverDoublingArgument : BoundedReceiverDoubling8<String>
+
+abstract class BoundedReceiverDeepListPairs :
+    BoundedReceiverNestedPaths<BoundedReceiverDoublingArgument, BoundedReceiverDoublingArgument, JavaNestedListPairs.Nesting18<String, Int>>
+
+fun <E> BoundedReceiverNestedPaths<BoundedReceiverDoubling0<*>, BoundedReceiverDoubling0<*>, BoundedReceiverNestedPair<E, E>>.sameNestedLists() {}
+
+fun BoundedReceiverNestedPaths<BoundedReceiverDoubling0<*>, BoundedReceiverDoubling0<*>, BoundedReceiverNestedPair<*, *>>.anyNestedLists() {}
 
 // a raw Kotlin supertype of a Java one erased to a not nullable bound, like CharSequence of T : CharSequence,
 // or through the bound of a type parameter, like Any? of B : A
