@@ -1209,6 +1209,12 @@ open class SyntheticPropertyHolder : com.xemantic.kotlin.introspection.test.othe
 // The getters of java.lang.Thread, like getName(), offered as the var name, with setName(String)
 class SyntheticPropertyThread : Thread()
 
+// The getters of a Java superclass, like getName(), next to an extension property of the name of its synthetic property,
+// which kotlinc does not read instead, see SyntheticPropertyExtended.name
+class SyntheticPropertyExtended : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyBase()
+
+val SyntheticPropertyExtended.name: Int get() = 0
+
 // A getter of a generic Java class overridden by a generic Kotlin subclass, offered as the var value with the inherited setValue(T)
 open class SyntheticPropertyGenericHolder<T> : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyBox<T>() {
     override fun getValue(): T = throw UnsupportedOperationException()
@@ -1291,6 +1297,9 @@ abstract class InheritedJavaTypeVariables : com.xemantic.kotlin.introspection.te
 class NotNullCharSequenceSorter : com.xemantic.kotlin.introspection.test.other.JavaNotNullSortBase() {
     fun <T : CharSequence> sort(x: T) {}
 }
+
+// The generic methods of a Java class, see JavaMethodTypeVariables
+abstract class InheritedJavaMethodTypeVariables : com.xemantic.kotlin.introspection.test.other.JavaMethodTypeVariables()
 
 // A property of another type than the getter of the Java superclass named like its synthetic property, unrelated to it
 class KotlinIntTitle : com.xemantic.kotlin.introspection.test.other.JavaTitled() {
