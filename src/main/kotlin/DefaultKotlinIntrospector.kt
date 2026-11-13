@@ -6175,10 +6175,32 @@ internal class DefaultKotlinIntrospector(
         val typesInferredFromBounds: MutableSet<KmType> = Collections.newSetFromMap(IdentityHashMap())
         var isInferringFromBounds = false
         var isUntold = false
-        val classTypeParameterTypes = ArrayList<Triple<Int, KmType, KmVariance>>()
-        var isPlatformArgument = false
+        val classTypeParameterTypes = ArrayList<ClassTypeParameterPosition>()
         var isMatchedBeyondInference = false
     }
+
+    /**
+     * A position a type parameter of a class, of the given [id], is matched in, see `ReceiverMatcher.isClassTypeParameterTyped`,
+     * against the [type] of the extension, in a position of the [variance], used there as the [use] tells.
+     */
+    private class ClassTypeParameterPosition(val id: Int, val type: KmType, val variance: KmVariance, val use: ClassTypeParameterUse)
+
+    /**
+     * How a type parameter of a class is used in a position, like `V`, the [NULLABLE] `V?`, the [NOT_NULLABLE] `V & Any`,
+     * or the [PLATFORM] type `V!`, given for a type parameter of Java, which is `V`, or `V?`, as the position needs,
+     * or the [NOT_NULLABLE_PLATFORM] type `(V & Any)!`, which is `V & Any`, or `V?`.
+     */
+    private enum class ClassTypeParameterUse { PLAIN, NULLABLE, NOT_NULLABLE, PLATFORM, NOT_NULLABLE_PLATFORM }
+
+    /**
+     * What a type parameter of a class takes by a position, see `ReceiverMatcher.classTypeParameterConstraintOf`:
+     * one of the [candidates] types, a subtype of the [upper] type, or a supertype of the [lower] one.
+     */
+    private class ClassTypeParameterConstraint(
+        val candidates: List<KmType>? = null,
+        val upper: KmType? = null,
+        val lower: KmType? = null
+    )
 
     /**
      * How a type parameter of an extension is inferred through its bound, see [ReceiverMatcher.isInferred],
@@ -6276,7 +6298,7 @@ internal class DefaultKotlinIntrospector(
             }
 
         // the types of the extension each type parameter of the class is matched against, by its id,
-        // with the variances of their positions, see isClassTypeParameterTyped
+        // with the variances of their positions, and its uses there, see isClassTypeParameterTyped
         private val classTypeParameterTypes get() = matched.classTypeParameterTypes
 
         /**
@@ -6356,27 +6378,91 @@ internal class DefaultKotlinIntrospector(
          * like `V` of `HashMap<V, V>` not for `Map<String, Order>`, as the invariant key makes it `String`, which is no `Order`,
          * but for `Map<String, CharSequence>`: the same type in all the invariant positions,
          * a subtype of the types of the covariant ones, and a supertype of the types of the contravariant ones,
-         * like `Nothing` of only covariant positions, or `Any?` of only contravariant ones.
+         * like `Nothing` of only covariant positions, or `Any?` of only contravariant ones,
+         * as far as its uses there leave, see [ClassTypeParameterUse]: `V?` of `String?` in an invariant position is `String`,
+         * or `String?`, `V & Any` of `String` is either as well, and so is `V!` of a Java supertype of `String?`,
+         * while `V?` is no `String`, and `V & Any` no `String?`, see [classTypeParameterConstraintOf],
+         * the type it takes satisfying its bounds, the ones referring to no type parameter, like `CharSequence` of `V : CharSequence`,
+         * and the ones referring only to itself, like `Comparable<V>`, when told by an invariant position,
+         * and not nullable when a bound is not, like `Comparable<V>`, also in a contravariant position, like no `String?`,
+         * where each type it is a supertype of satisfies a bound comparing it to itself, like no `String?` of `Comparable<V>?`.
+         * A bound referring to another type parameter of the class, or to itself only in other positions, like `List<V>`,
+         * is not checked in contravariant, and covariant, positions alone, as the type it takes is not told then.
          */
-        private fun isClassTypeParameterTyped(): Boolean =
-            classTypeParameterTypes.groupBy({ it.first }, { it.second to it.third }).all { (id, positions) ->
-                fun typesOf(variance: KmVariance) = positions.filter { it.second == variance }.map { it.first }
-                val invariant = typesOf(KmVariance.INVARIANT)
-                val bounds = supertypes.kmClass.typeParameters.find { it.id == id }?.upperBounds.orEmpty()
-                // also the bounds of the type parameter, like CharSequence of V : CharSequence, referring to no type parameter
-                val upper = typesOf(KmVariance.OUT) + bounds.filter { bound -> bound.refersOnlyTo { false } }
-                val lower = typesOf(KmVariance.IN)
-                // whether the subtype is a subtype of the supertype, as far as told
-                fun isSubtype(subtype: KmType, supertype: KmType) = typeMatcher.matches(supertype, subtype, KmVariance.OUT, isStrict = false)
-                when (val type = invariant.firstOrNull()) {
-                    null -> lower.all { subtype -> upper.all { isSubtype(subtype, it) } }
-                    else -> invariant.all { typeMatcher.matches(it, type, KmVariance.INVARIANT, isStrict = false) } &&
-                        upper.all { isSubtype(type, it) } && lower.all { isSubtype(it, type) } &&
+        private fun isClassTypeParameterTyped(): Boolean = classTypeParameterTypes.groupBy { it.id }.all { (id, positions) ->
+            val bounds = supertypes.kmClass.typeParameters.find { it.id == id }?.upperBounds.orEmpty()
+            val constraints = positions.map { classTypeParameterConstraintOf(it) ?: return@all false }
+            // the types it can take, of the invariant positions, if any
+            val candidates = constraints.mapNotNull { it.candidates }.reduceOrNull { types, others ->
+                types.filter { type -> others.any { typeMatcher.matches(it, type, KmVariance.INVARIANT, isStrict = false) } }
+            }
+            // also the bounds of the type parameter, like CharSequence of V : CharSequence, referring to no type parameter
+            val upper = constraints.mapNotNull { it.upper } + bounds.filter { bound -> bound.refersOnlyTo { false } }
+            val lower = constraints.mapNotNull { it.lower }
+            val isNotNullable = bounds.any { !it.isNullable && it.classifier is KmClassifier.Class }
+            // whether the subtype is a subtype of the supertype, as far as told
+            fun isSubtype(subtype: KmType, supertype: KmType) = typeMatcher.matches(supertype, subtype, KmVariance.OUT, isStrict = false)
+            // a bound comparing it to itself, like Comparable<V>, satisfied by a subtype of a type satisfying it,
+            // so by each type it is a supertype of, like no String? of Comparable<V>?
+            val comparableBounds = bounds.filter { bound ->
+                val argument = bound.arguments.singleOrNull()?.type
+                (bound.classifier as? KmClassifier.Class)?.name == "kotlin/Comparable" && argument != null &&
+                    (argument.classifier as? KmClassifier.TypeParameter)?.id == id && !argument.isNullable && !argument.isDefinitelyNonNull
+            }
+            when {
+                isNotNullable && lower.any { it.isNullable } -> false
+                candidates == null -> lower.all { subtype ->
+                    upper.all { isSubtype(subtype, it) } &&
+                        comparableBounds.all { bound -> isSubtype(subtype, bound.substituted(mapOf(id to subtype))) }
+                }
+                else -> candidates.any { type ->
+                    (!isNotNullable || !type.isNullable) && upper.all { isSubtype(type, it) } && lower.all { isSubtype(it, type) } &&
                         // and the bounds referring only to itself, like Comparable<V> of V : Comparable<V>, of the type it takes
                         bounds.filter { bound -> !bound.refersOnlyTo { false } && bound.refersOnlyTo { it == id } }
                             .all { bound -> isSubtype(type, bound.substituted(mapOf(id to type))) }
                 }
             }
+        }
+
+        /**
+         * What a type parameter of a class takes by its [position], see [isClassTypeParameterTyped]:
+         * in an invariant one, the [ClassTypeParameterConstraint.candidates] types, like `String`, or `String?`, of `V?` for `String?`,
+         * or of `V & Any` for `String`, or of `V!`, from `V` to `V?`, for `String?`, but only `String` of `V!` for `String`,
+         * in a covariant one, an [ClassTypeParameterConstraint.upper] bound, like `String?` of `V & Any` for `String`,
+         * in a contravariant one, a [ClassTypeParameterConstraint.lower] bound, like `String` of `V?`, or of `V!`, for `String?`,
+         * or `null` when it takes no type there, like `V?` for `String` in a covariant, or an invariant, position,
+         * or `V & Any` for `String?` in a contravariant, or an invariant, one.
+         */
+        private fun classTypeParameterConstraintOf(position: ClassTypeParameterPosition): ClassTypeParameterConstraint? {
+            val type = position.type
+            fun KmType.nullable() = copy().also { it.isNullable = true }
+            return when (position.variance) {
+                KmVariance.INVARIANT -> ClassTypeParameterConstraint(
+                    candidates = when (position.use) {
+                        ClassTypeParameterUse.PLAIN -> listOf(type)
+                        ClassTypeParameterUse.NULLABLE -> if (type.isNullable) listOf(type.notNullable(), type) else return null
+                        ClassTypeParameterUse.NOT_NULLABLE -> if (type.isNullable) return null else listOf(type, type.nullable())
+                        ClassTypeParameterUse.PLATFORM -> if (type.isNullable) listOf(type.notNullable(), type) else listOf(type)
+                        ClassTypeParameterUse.NOT_NULLABLE_PLATFORM -> type.notNullable().let { listOf(it, it.nullable()) }
+                    }
+                )
+                KmVariance.OUT -> ClassTypeParameterConstraint(
+                    upper = when (position.use) {
+                        ClassTypeParameterUse.PLAIN, ClassTypeParameterUse.PLATFORM -> type
+                        ClassTypeParameterUse.NULLABLE -> if (type.isNullable) type else return null
+                        ClassTypeParameterUse.NOT_NULLABLE, ClassTypeParameterUse.NOT_NULLABLE_PLATFORM -> type.nullable()
+                    }
+                )
+                KmVariance.IN -> ClassTypeParameterConstraint(
+                    lower = when (position.use) {
+                        ClassTypeParameterUse.PLAIN -> type
+                        ClassTypeParameterUse.NULLABLE, ClassTypeParameterUse.PLATFORM, ClassTypeParameterUse.NOT_NULLABLE_PLATFORM ->
+                            type.notNullable()
+                        ClassTypeParameterUse.NOT_NULLABLE -> if (type.isNullable) return null else type
+                    }
+                )
+            }
+        }
 
         /**
          * Whether the class of the [expected] type of the extension, like `List<T>`, can be the type parameter of the class [actual],
@@ -6405,20 +6491,16 @@ internal class DefaultKotlinIntrospector(
         }
 
         /**
-         * The type of the extension the type parameter of the class [actual] is matched against, see [isClassTypeParameterTyped],
-         * with the variance of its position, the [expected] type referring to no type parameter of the extension,
-         * or else the bound of its type parameter, like `Order` of `T : Order` for `Map<String, T>`, which it is a subtype of,
-         * in a covariant, or an invariant, position,
-         * without the nullability for a platform type, when [isPlatform], like `V!` of a Java supertype,
-         * also a type argument of one, like `T` of `(Mutable)List<T!>!`, or for a nullable one, like `V?`,
-         * or `null` if nothing is told, like of a nullable one for a not nullable type, or of a type parameter bounded by another.
+         * The position the type parameter of the class [actual] is matched in, see [isClassTypeParameterTyped],
+         * against the [expected] type, in a position of the [variance], referring to no type parameter of the extension,
+         * or else against the bound of its type parameter, like `Order` of `T : Order` for `Map<String, T>`, which it is a subtype of,
+         * in a covariant, or an invariant, position, with the use of the type parameter of the class there, see [ClassTypeParameterUse],
+         * or `null` if nothing is told, like of a type parameter bounded by another,
+         * or of a platform type, like `List<V?>!` of a bound of the extension substituted by a type a type parameter is inferred as.
          */
-        private fun classTypeParameterTypeOf(
-            expected: KmType,
-            actual: KmType,
-            variance: KmVariance,
-            isPlatform: Boolean
-        ): Pair<KmType, KmVariance>? {
+        private fun classTypeParameterPositionOf(expected: KmType, actual: KmType, variance: KmVariance): ClassTypeParameterPosition? {
+            val id = (actual.classifier as? KmClassifier.TypeParameter)?.id ?: return null
+            if (expected.flexibleTypeUpperBound != null) return null
             val typeParameterId = (expected.classifier as? KmClassifier.TypeParameter)?.id
             val (type, typeVariance) = when {
                 expected.refersToNoTypeParameter() -> expected to variance
@@ -6429,12 +6511,16 @@ internal class DefaultKotlinIntrospector(
                     (if (expected.isNullable) bound.copy().also { it.isNullable = true } else bound) to KmVariance.OUT
                 }
             }
-            return when {
-                isPlatform -> type.notNullable() to typeVariance
-                !actual.isNullable -> type to typeVariance
-                type.isNullable -> type.notNullable() to typeVariance
-                else -> null
+            val use = when {
+                // also a platform type of Java made nullable, like V!? of T?, which is V?
+                actual.isNullable -> ClassTypeParameterUse.NULLABLE
+                // a platform type of Java, like V! of JavaBox<V>, see javaSignatureType
+                actual.flexibleTypeUpperBound != null ->
+                    if (actual.isDefinitelyNonNull) ClassTypeParameterUse.NOT_NULLABLE_PLATFORM else ClassTypeParameterUse.PLATFORM
+                actual.isDefinitelyNonNull -> ClassTypeParameterUse.NOT_NULLABLE
+                else -> ClassTypeParameterUse.PLAIN
             }
+            return ClassTypeParameterPosition(id, type, typeVariance, use)
         }
 
         // the ids of the type parameters bounding this one, like U of T : U
@@ -6882,34 +6968,6 @@ internal class DefaultKotlinIntrospector(
          * while a type parameter of the class stands for any type, other than the class itself.
          */
         private fun matches(expected: KmType, actual: KmType, variance: KmVariance, isStrict: Boolean): Boolean {
-            val isPlatformPosition = isPlatformArgument
-            isPlatformArgument = actual.flexibleTypeUpperBound != null
-            try {
-                return matchesType(expected, actual, variance, isStrict, isPlatformPosition)
-            } finally {
-                isPlatformArgument = isPlatformPosition
-            }
-        }
-
-        // whether the types matched are the type arguments of a platform type, like T of (Mutable)List<T!>! of a Java supertype,
-        // where a type parameter of the class is a platform type too, which the substitution leaves as is, see matchesType
-        private var isPlatformArgument
-            get() = matched.isPlatformArgument
-            set(value) {
-                matched.isPlatformArgument = value
-            }
-
-        /**
-         * Whether the [expected] type matches the [actual] one, see [matches],
-         * the [actual] one a type argument of a platform type when [isPlatformPosition].
-         */
-        private fun matchesType(
-            expected: KmType,
-            actual: KmType,
-            variance: KmVariance,
-            isStrict: Boolean,
-            isPlatformPosition: Boolean
-        ): Boolean {
             val actualClassifier = actual.classifier as? KmClassifier.Class
                 // a type parameter bounded by the class itself, like `E` of `Enum<E : Enum<E>>`, stands for the class
                 ?: KmClassifier.Class(supertypes.kmClass.name).takeIf { supertypes.isSelfTypeParameter(actual) }
@@ -6919,18 +6977,15 @@ internal class DefaultKotlinIntrospector(
                 ?: return (receiverTypeParameterId == null ||
                     (expected.classifier as? KmClassifier.TypeParameter)?.id != receiverTypeParameterId) &&
                     // a nullable one, like V?, is no type of a class, like String, in a covariant, or an invariant position,
-                    // nor a type parameter bounded only by classes, like T : Order
-                    (!actual.isNullable || actual.flexibleTypeUpperBound != null || isPlatformPosition || variance == KmVariance.IN ||
-                        expected.isNullable || !expected.isNeverNullable()) &&
+                    // nor a type parameter bounded only by classes, like T : Order, but for a platform type,
+                    // like List<V?>! of a bound of the extension substituted by a type a type parameter is inferred as
+                    (!actual.isNullable || variance == KmVariance.IN || expected.isNullable || expected.flexibleTypeUpperBound != null ||
+                        !expected.isNeverNullable()) &&
                     // nor is the type parameter of a class bounded by a class a type of an unrelated class,
                     // like V : Comparable<V> no List<T>, in an invariant, or a contravariant, position
                     (variance == KmVariance.OUT || isClassOfClassTypeParameter(expected, actual)) &&
                     matchesUntold(isStrict = false).also {
-                        val id = (actual.classifier as? KmClassifier.TypeParameter)?.id
-                        val isPlatform = isPlatformPosition || actual.flexibleTypeUpperBound != null
-                        if (id != null) classTypeParameterTypeOf(expected, actual, variance, isPlatform)?.let { (type, typeVariance) ->
-                            classTypeParameterTypes += Triple(id, type, typeVariance)
-                        }
+                        classTypeParameterPositionOf(expected, actual, variance)?.let { classTypeParameterTypes += it }
                     }
             return when (val classifier = expected.classifier) {
                 is KmClassifier.TypeParameter -> when (classifier.id) {
@@ -6950,9 +7005,14 @@ internal class DefaultKotlinIntrospector(
                             // a platform type, like String!, is either String, or String?, as the type parameter can be
                             actual.flexibleTypeUpperBound != null -> infer(classifier.id, actual, variance, isStrict)
                             // and a not nullable one, like String, is T & Any of T of String, or of String?,
-                            // a supertype of String, and a subtype of String?, satisfying the bounds as String itself
-                            // in an invariant position, where no supertype of it can be inferred instead
-                            else -> (variance != KmVariance.INVARIANT || satisfiesBounds(classifier.id, actual, variance, isStrict)) &&
+                            // a supertype of String, and a subtype of String?, satisfying the bounds as String itself,
+                            // or as String?, in an invariant position, where no other supertype of it can be inferred instead,
+                            // like List<SL?>? of T : List<T>? for List<SL?>, where SL : List<SL>
+                            else -> (variance != KmVariance.INVARIANT || Mark().let { mark ->
+                                satisfiesBounds(classifier.id, actual, variance, isStrict) || retrying(mark) {
+                                    satisfiesBounds(classifier.id, actual.copy().also { it.isNullable = true }, variance, isStrict)
+                                }
+                            }) &&
                                 (variance == KmVariance.IN || infer(classifier.id, actual, KmVariance.OUT, isStrict)) &&
                                 (variance == KmVariance.OUT ||
                                     infer(classifier.id, actual.copy().also { it.isNullable = true }, KmVariance.IN, isStrict))
@@ -11523,6 +11583,7 @@ private fun isNullabilityMatched(expected: KmType, actual: KmType, variance: KmV
  * its type arguments, also the nested ones, as the platform types of Java, like `Comparable<Base!>`,
  * flexible from not nullable to nullable, see [isNullabilityMatched],
  * also a not nullable type argument substituted for a type parameter, like `Box<String!>` of `Box<T>` for `T` of `String`,
+ * or `Box<V!>` for a type parameter `V` of the class, matching `V`, or `V?`, see `ReceiverMatcher.isClassTypeParameterTyped`,
  * but not an erased type argument of a raw Kotlin supertype, see [isJavaErasure], unless substituted for a type parameter,
  * but not a nullable one, like `Box<String?>` for `T` of `String?`, nor the nested type arguments of either,
  * declared by Kotlin.
@@ -11548,14 +11609,22 @@ private fun KmType.javaSignatureType(substitution: Map<Int, KmType>): KmType = c
             type.javaSignatureType(substitution)
         }
         val argumentClassifier = argumentType.classifier
-        // an erased type argument of a raw Kotlin supertype is the type kotlinc erases it to, see JAVA_ERASURE_MARKER
-        if (!argumentType.isNullable && argumentClassifier is KmClassifier.Class && !argumentType.isJavaErasure) {
-            argumentType.flexibleTypeUpperBound =
-                KmFlexibleTypeUpperBound(argumentType.copy().also { it.isNullable = true }, typeFlexibilityId = null)
-            if (classifier is KmClassifier.Class && argumentClassifier.name in MUTABLE_COLLECTION_TYPES) {
+        // an erased type argument of a raw Kotlin supertype is the type kotlinc erases it to, see JAVA_ERASURE_MARKER,
+        // while a type parameter of the class substituted for a type parameter of Java is a platform type too, like V!,
+        // but not the type arguments of a Kotlin type substituted, like V of List<V>!
+        if (!argumentType.isNullable && !argumentType.isJavaErasure && (argumentClassifier is KmClassifier.Class ||
+                (classifier is KmClassifier.TypeParameter && argumentClassifier is KmClassifier.TypeParameter))
+        ) {
+            argumentType.flexibleTypeUpperBound = KmFlexibleTypeUpperBound(
+                argumentType.copy().also { it.isNullable = true; it.isDefinitelyNonNull = false },
+                typeFlexibilityId = null
+            )
+            if (classifier is KmClassifier.Class && argumentClassifier is KmClassifier.Class &&
+                argumentClassifier.name in MUTABLE_COLLECTION_TYPES
+            ) {
                 argumentType.annotations += KmAnnotation(JAVA_COLLECTION_MARKER, emptyMap())
             }
-            if (classifier is KmClassifier.Class && argumentClassifier.name == ARRAY_CLASS_NAME) {
+            if (classifier is KmClassifier.Class && argumentClassifier is KmClassifier.Class && argumentClassifier.name == ARRAY_CLASS_NAME) {
                 argumentType.annotations += KmAnnotation(JAVA_ARRAY_MARKER, emptyMap())
             }
         }

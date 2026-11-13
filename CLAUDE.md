@@ -154,6 +154,13 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   the verdict depends on who declares the type argument, not on the bound, so probe such a shape with Java-declared type arguments too —
   see `givenTypeVariableNames`.
 
+- A type parameter of a Kotlin class passed to a Java type variable is the platform type `V!`, from `V` to `V?`, not from `V & Any`:
+  `interface R<V> : JavaBox<V>` is a `Box<String>` for `R<String>`, but no `Box<String>` for `R<String?>`.
+  The type arguments of a Kotlin type passed there stay as they are, like `V?` of `JavaBox<List<V?>>` — see `ClassTypeParameterUse`.
+
+- A `T & Any` of an extension in an invariant position, matched against `X`, lets kotlinc infer `T` as `X?` to satisfy the bounds,
+  like `fun <T : List<T>?> Box<T & Any>.f()` on `Box<List<SL?>>`, where `SL : List<SL>`, whose `List<SL?>` itself does not.
+
 - Kotlin never passes named arguments to a Java method, even one compiled with `-parameters`, so a Java method taking parameters never shadows an extension — see `isShadowingJavaMethod`.
 
 ## Anti-patterns to avoid

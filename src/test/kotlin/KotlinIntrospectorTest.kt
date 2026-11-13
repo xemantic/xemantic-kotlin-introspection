@@ -11587,6 +11587,146 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve interface passing type parameter through Java with extensions on its platform type`() {
+        // PlatformBox<V!> is a PlatformBox<String?> for V of String, like a TypedOther<String>, but no PlatformBox<String> for V of String?
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.nullable.TypedPassedBox",
+            pageSize = 10000
+        ) should {
+            have(lines().any { ".nullableBoxAndOther()" in it })
+            have(lines().any { ".nullableBoxAndNullableOther()" in it })
+            have(lines().none { ".boxAndNullableOther()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface passing Kotlin type of type parameter through Java with extensions on its nullable type`() {
+        // PlatformBox<List<V>!> is a PlatformBox<List<String?>> for V of String?, like a TypedSource<String?>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.nullable.TypedPassedListBox",
+            pageSize = 10000
+        ) should {
+            have(lines().any { ".nullableListBoxAndNullableSource()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface passing Kotlin type of nullable type parameter through Java without extension on its not nullable type`() {
+        // the V? of PlatformBox<List<V?>!> is no platform type, no String
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.nullable.TypedPassedNullableListBox",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".boxOfStringList()" in it })
+            have(lines().any { ".boxOfNullableStringList()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve class extending Java map of same type parameter with extension on map of nullable keys`() {
+        // MutableMap<V!, V!> is a Map<String?, String> for V of String
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.nullable.TypedSameKeyMap",
+            pageSize = 10000
+        ) should {
+            have(lines().any { ".nullableKeysOfStrings()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of map of definitely not nullable values with extension on map of nullable keys`() {
+        // Map<V, V & Any> is a Map<String?, String> for V of String?
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.nullable.TypedNotNullValueMap",
+            pageSize = 10000
+        ) should {
+            have(lines().any { ".nullableKeysOfStrings()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of definitely not nullable type parameter bounded recursively without extension on type outside of its bound`() {
+        // V & Any of V : List<V>? is List<String> only for V of List<String>, or of List<String>?, neither of them a List<V>?
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.nullable.TypedSelfListOfNotNull",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".selfBoxOfStringList()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of comparable type parameter without extension on its nullable type in contravariant position`() {
+        // V of V : Comparable<V> is never nullable, no String? of TypedMixed<V & Any, V>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.nullable.TypedComparableMixed",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".mixedOfNullableString()" in it })
+            have(lines().none { ".mixedOfNullableStrings()" in it })
+            have(lines().any { ".mixedOfString()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of nullable comparable type parameter without extension on its nullable type in contravariant position`() {
+        // V of V : Comparable<V>? is no String?, which is no Comparable<String?>, though V & Any is a String
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.nullable.TypedNullableComparableMixed",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".mixedOfNullableString()" in it })
+            have(lines().any { ".mixedOfString()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of list of nullable recursive type with extension on definitely not nullable type parameter bounded by nullable list`() {
+        // T of TypedSelfBox<T & Any> is List<TypedSelfList?>?, a List<List<TypedSelfList?>?>?, while List<TypedSelfList?> is none
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.nullable.TypedNullableSelfListsBox",
+            pageSize = 10000
+        ) should {
+            have(lines().any { ".selfBoxOfNotNull()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface passing nullable type parameter to Java list of definitely not nullable type with extension bounded by nullable list`() {
+        // PlatformBox<(Mutable)List<V?>> is a PlatformBox<T & Any> of T of List<TypedSelfList?>?, for V of TypedSelfList
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.nullable.TypedNullableNotNullListsBox",
+            pageSize = 10000
+        ) should {
+            have(lines().any { ".boxOfSelfListOfNotNull()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of definitely not nullable type parameter without extension on nullable type`() {
+        // V & Any is no String?
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.nullable.TypedNotNullOfBox",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".boxOfNullableString()" in it })
+            have(lines().any { ".boxOfString()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface passing type parameter to Java list of definitely not nullable type without extension on nullable list`() {
+        // PlatformBox<(Mutable)List<V!>! & Any> is a PlatformBox<List<String>>, no PlatformBox<List<String>?>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.nullable.TypedNotNullListsBox",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".boxOfNullableList()" in it })
+            have(lines().any { ".boxOfStringList()" in it })
+        }
+    }
+
+    @Test
     fun `should resolve class comparable through raw Java supertype without extensions on comparable of its package`() {
         // the Comparable of the raw JavaGenericComparable, told only by its name, is comparable to the raw type,
         // so that kotlinc accepts none of the extensions on Comparable of the package, like Comparable<BoundedReceiverMoney>,

@@ -35,4 +35,14 @@ public interface JavaPlatformBoxes {
     interface NullableWrap extends PlatformNullableBox<PlatformWrap<String>> {}
 
     interface NotNullPassing<T> extends PlatformNotNullBox<T> {}
+
+    /**
+     * Passing its type argument to {@code PlatformBox}, as a platform type, like {@code PlatformBox<V!>} for {@code Passing<V>},
+     * but not the type arguments of a Kotlin type, like {@code PlatformBox<List<V>!>} for {@code Passing<List<V>>}.
+     */
+    interface Passing<T> extends PlatformBox<T> {}
+
+    interface NotNullList<T> extends PlatformNotNullBox<java.util.List<T>> {}
+
+    class SameKeyMap<V> extends java.util.HashMap<V, V> {}
 }
