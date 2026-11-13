@@ -165,6 +165,13 @@ class DeprecatedSharedSupertypeCompanionHolder : CompanionSupertype {
     companion object : CompanionSupertype
 }
 
+// the supertype of both the class and its companion object, whose extension is called only as
+// ShadowedOnInstanceCompanionHolder.onSupertype(), as holder.onSupertype() calls the member of the class
+class ShadowedOnInstanceCompanionHolder : CompanionSupertype {
+    fun onSupertype(): Int = 1
+    companion object : CompanionSupertype
+}
+
 // called only on the name of the class, DeprecatedSharedSupertypeCompanionHolder.onCompanion(), reporting the deprecation
 fun DeprecatedSharedSupertypeCompanionHolder.Companion.onCompanion(): Int = 0
 
@@ -484,3 +491,124 @@ class GenericInstanceShadowing<T> : InstanceShadowedSupertype {
 }
 
 fun InstanceShadowedSupertype.typed(x: String): Int = 1
+
+// member properties of a type with an operator invoke, invoked instead of the extension functions of their names,
+// like invokedShadowing.task(), or invokedShadowing.taskOf(x = 1), also through an inherited invoke,
+// like invokedShadowing.inheritedTask(), unlike a property of a type whose invoke is no operator,
+// like invokedShadowing.notOperator(), which calls the extension
+interface InvokedSupertype
+
+class InvokedTask {
+    operator fun invoke(): Int = 0
+}
+
+class InvokedTaskOf {
+    operator fun invoke(x: Int): Int = x
+}
+
+open class InvokedTaskBase {
+    operator fun invoke(): Int = 0
+}
+
+class InvokedInheritedTask : InvokedTaskBase()
+
+class NotOperatorTask {
+    fun invoke(): Int = 0
+}
+
+class InvokedShadowing : InvokedSupertype {
+    val task: InvokedTask = InvokedTask()
+    val taskOf: InvokedTaskOf = InvokedTaskOf()
+    val inheritedTask: InvokedInheritedTask = InvokedInheritedTask()
+    val notOperator: NotOperatorTask = NotOperatorTask()
+}
+
+fun InvokedSupertype.task(): Int = 1
+
+fun InvokedSupertype.taskOf(x: Int): Int = x
+
+fun InvokedSupertype.inheritedTask(): Int = 1
+
+fun InvokedSupertype.notOperator(): Int = 1
+
+// members taking the type parameter of their class, called instead of an extension on the class with a type argument,
+// like TypedShadowing<String>().put(""), or TypedShadowing<String>().putAll(listOf("")), while the member of a covariant class,
+// like CovariantTypedShadowing<Nothing>().put(""), does not accept the argument, calling the extension
+class TypedShadowing<T> {
+    fun put(x: T): Int = 0
+    fun putAll(x: List<T>): Int = 0
+}
+
+fun TypedShadowing<String>.put(x: String): Int = 1
+
+fun TypedShadowing<String>.putAll(x: List<String>): Int = 1
+
+class CovariantTypedShadowing<out T> {
+    fun put(x: @UnsafeVariance T): Int = 0
+}
+
+fun CovariantTypedShadowing<String>.put(x: String): Int = 1
+
+// a member taking a supertype with type arguments, called instead of an extension taking its subtype,
+// like collectionShadowing.addAll(listOf("")), unlike one of other type arguments, like collectionShadowing.addOther(listOf(1))
+interface CollectionShadowedSupertype
+
+class CollectionShadowing : CollectionShadowedSupertype {
+    fun addAll(x: Collection<String>): Int = 0
+    fun addOther(x: Collection<String>): Int = 0
+}
+
+fun CollectionShadowedSupertype.addAll(x: List<String>): Int = 1
+
+fun CollectionShadowedSupertype.addOther(x: List<Int>): Int = 1
+
+// and of a Java class, like javaMapShadowing.take(hashMapOf("" to 1))
+class JavaMapShadowing : CollectionShadowedSupertype {
+    fun take(x: Map<String, Int>): Int = 0
+}
+
+fun CollectionShadowedSupertype.take(x: HashMap<String, Int>): Int = 1
+
+// extensions of the same package, of a more specific receiver, read, or called, instead of the ones of the same name,
+// like specific.rank of val SpecificReceiver.rank, also on a subclass, specificSub.rank, and assigned so,
+// failing to compile then, specific.rank = 1, as val SpecificReceiver.rank cannot be assigned,
+// or specific.describe(), unlike specific.describeNamed(x = 1), which only the general one, of a parameter of that name, takes,
+// and unlike the ones on a nullable receiver, like nullableSpecific.nullableRank, or nullableSpecific.nullableDescribe(),
+// which only the general one can be called on
+interface GeneralReceiver
+
+open class SpecificReceiver : GeneralReceiver
+
+class SpecificReceiverSub : SpecificReceiver()
+
+var GeneralReceiver.rank: Int
+    get() = 0
+    set(value) {}
+
+val SpecificReceiver.rank: Int get() = 1
+
+val GeneralReceiver?.nullableRank: Int get() = 0
+
+val SpecificReceiver.nullableRank: Int get() = 1
+
+val <T : GeneralReceiver> T.boundedRank: Int get() = 0
+
+val SpecificReceiver.boundedRank: Int get() = 1
+
+fun GeneralReceiver.describe(): Int = 0
+
+fun SpecificReceiver.describe(): Int = 1
+
+fun GeneralReceiver?.nullableDescribe(): Int = 0
+
+fun SpecificReceiver.nullableDescribe(): Int = 1
+
+fun GeneralReceiver.describeNamed(x: Int): Int = x
+
+fun SpecificReceiver.describeNamed(y: Int): Int = y
+
+// the members of Any, called instead of the extensions of the same signature, like anyMemberShadowing.toString()
+class AnyMemberShadowing
+
+@Suppress("EXTENSION_SHADOWED_BY_MEMBER")
+fun AnyMemberShadowing.toString(): String = ""

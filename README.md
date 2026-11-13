@@ -107,6 +107,10 @@ com.example.AnnotationTestClass
   but not the extensions on the supertypes of the companion object, also called as `Foo.parse()`,
   not to flood the listing of the class, like with the ones on `Any`,
   which are still resolved by the name of the class, like `com.example.Foo.parse` of `fun Parser.parse()` for `companion object : Parser`,
+  following a comment telling how they are called, as their receivers do not tell it,
+  like `/* called as Foo.parse() */ fun Parser.parse(): Foo`, or `/* called as Foo.parse(…) */` of one taking parameters,
+  unless the class extends the supertype too, so that they are also called on its instance, like `foo.parse()`,
+  where no member of the class, like `fun parse()`, is called instead,
   except the ones of the standard library, like for the supertypes of the class,
   and the ones of a protected companion object, called so only within the subclasses,
   while the ones of a companion object within a protected class are told by the comment of the protected class,
@@ -225,6 +229,7 @@ com.example.AnnotationTestClass
   A member of a typealias of a Java class, like `kotlin.collections.ArrayList.add`,
   is not resolved, as a Java class is not rendered,
   and of a typealias of a class with type arguments, like `typealias Names = List<String>`, or `typealias Box<T> = Holder<T>`,
+  also of an inner class of an outer class with them, like `typealias StringInner = Outer<String>.Inner`,
   only what is called on the name of the class, like `com.example.Box.create` of the companion object of `Holder`,
   or of an extension on it, as the members of the class would not tell the type arguments.
   Typealiases are found by the classpath scan only.
@@ -335,6 +340,19 @@ com.example.AnnotationTestClass
   So is an extension property on such a `T` next to an extension property of the same name on the type itself,
   of the same package, without context parameters,
   like `val <T : Comparable<T>> T.rank` next to `val Version.rank`, read instead.
+* An extension which Kotlin never calls on a class, as a more specific one of the same name, of the same package, is called instead,
+  is not listed for it, nor resolved by its name, unless the class is a built-in type,
+  or the extensions are of the `kotlin.*` and `java.*` packages, some of which the standard library lowers the priority of:
+  the more specific one is on a class without type arguments, the class itself, or one of its supertypes, like `val Order.total`,
+  and the other one on a class it is a subclass of, without type arguments, like `val Entity.total`,
+  but not a nullable one, like `val Entity?.total`, which alone is called on a nullable receiver, like `nullableOrder.total`,
+  or on a type parameter bounded only by such classes, like `val <T : Entity> T.total`,
+  neither of them with context parameters, nor with type parameters of their own, but the one of the receiver.
+  An extension property is shadowed so also when it is a `var`, as Kotlin assigns the more specific one,
+  and an extension function next to one taking the same parameters, of the same names, none of the type parameter of the receiver,
+  like `fun Entity.describe(x: Int)` next to `fun Order.describe(x: Int)`,
+  while a call giving explicitly the type argument, like `order.describe<Entity>(1)` of `fun <T : Entity> T.describe(x: Int)`,
+  which would reach the other one, is not told.
 * An extension which Kotlin never calls on a class, as a member of the class is always called instead, is not listed for it,
   nor resolved by its name, unless the class is a built-in type:
   an extension property next to a member property of the same name, without context parameters,
@@ -342,12 +360,18 @@ com.example.AnnotationTestClass
   each accepting every argument of the parameter of the extension:
   of the same type, also nullable, of a supertype without type arguments, or of an unbounded type parameter of the member,
   like `fun <T> put(x: T)`, `fun put(x: Int?)`, or `fun put(x: Number)`, next to `fun Bar.put(x: Int)`,
+  or of a supertype with the same type arguments, like `fun addAll(x: Collection<String>)` next to `fun Bar.addAll(x: List<String>)`,
+  where a type parameter of the class stands for the type argument of the receiver of an extension on the class itself,
+  like `fun put(x: T)` of `class Box<T>` next to `fun Box<String>.put(x: String)`,
+  unless the type parameter is covariant, like of `class Box<out T>`, as a `Box<Nothing>` is a `Box<String>` too,
   where a type parameter of the extension is accepted like its bound,
   like by `fun put(x: Bar)` next to `fun <T : Bar> T.put(x: T)`,
   or like the type argument of the supertype which is the receiver of the extension,
   like by `fun put(x: String)` of `object Strings : Base<String>` next to `fun <T> Base<T>.put(x: T)`.
   A member property of a function type without parameters shadows an extension function without parameters too,
-  like `val run: () -> Unit` next to `fun Bar.run()`.
+  like `val run: () -> Unit` next to `fun Bar.run()`,
+  and so does a member property of a type with an `operator fun invoke` accepting every call of the extension, like a member function,
+  also with the named arguments, like `val run: Task` of `class Task { operator fun invoke(x: Int) }` next to `fun Bar.run(x: Int)`.
   The members are the public ones, also the inherited ones,
   of an object for the extensions called on its name, of a companion object for the ones called on the name of its class,
   and of any other class for the ones called on its instance,
