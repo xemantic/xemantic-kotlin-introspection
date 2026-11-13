@@ -436,13 +436,16 @@ internal fun Class<*>.javaSignatureSupertypes(supertypeName: (Class<*>) -> Strin
  * The declaration of the Kotlin [clazz], read from its Kotlin metadata, or `null` if it has none, like a Java class,
  * or if it cannot be read, see [toKmJavaClassHeader].
  */
-internal fun readKmClass(clazz: Class<*>): KmClass? {
-    val metadata = clazz.getAnnotation(Metadata::class.java) ?: return null
-    return try {
-        (KotlinClassMetadata.readLenient(metadata) as? KotlinClassMetadata.Class)?.kmClass
-    } catch (_: IllegalArgumentException) {
-        null
-    }
+internal fun readKmClass(clazz: Class<*>): KmClass? =
+    clazz.getAnnotation(Metadata::class.java)?.let { (parseKotlinMetadata(it) as? KotlinClassMetadata.Class)?.kmClass }
+
+/**
+ * The Kotlin metadata of the [metadata] annotation, or `null` if it cannot be read.
+ */
+internal fun parseKotlinMetadata(metadata: Metadata): KotlinClassMetadata? = try {
+    KotlinClassMetadata.readLenient(metadata)
+} catch (_: IllegalArgumentException) {
+    null
 }
 
 /**

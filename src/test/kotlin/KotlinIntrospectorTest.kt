@@ -9624,6 +9624,40 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve class implementing JDK list named directly with extensions on JDK list of invariant element`() {
+        // java.util.List<String> is a java.util.List<out Any>, but no java.util.List<Any>, of the invariant E of Java
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.jdk.JdkNamedList"
+        ) should {
+            have(lines().any { ".outAnyJdkElements()" in it })
+            have(lines().any { ".stringJdkElements()" in it })
+            have(lines().none { ".anyJdkElements()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve class implementing JDK map named directly with extensions on JDK map of invariant value`() {
+        // java.util.Map<String, Int> is no java.util.Map<String, Int?>, of the invariant V of Java
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.jdk.JdkNamedMap"
+        ) should {
+            have(lines().any { ".intJdkValues()" in it })
+            have(lines().none { ".nullableJdkValues()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve class implementing JDK comparable named directly with extensions on JDK comparable of invariant type`() {
+        // java.lang.Comparable<String> is a java.lang.Comparable<in String>, but no java.lang.Comparable<Nothing>, of the invariant T of Java
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.jdk.JdkNamedComparable"
+        ) should {
+            have(lines().any { ".comparableToString()" in it })
+            have(lines().none { ".comparableToNothing()" in it })
+        }
+    }
+
+    @Test
     fun `should resolve class with repeated type parameter in JDK map supertype without extension of other key and value types`() {
         // the V of HashMap<V, V> is the key String of Map<String, CollectionOrder> only when the value is not a CollectionOrder
         resolver.resolve(
@@ -11099,6 +11133,19 @@ class KotlinIntrospectorTest {
             // from com.xemantic.kotlin.introspection.test
             fun BoundedReceiverDoubling0<*>.doublingPaths()
         """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with nested Java lists matched for each combination of supertypes reached through different paths`() {
+        // the Java lists nested 18 times, of strings, and of integers, each of them the read-only, or the mutable one,
+        // compared for each combination of the supertypes of BoundedReceiverDoubling0 at the other places,
+        // which took minutes when compared anew each time, telling once that no E is both of them
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.BoundedReceiverDeepListPairs"
+        ) should {
+            have(lines().any { ".anyNestedLists()" in it })
+            have(lines().none { ".sameNestedLists()" in it })
+        }
     }
 
     @Test

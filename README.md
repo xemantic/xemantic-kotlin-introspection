@@ -318,7 +318,9 @@ com.example.AnnotationTestClass
   but not `fun Box<String?>.ext()` for `interface NotNullBox<V> : Box<V & Any>`.
   A JDK interface named as a supertype, like `abstract class Orders : java.util.List<Order>`,
   is the Java one, with the supertypes Java declares,
-  so that `fun Collection<Order>.count()` is listed for it, but not `fun List<Order>.total()`, as the compiler tells.
+  so that `fun Collection<Order>.count()` is listed for it, but not `fun List<Order>.total()`, as the compiler tells,
+  and so is one named as a receiver, of invariant type parameters,
+  like `fun java.util.List<out Any>.ext()`, listed for it, but not `fun java.util.List<Any>.ext()`.
   An extension declaring type parameters is listed when a call without arguments, like `orders.ext()`, compiles,
   that is when the compiler infers them from the receiver, and from their bounds,
   also the bounds referring to each other, like `<A : Comparable<A>, B : A> Sink<B, A>.ext()`,

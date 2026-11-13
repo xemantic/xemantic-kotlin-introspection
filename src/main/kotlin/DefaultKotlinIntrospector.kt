@@ -868,7 +868,7 @@ internal class DefaultKotlinIntrospector(
         }
 
         // parsed once, and only when needed, as some classes are loaded only for the Java reflection
-        val metadata: KotlinClassMetadata? by lazy { metadataAnnotation?.let { parseMetadata(it) } }
+        val metadata: KotlinClassMetadata? by lazy { metadataAnnotation?.let { parseKotlinMetadata(it) } }
 
         /**
          * The Kotlin package of a file facade, when it differs from its JVM package,
@@ -909,6 +909,16 @@ internal class DefaultKotlinIntrospector(
                     )
                 }
             }
+        }
+
+        /**
+         * The supertypes of this class, if it is a JDK class which kotlin-reflect describes as a built-in type,
+         * like `java.util.List` as `List`, as Kotlin sees them when it is named as a supertype, see [javaSupertypeTypes],
+         * reflected once, or `null` if it is not one, or when they take other type arguments than its type parameters.
+         */
+        val builtinJavaSupertypes: List<KmType>? by lazy {
+            clazz?.takeIf { metadataAnnotation == null && isDescribedAsBuiltin(it) }
+                ?.let { clazz -> reflectedValue(default = null) { clazz.javaSignatureSupertypes(::javaSupertypeMetadataName) } }
         }
 
         /**
@@ -1921,12 +1931,6 @@ internal class DefaultKotlinIntrospector(
     private fun readClassFile(binaryName: String): TransientFailures.Outcome<ClassFile?> {
         val bytes = readClassBytesOutcome(binaryName)
         return TransientFailures.Outcome(readClassFile(binaryName, bytes.value), bytes.isFinal)
-    }
-
-    private fun parseMetadata(metadataAnnotation: Metadata): KotlinClassMetadata? = try {
-        KotlinClassMetadata.readLenient(metadataAnnotation)
-    } catch (_: IllegalArgumentException) {
-        null
     }
 
     /**
@@ -5463,6 +5467,13 @@ internal class DefaultKotlinIntrospector(
         // the structures of the types of each supertype, see structureKey, telling the ones already reached at once,
         // as their number can double at each level of a hierarchy
         val structures = HashMap<String, MutableSet<String>>()
+        // whether each type reached has platform type arguments, see hasPlatformArguments, told once, by its instance,
+        // as the ones beyond MAX_SUPERTYPE_PATHS are told again at each one reached
+        val platformTypes = IdentityHashMap<KmType, Boolean>()
+        fun KmType.isPlatform() = platformTypes.getOrPut(this) { hasPlatformArguments }
+        // and the platform markers of each type compared, see coversType, by its instance, read from its annotations once
+        val markers = IdentityHashMap<KmType, Int>()
+        fun KmType.covers(other: KmType) = coversType(other) { type -> markers.getOrPut(type) { type.platformMarkers } }
         fun visit(name: String, metadataName: String, type: KmType?) {
             if (type != null && types != null) {
                 val known = types[name].orEmpty()
@@ -5476,14 +5487,14 @@ internal class DefaultKotlinIntrospector(
                     structure in knownStructures -> null
                     known.size < MAX_SUPERTYPE_PATHS -> known + type
                     else -> {
-                        val isPlatform = type.hasPlatformArguments
-                        val sameKind = known.filter { it.hasPlatformArguments == isPlatform }
-                        val covered = sameKind.filter { type.coversType(it) }
+                        val isPlatform = type.isPlatform()
+                        val sameKind = known.filter { it.isPlatform() == isPlatform }
+                        val covered by lazy(LazyThreadSafetyMode.NONE) { sameKind.filter { type.covers(it) } }
                         when {
-                            sameKind.any { it.coversType(type) } -> null
+                            sameKind.any { it.covers(type) } -> null
                             covered.isNotEmpty() -> known.filter { it !in covered } + type
                             isPlatform -> null
-                            else -> known.indexOfFirst { it.hasPlatformArguments }.takeIf { it >= 0 }?.let { index ->
+                            else -> known.indexOfFirst { it.isPlatform() }.takeIf { it >= 0 }?.let { index ->
                                 known.toMutableList().also { it[index] = type }
                             }
                         }
@@ -5607,9 +5618,7 @@ internal class DefaultKotlinIntrospector(
         // or java.util.Collection<E>, the ones javaSupertypeNames tells, not the ones of the built-in type,
         // unless they take other type arguments than its type parameters, like Comparable<Integer> of java.lang.Integer,
         // told by the built-in type then, like Comparable<Int>, which is no Comparable of another type either
-        val supertypes = foundClass.clazz?.takeIf(::isDescribedAsBuiltin)
-            ?.let { clazz -> reflectedValue(default = null) { clazz.javaSignatureSupertypes(::javaSupertypeMetadataName) } }
-            ?: header.supertypes
+        val supertypes = foundClass.builtinJavaSupertypes ?: header.supertypes
         val pureImplementation = PURE_IMPLEMENTATIONS[metadataName]?.replace('/', '.')
         val types = supertypes.associate { supertype ->
             val key = receiverIndexKeys(supertype).single()
@@ -6132,13 +6141,18 @@ internal class DefaultKotlinIntrospector(
     /**
      * The declaration-site variances of the type parameters of the class of the given [metadataName],
      * like `in P1, out R` of a function type, see [FunctionTypeClass], invariant ones of a Java class,
-     * see [FoundClass.javaClassHeader], or `null` if the class cannot be loaded.
+     * see [FoundClass.javaClassHeader], also of a JDK class named as such, like `java.util.List<Any>`,
+     * which kotlin-reflect describes as a built-in type, like `List<out E>`, while kotlinc sees the Java class,
+     * or `null` if the class cannot be loaded.
      */
     private fun declaredVariances(metadataName: String): List<KmVariance>? {
         FunctionTypeClass.of(metadataName.replace('/', '.'))?.let { functionTypeClass ->
             return List(functionTypeClass.arity) { KmVariance.IN } + KmVariance.OUT
         }
-        return classHeader(metadataName)?.typeParameters?.map { it.variance }
+        builtinClasses[metadataName]?.let { builtin -> return builtin.typeParameters.map { it.variance } }
+        val foundClass = findClassByMetadataName(metadataName) ?: return null
+        foundClass.kmClass?.let { kmClass -> return kmClass.typeParameters.map { it.variance } }
+        return foundClass.javaClassHeader?.typeParameters?.map { KmVariance.INVARIANT }
     }
 
     /**
@@ -6263,7 +6277,8 @@ internal class DefaultKotlinIntrospector(
         private val receiverTypeParameterId: Int?,
         private val self: String,
         private val isCollecting: Boolean = false,
-        private val receiver: KmType? = null
+        private val receiver: KmType? = null,
+        isRememberingTypesMatched: Boolean = false
     ) {
 
         // the supertypes chosen among the ones reached through different paths, when matching again, see matchingAgain
@@ -6287,8 +6302,15 @@ internal class DefaultKotlinIntrospector(
         // telling whether a type the type parameter is inferred from is a subtype of another one, or the same type, see infer,
         // without inferring the type parameters of the extension, whose ids the type parameters of the class can take
         private val typeMatcher by lazy(LazyThreadSafetyMode.NONE) {
-            ReceiverMatcher(supertypes, emptyList(), receiverTypeParameterId = null, self)
+            ReceiverMatcher(supertypes, emptyList(), receiverTypeParameterId = null, self, isRememberingTypesMatched = true)
         }
+
+        // whether the types of no type parameter, of a Java collection, or array, matched each other, by their structures, see structureKey,
+        // and the variance, paired with whether what is not told was matched then, see isUntold, as matching them again tells the same,
+        // remembered only by a matcher of no type parameters, nor path choices, see typeMatcher, which compares many types
+        // a type parameter is inferred from, again for each combination of the supertypes reached through different paths,
+        // like nested Java collections, each of them matched as the read-only one, and again as the mutable one, see matches
+        private val typesMatched = if (isRememberingTypesMatched) HashMap<String, Pair<Boolean, Boolean>>() else null
 
         // the type parameters whose bounds are being checked, see satisfiesBounds
         private val boundsChecked get() = matched.boundsChecked
@@ -7050,6 +7072,30 @@ internal class DefaultKotlinIntrospector(
          * while a type parameter of the class stands for any type, other than the class itself.
          */
         private fun matches(expected: KmType, actual: KmType, variance: KmVariance, isStrict: Boolean): Boolean {
+            val typesMatched = typesMatched
+            // only Java collections, and arrays, matched again as the mutable, and the covariant, ones, are worth remembering
+            if (typesMatched == null || (actual.platformMarkers or expected.platformMarkers) and (JAVA_COLLECTION or JAVA_ARRAY) == 0 ||
+                !expected.refersOnlyTo { false } || !actual.refersOnlyTo { false }
+            ) {
+                return matchesOnce(expected, actual, variance, isStrict)
+            }
+            val key = StringBuilder().also { key ->
+                key.append(variance).append(if (isStrict) '!' else ' ')
+                expected.appendStructure(key)
+                key.append(' ')
+                actual.appendStructure(key)
+            }.toString()
+            val wasUntold = isUntold
+            val (isMatched, isUntoldMatched) = typesMatched.getOrPut(key) {
+                isUntold = false
+                matchesOnce(expected, actual, variance, isStrict) to isUntold
+            }
+            isUntold = wasUntold || isUntoldMatched
+            return isMatched
+        }
+
+        // whether the expected type matches the actual one, see matches, matched anew
+        private fun matchesOnce(expected: KmType, actual: KmType, variance: KmVariance, isStrict: Boolean): Boolean {
             val actualClassifier = actual.classifier as? KmClassifier.Class
                 // a type parameter bounded by the class itself, like `E` of `Enum<E : Enum<E>>`, stands for the class
                 ?: KmClassifier.Class(supertypes.kmClass.name).takeIf { supertypes.isSelfTypeParameter(actual) }
@@ -10495,7 +10541,7 @@ internal class DefaultKotlinIntrospector(
             } else null
         val isAbsent = bytes == null && failure !is IOException && !classLoader.hasClassFile(binaryName)
         val classFile = readClassFile(binaryName, bytes) ?: return OutsideClass(scope = null, isAbsent)
-        val kmClass = (classFile.metadata?.let(::parseMetadata) as? KotlinClassMetadata.Class)?.kmClass
+        val kmClass = (classFile.metadata?.let(::parseKotlinMetadata) as? KotlinClassMetadata.Class)?.kmClass
             ?: return OutsideClass(scope = null, isAbsent)
         val scope = classScope(kmClass, isUsableClass(kmClass, classFile), classFile) { locatedNameOf(binaryName, it) }
         return OutsideClass(scope, isAbsent)
@@ -11924,27 +11970,30 @@ private val KmType.isPlatformType: Boolean
  * matching any type the other one matches, see [ClassSupertypes.types], the same type,
  * but for a platform type of Java in place of the same class, or of its mutable one, see [coversClass],
  * like `Box<(Mutable)List<String!>!>` covering `Box<MutableList<String>>`, and `Box<List<String?>>`,
- * so that one covering others replaces them, and one covered adds nothing.
+ * so that one covering others replaces them, and one covered adds nothing,
+ * of the platform markers of each type told by [markersOf], see [platformMarkers].
  */
-private fun KmType.coversType(other: KmType): Boolean {
-    if (hasSameStructure(other)) return true
+private fun KmType.coversType(other: KmType, markersOf: (KmType) -> Int): Boolean {
+    // the same structure, see hasSameStructure, is covered too, told without telling it first, at each type argument again
+    if (this === other) return true
     if (arguments.size != other.arguments.size || (outerType == null) != (other.outerType == null)) return false
-    if (!coversClass(other) && (classifier != other.classifier || isNullable != other.isNullable ||
+    val markers = markersOf(this)
+    val otherMarkers = markersOf(other)
+    if (!coversClass(other, markers, otherMarkers) && (classifier != other.classifier || isNullable != other.isNullable ||
             isSuspend != other.isSuspend || isDefinitelyNonNull != other.isDefinitelyNonNull ||
-            (flexibleTypeUpperBound == null) != (other.flexibleTypeUpperBound == null) ||
-            isJavaCollection != other.isJavaCollection || isJavaArray != other.isJavaArray || isJavaRaw != other.isJavaRaw)
+            (flexibleTypeUpperBound == null) != (other.flexibleTypeUpperBound == null) || markers != otherMarkers)
     ) {
         return false
     }
     val outer = outerType
     val otherOuter = other.outerType
-    return (outer == null || otherOuter == null || outer.coversType(otherOuter)) && arguments.indices.all { index ->
+    return (outer == null || otherOuter == null || outer.coversType(otherOuter, markersOf)) && arguments.indices.all { index ->
         val argument = arguments[index]
         val otherArgument = other.arguments[index]
         val type = argument.type
         val otherType = otherArgument.type
         if (type == null || otherType == null) type == null && otherType == null else {
-            argument.variance == otherArgument.variance && type.coversType(otherType)
+            argument.variance == otherArgument.variance && type.coversType(otherType, markersOf)
         }
     }
 }
@@ -11952,9 +12001,11 @@ private fun KmType.coversType(other: KmType): Boolean {
 // whether this platform type of Java is of the class of the other type, not a platform type, or of its mutable one,
 // also a platform one, like (Mutable)List<String!>! of MutableList<String>!, see coversType,
 // but not one made nullable, like W<String!>! substituted for T of W<T?>, which kotlinc sees nullable, like W<String!>?
-private fun KmType.coversClass(other: KmType): Boolean {
-    if (flexibleTypeUpperBound == null || isNullable || isJavaArray != other.isJavaArray || isJavaRaw != other.isJavaRaw ||
-        (other.flexibleTypeUpperBound != null && (classifier == other.classifier || other.isJavaCollection))
+// of the given platform markers, see platformMarkers
+private fun KmType.coversClass(other: KmType, markers: Int, otherMarkers: Int): Boolean {
+    val isJavaCollection = markers and JAVA_COLLECTION != 0
+    if (flexibleTypeUpperBound == null || isNullable || (markers and JAVA_COLLECTION.inv()) != (otherMarkers and JAVA_COLLECTION.inv()) ||
+        (other.flexibleTypeUpperBound != null && (classifier == other.classifier || otherMarkers and JAVA_COLLECTION != 0))
     ) {
         return false
     }
@@ -11962,6 +12013,26 @@ private fun KmType.coversClass(other: KmType): Boolean {
     return classifier == other.classifier ||
         (isJavaCollection && (other.classifier as? KmClassifier.Class)?.name == MUTABLE_COLLECTION_TYPES[name])
 }
+
+/**
+ * The markers of a platform type of Java this type is, as bits, [JAVA_COLLECTION], [JAVA_ARRAY] and [JAVA_RAW],
+ * see [isJavaCollection], [isJavaArray] and [isJavaRaw], told by reading its annotations once.
+ */
+private val KmType.platformMarkers: Int
+    get() = annotations.fold(0) { markers, annotation ->
+        markers or when (annotation.className) {
+            JAVA_COLLECTION_MARKER -> JAVA_COLLECTION
+            JAVA_ARRAY_MARKER -> JAVA_ARRAY
+            JAVA_RAW_MARKER -> JAVA_RAW
+            else -> 0
+        }
+    }
+
+private const val JAVA_COLLECTION = 1
+
+private const val JAVA_ARRAY = 2
+
+private const val JAVA_RAW = 4
 
 /**
  * Whether this type has the same structure as the [other] one, as told by [structureKey], without building the keys,
@@ -11972,8 +12043,7 @@ private fun KmType.hasSameStructure(other: KmType): Boolean {
     if (classifier != other.classifier || isNullable != other.isNullable || isSuspend != other.isSuspend ||
         isDefinitelyNonNull != other.isDefinitelyNonNull ||
         (flexibleTypeUpperBound == null) != (other.flexibleTypeUpperBound == null) ||
-        isJavaCollection != other.isJavaCollection || isJavaArray != other.isJavaArray || isJavaRaw != other.isJavaRaw ||
-        arguments.size != other.arguments.size
+        arguments.size != other.arguments.size || platformMarkers != other.platformMarkers
     ) {
         return false
     }
