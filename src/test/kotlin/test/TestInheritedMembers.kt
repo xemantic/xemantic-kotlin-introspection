@@ -652,6 +652,11 @@ abstract class GenericPutImplementation<T> : GenericPut<T> {
 abstract class IntegerJavaGenericPutImplementationPrimitivePutJoin :
     com.xemantic.kotlin.introspection.test.other.JavaIntegerGenericPutImplementation(), PrimitivePut
 
+// the put(int) of the Java interface is another JVM method than the put(t: T) of GenericPut, which it does not override,
+// so that the compiler picks the put(t: T) of GenericPut<Int>, declared first, though the Java interface is a subtype of it
+abstract class GenericPutPrimitiveJavaPutInterfaceJoin :
+    GenericPut<Int>, com.xemantic.kotlin.introspection.test.other.JavaPrimitiveIntegerPutInterfaceOverload
+
 // and the abstract put(t: T) of GenericPut, given Integer by the Java interface
 abstract class IntegerJavaPutInterfacePrimitivePutJoin : com.xemantic.kotlin.introspection.test.other.JavaIntegerPutInterface, PrimitivePut
 

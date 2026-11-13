@@ -4087,11 +4087,22 @@ internal class DefaultKotlinIntrospector(
             // leaving the put(key: Int) of IntPut apart, the one walked first
             val ranks = IdentityHashMap<InheritedCandidate, Int>()
             (if (isContributionOrdered) ordered else survivors).forEachIndexed { rank, candidate -> ranks[candidate] = rank }
-            // but the member of a subtype of the class of the other one, which K2 takes as overriding it,
+            // whether both members are of the same JVM name and parameter types, as told, see InheritedCandidate.jvmMethod
+            fun isSameJvmMethod(a: InheritedCandidate, b: InheritedCandidate): Boolean {
+                fun InheritedCandidate.jvmSignature() =
+                    jvmMethod?.signature ?: (member as? Member.Function)?.declaration?.signature
+                val aSignature = a.jvmSignature() ?: return false
+                val bSignature = b.jvmSignature() ?: return false
+                return aSignature.name == bSignature.name &&
+                    AsmType.getArgumentTypes(aSignature.descriptor).contentEquals(AsmType.getArgumentTypes(bSignature.descriptor))
+            }
+            // but the member of a subtype of the class of the other one, which K2 takes as overriding it, of the same JVM method,
             // like the default spliterator() of java.util.List the one of java.util.Collection for a subclass of
             // kotlin.collections.AbstractList, though Collection is contributed first, through AbstractCollection
             fun beats(rival: InheritedCandidate, candidate: InheritedCandidate): Boolean {
-                if (isContributionOrdered && rival.compareReturnType(candidate, supertypeNamesOf) == 0) {
+                if (isContributionOrdered && rival.compareReturnType(candidate, supertypeNamesOf) == 0 &&
+                    (rival.overrides(candidate) || candidate.overrides(rival) || isSameJvmMethod(rival, candidate))
+                ) {
                     if (candidate.name.replace('/', '.') in supertypeNamesOf(rival.name)) return true
                     if (rival.name.replace('/', '.') in supertypeNamesOf(candidate.name)) return false
                 }
@@ -4116,13 +4127,21 @@ internal class DefaultKotlinIntrospector(
             // or the member of a class deprecated as hidden, which still implements the merged members it overrides,
             // or is merged with, though the compiler picks the one of the interface, like the hidden run() of a subclass
             // of java.lang.Thread for `abstract class X : Runnable, HiddenRunThread()`, so that `class Y : X()` compiles
-            // unless declared abstract again below it, like by a Java subclass
+            // or else of the lowest member overriding it, unless declared abstract again, like by a Java subclass
+            fun hiddenImplementationModality(hidden: InheritedCandidate): Modality? {
+                val overriding = walked.filter { it !== hidden && it.overrides(hidden) }
+                if (overriding.isEmpty()) return hidden.member.modality.takeUnless { hidden.key in overridden }
+                val lowest = overriding.filter { member -> overriding.none { it !== member && it.overrides(member) } }
+                if (lowest.any { it.member.modality == Modality.ABSTRACT }) return null
+                return lowest.first().let { it.implementationModality ?: it.member.modality }
+            }
             listed.filter { it.kmClass.kind == ClassKind.INTERFACE && it.implementationModality == null }.forEach { candidate ->
-                candidates.firstOrNull { hidden ->
-                    hidden.isHidden && hidden.kmClass.kind != ClassKind.INTERFACE && hidden.member.modality != Modality.ABSTRACT &&
-                        (hidden.overrides(candidate) || hidden.isMergedWith(candidate)) &&
-                        hidden.key !in overridden && walked.none { it !== hidden && it.overrides(hidden) }
-                }?.let { candidate.implementationModality = it.member.modality }
+                candidates.firstNotNullOfOrNull { hidden ->
+                    hidden.takeIf {
+                        it.isHidden && it.kmClass.kind != ClassKind.INTERFACE && it.member.modality != Modality.ABSTRACT &&
+                            (it.overrides(candidate) || it.isMergedWith(candidate))
+                    }?.let(::hiddenImplementationModality)
+                }?.let { candidate.implementationModality = it }
             }
             // of a Kotlin member and the method of a Java class, or interface, of the same JVM signature merged with it, which it does not override,
             // as their classes are unrelated, the compiler picks the first one, when their return types are equally specific,

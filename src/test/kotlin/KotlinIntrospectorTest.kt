@@ -5897,6 +5897,17 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve Kotlin member declared first over merged member of Java subtype of other JVM signature`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.GenericPutPrimitiveJavaPutInterfaceJoin.put"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GenericPutPrimitiveJavaPutInterfaceJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.GenericPut
+            fun put(t: Int): String
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve abstract Kotlin member given platform type by Java interface contributed before merged Kotlin member`() {
         resolver.resolve("com.xemantic.kotlin.introspection.test.IntegerJavaPutInterfacePrimitivePutJoin.put") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.IntegerJavaPutInterfacePrimitivePutJoin.put [page 1/1]
@@ -18062,6 +18073,15 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.test.HiddenReabstractedTakerJoin.take [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.HiddenImplementedOtherTaker
             fun take(b: String): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member merged with hidden one of superclass implemented again by Java subclass as open`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenReimplementedTakerJoin.take") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenReimplementedTakerJoin.take [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.HiddenImplementedOtherTaker
+            open fun take(b: String): String
         """.trimIndent()
     }
 
