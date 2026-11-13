@@ -12709,6 +12709,58 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve class without extension of inferred type violating bound next to type parameter given explicitly`() {
+        // x.biSinkComparableExplicit<_, _, Nothing>() infers T as CharSequence, which kotlinc checks against Comparable<CharSequence>,
+        // while T of biSinkSameListExplicit, inferred as CharSequence & Int, an intersection, is not checked against List<U>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InferredReceiverCharSequenceIntBiSink"
+        ) should {
+            have("fun <T : Comparable<T>, U : T, W> InferredReceiverBiSink<T, U>.biSinkComparableExplicit()" !in lines())
+            have("fun <T : List<U>, U : T, W> InferredReceiverBiSink<T, T>.biSinkSameListExplicit()" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve class without extension inferring reified type parameter as intersection`() {
+        // A is inferred as CharSequence & Int, which kotlinc cannot reify
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InferredReceiverIntCharSequenceBiSink"
+        ) should {
+            have("inline fun <reified A : CharSequence, B : A> InferredReceiverBiSink<B, B>.biSinkReified()" !in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve class with extension inferring reified type parameter as class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InferredReceiverStringBuilderCharSequenceBiSink"
+        ) should {
+            have("inline fun <reified A : CharSequence, B : A> InferredReceiverBiSink<B, B>.biSinkReified()" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve class without extension on type parameter of recursive bound for function type`() {
+        // () -> String is no Comparable
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InferredReceiverFunctionSource"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InferredReceiverFunctionSource [page 1/1]
+            class InferredReceiverFunctionSource : InferredReceiverSource<() -> String>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extension on function type for class which is none`() {
+        // (T) -> T is no List<String>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InferredReceiverStringListSink"
+        ) should {
+            have("fun <T : Comparable<T>> InferredReceiverSink<(T) -> T>.sinkComparableFunction()" !in lines())
+        }
+    }
+
+    @Test
     fun `should resolve class without extension on type parameter constrained only by Nothing`() {
         // Nothing is a List<T>, and a List<E>, of any T, and E, which kotlinc cannot infer then,
         // also not when the return type refers to it, like of produceFirst returning T?, as x.produceFirst() fails,
