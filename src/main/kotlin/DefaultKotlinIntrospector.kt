@@ -3392,9 +3392,15 @@ internal class DefaultKotlinIntrospector(
             // the members of a Java class reached through a raw supertype are seen erased, see JavaClass.erasedFunctionOf
             val isReachedRaw = superDeclarations is JavaClass && name in rawlyReached
             // the types of a member of a Java class, named by their JVM names, which might be relocated,
-            // are named by the names the metadata refers to them by, like the supertypes of the class above
-            fun Member.unlocated(): Member =
-                if (superDeclarations !is JavaClass || !isRelocated) this else withTypes { it.unlocated(declarations) }
+            // are named by the names the metadata refers to them by, like the supertypes of the class above,
+            // also when the inheriting class tells no relocation, as the Java class might refer to a relocated Kotlin class,
+            // which its own metadata names, see OverrideResolver.unlocatedName, the member then kept, unless one is
+            fun Member.unlocated(): Member {
+                if (superDeclarations !is JavaClass) return this
+                var isUnlocated = false
+                val unlocated = withTypes { type -> type.unlocated(declarations).also { if (it !== type) isUnlocated = true } }
+                return if (isRelocated || isUnlocated) unlocated else this
+            }
             apiMembers.forEach { apiMember ->
                 val declared = apiMember.member
                 val overridden = (superDeclarations as? JavaClass)?.overriddenMembers(declared)

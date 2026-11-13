@@ -361,6 +361,12 @@ internal class OverrideResolver(
          * The results of [shrinkableJava] by the function names, computed once, as the overridables are cached.
          */
         val shrinkableJava = ConcurrentHashMap<String, List<Overridable>>()
+
+        /**
+         * The final results of [hasOwnerJvmMethodOfNoMember] by the JVM methods, computed once, as the overridables are cached,
+         * while it is checked for each member of the shape, looking up the classes the JVM methods name.
+         */
+        val ownerJvmMethodsOfNoMember = ConcurrentHashMap<String, Boolean>()
     }
 
     /**
@@ -642,17 +648,18 @@ internal class OverrideResolver(
     }
 
     /**
-     * The name the Kotlin metadata refers to the class of the [jvmName] by, like a supertype of a Java supertype of the [owner],
-     * see [Relocation.unlocated], or else the one the Kotlin class found there is named by its own metadata,
-     * which a relocation does not rewrite, like `lib/Event` of the `Event` of the root package,
-     * whose names are never translated back, as a class of the root package might not be relocated,
-     * or the [jvmName], if it is not known to be relocated, like when the [owner] refers to no relocated class at all.
+     * The name the Kotlin metadata refers to the class of the [jvmName] by, like a supertype of a Java supertype of the [owner]:
+     * the one the Kotlin class found there is named by its own metadata, which a relocation does not rewrite,
+     * like `lib/Event` of the `Event` of the root package, whose names are never translated back,
+     * as a class of the root package might not be relocated, also when the [owner] refers to no relocated class at all,
+     * like a Java supertype of a library, whose own dependency is relocated,
+     * and a class of the root package, like `Event` itself, when the [owner] is relocated there,
+     * or else the name its relocation tells, see [Relocation.unlocated], like of a Java class,
+     * or the [jvmName], if it is not known to be relocated.
      */
     fun unlocatedName(owner: Owner, jvmName: String): String {
-        val relocation = overridables(owner).relocation ?: return jvmName
-        val unlocated = relocation.unlocated(jvmName)
-        if (unlocated != jvmName || !jvmName.isRelocatable) return unlocated
-        return declaration(jvmName).kotlin?.name ?: jvmName
+        if (jvmName.isRelocatable) declaration(jvmName).kotlin?.name?.let { return it }
+        return overridables(owner).relocation?.unlocated(jvmName) ?: jvmName
     }
 
     /**
@@ -994,6 +1001,17 @@ internal class OverrideResolver(
      * and neither does a synthetic one, nor a bridge, which are the JVM methods of no member either way.
      */
     private fun Overridables.hasOwnerJvmMethodOfNoMember(method: String, owner: KmClass): Boolean {
+        ownerJvmMethodsOfNoMember[method]?.let { return it }
+        val failureCount = transientFailures.count()
+        val hasJvmMethodOfNoMember = findsOwnerJvmMethodOfNoMember(method, owner)
+        if (transientFailures.count() == failureCount) ownerJvmMethodsOfNoMember[method] = hasJvmMethodOfNoMember
+        return hasJvmMethodOfNoMember
+    }
+
+    /**
+     * Computes [hasOwnerJvmMethodOfNoMember], see there.
+     */
+    private fun Overridables.findsOwnerJvmMethodOfNoMember(method: String, owner: KmClass): Boolean {
         val shape = methodShape(method)
         val declared = ownerDeclaredJvmMethodsByShape ?: return false
         if (shape !in declared) return false

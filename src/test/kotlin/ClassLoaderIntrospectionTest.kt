@@ -595,6 +595,48 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should name Kotlin class of the root package taken by member of Java supertype relocated to the root package with the class by its metadata name`() {
+        // given
+        // like by shading the app to the root package, together with the Java class and the Kotlin class of a subpackage it takes
+        val dependencies = arrayOf("RelocatedSubEventJavaBase.class", "sub/RelocatedEvent.class", "RelocatedSubEventJavaBaseImpl.class")
+        val root = isolatedTestFixturesCopy("rootSubEventJavaBaseOfRootImpl", *dependencies)
+        relocatedCopy(root, *dependencies, toRootPackage = true)
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("RelocatedSubEventJavaBaseImpl.js")
+
+        // then
+        // the relocation of the class itself would translate the class of the root package back to the package of the class,
+        // while the Kotlin class found there tells the name its metadata refers to it by
+        signature sameAsKotlin """
+            // RelocatedSubEventJavaBaseImpl.js [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.isolated.RelocatedSubEventJavaBase
+            fun js(arg0: com.xemantic.kotlin.introspection.isolated.sub.RelocatedEvent?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should name relocated Kotlin class taken by member of Java supertype by its metadata name when the class tells no relocation`() {
+        // given
+        // like by shading, only the Kotlin class taken by the Java class is relocated,
+        // which the class file of the class extending the Java class does not refer to
+        val root = isolatedTestFixturesCopy("relocatedEventOfJavaBase", "RelocatedEvent.class", "RelocatedJavaBase.class")
+        relocatedCopy(root, "RelocatedEvent.class", dependents = listOf("RelocatedJavaBase.class"))
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.RelocatedJavaBaseImpl.jm")
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.RelocatedJavaBaseImpl.jm [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.isolated.RelocatedJavaBase
+            fun jm(arg0: RelocatedEvent?)
+        """.trimIndent()
+    }
+
+    @Test
     fun `should list member inherited through relocated Java class from Kotlin class relocated to another package`() {
         // given
         // like by shading, the Java class to shaded/, and the Kotlin class of the subpackage it extends to other/,
