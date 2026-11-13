@@ -969,6 +969,33 @@ abstract class HiddenPrimitiveJavaPutOverride : com.xemantic.kotlin.introspectio
 
 abstract class HiddenPrimitiveJavaPutOverrideJoin : GenericPut<Int>, HiddenPrimitiveJavaPutOverride()
 
+interface HiddenImplementedTaker {
+    fun take(a: String): String
+}
+
+interface HiddenImplementedOtherTaker {
+    fun take(b: String): String
+}
+
+abstract class HiddenTakerImplementation : HiddenImplementedTaker {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    override fun take(h: String): String = ""
+}
+
+// the hidden take(h: String) declared abstract again by the Java subclass implements nothing
+abstract class HiddenReabstractedTakerJoin :
+    HiddenImplementedOtherTaker, com.xemantic.kotlin.introspection.test.other.JavaReabstractedHiddenTaker()
+
+interface HiddenStringPut {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    fun put(s: String): String = ""
+}
+
+// the hidden put(s: String) is an overload of its own, so that the put(t: T) of GenericPutImplementation, contributed first,
+// is picked like without it
+abstract class HiddenOverloadGenericPutImplementationJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaIntegerGenericPutImplementation(), PrimitivePut, HiddenStringPut
+
 // compile, as the hidden members of the superclasses implement the merged members the compiler picks, though not listed
 @Suppress("unused")
 private class HiddenMergedImplementations {

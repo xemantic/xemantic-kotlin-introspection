@@ -2731,8 +2731,9 @@ internal class DefaultKotlinIntrospector(
          * Whether the [member] stands for a Java method of the user code overriding it, which returns a platform type,
          * like the `computeIfAbsent` of a Java subclass of `java.util.HashMap` for the JVM-only member of `MutableMap`,
          * as the JDK enhancement is not inherited by such an override, see [ENHANCED_RETURN_JDK_METHODS],
-         * or a Kotlin member returning the type parameter of its class, given by Java, of a Java method overriding it,
-         * returning a platform type too, like the `get(index: Int)` of `List` for a Java subclass of `java.util.AbstractList<String>`.
+         * or a Kotlin member, not a JVM-only one, returning the type parameter of its class given by Java along every path
+         * reaching it, or by the Java methods overriding it there, returning a platform type then,
+         * like the `get(index: Int)` of `List` for a Java subclass of `java.util.AbstractList<String>`, see [inheritedCandidates].
          */
         var standsForPlatformType: Boolean = false
 
@@ -2884,7 +2885,8 @@ internal class DefaultKotlinIntrospector(
          * Whether the [member], of a Java class, returns a platform type of Java, see [JavaClass.returnsPlatformType],
          * as substituted, unlike the `V!` of `call()` of `java.util.concurrent.Callable<String?>`, which is `String?`,
          * also when the JDK enhancement of its return type is lost, see [isEnhancementLost],
-         * or of a JVM-only member, which [standsForPlatformType], told once the inherited candidates are walked.
+         * or of a JVM-only member, or a Kotlin member returning a type parameter of its class given by Java,
+         * which [standsForPlatformType], told once the inherited candidates are walked.
          */
         val returnsPlatformType: Boolean
             get() = returnsJavaPlatformType || (platformCandidate != null && standsForPlatformType) ||
@@ -3708,7 +3710,7 @@ internal class DefaultKotlinIntrospector(
                 // returning a platform type then, which an unrelated member merged with it, returning the type it declares,
                 // wins over, like the get(index: Int) of a Kotlin interface over the one of List of a subclass of a Java subclass
                 // of java.util.AbstractList<String>, returning String!, though contributed after it, see listed,
-                // but a JVM-only member, like getOrDefault of Map, whose return type K2 may enhance, told below
+                // but a JVM-only member, see BuiltinClass.jvmOnlyFunctions, whose return type K2 may enhance, told below
                 if (picked.returnsPlatformType && candidate.returnsClassTypeParameter && candidate.jvmMethod == null) {
                     candidate.standsForPlatformType = true
                 }
@@ -3979,7 +3981,7 @@ internal class DefaultKotlinIntrospector(
         val notOverridden = candidates.filter { isListable(it) && it !in jvmOnlyOverridden }
         // whether the member a wins over the merged member b, of a less specific return type, see compareReturnType,
         // or else the method of a Java class over the one of a Java interface, which it implements in Kotlin,
-        // whatever the order of the supertypes, or else the one walked first
+        // whatever the order of the supertypes, or else the one of the lower rank, like contributed first, see listed
         fun isJavaClassMember(candidate: InheritedCandidate) =
             candidate.declarations is JavaClass && candidate.kmClass.kind != ClassKind.INTERFACE
         fun wins(a: InheritedCandidate, aIndex: Int, b: InheritedCandidate, bIndex: Int): Boolean =
@@ -4085,11 +4087,18 @@ internal class DefaultKotlinIntrospector(
             // leaving the put(key: Int) of IntPut apart, the one walked first
             val ranks = IdentityHashMap<InheritedCandidate, Int>()
             (if (isContributionOrdered) ordered else survivors).forEachIndexed { rank, candidate -> ranks[candidate] = rank }
-            val listed = survivors.filter { candidate ->
-                survivors.none { rival ->
-                    rival !== candidate && groups[rival] === groups[candidate] &&
-                        wins(rival, ranks.getValue(rival), candidate, ranks.getValue(candidate))
+            // but the member of a subtype of the class of the other one, which K2 takes as overriding it,
+            // like the default spliterator() of java.util.List the one of java.util.Collection for a subclass of
+            // kotlin.collections.AbstractList, though Collection is contributed first, through AbstractCollection
+            fun beats(rival: InheritedCandidate, candidate: InheritedCandidate): Boolean {
+                if (isContributionOrdered && rival.compareReturnType(candidate, supertypeNamesOf) == 0) {
+                    if (candidate.name.replace('/', '.') in supertypeNamesOf(rival.name)) return true
+                    if (rival.name.replace('/', '.') in supertypeNamesOf(candidate.name)) return false
                 }
+                return wins(rival, ranks.getValue(rival), candidate, ranks.getValue(candidate))
+            }
+            val listed = survivors.filter { candidate ->
+                survivors.none { rival -> rival !== candidate && groups[rival] === groups[candidate] && beats(rival, candidate) }
             }
             listed.filter { it.kmClass.kind == ClassKind.INTERFACE && it.implementationModality == null }.forEach { candidate ->
                 ordered.firstNotNullOfOrNull { merged ->
@@ -4107,10 +4116,12 @@ internal class DefaultKotlinIntrospector(
             // or the member of a class deprecated as hidden, which still implements the merged members it overrides,
             // or is merged with, though the compiler picks the one of the interface, like the hidden run() of a subclass
             // of java.lang.Thread for `abstract class X : Runnable, HiddenRunThread()`, so that `class Y : X()` compiles
+            // unless declared abstract again below it, like by a Java subclass
             listed.filter { it.kmClass.kind == ClassKind.INTERFACE && it.implementationModality == null }.forEach { candidate ->
                 candidates.firstOrNull { hidden ->
                     hidden.isHidden && hidden.kmClass.kind != ClassKind.INTERFACE && hidden.member.modality != Modality.ABSTRACT &&
-                        (hidden.overrides(candidate) || hidden.isMergedWith(candidate))
+                        (hidden.overrides(candidate) || hidden.isMergedWith(candidate)) &&
+                        hidden.key !in overridden && walked.none { it !== hidden && it.overrides(hidden) }
                 }?.let { candidate.implementationModality = it.member.modality }
             }
             // of a Kotlin member and the method of a Java class, or interface, of the same JVM signature merged with it, which it does not override,
@@ -4260,7 +4271,14 @@ internal class DefaultKotlinIntrospector(
             }
         }
         return withUnimplemented(
-            listed(survivors, isContributionOrdered = false)
+            // ordered like without hidden members when each hidden one is an overload of a signature of its own,
+            // regardless of nullability, like a hidden put(s: String) next to put(key: Int) and put(t: T) of GenericPut<Int>
+            listed(
+                survivors,
+                isContributionOrdered = candidates.none { hidden ->
+                    hidden.isHidden && survivors.any { it.rivalrySignatures.matches(hidden.rivalrySignatures) }
+                }
+            )
                 .filter { candidate -> contribution(kmClass.name, candidate).singleOrNull()?.isHidden != true }
                 .withoutCalledInstead()
         )

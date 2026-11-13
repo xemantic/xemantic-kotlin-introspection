@@ -5915,6 +5915,17 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve JVM-only member of subtype over the one of its supertype contributed first`() {
+        // the default spliterator() of java.util.List overrides the one of java.util.Collection,
+        // reached first through kotlin.collections.AbstractCollection
+        resolver.resolve("com.xemantic.kotlin.introspection.test.StringList.spliterator") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.StringList.spliterator [page 1/1]
+            // inherited from kotlin.collections.List
+            open override fun spliterator(): java.util.Spliterator<String>
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve Kotlin member over merged one contributed first returning platform type through Java class`() {
         resolver.resolve("com.xemantic.kotlin.introspection.test.IndexGetterJavaListJoin.get") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.IndexGetterJavaListJoin.get [page 1/1]
@@ -18042,6 +18053,24 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.test.HiddenMergedHiddenRunThreadJoin.run [page 1/1]
             // inherited from java.lang.Runnable
             open fun run()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member merged with hidden one of superclass declared abstract again by Java subclass as abstract`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenReabstractedTakerJoin.take") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenReabstractedTakerJoin.take [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.HiddenImplementedOtherTaker
+            fun take(b: String): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member contributed first of merged ones next to unrelated hidden overload`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenOverloadGenericPutImplementationJoin.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenOverloadGenericPutImplementationJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.GenericPutImplementation
+            override fun put(t: Int?): String
         """.trimIndent()
     }
 
