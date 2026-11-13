@@ -3471,17 +3471,22 @@ internal class DefaultKotlinIntrospector(
         val walked = candidates.toList()
         // the members of a JDK class reached only through a Java class of the user code lose the enhancement of their return types,
         // like the get() of java.util.function.Supplier for a subclass of a Java class implementing it without declaring it again,
-        // unless reached also directly, or through the JDK, or a Kotlin class not overriding them, whatever the order of the supertypes
+        // unless reached also directly, or through the JDK, or a Kotlin class not overriding them, whatever the order of the supertypes,
+        // also a Kotlin class reached through the Java class, which inherits them as it sees them itself,
+        // like the apply of Function<String, String> of a Kotlin class extending it, reached through a Java subclass of it
         if (userJavaClasses.isNotEmpty()) {
             val candidatesByName = candidates.groupBy { it.name }
             candidates.filter { it.declarations is JavaClass && it.name !in userJavaClasses }.forEach { candidate ->
                 val keepingEnhancement = HashSet<String>()
-                val reached = ArrayDeque(directSupertypes[kmClass.name].orEmpty())
+                val losingEnhancement = HashSet<String>()
+                val reached = ArrayDeque(directSupertypes[kmClass.name].orEmpty().map { it to true })
                 while (reached.isNotEmpty()) {
-                    val name = reached.removeFirst()
-                    if (!keepingEnhancement.add(name) || name in userJavaClasses) continue
+                    val (name, isReachedKeeping) = reached.removeFirst()
+                    val isKeeping = isReachedKeeping || name !in javaClasses
+                    if (!(if (isKeeping) keepingEnhancement else losingEnhancement).add(name)) continue
                     if (candidatesByName[name].orEmpty().none { it !== candidate && it.overrides(candidate) }) {
-                        reached += directSupertypes[name].orEmpty()
+                        val isPassingKeeping = isKeeping && name !in userJavaClasses
+                        reached += directSupertypes[name].orEmpty().map { it to isPassingKeeping }
                     }
                 }
                 candidate.isEnhancementLost = candidate.name !in keepingEnhancement
@@ -3613,7 +3618,7 @@ internal class DefaultKotlinIntrospector(
         // takes the types of the picked one then, also its return type, like the String? of Function<String?, String?>,
         // of the type arguments given along the path it is picked by, like the ones of a Kotlin `interface F : Function<String?, String?>`
         // for `X : JavaFunctionImpl<String>(), F`, not of the path walked first, through the Java class,
-        // told only of the Java methods no Kotlin member of the same number of value parameters competes with,
+        // told only of the Java methods no Kotlin member of the same number of value parameters, related to them, competes with,
         // which are picked above, and when their return types are equally specific, see compareSpecificity
         // the type of the class reached, of the type arguments given along the path, or null when not told,
         // like through a raw Java supertype
@@ -3629,16 +3634,22 @@ internal class DefaultKotlinIntrospector(
         val javaFunctions = candidates.filter { it.declarations is JavaClass && it.member is Member.Function && !it.isHidden }
         if (javaFunctions.size > 1) {
             fun InheritedCandidate.arity() = (member as Member.Function).function.valueParameters.size
-            val kotlinArities = candidates.filter { it.declarations !is JavaClass && it.member is Member.Function }
-                .mapTo(HashSet()) { it.arity() }
+            val kotlinFunctions = candidates.filter { it.declarations !is JavaClass && it.member is Member.Function }
             javaFunctions.forEach { candidate ->
-                if (candidate.arity() in kotlinArities) return@forEach
                 val overridden = javaFunctions.filter { it !== candidate && candidate.overrides(it) }
                 if (overridden.isEmpty()) return@forEach
                 // and the ones overriding them apart from it, each contributed in place of the one it overrides
                 val related = javaFunctions.filter { other -> other === candidate || overridden.any { it === other || other.overrides(it) } }
                     .groupBy { it.name }
                 if (related.values.any { it.size > 1 }) return@forEach
+                // but a Kotlin member of the same number of value parameters, related to one of them, competes, picked above,
+                // unlike an unrelated overload, like the apply(x: Int) of a Kotlin interface next to the apply of Function<String, String>
+                val isCompeting = kotlinFunctions.any { kotlin ->
+                    kotlin.arity() == candidate.arity() && related.values.any { members ->
+                        members.any { it.overrides(kotlin) || kotlin.overrides(it) || it.isMergedWith(kotlin) || kotlin.isMergedWith(it) }
+                    }
+                }
+                if (isCompeting) return@forEach
                 val contributions = reaches(related.keys).map { reach -> reach to related.getValue(reach.name).single() }
                 val (reach, picked) = contributions.firstOrNull { (reach, member) ->
                     !member.returnsPlatformType && !(reach.isPlatform && member.returnsClassTypeParameter)
@@ -4005,14 +4016,17 @@ internal class DefaultKotlinIntrospector(
         // which inherits the member the join picks, while the supertypes of a Java class share its place,
         // the Kotlin members staying first among them, see listed, as a Java class, or interface, joining the method
         // of a Java supertype and a Kotlin member inherits the Kotlin types, whatever the order of its supertypes,
-        // like `interface JavaJoin extends JavaAcceptor, Acceptor`, so that accept(null) does not compile
+        // like `interface JavaJoin extends JavaAcceptor, Acceptor`, so that accept(null) does not compile,
+        // but a Java class of a single direct supertype, which joins nothing, inheriting the member its supertype picks,
+        // like the accept(s: String?) of `Join : JavaAcceptor(), Acceptor` for a subclass of a Java subclass of it
         val contributionOrder = HashMap<String, Int>()
         fun orderContributions(name: String, javaClassOrder: Int?) {
             directSupertypes[name].orEmpty().forEach { supertype ->
                 if (supertype !in contributionOrder) {
                     val order = javaClassOrder ?: contributionOrder.size
                     contributionOrder[supertype] = order
-                    orderContributions(supertype, javaClassOrder ?: order.takeIf { supertype in javaClasses })
+                    val isJavaJoin = supertype in javaClasses && directSupertypes[supertype].orEmpty().count { it != ANY_CLASS_NAME } > 1
+                    orderContributions(supertype, javaClassOrder ?: order.takeIf { isJavaJoin })
                 }
             }
         }
