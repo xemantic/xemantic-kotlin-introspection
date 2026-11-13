@@ -1485,3 +1485,42 @@ class InferredReceiverNullableNothingTriple : InferredReceiverTriple<Nothing?, C
 fun <W, V, T : Map<T, V>> InferredReceiverBiSink<V, T>.biSinkExplicit() {}
 
 class InferredReceiverStringStringBiSink : InferredReceiverBiSink<String, String>
+
+// a type parameter given explicitly, like W of x.f<_, _, Nothing>(), makes kotlinc check the types inferred for the other ones
+// against their bounds, see #319, like CharSequence, inferred for T, no Comparable<CharSequence>,
+// but not a type inferred as an intersection, like CharSequence & Int, for T of T : List<U>
+fun <T : Comparable<T>, U : T, W> InferredReceiverBiSink<T, U>.biSinkComparableExplicit() {}
+
+fun <T : List<U>, U : T, W> InferredReceiverBiSink<T, T>.biSinkSameListExplicit() {}
+
+class InferredReceiverCharSequenceIntBiSink : InferredReceiverBiSink<CharSequence, Int>
+
+// a reified type parameter inferred as an intersection, like CharSequence & Int, is an error for kotlinc
+inline fun <reified A : CharSequence, B : A> InferredReceiverBiSink<B, B>.biSinkReified() {}
+
+class InferredReceiverIntCharSequenceBiSink : InferredReceiverBiSink<Int, CharSequence>
+
+class InferredReceiverStringBuilderCharSequenceBiSink : InferredReceiverBiSink<StringBuilder, CharSequence>
+
+// a function type is a subtype of kotlin.Function only, no Comparable, nor List
+fun <T : Comparable<T>> InferredReceiverSource<T>.sourceComparable() {}
+
+class InferredReceiverFunctionSource : InferredReceiverSource<() -> String>
+
+fun <T : Comparable<T>> InferredReceiverSink<(T) -> T>.sinkComparableFunction() {}
+
+class InferredReceiverStringListSink : InferredReceiverSink<List<String>>
+
+// a function type next to a type parameter the receiver does not refer to, like W, is matched leniently, like before #319,
+// as kotlinc accepts x.f<_, _, String>() through empty intersections, like ((String) -> Unit) & String, see #319
+fun <T : List<W>, U : T, W> InferredReceiverBiSink<T, U>.biSinkListOfExplicit() {}
+
+fun <T : Comparable<W>, W> InferredReceiverBiSink<T, T>.biSinkComparableToExplicit() {}
+
+fun <T : Comparable<T>, U : T, W : U> InferredReceiverBiSink<U, U>.biSinkUnderBoundedLast() {}
+
+class InferredReceiverFunctionStringBiSink : InferredReceiverBiSink<(String) -> Unit, String>
+
+class InferredReceiverFunctionsBiSink : InferredReceiverBiSink<() -> String, () -> String>
+
+class InferredReceiverFunctionCharSequenceBiSink : InferredReceiverBiSink<() -> String, CharSequence>
