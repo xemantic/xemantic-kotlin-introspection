@@ -1969,6 +1969,8 @@ internal class DefaultKotlinIntrospector(
      * but the ones hidden by an extension, which its listing leaves out too, see [jvmOnlyFunctionsNotHidden].
      * Then the members it inherits from its supertypes, and does not override, see [inheritedMembers],
      * which its listing leaves out, not to be flooded with them, rendered before the companion object members, and the extensions.
+     * The getter, and the setter, of the synthetic property of the name, if any, follow the declared, and the inherited, members,
+     * see [syntheticPropertyAccessors].
      *
      * @param apiClass the [kmClass] as a class of the API.
      * @param isBuiltin whether the class is a built-in type, or its companion object, see [listedExtensions].
@@ -2024,6 +2026,9 @@ internal class DefaultKotlinIntrospector(
         val inherited = if (isOnlyCalledOnClassName) emptyList() else inheritedMembers(
             kmClass, declarations, memberName, apiClass, contextPackage, hidingExtensions
         )
+        val accessors = if (isOnlyCalledOnClassName) SyntheticPropertyAccessors.NONE else syntheticPropertyAccessors(
+            kmClass, apiClass, declarations, memberName, contextPackage
+        )
 
         // a member, or an extension, of an object is called on its name, like Obj.ext(), as is one on the companion object
         // of a class, like Foo.of(), or one of an enum class, usually called on its entry, like Color.RED.ext(),
@@ -2075,12 +2080,81 @@ internal class DefaultKotlinIntrospector(
             enumMembersNamed(kmClass, declarations, memberName, contextPackage)
         }
         return MemberListing.of(
-            (enumMembers + members).map { ListingItem.Declaration(it) } + inherited + companionMembers +
+            (enumMembers + members + accessors.declared).map { ListingItem.Declaration(it) } + inherited + accessors.inherited +
+                companionMembers +
                 // through a typealias expanding to the class with type arguments, only the ones called on the name of the class
                 extensions.filter { !isOnlyCalledOnClassName || it.isCalledOnClassName },
             context = context,
             areMembersCalledOnClassName = isObject
         )
+    }
+
+    /**
+     * The getters, and the setters, of a synthetic property, see [syntheticPropertyAccessors],
+     * the [declared] ones, each on its lines, and the [inherited] ones.
+     */
+    private class SyntheticPropertyAccessors(
+        val declared: List<List<String>>,
+        val inherited: List<ListingItem.InheritedMember>
+    ) {
+        companion object {
+            val NONE = SyntheticPropertyAccessors(emptyList(), emptyList())
+        }
+    }
+
+    /**
+     * The getter, and the setter, of the synthetic property named [propertyName] which Kotlin also reads a getter of the [kmClass] as,
+     * see [syntheticPropertyOf], like `getName()`, and `setName(String)`, of `name` of `java.lang.Thread`,
+     * rendered as resolved by their own names, the getter following the `// also property` hint naming the property,
+     * or none, like when the [kmClass] has a property of the name, which Kotlin reads instead, see [syntheticPropertyOf].
+     * As verified with kotlinc 2.4.21, Kotlin reads the synthetic property also when the [kmClass] has a function of the name,
+     * like `name()`, which is no property, or an extension property of the name, like `val Holder.name: Int`, even of its own package,
+     * so they are found next to them.
+     * A getter named like the property itself, like `isActive()` of `isActive`, is found by its name already, so only its setter is added.
+     * The setter is the one taking the type the getter returns, as rendered, regardless of its nullability,
+     * like `setName(arg0: String?)` of `getName(): String`, the one the `var` of the hint tells, see [syntheticPropertyOf].
+     */
+    private fun syntheticPropertyAccessors(
+        kmClass: KmClass,
+        apiClass: ApiClass,
+        declarations: ClassDeclarations,
+        propertyName: String,
+        contextPackage: String
+    ): SyntheticPropertyAccessors {
+        if ('.' in propertyName) return SyntheticPropertyAccessors.NONE
+        // the names syntheticPropertyName reads as the property name, like getName, getNAME, or isActive
+        val getterNames = (propertyName.indices.map { "get" + propertyName.take(it + 1).uppercase() + propertyName.drop(it + 1) } +
+            propertyName).distinct().filter { syntheticPropertyName(it) == propertyName }
+        if (getterNames.isEmpty()) return SyntheticPropertyAccessors.NONE
+        val name = escapeIdentifier(propertyName)
+        fun List<String>.isHinted() = "// also property: val $name" in this || "// also property: var $name" in this
+        val declared = mutableListOf<List<String>>()
+        val inherited = mutableListOf<ListingItem.InheritedMember>()
+        fun declaredNamed(memberName: String) = declaredMembers(
+            kmClass, declarations, apiMembersNamed(kmClass, declarations, memberName, apiClass), apiClass, contextPackage
+        )
+        fun inheritedNamed(memberName: String) = inheritedMembers(
+            kmClass, declarations, memberName, apiClass, contextPackage, hidingExtensions = mutableListOf()
+        )
+        for (getterName in getterNames) {
+            val declaredGetters = declaredNamed(getterName).filter { it.isHinted() }
+            val inheritedGetters = inheritedNamed(getterName).filter { it.lines.isHinted() }
+            val getter = declaredGetters.firstOrNull() ?: inheritedGetters.firstOrNull()?.lines ?: continue
+            if (getterName != propertyName) {
+                declared += declaredGetters
+                inherited += inheritedGetters
+            }
+            if ("// also property: var $name" !in getter) continue
+            val type = getter.last().substringAfter("fun ${escapeIdentifier(getterName)}(): ", "").replace("?", "")
+            val setterName = syntheticPropertySetterName(getterName)
+            // a setter of a single parameter, returning nothing, like `open fun setName(arg0: String?)`
+            fun List<String>.isSetter() = last().substringAfter("fun ${escapeIdentifier(setterName)}(", "").let { parameters ->
+                parameters.endsWith(")") && parameters.removeSuffix(")").substringAfter(": ").replace("?", "") == type
+            }
+            declared += declaredNamed(setterName).filter { it.isSetter() }
+            inherited += inheritedNamed(setterName).filter { it.lines.isSetter() }
+        }
+        return SyntheticPropertyAccessors(declared, inherited)
     }
 
     /**
@@ -9834,6 +9908,13 @@ internal class DefaultKotlinIntrospector(
         (classifier as? KmClassifier.Class)?.name == "kotlin/Any" && isNullable
 
     /**
+     * The upper bounds of this type parameter as rendered, but a nullable `Any` next to another one, which adds nothing to it,
+     * like the `Object` of Java `<T extends Object & Comparable<? super T>>`, rendered `T : Comparable<in T>?`.
+     */
+    private val KmTypeParameter.renderedBounds: List<KmType>
+        get() = if (upperBounds.size > 1) upperBounds.filterNot { it.isNullableAny() } else upperBounds
+
+    /**
      * Format type parameter declarations, like `<K, out V : Any>`.
      * Parameters with multiple upper bounds have them listed in the [formatWhereClause] instead.
      */
@@ -9852,7 +9933,7 @@ internal class DefaultKotlinIntrospector(
                     KmVariance.INVARIANT -> {}
                 }
                 +escapeIdentifier(typeParameter.name)
-                typeParameter.upperBounds.singleOrNull()?.takeUnless { it.isNullableAny() }?.let {
+                typeParameter.renderedBounds.singleOrNull()?.takeUnless { it.isNullableAny() }?.let {
                     +" : "
                     +formatType(it, contextPackage, typeParameters)
                 }
@@ -9865,8 +9946,8 @@ internal class DefaultKotlinIntrospector(
         typeParameters: TypeParameterScope,
         contextPackage: String? = null
     ): String {
-        val constraints = declarations.filter { it.upperBounds.size > 1 }.flatMap { typeParameter ->
-            typeParameter.upperBounds.map {
+        val constraints = declarations.filter { it.renderedBounds.size > 1 }.flatMap { typeParameter ->
+            typeParameter.renderedBounds.map {
                 "${escapeIdentifier(typeParameter.name)} : ${formatType(it, contextPackage, typeParameters)}"
             }
         }
