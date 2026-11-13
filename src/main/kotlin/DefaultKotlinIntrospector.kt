@@ -3279,6 +3279,9 @@ internal class DefaultKotlinIntrospector(
         val isRelocated by lazy(LazyThreadSafetyMode.NONE) {
             declarations.overrideOwner?.let { overrideResolver.isRelocated(it) } == true
         }
+        // the candidates of the members of the Java classes walked whose types are translated back, see unlocated,
+        // also when the inheriting class is not known to be relocated
+        val unlocatedCandidates = HashSet<InheritedCandidate>()
         // the names of the supertypes walked which are classes, not interfaces, see reachedThroughSuperclass
         val classNames = HashSet<String>()
         // the names of the Kotlin supertypes walked which are not part of the API, see withUnimplemented
@@ -3392,9 +3395,15 @@ internal class DefaultKotlinIntrospector(
             // the members of a Java class reached through a raw supertype are seen erased, see JavaClass.erasedFunctionOf
             val isReachedRaw = superDeclarations is JavaClass && name in rawlyReached
             // the types of a member of a Java class, named by their JVM names, which might be relocated,
-            // are named by the names the metadata refers to them by, like the supertypes of the class above
-            fun Member.unlocated(): Member =
-                if (superDeclarations !is JavaClass || !isRelocated) this else withTypes { it.unlocated(declarations) }
+            // are named by the names the metadata refers to them by, like the supertypes of the class above,
+            // also when the inheriting class tells no relocation, as the Java class might refer to a relocated Kotlin class,
+            // which its own metadata names, see OverrideResolver.unlocatedName, the member then kept, unless one is
+            fun Member.unlocated(): Member {
+                if (superDeclarations !is JavaClass) return this
+                var isUnlocated = false
+                val unlocated = withTypes { type -> type.unlocated(declarations).also { if (it !== type) isUnlocated = true } }
+                return if (isUnlocated) unlocated else this
+            }
             apiMembers.forEach { apiMember ->
                 val declared = apiMember.member
                 val overridden = (superDeclarations as? JavaClass)?.overriddenMembers(declared)
@@ -3406,8 +3415,9 @@ internal class DefaultKotlinIntrospector(
                     superDeclarations !is JavaClass && name in rawlyReached -> declared.declaration.rawlyErased()
                     else -> null
                 }
-                val member = (erased?.let { Member.Function(it, (declared as Member.Function).declaration) } ?: declared)
-                    .unlocated()
+                val located = erased?.let { Member.Function(it, (declared as Member.Function).declaration) } ?: declared
+                val unlocated = located.unlocated()
+                val member = unlocated
                     .substituted(substitution, inheritingNames)
                     .let { if (superDeclarations is JavaClass && !isReachedRaw) it.joined(superDeclarations) else it }
                 val signature = member.signature(inheritingNames)
@@ -3432,7 +3442,7 @@ internal class DefaultKotlinIntrospector(
                         }
                     },
                     isApi = isApi
-                )
+                ).also { if (unlocated !== located) unlocatedCandidates += it }
             }
         }
         while (pending.isNotEmpty()) {
@@ -3623,8 +3633,9 @@ internal class DefaultKotlinIntrospector(
                 ) {
                     return@forEach
                 }
-                // but through a relocated, or a raw, supertype, whose members are told otherwise, see collect above
-                if (isRelocated || picked.name in rawlyReached) return@forEach
+                // but through a relocated, or a raw, supertype, whose members are told otherwise, see collect above,
+                // nor of a member whose types are translated back, which the declaration would name by their JVM names again
+                if (isRelocated || picked.name in rawlyReached || picked in unlocatedCandidates) return@forEach
                 val substitution = supertypeSubstitution(picked.kmClass, typeReached(reach) ?: return@forEach, declarations)
                 val reached = Member.Function((picked.member as Member.Function).declaration)
                     .substituted(substitution, inheritingNames) as Member.Function

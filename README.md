@@ -426,8 +426,12 @@ com.example.AnnotationTestClass
   as far as the relocation is told by the class files,
   or by a relocated Kotlin class itself, whose metadata keeps its original name,
   also when it is relocated to the root package,
+  or when only the Java class refers to it, the inheriting class telling no relocation,
+  and a Kotlin class of the root package keeps its name, also next to a class relocated there,
   unlike a Java class relocated there, which cannot be told from a class of the root package,
-  and keeps its relocated name.
+  and keeps its relocated name,
+  while a Java class of the root package taken by a member inherited by a class relocated to the root package
+  is named like a class of its original package.
   A declaration within a protected class, like a protected companion object,
   resolved directly, follows a comment telling that class,
   like `// in protected companion object Outer.Named`,
