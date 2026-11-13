@@ -182,10 +182,13 @@ com.example.AnnotationTestClass
   or `final` when implemented by a final Java method,
   or `abstract` when the Java class declares it abstract again,
   like `abstract fun hashCode(): Int` for a class extending `java.security.Permission`.
-  An abstract member of a Kotlin supertype which is not part of the API, like an internal class, public on the JVM,
-  which a Java class extending it leaves unimplemented, is inherited from that Java class, as `abstract`,
-  as a concrete subclass has to implement it,
-  like `abstract fun put(k: Int?): Int` next to the `open fun put(arg0: Int): Int` the Java class declares, a JVM method of its own.
+  A member of a Kotlin supertype which is not part of the API, like an internal class, public on the JVM,
+  which a Java class extending it does not override, is inherited from that Java class,
+  or from the nearest public subclass of it, when the Java class is package-private,
+  as `abstract`, when a concrete subclass has to implement it,
+  like `abstract fun put(k: Int?): Int` next to the `open fun put(arg0: Int): Int` the Java class declares, a JVM method of its own,
+  or else `open`, or final, like `fun h(): Int`,
+  and so through a Kotlin class exposing such a supertype, which only a suppressed `EXPOSED_SUPER_CLASS` error allows.
   The types of a Java method are nullable, or not, as the compiler reads its nullability annotations,
   like `@NotNull` of JetBrains, or `@Nullable`, and `@NullMarked`, of JSpecify,
   also the ones of the methods it overrides,

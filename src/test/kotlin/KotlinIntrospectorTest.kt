@@ -18197,9 +18197,101 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should not resolve abstract member of internal class exposed by Kotlin class`() {
-        // only a suppressed error lets a public Kotlin class expose an internal supertype, of unspecified compiler behavior
-        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.KotlinNotImplementingInternal.f") == null)
+    fun `should resolve abstract member of internal class exposed by Kotlin class as abstract`() {
+        // only a suppressed error lets a public Kotlin class expose an internal supertype, of unspecified compiler behavior,
+        // still kotlinc 2.4.21 lets another module call f(), and requires a concrete subclass to override it, like through Java,
+        // inherited from the internal class declaring it, as the class inheriting it is the one exposing it
+        resolver.resolve("com.xemantic.kotlin.introspection.test.KotlinNotImplementingInternal.f") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.KotlinNotImplementingInternal.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.HiddenMergedInternalAbstract
+            abstract fun f(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve abstract member of internal class exposed by Kotlin superclass as inherited from it`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.KotlinNotImplementingInternalSub.f") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.KotlinNotImplementingInternalSub.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.KotlinNotImplementingInternal
+            abstract fun f(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve abstract member of internal class left unimplemented by package-private Java class as inherited from public one`() {
+        // the user code cannot name the package-private Java class extending the internal one, but its public subclass
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaBelowPackagePrivateNotImplementingInternalSub.f"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaBelowPackagePrivateNotImplementingInternalSub.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaPublicBelowPackagePrivateNotImplementingInternal
+            abstract fun f(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve abstract member of internal class left unimplemented by Java class declared before hidden member merged with it`() {
+        // the compiler picks the f() of the Java class, declared first, so that f() can be called, and has to be overridden
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaNotImplementingInternalHiddenFaceSub.f"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaNotImplementingInternalHiddenFaceSub.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNotImplementingInternal
+            abstract fun f(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve abstract member of internal class left unimplemented by Java class declared after hidden member merged with it`() {
+        // the compiler picks the hidden f() of the interface, declared first, so that f() cannot be called,
+        // though a concrete subclass still has to override it
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenFaceJavaNotImplementingInternalSub.f") == null)
+    }
+
+    @Test
+    fun `should resolve open member of internal class reached through Java class as open`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaExtendingInternalOpenSub.g") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaExtendingInternalOpenSub.g [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaExtendingInternalOpen
+            open fun g(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve final member of internal class reached through Java class as final`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaExtendingInternalOpenSub.h") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaExtendingInternalOpenSub.h [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaExtendingInternalOpen
+            fun h(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve property of internal class reached through Java class`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaExtendingInternalOpenSub.pv") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaExtendingInternalOpenSub.pv [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaExtendingInternalOpen
+            val pv: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of a body of internal interface implemented by Java class as open`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaImplementingInternalDefaultSub.d") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaImplementingInternalDefaultSub.d [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaImplementingInternalDefault
+            open fun d(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve method of Java class implementing member of internal interface through unrelated superclass as open`() {
+        // the f() of JavaPlainF, inherited by the Java class implementing NearestClassInternalFace, implements its f()
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaPlainFImplementingInternalFaceSub.f") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaPlainFImplementingInternalFaceSub.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaPlainF
+            open fun f(): Int
+        """.trimIndent()
     }
 
     @Test
