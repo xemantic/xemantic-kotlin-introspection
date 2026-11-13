@@ -1510,3 +1510,17 @@ class InferredReceiverFunctionSource : InferredReceiverSource<() -> String>
 fun <T : Comparable<T>> InferredReceiverSink<(T) -> T>.sinkComparableFunction() {}
 
 class InferredReceiverStringListSink : InferredReceiverSink<List<String>>
+
+// a function type next to a type parameter the receiver does not refer to, like W, is matched leniently, like before #319,
+// as kotlinc accepts x.f<_, _, String>() through empty intersections, like ((String) -> Unit) & String, see #319
+fun <T : List<W>, U : T, W> InferredReceiverBiSink<T, U>.biSinkListOfExplicit() {}
+
+fun <T : Comparable<W>, W> InferredReceiverBiSink<T, T>.biSinkComparableToExplicit() {}
+
+fun <T : Comparable<T>, U : T, W : U> InferredReceiverBiSink<U, U>.biSinkUnderBoundedLast() {}
+
+class InferredReceiverFunctionStringBiSink : InferredReceiverBiSink<(String) -> Unit, String>
+
+class InferredReceiverFunctionsBiSink : InferredReceiverBiSink<() -> String, () -> String>
+
+class InferredReceiverFunctionCharSequenceBiSink : InferredReceiverBiSink<() -> String, CharSequence>

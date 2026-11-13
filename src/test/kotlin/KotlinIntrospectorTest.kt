@@ -12721,6 +12721,36 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve class with extension on function type next to type parameter given explicitly`() {
+        // x.biSinkListOfExplicit<_, _, String>() compiles, inferring T and U through ((String) -> Unit) & String
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InferredReceiverFunctionStringBiSink"
+        ) should {
+            have("fun <T : List<W>, U : T, W> InferredReceiverBiSink<T, U>.biSinkListOfExplicit()" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve class with extension on function types bounded by type parameter given explicitly`() {
+        // x.biSinkComparableToExplicit<_, String>() compiles
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InferredReceiverFunctionsBiSink"
+        ) should {
+            have("fun <T : Comparable<W>, W> InferredReceiverBiSink<T, T>.biSinkComparableToExplicit()" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve class with extension on function type next to type parameter bounded by inferred one`() {
+        // x.biSinkUnderBoundedLast<_, _, Nothing>() compiles, unlike x.biSinkUnderBoundedLast()
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InferredReceiverFunctionCharSequenceBiSink"
+        ) should {
+            have("fun <T : Comparable<T>, U : T, W : U> InferredReceiverBiSink<U, U>.biSinkUnderBoundedLast()" in lines())
+        }
+    }
+
+    @Test
     fun `should resolve class without extension inferring reified type parameter as intersection`() {
         // A is inferred as CharSequence & Int, which kotlinc cannot reify
         resolver.resolve(
