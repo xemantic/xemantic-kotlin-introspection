@@ -948,6 +948,37 @@ abstract class HiddenMergedHiddenRunThread : Thread() {
 
 abstract class HiddenMergedHiddenRunThreadJoin : Runnable, HiddenMergedHiddenRunThread()
 
+abstract class HiddenMergedFinalRunThread : Thread() {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    final override fun run() {}
+}
+
+abstract class HiddenMergedFinalRunThreadJoin : Runnable, HiddenMergedFinalRunThread()
+
+abstract class HiddenGenericPutImplementation : GenericPut<Int> {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    override fun put(t: Int): String = ""
+}
+
+abstract class HiddenGenericPutImplementationJoin : PrimitivePut, HiddenGenericPutImplementation()
+
+abstract class HiddenPrimitiveJavaPutOverride : com.xemantic.kotlin.introspection.test.other.JavaPrimitivePut() {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    override fun put(key: Int): String = ""
+}
+
+abstract class HiddenPrimitiveJavaPutOverrideJoin : GenericPut<Int>, HiddenPrimitiveJavaPutOverride()
+
+// compile, as the hidden members of the superclasses implement the merged members the compiler picks, though not listed
+@Suppress("unused")
+private class HiddenMergedImplementations {
+    class MidClassJoin : HiddenMergedMidClassJoin()
+    class RunThreadJoin : HiddenMergedHiddenRunThreadJoin()
+    class FinalRunThreadJoin : HiddenMergedFinalRunThreadJoin()
+    class GenericPutImplementationJoin : HiddenGenericPutImplementationJoin()
+    class PrimitiveJavaPutOverrideJoin : HiddenPrimitiveJavaPutOverrideJoin()
+}
+
 // compiles, as the merged members picked are not hidden
 @Suppress("unused")
 private fun callMergedMembers(

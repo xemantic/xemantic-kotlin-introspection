@@ -517,6 +517,43 @@ abstract class InheritedJavaJoinedStringAcceptor : com.xemantic.kotlin.introspec
 
 abstract class InheritedJavaJoinedStringAcceptorSubclass : InheritedJavaJoinedStringAcceptor()
 
+interface GenericAcceptor<T> {
+    fun accept(t: T)
+    fun put2(t: T, tag: String): String
+}
+
+interface StringTagPut {
+    fun put2(key: String, tag: String): String
+}
+
+// the compiler picks the methods of the Java class, declared first, implementing the ones of GenericAcceptor<String>,
+// of their types, String! where they take T, so that accept(null) and put2(null, "") compile, unlike put2("", null)
+abstract class StringGenericJavaAcceptorJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaStringGenericAcceptor(), StringAcceptor, StringTagPut
+
+// the parameter names tell the member the compiler picks of the ones merged of the same types: the one contributed first,
+// depth-first in the order of the direct supertypes, the take(root: String) of NamedRootTaker through NamedMidTaker
+interface NamedRootTaker {
+    fun take(root: String): String
+}
+
+interface NamedMidTaker : NamedRootTaker
+
+interface NamedOtherTaker {
+    fun take(other: String): String
+}
+
+abstract class NamedMidOtherTakerJoin : NamedMidTaker, NamedOtherTaker
+
+interface IndexGetter {
+    fun get(index: Int): String
+}
+
+// the get(index: Int) of List, contributed first, returns String! through the Java subclass of java.util.AbstractList,
+// so that the compiler picks the one of IndexGetter, returning String, which is no operator, so that x[0] does not compile,
+// still abstract, as java.util.AbstractList does not implement get
+abstract class IndexGetterJavaListJoin : com.xemantic.kotlin.introspection.test.other.JavaAddFirstHolder(), IndexGetter
+
 // the type parameter of the interface numbers the ones of its members apart from the ones of the Java methods
 interface GenericMethodTaker<E> {
     fun <T> take2(value: T, type: Class<T>)
@@ -605,6 +642,18 @@ abstract class PrimitiveAndBoxedJavaIntPutImpl : com.xemantic.kotlin.introspecti
 abstract class PrimitiveJavaIntPutOverBoxedImpl : com.xemantic.kotlin.introspection.test.other.JavaPrimitiveIntPutOverBoxed()
 
 abstract class BoxedJavaIntPutOverPrimitiveImpl : com.xemantic.kotlin.introspection.test.other.JavaBoxedIntPutOverPrimitive()
+
+abstract class GenericPutImplementation<T> : GenericPut<T> {
+    override fun put(t: T): String = ""
+}
+
+// the compiler picks the put(t: T) of GenericPutImplementation, given Integer by its Java subclass, taking Int!,
+// contributed first, though PrimitivePut is reached first, so that put(null) compiles
+abstract class IntegerJavaGenericPutImplementationPrimitivePutJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaIntegerGenericPutImplementation(), PrimitivePut
+
+// and the abstract put(t: T) of GenericPut, given Integer by the Java interface
+abstract class IntegerJavaPutInterfacePrimitivePutJoin : com.xemantic.kotlin.introspection.test.other.JavaIntegerPutInterface, PrimitivePut
 
 interface FunctionTaker {
     fun take(function: (String) -> Int): String
