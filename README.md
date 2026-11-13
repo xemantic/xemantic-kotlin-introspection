@@ -170,6 +170,11 @@ com.example.AnnotationTestClass
   for which the Kotlin member is inherited instead, declared with the names of its parameters, which the JDK does not tell,
   unless the Java method makes it more visible, like the public `clone()` of the protected one of `kotlin.Cloneable`,
   or returns a more specific type,
+  or takes types the Kotlin member does not, like the platform types of the `compute` of `java.util.Hashtable`,
+  which, as no pure implementation of `MutableMap`, lets `compute(null, …)` compile —
+  the `// inherited from` header names the declaration whose types are rendered,
+  so `java.util.Hashtable` for its `compute`, but `kotlin.collections.MutableMap` for the one of `java.util.TreeMap`, though the JDK class declares it too,
+  as naming the JDK class everywhere would trade the parameter names, like `key` and `value`, for `arg0` and `arg1`,
   and the ones overriding a JDK method which the built-in type does not have, like the `sort(Comparator)` of `java.util.List`,
   as Kotlin calls the `MutableList<T>.sort(comparator)` extension instead.
   A member a Java supertype implements is rendered of the modality of the Java method,
