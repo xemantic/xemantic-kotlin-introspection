@@ -2562,6 +2562,8 @@ internal class DefaultKotlinIntrospector(
      *   with `put(key: Int)`, one intersection override through a bridge, but never a nullable one, like the `Integer`
      *   of `put(key: Int?)`, nor the one of `G<Int?>`, as a Java primitive type is never a platform type, nor one of a Java member,
      *   like `put(Integer)`, or `put(T)` of a Java class given `Integer`, nor of a JVM-only member, like `putIfAbsent` of `MutableMap`,
+     *   nor, with the primitive type of a Java member, like `put(int)`, the one taking a platform type, [isPlatform], or [isOtherPlatform],
+     *   like `put(t: T)` of `G<T>` given `Integer` by a Java class, though it is merged with the one of a Kotlin member, like `put(key: Int)`,
      * - of arrays of reference types, like `Array<IntArray>` with the `Array<T>` of `G<IntArray>`,
      *   as an array of a primitive type is never merged with another one,
      *   like the `IntArray` of `vararg key: Int` with the `Array<out Int>` of `vararg t: T` of `G<Int>`,
@@ -2569,14 +2571,23 @@ internal class DefaultKotlinIntrospector(
      *   but a boxed type of a Java member, like `put(Integer)`, also annotated not null, with the erased one of a Kotlin member
      *   which is not nullable, like `put(t: T)` of `G<Int>`, unlike of `G<Int?>`.
      */
-    private fun isMergedJvmParameter(parameter: JvmParameter, other: JvmParameter): Boolean {
+    private fun isMergedJvmParameter(
+        parameter: JvmParameter,
+        other: JvmParameter,
+        isPlatform: Boolean,
+        isOtherPlatform: Boolean
+    ): Boolean {
         fun JvmParameter.isBoxedJavaAgainst(kotlin: JvmParameter) =
             isJava && type.internalName in BOXED_JVM_NAMES && !kotlin.isJava && !kotlin.isNullable
         return when {
             parameter.type == other.type -> true
             parameter.type.isPrimitive || other.type.isPrimitive -> {
-                val reference = if (parameter.type.isPrimitive) other else parameter
-                !reference.isJava && !reference.isNullable && reference.type.sort == AsmType.OBJECT
+                val isPrimitiveFirst = parameter.type.isPrimitive
+                val primitive = if (isPrimitiveFirst) parameter else other
+                val reference = if (isPrimitiveFirst) other else parameter
+                val isReferencePlatform = if (isPrimitiveFirst) isOtherPlatform else isPlatform
+                !reference.isJava && !reference.isNullable && reference.type.sort == AsmType.OBJECT &&
+                    !(primitive.isJava && isReferencePlatform)
             }
             parameter.type.sort == AsmType.ARRAY && other.type.sort == AsmType.ARRAY ->
                 !parameter.type.isPrimitiveArray && !other.type.isPrimitiveArray
@@ -3007,9 +3018,19 @@ internal class DefaultKotlinIntrospector(
             return parameters.size != otherParameters.size || parameters.indices.all { index ->
                 val parameter = parameters[index]
                 val otherParameter = otherParameters[index]
-                parameter == null || otherParameter == null || isMergedJvmParameter(parameter, otherParameter)
+                parameter == null || otherParameter == null ||
+                    isMergedJvmParameter(parameter, otherParameter, index in platformPositions, index in other.platformPositions)
             }
         }
+
+        // the positions of the value parameters of a Kotlin member taking the platform types a Java class gives,
+        // see takesPlatformTypes, unless it stands for the method of the Java class implementing it, see isMergedJvmParameter
+        private val platformPositions: Set<Int>
+            get() = if (!takesPlatformTypes || declarations is JavaClass || jvmMethod != null || implementingJvmMethod != null) {
+                emptySet()
+            } else {
+                classTypeParameterPositions - givenPositions
+            }
 
         // a JVM-only member is a Java method of its own, see jvmMethod, merged like the members of a Java class,
         // and so is a member standing for the method of the Java class implementing it, see implementingJvmMethod,

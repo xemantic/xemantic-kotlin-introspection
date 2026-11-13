@@ -575,6 +575,37 @@ abstract class PrimitiveJavaGenericNullablePutJoin :
 // the put(t: T) of GenericPut<Int?> takes Int?, which the put(int) of JavaPrimitivePut never implements
 abstract class PrimitiveJavaNullableGenericPutJoin : com.xemantic.kotlin.introspection.test.other.JavaPrimitivePut(), GenericPut<Int?>
 
+interface IntPut : GenericPut<Int>
+
+interface StringPut : GenericPut<String>
+
+interface BoundedPut<T : Number> {
+    fun put(t: T): String
+}
+
+interface MidPut<T> : GenericPut<T>
+
+abstract class BoxedJavaIntPutImpl : com.xemantic.kotlin.introspection.test.other.JavaBoxedIntPut()
+
+abstract class EmptyJavaStringPutImpl : com.xemantic.kotlin.introspection.test.other.JavaEmptyStringPut()
+
+abstract class PrimitiveJavaIntegerPutImpl : com.xemantic.kotlin.introspection.test.other.JavaPrimitiveIntegerPut()
+
+abstract class PrimitiveJavaIntegerPutInterfaceImpl :
+    com.xemantic.kotlin.introspection.test.other.JavaPrimitiveIntegerPutInterfaceImplementation()
+
+abstract class PrimitiveJavaIntegerBoundedPutImpl : com.xemantic.kotlin.introspection.test.other.JavaPrimitiveIntegerBoundedPut()
+
+abstract class PrimitiveJavaLongPutImpl : com.xemantic.kotlin.introspection.test.other.JavaPrimitiveLongPut()
+
+abstract class PrimitiveJavaIntegerMidPutImpl : com.xemantic.kotlin.introspection.test.other.JavaPrimitiveIntegerMidPut()
+
+abstract class PrimitiveAndBoxedJavaIntPutImpl : com.xemantic.kotlin.introspection.test.other.JavaPrimitiveAndBoxedIntPut()
+
+abstract class PrimitiveJavaIntPutOverBoxedImpl : com.xemantic.kotlin.introspection.test.other.JavaPrimitiveIntPutOverBoxed()
+
+abstract class BoxedJavaIntPutOverPrimitiveImpl : com.xemantic.kotlin.introspection.test.other.JavaBoxedIntPutOverPrimitive()
+
 interface FunctionTaker {
     fun take(function: (String) -> Int): String
 }
