@@ -18,6 +18,9 @@
 
 package com.xemantic.kotlin.introspection
 
+import org.objectweb.asm.ClassReader
+import org.objectweb.asm.Opcodes
+
 // The class file resources of a class loader, looked up without loading the classes.
 // A class file resource is never encapsulated, also when it is in a named module.
 // A class loader might throw when looking one up, even a runtime exception, like a closed or a restricted one,
@@ -42,6 +45,46 @@ internal fun ClassLoader.hasClassFile(binaryName: String): Boolean = try {
 } catch (_: Exception) {
     false
 }
+
+/**
+ * An ASM reader of the class file [bytes], also of one too new for ASM, like of a class compiled for a newer JVM,
+ * whose major version is then lowered in a copy, as the constant pool, the fields, the methods and the attributes
+ * keep their format across the class file versions, so that its declarations, like its Kotlin metadata, are read all the same.
+ *
+ * @throws IllegalArgumentException if the class file cannot be parsed otherwise,
+ *   like when the constant pool has an entry of an unknown kind.
+ */
+internal fun classReader(bytes: ByteArray): ClassReader = try {
+    ClassReader(bytes)
+} catch (e: IllegalArgumentException) {
+    // the major version, following the magic number and the minor version
+    val majorVersion = if (bytes.size < 8) 0 else ((bytes[6].toInt() and 0xFF) shl 8) or (bytes[7].toInt() and 0xFF)
+    if (majorVersion <= Opcodes.V1_8) throw e
+    ClassReader(
+        bytes.copyOf().apply {
+            this[6] = 0
+            this[7] = Opcodes.V1_8.toByte()
+        }
+    )
+}
+
+/**
+ * Whether the class file of this reader names each of its direct supertypes by a `Class` entry of its constant pool,
+ * unlike a malformed one, whose superclass or interface index ASM reads all the same:
+ * the entry 0 as no name, and an entry of another kind, like a `Utf8` one, as an unrelated name.
+ * The superclass of the entry 0 is none, like of `java/lang/Object`.
+ */
+internal fun ClassReader.namesSupertypesByClassEntries(): Boolean {
+    fun isClassEntry(index: Int): Boolean =
+        // the offset of an entry follows its tag, while the second entry taken by a Long or a Double has none
+        index in 1 until itemCount && getItem(index).let { it > 0 && readByte(it - 1) == CONSTANT_CLASS_TAG }
+    // the access flags are followed by this class, the superclass, the interface count, and the interfaces
+    val superclass = readUnsignedShort(header + 4)
+    return (superclass == 0 || isClassEntry(superclass)) &&
+        (0 until readUnsignedShort(header + 6)).all { isClassEntry(readUnsignedShort(header + 8 + 2 * it)) }
+}
+
+private const val CONSTANT_CLASS_TAG = 7
 
 private fun classFileResource(binaryName: String): String = binaryName.replace('.', '/') + ".class"
 

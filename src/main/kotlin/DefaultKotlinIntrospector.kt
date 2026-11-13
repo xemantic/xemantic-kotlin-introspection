@@ -1899,7 +1899,7 @@ internal class DefaultKotlinIntrospector(
      * Reads the class file of a class by its JVM [binaryName], whether it can be loaded or not, to tell the flags,
      * which neither [Class.isSynthetic] tells for a nested class, as it reports the flags of the `InnerClasses` attribute,
      * nor the reflection of annotations, which would load the classes of all of them,
-     * and the metadata of a class which cannot be loaded,
+     * and the metadata of a class which cannot be loaded, also of a class file too new for ASM, see [classReader],
      * unless the file is of another class, like the one found for the name `com/example/Outer`,
      * or for a name differing only in case.
      *
@@ -1907,7 +1907,7 @@ internal class DefaultKotlinIntrospector(
      */
     private fun readClassFile(binaryName: String, bytes: ByteArray?): ClassFile? = try {
         bytes
-            ?.let { ClassReader(it) }
+            ?.let { classReader(it) }
             ?.takeIf { it.className.replace('/', '.') == binaryName }
             ?.let { readClassFile(it) }
     } catch (_: Exception) {
@@ -10402,7 +10402,7 @@ internal class DefaultKotlinIntrospector(
          */
         private fun indexClass(path: String, bytes: ByteArray, nestedClassFiles: NestedClassFiles) {
             val reader = try {
-                ClassReader(bytes)
+                classReader(bytes)
             } catch (_: Exception) {
                 indexedClasses.add(path.replace('/', '.'))
                 return

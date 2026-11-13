@@ -1153,6 +1153,55 @@ class OverrideResolverTest {
     }
 
     @Test
+    fun `should not take class file of supertype index which ASM lets through for Java class which cannot be loaded`() {
+        // given
+        // the index of the interface 0, which ASM reads as no name, or of a Utf8 entry, which ASM reads as an unrelated name,
+        // in a class file ASM can parse otherwise, and in one it cannot
+        val classFiles = listOf(0, utf8IndexOfName(annotatedClassFile("lib/Mid"))).flatMap { index ->
+            val classFile = withSupertypeIndexes(annotatedClassFile("lib/Mid"), interfaces = mapOf(0 to index))
+            listOf(classFile, tooNew(classFile))
+        }
+
+        // when
+        val supertypes = classFiles.map { classFile ->
+            overrideResolver(unloadableClassFiles = mapOf("lib/Mid" to classFile)).unloadableJavaSupertypeNames("lib/Mid")
+        }
+
+        // then
+        // like an index out of the constant pool, the interface is left out, so the class stays unknown
+        assert(supertypes == List(4) { emptyList<String>() })
+    }
+
+    @Test
+    fun `should not pair supertypes of owner by simple names when its class file has supertype index which ASM lets through`() {
+        // given
+        // like above, the index of the first interface 0, or of a Utf8 entry, in a class file ASM can parse otherwise
+        val owner = kmClass("app/Owner", supertype = "a/Base").apply { supertypes += type("b/Base") }
+        val ownerClassFile = classFile("app/Owner", "app/shaded/a/Base", "app/shaded/b/Base")
+        val ownerClassFiles = listOf(0, utf8IndexOfName(ownerClassFile)).map { index ->
+            withSupertypeIndexes(ownerClassFile, interfaces = mapOf(0 to index))
+        }
+
+        // when
+        val overrides = ownerClassFiles.map { classFile ->
+            val resolver = overrideResolver(
+                classes = mapOf(
+                    "app/shaded/a/Base" to kmClass("a/Base", null, "fromA"),
+                    "app/shaded/b/Base" to kmClass("b/Base", null, "fromB")
+                ),
+                classFiles = mapOf("app/Owner" to classFile)
+            )
+            listOf(
+                resolver.isOverride(OverrideResolver.Owner(owner), function("fromA")),
+                resolver.isOverride(OverrideResolver.Owner(owner), function("fromB"))
+            )
+        }
+
+        // then
+        assert(overrides == List(2) { listOf(false, false) })
+    }
+
+    @Test
     fun `should not take class file too new to be parsed of malformed class index for Java class which cannot be loaded`() {
         // given
         // the index of the class itself out of the constant pool, so that the class file does not tell whose it is
