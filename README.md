@@ -309,6 +309,13 @@ com.example.AnnotationTestClass
   from the Kotlin metadata, or from the generic signatures of the Java supertypes.
   A type argument passed through a Java supertype is a platform type, of either nullability,
   like `String!` of `Box<String!>`, unless the supertype uses its type parameter as `T & Any`, or as `T?`.
+  So is a type parameter of a generic class, like `V!` of `interface Pair<V> : JavaBox<V>, Other<V>`,
+  for which `fun <P> P.ext() where P : Box<String?>, P : Other<String>` is listed, as `Pair<String>` is both,
+  while the type arguments of a Kotlin type passed through Java stay as they are, like `V?` of `JavaBox<List<V?>>`.
+  An extension is listed for a generic class when one type argument of the class fits all the positions its type parameter is matched in,
+  as nullable, like `V?`, as definitely not nullable, like `V & Any`, or as a platform type, satisfying its bounds,
+  like `fun Map<String?, String>.ext()` for `interface Index<V> : Map<V, V & Any>`, of `Index<String?>`,
+  but not `fun Box<String?>.ext()` for `interface NotNullBox<V> : Box<V & Any>`.
   A JDK interface named as a supertype, like `abstract class Orders : java.util.List<Order>`,
   is the Java one, with the supertypes Java declares,
   so that `fun Collection<Order>.count()` is listed for it, but not `fun List<Order>.total()`, as the compiler tells.
