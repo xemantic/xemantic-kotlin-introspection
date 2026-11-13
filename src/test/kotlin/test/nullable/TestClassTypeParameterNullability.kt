@@ -151,3 +151,8 @@ fun <P, T : List<T>?> P.sinkAndSelfBox() where P : TypedSink<T>, P : TypedSelfBo
 interface TypedNullableSelfListsBoxAndOther<V> : TypedSelfBox<List<V?>>, TypedOther<V>
 
 fun <P, T : List<T>?> P.selfBoxAndOther() where P : TypedSelfBox<T & Any>, P : TypedOther<T> {}
+
+// nor is it for List<V?> of V fixed by another bound, like TypedOther<Int>, as only a type referring to no type parameter
+// of the class is taken as its nullable type, not modelled otherwise
+
+fun <P, T : List<T>?> P.selfBoxAndIntOther() where P : TypedSelfBox<T & Any>, P : TypedOther<Int> {}

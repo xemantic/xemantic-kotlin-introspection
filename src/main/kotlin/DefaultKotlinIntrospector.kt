@@ -6543,6 +6543,17 @@ internal class DefaultKotlinIntrospector(
         private fun KmType.isSubstitutedPlatformType(): Boolean = flexibleTypeUpperBound != null && !isNullable && boundsChecked.isNotEmpty()
 
         /**
+         * Whether the [actual] type matched against the type parameter of the given [id] used as `T & Any` is fixed by that position alone:
+         * referring to no type parameter of a class, or else matched against the sole type argument of the receiver,
+         * like `List<V?>` for `Box<T & Any>`, but not for `where P : Box<T & Any>, P : Other<Int>`, whose other bound fixes `V`.
+         */
+        private fun isFixedOnlyHere(id: Int, actual: KmType): Boolean {
+            if (actual.refersOnlyTo { false }) return true
+            val argument = receiver?.takeIf { it.classifier is KmClassifier.Class && it.outerType == null }?.arguments?.singleOrNull()?.type
+            return argument != null && argument.isDefinitelyNonNull && (argument.classifier as? KmClassifier.TypeParameter)?.id == id
+        }
+
+        /**
          * Whether the type parameter of the given [id] occurs once in the receiver of the extension and in the bounds
          * of its other type parameters, like `T` of `Box<T & Any>`, but not of `where P : Box<T & Any>, P : Other<T>`,
          * where kotlinc infers it by the other occurrence too, also through a type parameter of the class, not modelled.
@@ -7040,10 +7051,10 @@ internal class DefaultKotlinIntrospector(
                             // a supertype of String, and a subtype of String?, satisfying the bounds as String itself,
                             // or as String?, in an invariant position, where no other supertype of it can be inferred instead,
                             // like List<SL?>? of T : List<T>? for List<SL?>, where SL : List<SL>,
-                            // when nothing else constrains it, see occursOnce
+                            // when nothing else constrains it, see occursOnce, nor what String refers to, see isFixedOnlyHere
                             else -> (variance != KmVariance.INVARIANT || Mark().let { mark ->
                                 satisfiesBounds(classifier.id, actual, variance, isStrict) ||
-                                    (boundsChecked.isEmpty() && occursOnce(classifier.id) && retrying(mark) {
+                                    (boundsChecked.isEmpty() && occursOnce(classifier.id) && isFixedOnlyHere(classifier.id, actual) && retrying(mark) {
                                         satisfiesBounds(classifier.id, actual.nullable(), variance, isStrict)
                                     })
                             }) &&
