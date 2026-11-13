@@ -5460,11 +5460,12 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve Kotlin member merged with platform-dependent member of map of primitive type keys`() {
-        // getOrDefault of Map is a built-in member, not a JVM-only one, so that it is merged like a Kotlin one
+        // getOrDefault of Map is a built-in member, not a JVM-only one, so that it is merged like a Kotlin one,
+        // and picked, contributed first, of a body, so that a concrete subclass need not implement it
         resolver.resolve("com.xemantic.kotlin.introspection.test.PrimitiveKeyMapJoin.getOrDefault") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.PrimitiveKeyMapJoin.getOrDefault [page 1/1]
-            // inherited from com.xemantic.kotlin.introspection.test.PrimitiveKeyMapMembers
-            fun getOrDefault(key: Int, defaultValue: String): String
+            // inherited from kotlin.collections.Map
+            open fun getOrDefault(key: Int, defaultValue: String): String
         """.trimIndent()
     }
 
@@ -5715,7 +5716,7 @@ class KotlinIntrospectorTest {
         // so that a concrete subclass compiles
         resolver.resolve("com.xemantic.kotlin.introspection.test.GenericGetOrDefaultTreeMapJoin.getOrDefault") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.GenericGetOrDefaultTreeMapJoin.getOrDefault [page 1/1]
-            // inherited from com.xemantic.kotlin.introspection.test.GenericGetOrDefault
+            // inherited from kotlin.collections.Map
             open fun getOrDefault(key: String, defaultValue: String): String
         """.trimIndent()
     }
@@ -5883,6 +5884,46 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve Kotlin member given platform type by Java subclass contributed before merged Kotlin member`() {
+        // the put(t: T) of GenericPutImplementation, given Integer by its Java subclass, is contributed first,
+        // though the put(key: Int) of PrimitivePut is reached first, so that put(null) compiles
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.IntegerJavaGenericPutImplementationPrimitivePutJoin.put"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.IntegerJavaGenericPutImplementationPrimitivePutJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.GenericPutImplementation
+            override fun put(t: Int?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve abstract Kotlin member given platform type by Java interface contributed before merged Kotlin member`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.IntegerJavaPutInterfacePrimitivePutJoin.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.IntegerJavaPutInterfacePrimitivePutJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.GenericPut
+            fun put(t: Int?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member contributed first of merged ones reached through Kotlin interfaces`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NamedMidOtherTakerJoin.take") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NamedMidOtherTakerJoin.take [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.NamedRootTaker
+            fun take(root: String): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member over merged one contributed first returning platform type through Java class`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.IndexGetterJavaListJoin.get") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.IndexGetterJavaListJoin.get [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.IndexGetter
+            fun get(index: Int): String
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve Java member taking boxed type annotated not null next to its own one taking primitive type once`() {
         // both are put(Int) in Kotlin, which calls put(int), and overrides it
         resolver.resolve("com.xemantic.kotlin.introspection.test.PrimitiveAndNotNullBoxedJavaPut.put") sameAsKotlin """
@@ -6041,6 +6082,26 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.test.InheritedJavaJoinedStringAcceptorSubclass.accept [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.StringAcceptor
             open fun accept(s: String)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member taking platform types of Java member implementing Kotlin generic one declared before it`() {
+        // the accept(String) of the Java class takes the String! given for the T of GenericAcceptor<String>
+        resolver.resolve("com.xemantic.kotlin.introspection.test.StringGenericJavaAcceptorJoin.accept") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.StringGenericJavaAcceptorJoin.accept [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.StringAcceptor
+            open fun accept(s: String?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member taking platform types only where Java member implements type parameter of Kotlin one`() {
+        // the tag of put2(t: T, tag: String) is a String declared in Kotlin, so that put2("", null) does not compile
+        resolver.resolve("com.xemantic.kotlin.introspection.test.StringGenericJavaAcceptorJoin.put2") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.StringGenericJavaAcceptorJoin.put2 [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.StringTagPut
+            open fun put2(key: String?, tag: String): String
         """.trimIndent()
     }
 
@@ -17961,24 +18022,63 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve member of first supertype overridden by visible one overridden by hidden one of superclass`() {
+        // the hidden f() of HiddenMergedMidLeftClass, though not listed, still implements it
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.HiddenMergedMidClassJoin.f"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.HiddenMergedMidClassJoin.f [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.HiddenMergedRoot
-            fun f(): Int
+            open fun f(): Int
         """.trimIndent()
     }
 
     @Test
     fun `should resolve Java member of first supertype overridden by Java one overridden by hidden one of superclass`() {
-        // the run() of java.lang.Thread, which HiddenMergedHiddenRunThread hides, stands for the one of Runnable only on it
+        // the run() of java.lang.Thread, which HiddenMergedHiddenRunThread hides, stands for the one of Runnable only on it,
+        // while the hidden run() still implements it, so that a concrete subclass compiles
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.HiddenMergedHiddenRunThreadJoin.run"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.HiddenMergedHiddenRunThreadJoin.run [page 1/1]
             // inherited from java.lang.Runnable
-            fun run()
+            open fun run()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member of first supertype implemented by final hidden one of superclass`() {
+        // a subclass cannot override run() then
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenMergedFinalRunThreadJoin.run"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenMergedFinalRunThreadJoin.run [page 1/1]
+            // inherited from java.lang.Runnable
+            final fun run()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of first supertype implemented by merged hidden one of superclass`() {
+        // the hidden put(t: Int) of HiddenGenericPutImplementation implements the put(key: Int) of PrimitivePut merged with it
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenGenericPutImplementationJoin.put"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenGenericPutImplementationJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.PrimitivePut
+            open fun put(key: Int): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of first supertype implemented by hidden override of Java member of other JVM signature`() {
+        // the hidden put(key: Int) overriding the put(int) of the Java class implements the put(t: T) of GenericPut<Int>,
+        // put(Object) on the JVM, through a bridge
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.HiddenPrimitiveJavaPutOverrideJoin.put"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenPrimitiveJavaPutOverrideJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.GenericPut
+            open fun put(t: Int): String
         """.trimIndent()
     }
 
