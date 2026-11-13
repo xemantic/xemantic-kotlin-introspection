@@ -106,3 +106,42 @@ interface TypedNullableSelfListsBox : TypedSelfBox<List<TypedSelfList?>>
 fun <T : List<T>?> PlatformBox<T & Any>.boxOfSelfListOfNotNull() {}
 
 interface TypedNullableNotNullListsBox<V> : JavaPlatformBoxes.NotNullList<V?>
+
+// also of a Kotlin list passed through Java, like PlatformBox<List<V?>!>, whose bound check takes V? as List<V?>! does
+
+interface TypedPassedNullableSelfListsBox<V> : JavaPlatformBoxes.Passing<List<V?>>
+
+// V & Any passed through Java is the platform type (V & Any)!, from V & Any to V?, like String! for V of String?
+
+interface TypedPassedNotNullBox<V> : JavaPlatformBoxes.Passing<V & Any>, TypedOther<V>
+
+// a platform type of a supertype of a type of the extension, like String! of PlatformBox<String!> of PassingString,
+// in a contravariant position, takes V as String, no Int
+
+interface TypedSink<in T>
+
+interface TypedSinkOfBoxAndOther<V> : TypedSink<PlatformBox<V>>, TypedOther<V>
+
+fun <P> P.sinkOfStringBoxAndIntOther() where P : TypedSink<JavaPlatformBoxes.PassingString>, P : TypedOther<Int> {}
+
+// V of V : W, of W : Any, is not nullable, no String?
+
+interface TypedBoundedMixed<W : Any, V : W> : TypedNotNullMixed<V>
+
+// nor is V of V : TypedCmp<V>? a TypedCmpSelf?, which is no TypedCmp<TypedCmpSelf?>
+
+interface TypedCmp<in T>
+
+class TypedCmpSelf : TypedCmp<TypedCmpSelf>
+
+interface TypedCmpMixed<V : TypedCmp<V>?> : TypedNotNullMixed<V>
+
+fun TypedMixed<TypedCmpSelf, TypedCmpSelf?>.mixedOfNullableCmpSelf() {}
+
+// T of TypedSink<T> for TypedSink<List<TypedSelfList?>> is the not nullable List<TypedSelfList?>, no List<List<TypedSelfList?>>?
+
+interface TypedNullableSelfListsBoxAndSink : TypedSelfBox<List<TypedSelfList?>>, TypedSink<List<TypedSelfList?>>
+
+fun <P, T : List<T>?> P.selfBoxAndSink() where P : TypedSelfBox<T & Any>, P : TypedSink<T> {}
+
+fun <P, T : List<T>?> P.sinkAndSelfBox() where P : TypedSink<T>, P : TypedSelfBox<T & Any> {}

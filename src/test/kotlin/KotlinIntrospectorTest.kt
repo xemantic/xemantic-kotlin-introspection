@@ -11703,6 +11703,77 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve interface passing list of nullable type parameter through Java with extension bounded by nullable list`() {
+        // PlatformBox<List<V?>!> is a PlatformBox<T & Any> of T of List<TypedSelfList?>?, for V of TypedSelfList
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.nullable.TypedPassedNullableSelfListsBox",
+            pageSize = 10000
+        ) should {
+            have(lines().any { ".boxOfSelfListOfNotNull()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface passing definitely not nullable type parameter through Java with extensions on its platform type`() {
+        // PlatformBox<(V & Any)!> is a PlatformBox<String?> for V of String, and a PlatformBox<String> for V of String?
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.nullable.TypedPassedNotNullBox",
+            pageSize = 10000
+        ) should {
+            have(lines().any { ".nullableBoxAndOther()" in it })
+            have(lines().any { ".boxAndNullableOther()" in it })
+            have(lines().any { ".nullableBoxAndNullableOther()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of contravariant box of type parameter without extension on Java box of other type`() {
+        // PassingString is a PlatformBox<String!>, a PlatformBox<V> only for V of String, no TypedOther<Int>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.nullable.TypedSinkOfBoxAndOther",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".sinkOfStringBoxAndIntOther()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of type parameter bounded by not nullable type parameter without extension on its nullable type in contravariant position`() {
+        // V of V : W, of W : Any, is no String?
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.nullable.TypedBoundedMixed",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".mixedOfNullableString()" in it })
+            have(lines().any { ".mixedOfString()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of type parameter bounded contravariantly by itself without extension on its nullable type in contravariant position`() {
+        // V of V : TypedCmp<V>? is no TypedCmpSelf?, which is no TypedCmp<TypedCmpSelf?>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.nullable.TypedCmpMixed",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".mixedOfNullableCmpSelf()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of list of nullable recursive type without extension on definitely not nullable type parameter constrained elsewhere`() {
+        // T of TypedSink<T> is the not nullable List<TypedSelfList?>, no List<List<TypedSelfList?>>?
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.nullable.TypedNullableSelfListsBoxAndSink",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".selfBoxAndSink()" in it })
+            have(lines().none { ".sinkAndSelfBox()" in it })
+            have(lines().any { ".selfBoxOfNotNull()" in it })
+        }
+    }
+
+    @Test
     fun `should resolve interface of definitely not nullable type parameter without extension on nullable type`() {
         // V & Any is no String?
         resolver.resolve(

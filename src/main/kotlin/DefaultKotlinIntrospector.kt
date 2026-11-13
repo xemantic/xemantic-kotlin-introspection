@@ -6176,6 +6176,7 @@ internal class DefaultKotlinIntrospector(
         var isInferringFromBounds = false
         var isUntold = false
         val classTypeParameterTypes = ArrayList<ClassTypeParameterPosition>()
+        val boundsSatisfiedAsNullable = ArrayList<Int>()
         var isMatchedBeyondInference = false
     }
 
@@ -6322,7 +6323,7 @@ internal class DefaultKotlinIntrospector(
          *   is not callable on `Box<Nothing>`, of `interface Box<out T>`, as `box.get()` is not, like kotlinc.
          */
         fun isInferred(referred: Lazy<Set<Int>>, inferredOtherwise: Lazy<Set<Int>>, referredByReturnType: Lazy<Set<Int>>): Boolean {
-            if (!isClassTypeParameterTyped()) return false
+            if (!isClassTypeParameterTyped() || !isSatisfiedAsNullableAlone()) return false
             if (isUntold || typeParameters.isEmpty()) return true
             val isInferred = referred.value.filterTo(HashSet()) { id ->
                 id == receiverTypeParameterId || id !in typeParameters || !inferred[id].isNullOrEmpty() || id in inferredOtherwise.value
@@ -6399,7 +6400,8 @@ internal class DefaultKotlinIntrospector(
             // also the bounds of the type parameter, like CharSequence of V : CharSequence, referring to no type parameter
             val upper = constraints.mapNotNull { it.upper } + bounds.filter { bound -> bound.refersOnlyTo { false } }
             val lower = constraints.mapNotNull { it.lower }
-            val isNotNullable = bounds.any { !it.isNullable && it.classifier is KmClassifier.Class }
+            // not nullable when a bound is not, also through other type parameters, like V : W of W : Any
+            val isNotNullable = id in notNullableTypeParameters(supertypes.kmClass.typeParameters)
             // whether the subtype is a subtype of the supertype, as far as told
             fun isSubtype(subtype: KmType, supertype: KmType) = typeMatcher.matches(supertype, subtype, KmVariance.OUT, isStrict = false)
             // a bound comparing it to itself, like Comparable<V>, satisfied by a subtype of a type satisfying it,
@@ -6409,8 +6411,18 @@ internal class DefaultKotlinIntrospector(
                 (bound.classifier as? KmClassifier.Class)?.name == "kotlin/Comparable" && argument != null &&
                     (argument.classifier as? KmClassifier.TypeParameter)?.id == id && !argument.isNullable && !argument.isDefinitelyNonNull
             }
+            // the bounds referring to type parameters not checked against the types of contravariant positions,
+            // like List<V>?, or Cmp<V>? of another class than Comparable, or W of V : W
+            val hasUncheckedBounds = bounds.any { bound -> !bound.refersOnlyTo { false } && bound !in comparableBounds }
             when {
                 isNotNullable && lower.any { it.isNullable } -> false
+                // a nullable type of a contravariant position, like String? of V of Mx<V & Any, V>, against a not nullable type
+                // of a covariant one, like String, which V & Any is a subtype of, not checked against such bounds, is no type,
+                // as before #323
+                candidates == null && hasUncheckedBounds && lower.any { it.isNullable } && positions.any { position ->
+                    position.variance == KmVariance.OUT && !position.type.isNullable &&
+                        (position.use == ClassTypeParameterUse.NOT_NULLABLE || position.use == ClassTypeParameterUse.NOT_NULLABLE_PLATFORM)
+                } -> false
                 candidates == null -> lower.all { subtype ->
                     upper.all { isSubtype(subtype, it) } &&
                         comparableBounds.all { bound -> isSubtype(subtype, bound.substituted(mapOf(id to subtype))) }
@@ -6435,7 +6447,6 @@ internal class DefaultKotlinIntrospector(
          */
         private fun classTypeParameterConstraintOf(position: ClassTypeParameterPosition): ClassTypeParameterConstraint? {
             val type = position.type
-            fun KmType.nullable() = copy().also { it.isNullable = true }
             return when (position.variance) {
                 KmVariance.INVARIANT -> ClassTypeParameterConstraint(
                     candidates = when (position.use) {
@@ -6496,11 +6507,13 @@ internal class DefaultKotlinIntrospector(
          * or else against the bound of its type parameter, like `Order` of `T : Order` for `Map<String, T>`, which it is a subtype of,
          * in a covariant, or an invariant, position, with the use of the type parameter of the class there, see [ClassTypeParameterUse],
          * or `null` if nothing is told, like of a type parameter bounded by another,
-         * or of a platform type, like `List<V?>!` of a bound of the extension substituted by a type a type parameter is inferred as.
+         * or of a platform type, like `List<V?>!` of a bound of the extension substituted by a type a type parameter is inferred as,
+         * see [isSubstitutedPlatformType].
          */
         private fun classTypeParameterPositionOf(expected: KmType, actual: KmType, variance: KmVariance): ClassTypeParameterPosition? {
             val id = (actual.classifier as? KmClassifier.TypeParameter)?.id ?: return null
-            if (expected.flexibleTypeUpperBound != null) return null
+            // nothing is told by a nullable one, like V?, against a platform type, like String!, as before #323
+            if (expected.isSubstitutedPlatformType() || (expected.flexibleTypeUpperBound != null && actual.isNullable)) return null
             val typeParameterId = (expected.classifier as? KmClassifier.TypeParameter)?.id
             val (type, typeVariance) = when {
                 expected.refersToNoTypeParameter() -> expected to variance
@@ -6508,7 +6521,7 @@ internal class DefaultKotlinIntrospector(
                 else -> {
                     val bound = typeParameters[typeParameterId]?.upperBounds?.singleOrNull()
                         ?.takeIf { it.refersToNoTypeParameter() && it.classifier is KmClassifier.Class } ?: return null
-                    (if (expected.isNullable) bound.copy().also { it.isNullable = true } else bound) to KmVariance.OUT
+                    (if (expected.isNullable) bound.nullable() else bound) to KmVariance.OUT
                 }
             }
             val use = when {
@@ -6522,6 +6535,20 @@ internal class DefaultKotlinIntrospector(
             }
             return ClassTypeParameterPosition(id, type, typeVariance, use)
         }
+
+        // whether this is a platform type of a bound of the extension being checked, see satisfiesBounds, substituted
+        // by a type a type parameter is inferred as, like List<V?>! of List<T>?, which takes a nullable type parameter of the class,
+        // like V?, as before #323
+        private fun KmType.isSubstitutedPlatformType(): Boolean = flexibleTypeUpperBound != null && !isNullable && boundsChecked.isNotEmpty()
+
+        // the ids of the type parameters of the extension used as T & Any satisfying their bounds only as the nullable type,
+        // like List<SL?>? of T : List<T>? for List<SL?>, see matches
+        private val boundsSatisfiedAsNullable get() = matched.boundsSatisfiedAsNullable
+
+        // whether each type parameter satisfying its bounds only as the nullable type is constrained by that position alone,
+        // as kotlinc infers it by the other ones too, like the not nullable List<SL?> of Ct<T> for Ct<List<SL?>>, not modelled
+        private fun isSatisfiedAsNullableAlone(): Boolean =
+            boundsSatisfiedAsNullable.all { id -> constrainedBy.count { it.first == id } <= 2 }
 
         // the ids of the type parameters bounding this one, like U of T : U
         private fun KmTypeParameter.boundingTypeParameterIds(): List<Int> =
@@ -6979,7 +7006,7 @@ internal class DefaultKotlinIntrospector(
                     // a nullable one, like V?, is no type of a class, like String, in a covariant, or an invariant position,
                     // nor a type parameter bounded only by classes, like T : Order, but for a platform type,
                     // like List<V?>! of a bound of the extension substituted by a type a type parameter is inferred as
-                    (!actual.isNullable || variance == KmVariance.IN || expected.isNullable || expected.flexibleTypeUpperBound != null ||
+                    (!actual.isNullable || variance == KmVariance.IN || expected.isNullable || expected.isSubstitutedPlatformType() ||
                         !expected.isNeverNullable()) &&
                     // nor is the type parameter of a class bounded by a class a type of an unrelated class,
                     // like V : Comparable<V> no List<T>, in an invariant, or a contravariant, position
@@ -7007,15 +7034,17 @@ internal class DefaultKotlinIntrospector(
                             // and a not nullable one, like String, is T & Any of T of String, or of String?,
                             // a supertype of String, and a subtype of String?, satisfying the bounds as String itself,
                             // or as String?, in an invariant position, where no other supertype of it can be inferred instead,
-                            // like List<SL?>? of T : List<T>? for List<SL?>, where SL : List<SL>
+                            // like List<SL?>? of T : List<T>? for List<SL?>, where SL : List<SL>,
+                            // when nothing else constrains it, see isSatisfiedAsNullableAlone
                             else -> (variance != KmVariance.INVARIANT || Mark().let { mark ->
-                                satisfiesBounds(classifier.id, actual, variance, isStrict) || retrying(mark) {
-                                    satisfiesBounds(classifier.id, actual.copy().also { it.isNullable = true }, variance, isStrict)
-                                }
+                                satisfiesBounds(classifier.id, actual, variance, isStrict) || (boundsChecked.isEmpty() && retrying(mark) {
+                                    satisfiesBounds(classifier.id, actual.nullable(), variance, isStrict)
+                                        .also { if (it) boundsSatisfiedAsNullable += classifier.id }
+                                })
                             }) &&
                                 (variance == KmVariance.IN || infer(classifier.id, actual, KmVariance.OUT, isStrict)) &&
                                 (variance == KmVariance.OUT ||
-                                    infer(classifier.id, actual.copy().also { it.isNullable = true }, KmVariance.IN, isStrict))
+                                    infer(classifier.id, actual.nullable(), KmVariance.IN, isStrict))
                         }
                     }
                     else -> true
@@ -7100,6 +7129,7 @@ internal class DefaultKotlinIntrospector(
             val inferredCount: Int = inferredIds.size,
             val isUntold: Boolean = this@ReceiverMatcher.isUntold,
             val classTypeParameterTypeCount: Int = classTypeParameterTypes.size,
+            val boundsSatisfiedAsNullableCount: Int = boundsSatisfiedAsNullable.size,
             val constrainedByCount: Int = constrainedBy.size,
             val isMatchedBeyondInference: Boolean = this@ReceiverMatcher.isMatchedBeyondInference
         ) {
@@ -7112,6 +7142,9 @@ internal class DefaultKotlinIntrospector(
                     classTypeParameterTypes.removeAt(classTypeParameterTypes.lastIndex)
                 }
                 while (constrainedBy.size > constrainedByCount) constrainedBy.removeAt(constrainedBy.lastIndex)
+                while (boundsSatisfiedAsNullable.size > boundsSatisfiedAsNullableCount) {
+                    boundsSatisfiedAsNullable.removeAt(boundsSatisfiedAsNullable.lastIndex)
+                }
                 this@ReceiverMatcher.isMatchedBeyondInference = isMatchedBeyondInference
             }
 
@@ -7408,7 +7441,7 @@ internal class DefaultKotlinIntrospector(
          * like when what is not told was matched, see [isUntold], or a projection, or a nullable use, of a type parameter.
          */
         fun isInferredByCall(referred: Lazy<Set<Int>>): Boolean? {
-            if (!isClassTypeParameterTyped()) return false
+            if (!isClassTypeParameterTyped() || !isSatisfiedAsNullableAlone()) return false
             if (isUntold || isMatchedBeyondInference) return null
             return try {
                 CallInference().isInferred(referred.value)

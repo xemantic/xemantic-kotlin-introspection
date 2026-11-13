@@ -42,6 +42,8 @@ public interface JavaPlatformBoxes {
      */
     interface Passing<T> extends PlatformBox<T> {}
 
+    interface PassingString extends Passing<String> {}
+
     interface NotNullList<T> extends PlatformNotNullBox<java.util.List<T>> {}
 
     class SameKeyMap<V> extends java.util.HashMap<V, V> {}

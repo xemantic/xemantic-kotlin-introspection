@@ -245,6 +245,11 @@ internal fun typeParameterType(id: Int): KmType = KmType().also { it.classifier 
 internal fun KmType.notNullable(): KmType = copy().also { it.isNullable = false }
 
 /**
+ * This type, but nullable, as a copy, as the types of the metadata are shared.
+ */
+internal fun KmType.nullable(): KmType = copy().also { it.isNullable = true }
+
+/**
  * The ids of the type parameters this type refers to.
  */
 private fun KmType.typeParameterIds(): Sequence<Int> = when (val classifier = classifier) {
