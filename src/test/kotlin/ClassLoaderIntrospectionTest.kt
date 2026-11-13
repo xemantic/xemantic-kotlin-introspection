@@ -3175,6 +3175,28 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should resolve and find Kotlin class whose class file is too new to be loaded and parsed`() {
+        // given
+        // like a class compiled for a JVM newer than the one running it, and than ASM knows
+        val root = isolatedTestFixturesCopy("tooNewKotlinClass") { fileName, bytes ->
+            if (fileName == "IsolatedTestClass.class") tooNew(bytes) else bytes
+        }
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.IsolatedTestClass")
+        val searchResult = introspector.search("IsolatedTestClass")
+
+        // then
+        // declared by its metadata, read from the class file all the same
+        signature sameAsKotlin isolatedTestClassSignature
+        searchResult sameAs """
+            // search results for "IsolatedTestClass" [page 1/1]
+            com.xemantic.kotlin.introspection.isolated.IsolatedTestClass
+        """.trimIndent()
+    }
+
+    @Test
     fun `should tell declarations hidden since a Kotlin version by the standard library of the class loader`() {
         // given
         val root = tempDir.resolve("olderStdlib")
