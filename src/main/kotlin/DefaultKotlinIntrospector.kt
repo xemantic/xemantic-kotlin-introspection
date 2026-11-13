@@ -5879,7 +5879,7 @@ internal class DefaultKotlinIntrospector(
             is KmClassifier.Class -> {
                 val reached = types[classReceiverIndexKey(receiver)] ?: return true
                 fun matches(isCollecting: Boolean, isInferred: ReceiverMatcher.() -> Boolean) =
-                    matchesThroughAnyPaths(typeParameters, receiverTypeParameterId = null, self = kmClass.name, isCollecting) {
+                    matchesThroughAnyPaths(receiver, typeParameters, receiverTypeParameterId = null, self = kmClass.name, isCollecting) {
                         anyReached(reached) { supertype ->
                             argumentsMatch(classifier.name, receiver.arguments, supertype.arguments, KmVariance.OUT) && isInferred()
                         }
@@ -5896,7 +5896,7 @@ internal class DefaultKotlinIntrospector(
             }
             is KmClassifier.TypeParameter -> {
                 val bounds = receiverBoundTypes(classifier.id, typeParameters)
-                fun isSatisfiedBy(self: String) = matchesThroughAnyPaths(typeParameters, classifier.id, self) {
+                fun isSatisfiedBy(self: String) = matchesThroughAnyPaths(receiver, typeParameters, classifier.id, self) {
                     bounds.all { isSupertype(it) } && isInferred(referred, inferredOtherwise, referredByReturnType)
                 }
                 isSatisfiedBy(kmClass.name) || bounds
@@ -5949,6 +5949,7 @@ internal class DefaultKotlinIntrospector(
      * @param isCollecting whether the types the type parameters are inferred from are only collected, see [ReceiverMatcher]
      */
     private fun ClassSupertypes.matchesThroughAnyPaths(
+        receiver: KmType,
         typeParameters: List<KmTypeParameter>,
         receiverTypeParameterId: Int?,
         self: String,
@@ -5956,7 +5957,7 @@ internal class DefaultKotlinIntrospector(
         match: ReceiverMatcher.() -> Boolean
     ): Boolean {
         // first matching the first supertype matched at each place, which tells the most
-        val matcher = ReceiverMatcher(this, typeParameters, receiverTypeParameterId, self, isCollecting = isCollecting)
+        val matcher = ReceiverMatcher(this, typeParameters, receiverTypeParameterId, self, isCollecting = isCollecting, receiver = receiver)
         if (matcher.match()) return true
         if (!matcher.hasPathChoices) return false
         var forced = emptyList<Int>()
@@ -6176,7 +6177,6 @@ internal class DefaultKotlinIntrospector(
         var isInferringFromBounds = false
         var isUntold = false
         val classTypeParameterTypes = ArrayList<ClassTypeParameterPosition>()
-        val boundsSatisfiedAsNullable = ArrayList<Int>()
         var isMatchedBeyondInference = false
     }
 
@@ -6223,7 +6223,8 @@ internal class DefaultKotlinIntrospector(
         typeParameters: List<KmTypeParameter>,
         private val receiverTypeParameterId: Int?,
         private val self: String,
-        private val isCollecting: Boolean = false
+        private val isCollecting: Boolean = false,
+        private val receiver: KmType? = null
     ) {
 
         // the supertypes chosen among the ones reached through different paths, when matching again, see matchingAgain
@@ -6323,7 +6324,7 @@ internal class DefaultKotlinIntrospector(
          *   is not callable on `Box<Nothing>`, of `interface Box<out T>`, as `box.get()` is not, like kotlinc.
          */
         fun isInferred(referred: Lazy<Set<Int>>, inferredOtherwise: Lazy<Set<Int>>, referredByReturnType: Lazy<Set<Int>>): Boolean {
-            if (!isClassTypeParameterTyped() || !isSatisfiedAsNullableAlone()) return false
+            if (!isClassTypeParameterTyped()) return false
             if (isUntold || typeParameters.isEmpty()) return true
             val isInferred = referred.value.filterTo(HashSet()) { id ->
                 id == receiverTypeParameterId || id !in typeParameters || !inferred[id].isNullOrEmpty() || id in inferredOtherwise.value
@@ -6541,14 +6542,18 @@ internal class DefaultKotlinIntrospector(
         // like V?, as before #323
         private fun KmType.isSubstitutedPlatformType(): Boolean = flexibleTypeUpperBound != null && !isNullable && boundsChecked.isNotEmpty()
 
-        // the ids of the type parameters of the extension used as T & Any satisfying their bounds only as the nullable type,
-        // like List<SL?>? of T : List<T>? for List<SL?>, see matches
-        private val boundsSatisfiedAsNullable get() = matched.boundsSatisfiedAsNullable
-
-        // whether each type parameter satisfying its bounds only as the nullable type is constrained by that position alone,
-        // as kotlinc infers it by the other ones too, like the not nullable List<SL?> of Ct<T> for Ct<List<SL?>>, not modelled
-        private fun isSatisfiedAsNullableAlone(): Boolean =
-            boundsSatisfiedAsNullable.all { id -> constrainedBy.count { it.first == id } <= 2 }
+        /**
+         * Whether the type parameter of the given [id] occurs once in the receiver of the extension and in the bounds
+         * of its other type parameters, like `T` of `Box<T & Any>`, but not of `where P : Box<T & Any>, P : Other<T>`,
+         * where kotlinc infers it by the other occurrence too, also through a type parameter of the class, not modelled.
+         */
+        private fun occursOnce(id: Int): Boolean {
+            fun KmType.occurrences(): Int = (if ((classifier as? KmClassifier.TypeParameter)?.id == id) 1 else 0) +
+                arguments.sumOf { it.type?.occurrences() ?: 0 } + (outerType?.occurrences() ?: 0)
+            val receiver = receiver ?: return false
+            return receiver.occurrences() + typeParameters.values.filter { it.id != id }
+                .sumOf { typeParameter -> typeParameter.upperBounds.sumOf { it.occurrences() } } == 1
+        }
 
         // the ids of the type parameters bounding this one, like U of T : U
         private fun KmTypeParameter.boundingTypeParameterIds(): List<Int> =
@@ -7035,12 +7040,12 @@ internal class DefaultKotlinIntrospector(
                             // a supertype of String, and a subtype of String?, satisfying the bounds as String itself,
                             // or as String?, in an invariant position, where no other supertype of it can be inferred instead,
                             // like List<SL?>? of T : List<T>? for List<SL?>, where SL : List<SL>,
-                            // when nothing else constrains it, see isSatisfiedAsNullableAlone
+                            // when nothing else constrains it, see occursOnce
                             else -> (variance != KmVariance.INVARIANT || Mark().let { mark ->
-                                satisfiesBounds(classifier.id, actual, variance, isStrict) || (boundsChecked.isEmpty() && retrying(mark) {
-                                    satisfiesBounds(classifier.id, actual.nullable(), variance, isStrict)
-                                        .also { if (it) boundsSatisfiedAsNullable += classifier.id }
-                                })
+                                satisfiesBounds(classifier.id, actual, variance, isStrict) ||
+                                    (boundsChecked.isEmpty() && occursOnce(classifier.id) && retrying(mark) {
+                                        satisfiesBounds(classifier.id, actual.nullable(), variance, isStrict)
+                                    })
                             }) &&
                                 (variance == KmVariance.IN || infer(classifier.id, actual, KmVariance.OUT, isStrict)) &&
                                 (variance == KmVariance.OUT ||
@@ -7129,7 +7134,6 @@ internal class DefaultKotlinIntrospector(
             val inferredCount: Int = inferredIds.size,
             val isUntold: Boolean = this@ReceiverMatcher.isUntold,
             val classTypeParameterTypeCount: Int = classTypeParameterTypes.size,
-            val boundsSatisfiedAsNullableCount: Int = boundsSatisfiedAsNullable.size,
             val constrainedByCount: Int = constrainedBy.size,
             val isMatchedBeyondInference: Boolean = this@ReceiverMatcher.isMatchedBeyondInference
         ) {
@@ -7142,9 +7146,6 @@ internal class DefaultKotlinIntrospector(
                     classTypeParameterTypes.removeAt(classTypeParameterTypes.lastIndex)
                 }
                 while (constrainedBy.size > constrainedByCount) constrainedBy.removeAt(constrainedBy.lastIndex)
-                while (boundsSatisfiedAsNullable.size > boundsSatisfiedAsNullableCount) {
-                    boundsSatisfiedAsNullable.removeAt(boundsSatisfiedAsNullable.lastIndex)
-                }
                 this@ReceiverMatcher.isMatchedBeyondInference = isMatchedBeyondInference
             }
 
@@ -7441,7 +7442,7 @@ internal class DefaultKotlinIntrospector(
          * like when what is not told was matched, see [isUntold], or a projection, or a nullable use, of a type parameter.
          */
         fun isInferredByCall(referred: Lazy<Set<Int>>): Boolean? {
-            if (!isClassTypeParameterTyped() || !isSatisfiedAsNullableAlone()) return false
+            if (!isClassTypeParameterTyped()) return false
             if (isUntold || isMatchedBeyondInference) return null
             return try {
                 CallInference().isInferred(referred.value)

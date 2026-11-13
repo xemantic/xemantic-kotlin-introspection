@@ -145,3 +145,9 @@ interface TypedNullableSelfListsBoxAndSink : TypedSelfBox<List<TypedSelfList?>>,
 fun <P, T : List<T>?> P.selfBoxAndSink() where P : TypedSelfBox<T & Any>, P : TypedSink<T> {}
 
 fun <P, T : List<T>?> P.sinkAndSelfBox() where P : TypedSink<T>, P : TypedSelfBox<T & Any> {}
+
+// nor is it for TypedOther<V>, which V of TypedSelfBox<List<V?>> makes T as well, a not nullable List<V?>
+
+interface TypedNullableSelfListsBoxAndOther<V> : TypedSelfBox<List<V?>>, TypedOther<V>
+
+fun <P, T : List<T>?> P.selfBoxAndOther() where P : TypedSelfBox<T & Any>, P : TypedOther<T> {}

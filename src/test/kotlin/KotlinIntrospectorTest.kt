@@ -11774,6 +11774,17 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve interface of list of nullable type parameter without extension on definitely not nullable type parameter constrained by it elsewhere`() {
+        // T of TypedOther<T> for TypedOther<V> is V, the List<V?> of TypedSelfBox<T & Any> then, no List<List<V?>>?
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.nullable.TypedNullableSelfListsBoxAndOther",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".selfBoxAndOther()" in it })
+        }
+    }
+
+    @Test
     fun `should resolve interface of definitely not nullable type parameter without extension on nullable type`() {
         // V & Any is no String?
         resolver.resolve(
