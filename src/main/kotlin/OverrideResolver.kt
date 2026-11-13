@@ -605,7 +605,7 @@ internal class OverrideResolver(
         is ClassType -> copy(
             arguments = arguments.map { it.copy(type = it.type.kotlinNamed()) },
             outer = outer?.kotlinNamed() as ClassType?,
-            unlocatedName = unlocatedName ?: name.takeIf { it.isRelocatable }?.let { declaration(it).kotlin?.name }?.takeIf { it != name }
+            unlocatedName = unlocatedName ?: kotlinNameOf(name)?.takeIf { it != name }
         )
         else -> this
     }
@@ -657,10 +657,15 @@ internal class OverrideResolver(
      * or else the name its relocation tells, see [Relocation.unlocated], like of a Java class,
      * or the [jvmName], if it is not known to be relocated.
      */
-    fun unlocatedName(owner: Owner, jvmName: String): String {
-        if (jvmName.isRelocatable) declaration(jvmName).kotlin?.name?.let { return it }
-        return overridables(owner).relocation?.unlocated(jvmName) ?: jvmName
-    }
+    fun unlocatedName(owner: Owner, jvmName: String): String =
+        kotlinNameOf(jvmName) ?: overridables(owner).relocation?.unlocated(jvmName) ?: jvmName
+
+    /**
+     * The name the Kotlin class found by the [jvmName] is named by in its own metadata, which a relocation does not rewrite,
+     * like `lib/Event` of `shaded/lib/Event`, or `null` if no Kotlin class is found there, or it is a class never relocated,
+     * like a built-in type, or a JDK class.
+     */
+    private fun kotlinNameOf(jvmName: String): String? = jvmName.takeIf { it.isRelocatable }?.let { declaration(it).kotlin?.name }
 
     /**
      * Whether the classes the [owner] refers to are known to be relocated, see [unlocatedName].
@@ -1205,13 +1210,12 @@ internal class OverrideResolver(
         val reflectedSupertypeNames = HashMap<String, String>()
         val supertypeDependencies = mutableListOf<Pair<String, String>>()
         val locatedSupertypes = HashMap<String, String>()
-        // a supertype of a Java class, named by its JVM name, named as the metadata would, see unlocated, or else, when the relocation
-        // does not tell it, by the name the metadata of the Kotlin class found there tells, like unlocatedName names it,
-        // found then by its JVM name, so that the members inherited from it are, see locatedName
+        // a supertype of a Java class, named by its JVM name, named by the name the metadata of the Kotlin class found there tells,
+        // like unlocatedName names it, found then by its JVM name, so that the members inherited from it are, see locatedName,
+        // or else as the metadata would, see unlocated
         fun metadataNamedSupertype(supertype: ClassType): ClassType {
             val unlocated = supertype.unlocated(relocation)
-            if (relocation == null || unlocated.name != supertype.name || !supertype.name.isRelocatable) return unlocated
-            val metadataName = declaration(supertype.name).kotlin?.name?.takeIf { it != supertype.name } ?: return unlocated
+            val metadataName = kotlinNameOf(supertype.name)?.takeIf { it != supertype.name } ?: return unlocated
             reflectedSupertypeNames.putIfAbsent(metadataName, supertype.name)
             return unlocated.copy(name = metadataName)
         }
