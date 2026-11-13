@@ -344,7 +344,8 @@ com.example.AnnotationTestClass
   is not listed for it, nor resolved by its name, unless the class is a built-in type,
   or the extensions are of the `kotlin.*` and `java.*` packages, some of which the standard library lowers the priority of:
   the more specific one is on a class without type arguments, the class itself, or one of its supertypes, like `val Order.total`,
-  and the other one on a class it is a subclass of, without type arguments, also nullable, like `val Entity.total`, or `val Entity?.total`,
+  and the other one on a class it is a subclass of, without type arguments, like `val Entity.total`,
+  but not a nullable one, like `val Entity?.total`, which alone is called on a nullable receiver, like `nullableOrder.total`,
   or on a type parameter bounded only by such classes, like `val <T : Entity> T.total`,
   neither of them with context parameters, nor with type parameters of their own, but the one of the receiver.
   An extension property is shadowed so also when it is a `var`, as Kotlin assigns the more specific one,
@@ -361,7 +362,8 @@ com.example.AnnotationTestClass
   like `fun <T> put(x: T)`, `fun put(x: Int?)`, or `fun put(x: Number)`, next to `fun Bar.put(x: Int)`,
   or of a supertype with the same type arguments, like `fun addAll(x: Collection<String>)` next to `fun Bar.addAll(x: List<String>)`,
   where a type parameter of the class stands for the type argument of the receiver of an extension on the class itself,
-  unless covariant, like `fun put(x: T)` of `class Box<T>` next to `fun Box<String>.put(x: String)`,
+  like `fun put(x: T)` of `class Box<T>` next to `fun Box<String>.put(x: String)`,
+  unless the type parameter is covariant, like of `class Box<out T>`, as a `Box<Nothing>` is a `Box<String>` too,
   where a type parameter of the extension is accepted like its bound,
   like by `fun put(x: Bar)` next to `fun <T : Bar> T.put(x: T)`,
   or like the type argument of the supertype which is the receiver of the extension,

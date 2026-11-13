@@ -1814,23 +1814,42 @@ class KotlinIntrospectorTest {
             }
             // from com.xemantic.kotlin.introspection.test
             fun CollectionShadowedSupertype.addOther(x: List<Int>): Int
+            fun CollectionShadowedSupertype.take(x: java.util.HashMap<String, Int>): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extension shadowed by member taking supertype of Java class with same type arguments`() {
+        // javaMapShadowing.take(hashMapOf("" to 1)) calls the member
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaMapShadowing") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaMapShadowing [page 1/1]
+            class JavaMapShadowing : CollectionShadowedSupertype {
+                fun take(x: Map<String, Int>): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun CollectionShadowedSupertype.addAll(x: List<String>): Int
+            fun CollectionShadowedSupertype.addOther(x: List<Int>): Int
         """.trimIndent()
     }
 
     @Test
     fun `should resolve class without extensions shadowed by more specific ones of same package`() {
-        // specificSub.rank, specificSub.nullableRank, specificSub.boundedRank and specificSub.describe() call the ones on SpecificReceiver,
-        // as specificSub.rank = 1 would, failing to compile, while specificSub.describeNamed(x = 1) calls the one on GeneralReceiver
+        // specificSub.rank, specificSub.boundedRank and specificSub.describe() call the ones on SpecificReceiver,
+        // as specificSub.rank = 1 would, failing to compile, while specificSub.describeNamed(x = 1) calls the one on GeneralReceiver,
+        // and nullableSpecificSub.nullableRank, or nullableSpecificSub.nullableDescribe(), the ones on GeneralReceiver?
         resolver.resolve("com.xemantic.kotlin.introspection.test.SpecificReceiverSub") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.SpecificReceiverSub [page 1/1]
             class SpecificReceiverSub : SpecificReceiver
             // from com.xemantic.kotlin.introspection.test
             val SpecificReceiver.boundedRank: Int
             val SpecificReceiver.nullableRank: Int
+            val GeneralReceiver?.nullableRank: Int
             val SpecificReceiver.rank: Int
             fun SpecificReceiver.describe(): Int
             fun SpecificReceiver.describeNamed(y: Int): Int
             fun GeneralReceiver.describeNamed(x: Int): Int
+            fun SpecificReceiver.nullableDescribe(): Int
+            fun GeneralReceiver?.nullableDescribe(): Int
         """.trimIndent()
     }
 

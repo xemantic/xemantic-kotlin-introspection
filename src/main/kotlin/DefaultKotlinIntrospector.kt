@@ -4657,6 +4657,7 @@ internal class DefaultKotlinIntrospector(
      * and only the ones which can be called on the class, as told by the type arguments, see [isCallableOn],
      * also the ones on its companion object, see [extendedCompanionOf], telling its deprecation, see [withCompanionDeprecation],
      * and never the ones on a type parameter shadowed by a more specific overload, see [withoutShadowed],
+     * nor, for a class other than a built-in type, the ones shadowed by a more specific extension, see [withoutLessSpecific],
      * nor the ones called on the name of an object, on an instance of a class other than a built-in type,
      * whose members shadow the extensions of its body, see [bodyExtensionsOf], or on the companion object,
      * shadowed by its members, see [withoutShadowedByMembers].
@@ -4849,6 +4850,7 @@ internal class DefaultKotlinIntrospector(
      * an extension property by a member property of the same name, unless it has a context parameter, see [isReadAnywhere],
      * and an extension function by a member function accepting its every call, see [shadowsAsMember],
      * or by a member property of a function type, see [isInvokedInsteadOf],
+     * or of a type with an operator `invoke` accepting its every call, see [isInvokedByOperatorInsteadOf],
      * unless the extension hides the members, see [IndexedExtension.hidesMembers].
      *
      * @param className the name of the class, like `com/example/Foo.Companion`, which the type parameter of the receiver
@@ -4922,7 +4924,7 @@ internal class DefaultKotlinIntrospector(
      * where the type parameter of the receiver of the [extension] stands for the class, when pinned to it, see [pins],
      * or else of a class without type arguments which the class of the parameter of the [extension] is a subclass of,
      * like `x: CharSequence` for `x: String`, or of a supertype with type arguments which the type of the parameter is,
-     * with its own type arguments given as types, see [ClassSupertypes.supertypeTypesOf], like `x: Collection<String>` for `x: List<String>`,
+     * with the same type arguments, a projection kept, see [ClassSupertypes.supertypesOf], like `x: Collection<String>` for `x: List<String>`,
      * where the type parameters of the class, in a function it declares, stand for the type arguments of the receiver
      * of the [extension] on the class itself, see [classTypeArguments], like `x: T` of `class Box<T>` for `fun Box<String>.f(x: String)`,
      * while a type parameter of the [extension] is accepted like any of its bounds, as the argument is a subtype of each of them,
@@ -4963,17 +4965,10 @@ internal class DefaultKotlinIntrospector(
         fun isSubclass(name: String, of: String) = name == of || of == ANY_CLASS_NAME ||
             supertypes()?.supertypeNamesOf(name)?.contains(of.replace('/', '.')) == true
         // the argument as its supertype of the class of the type, like Collection<String> of List<String>,
-        // with its own type arguments substituted, each one given as a type, see supertypeTypesOf
-        fun asSupertype(argument: KmType, argumentClassName: String, type: KmType): KmType? {
-            val supertypes = supertypes() ?: return null
-            val supertype = supertypes.supertypeTypesOf(argumentClassName)[classReceiverIndexKey(type)]?.singleOrNull() ?: return null
-            val typeParameters = (builtinClasses[argumentClassName] ?: loadKmClass(argumentClassName))?.typeParameters ?: return null
-            if (typeParameters.size != argument.arguments.size) return null
-            val substitution = typeParameters.zip(argument.arguments).associate { (typeParameter, projection) ->
-                val projected = projection.type?.takeIf { projection.variance == KmVariance.INVARIANT } ?: return null
-                typeParameter.id to projected
-            }
-            return supertype.substituted(substitution).copy().also { it.isNullable = argument.isNullable }
+        // with its own type arguments substituted, also of a Java class, see supertypesOf
+        fun asSupertype(argument: KmType, type: KmType): KmType? {
+            val supertype = supertypes()?.supertypesOf(argument, (type.classifier as KmClassifier.Class).name)?.singleOrNull()
+            return supertype?.copy()?.also { it.isNullable = argument.isNullable }
         }
         fun accepts(type: KmType, argument: KmType, visited: MutableSet<Int>): Boolean {
             val classifier = type.classifier
@@ -4984,7 +4979,7 @@ internal class DefaultKotlinIntrospector(
             return when (val argumentClassifier = argument.classifier) {
                 is KmClassifier.Class -> if (type.arguments.isEmpty()) isSubclass(argumentClassifier.name, classifier.name) else {
                     argumentClassifier.name != classifier.name &&
-                        asSupertype(argument, argumentClassifier.name, type)?.let { isSameType(it, expected, pinnedId, className) } == true
+                        asSupertype(argument, type)?.let { isSameType(it, expected, pinnedId, className) } == true
                 }
                 is KmClassifier.TypeParameter -> {
                     val typeParameter = extension.typeParameters.firstOrNull { it.id == argumentClassifier.id }
@@ -5149,8 +5144,9 @@ internal class DefaultKotlinIntrospector(
      * These extensions without the ones shadowed by a more specific one of the same name, imported from the same package, or object,
      * which Kotlin calls instead on the class of the [supertypes], the receiver of the more specific one being a subtype of the other one:
      * a class without type arguments, the class itself, or one of its supertypes, like `val Fin.rank` of `class Fin : Sup`,
-     * more specific than a class without type arguments it is a subclass of, also nullable, like `val Sup.rank`, or `val Sup?.rank`,
-     * or than a type parameter bounded only by such classes, like `val <T : Sup> T.rank`.
+     * more specific than a class without type arguments it is a subclass of, like `val Sup.rank`,
+     * or than a type parameter bounded only by such classes, like `val <T : Sup> T.rank`,
+     * but never than a nullable one, like `val Sup?.rank`, which alone is called on a nullable receiver, like `nullableFin.rank`.
      * An extension property is shadowed by one read anywhere, see [isReadAnywhere], also when it is a `var`,
      * as Kotlin assigns the more specific one, failing to compile when it is a `val`,
      * and an extension function by one called the same way, see [isCalledLike], while no parameter of the shadowed one
@@ -5174,8 +5170,9 @@ internal class DefaultKotlinIntrospector(
         fun isSubclass(name: String, of: String) = name == of || of.replace('/', '.') in supertypes.supertypeNamesOf(name)
         fun isLessSpecific(receiver: KmType?, typeParameters: List<KmTypeParameter>, specific: String): Boolean =
             when (val classifier = receiver?.classifier) {
-                is KmClassifier.Class ->
-                    typeParameters.isEmpty() && receiver.arguments.isEmpty() && classifier.name != specific && isSubclass(specific, classifier.name)
+                // never a nullable one, called alone on a nullable receiver, like nullableFin.rank of val Sup?.rank
+                is KmClassifier.Class -> !receiver.isNullable && typeParameters.isEmpty() && receiver.arguments.isEmpty() &&
+                    classifier.name != specific && isSubclass(specific, classifier.name)
                 is KmClassifier.TypeParameter -> {
                     val bounds = typeParameters.singleOrNull()?.takeIf { it.id == classifier.id }?.upperBounds.orEmpty()
                     !receiver.isNullable && bounds.isNotEmpty() && bounds.all { bound ->

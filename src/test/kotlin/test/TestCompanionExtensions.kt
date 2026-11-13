@@ -562,10 +562,19 @@ fun CollectionShadowedSupertype.addAll(x: List<String>): Int = 1
 
 fun CollectionShadowedSupertype.addOther(x: List<Int>): Int = 1
 
+// and of a Java class, like javaMapShadowing.take(hashMapOf("" to 1))
+class JavaMapShadowing : CollectionShadowedSupertype {
+    fun take(x: Map<String, Int>): Int = 0
+}
+
+fun CollectionShadowedSupertype.take(x: HashMap<String, Int>): Int = 1
+
 // extensions of the same package, of a more specific receiver, read, or called, instead of the ones of the same name,
 // like specific.rank of val SpecificReceiver.rank, also on a subclass, specificSub.rank, and assigned so,
 // failing to compile then, specific.rank = 1, as val SpecificReceiver.rank cannot be assigned,
-// or specific.describe(), unlike specific.describeNamed(x = 1), which only the general one, of a parameter of that name, takes
+// or specific.describe(), unlike specific.describeNamed(x = 1), which only the general one, of a parameter of that name, takes,
+// and unlike the ones on a nullable receiver, like nullableSpecific.nullableRank, or nullableSpecific.nullableDescribe(),
+// which only the general one can be called on
 interface GeneralReceiver
 
 open class SpecificReceiver : GeneralReceiver
@@ -589,6 +598,10 @@ val SpecificReceiver.boundedRank: Int get() = 1
 fun GeneralReceiver.describe(): Int = 0
 
 fun SpecificReceiver.describe(): Int = 1
+
+fun GeneralReceiver?.nullableDescribe(): Int = 0
+
+fun SpecificReceiver.nullableDescribe(): Int = 1
 
 fun GeneralReceiver.describeNamed(x: Int): Int = x
 
