@@ -1464,8 +1464,10 @@ internal fun isNotNullClassTypeParameter(method: Method, position: Int, isConver
  * unlike a platform type, like `U!`, accepting `null` whatever the type argument, so that `id<String>(null)` does not compile:
  * the ones of a single bound, told nullable, or not, by an annotation, like `<U extends @NonNull Object>`,
  * unlike an annotated bound among several ones, like of `<T extends Serializable & @NonNull Cloneable>`, which the compiler ignores,
+ * and the ones bounded by a type parameter of a bound annotated not nullable, like the `U` of `<T extends @NonNull Object, U extends T>`,
  * or all of them, when the class of the method is marked by `@NullMarked`, see [enhanceJavaBounds],
- * whatever the mark of the method itself, and the number of the bounds, whoever declares the type argument.
+ * whatever the mark of the method itself, and the number of the bounds, whoever declares the type argument,
+ * while a mark of the method alone keeps them platform types, like the `T` of `@NullMarked <T> void take(T t)`, see [javaNullabilityOf].
  * A type parameter in a contravariant position of its bound, like the `T` of `<T extends Comparable<T>>`, stays a platform type,
  * though the compiler rejects `sort<String>(null)`, as it accepts `null` for a type argument declared by Java,
  * like `sort<BigDecimal>(null)`, whose own supertype names it as a platform type, which no signature tells.
@@ -1476,8 +1478,19 @@ private fun givenTypeVariableNames(method: Method): Set<String> {
     if (typeParameters.isEmpty() || declaring.isJdkClass || declaring.isKotlinClass) return emptySet()
     if (nullMarking(declaring) == true) return typeParameters.mapTo(HashSet()) { it.name }
     val annotated = javaNullabilities.get(declaring).methods[method.name + AsmType.getMethodDescriptor(method)]?.nullability?.bounds
-    return typeParameters.indices.filter { typeParameters[it].bounds.size == 1 && !annotated?.get(it).isNullOrEmpty() }
+    val given = typeParameters.indices.filter { typeParameters[it].bounds.size == 1 && !annotated?.get(it).isNullOrEmpty() }
         .mapTo(HashSet()) { typeParameters[it].name }
+    // and the ones bounded by one of a bound annotated not nullable, maybe through others, like the U of `U extends T`
+    val notNull = typeParameters.indices.filter { annotated?.get(it)?.values?.singleOrNull() == false && typeParameters[it].name in given }
+        .mapTo(HashSet()) { typeParameters[it].name }
+    do {
+        val bounded = typeParameters.filter { typeParameter ->
+            typeParameter.name !in notNull && (typeParameter.bounds.singleOrNull() as? TypeVariable<*>)
+                ?.let { it.genericDeclaration == method && it.name in notNull } == true
+        }
+        bounded.forEach { notNull += it.name; given += it.name }
+    } while (bounded.isNotEmpty())
+    return given
 }
 
 /**
@@ -1982,7 +1995,8 @@ internal class JavaNullability(
  * like of `@org.jetbrains.annotations.NotNull`, retained in the class file only, which the compiler reads,
  * winning over the enhancements of the JDK methods it overrides, see [enhanceNullableReturn].
  * A type variable annotated not nullable is definitely not nullable, like `T & Any`, not nullable whatever is given for it,
- * while one not annotated of a method marked by `@NullMarked` stays as given, like `T`, see [nullMarking].
+ * while one not annotated of a method marked by `@NullMarked` stays as given, like `T`, see [nullMarking],
+ * but a type variable of the method itself, when only the method is marked, not its class, see [givenTypeVariableNames].
  * The bounds of its type parameters are marked alike, see [enhanceJavaBounds].
  */
 private fun enhanceJavaNullability(method: Method, function: KmFunction) {
@@ -2170,6 +2184,9 @@ private class EffectiveJavaNullabilities(type: Class<*>) {
                 }
                 // where the own annotation, or the mark, and the overridden methods disagree
                 annotated != null || overridden.isNotEmpty() -> platform += position
+                // a type variable of the method itself, which only a mark of its class keeps as given, see givenTypeVariableNames,
+                // unlike the mark of the method, like the T of `@NullMarked <T> void take(T t)`, so that take<String>(null) compiles
+                typeVariables[position] == false && nullMarking != true && isMethodTypeVariable(method, position) -> platform += position
                 // a type variable of a class marked by @NullMarked, of a bound not nullable, unlike one of the method,
                 // is not nullable in the overrides
                 typeVariables[position] == true -> inheritedMarks += position
@@ -2198,6 +2215,11 @@ private class EffectiveJavaNullabilities(type: Class<*>) {
 
     private fun isClassTypeVariable(method: Method, position: Int): Boolean = reflectedValue(default = false) {
         (method.genericParameterTypes.getOrNull(position) as? TypeVariable<*>)?.genericDeclaration is Class<*>
+    }
+
+    private fun isMethodTypeVariable(method: Method, position: Int): Boolean = reflectedValue(default = false) {
+        val type = if (position == RETURN_TYPE) method.genericReturnType else method.genericParameterTypes.getOrNull(position)
+        (type as? TypeVariable<*>)?.genericDeclaration is Method
     }
 
 }
