@@ -198,9 +198,16 @@ com.example.AnnotationTestClass
   like `take(arg0: String)`, or the type argument is annotated, like the `String?` of the `get(): T` of a `Base<@Nullable String>`.
   A parameter of a type parameter of the Java method itself is nullable too, like `fun <T : CharSequence?> take(arg0: T?)`,
   unless the compiler takes the type parameter as given, whatever the type argument, so that `id<String>(null)` does not compile:
-  one of an annotated bound, like `fun <U : Any> id(arg0: U): U` of `<U extends @NotNull Object>`, or of a class marked by `@NullMarked`.
-  One bounded by a `Comparable` of itself stays nullable, like `fun <T : Comparable<T>?> sort(arg0: T?)`,
-  though `sort<String>(null)` does not compile, as `null` is accepted for a type argument declared by Java, like `sort<BigDecimal>(null)`.
+  one of an annotated bound, like `fun <U : Any> id(arg0: U): U` of `<U extends @NotNull Object>`,
+  one bounded by such a one, like the `U` of `<T extends @NotNull Object, U extends T>`,
+  or of a class marked by `@NullMarked`, unlike a method marked by itself, like `fun <T> take(arg0: T?)` of `@NullMarked <T> void take(T t)`.
+  One referred to by its own bound, like by a `Comparable` of itself, stays nullable, like `fun <T : Comparable<T>?> sort(arg0: T?)`,
+  though `sort<String>(null)` does not compile, as `null` is accepted for a type argument declared by Java, like `sort<BigDecimal>(null)`,
+  the convention for any type parameter in a contravariant position of its bound,
+  like of `Comparable<? super T>`, or of a function type taking it,
+  as the compiler decides it by whether the own supertype of the type argument names it as a platform type, which no signature tells,
+  and `null` is never rejected then where the compiler accepts it.
+  An `Object` bound next to another one, like of `<T extends Object & Comparable<? super T>>`, is left out, like `T : Comparable<in T>?`.
   A method named with `$`, like `get$x()`, is rendered in backticks, like `` fun `get$x`(): String ``.
   The synthetic property which Kotlin reads a Java getter as is not listed as a member of its own,
   as Kotlin does not let it be referenced, like `Thread::name`, and it would repeat every getter,
@@ -219,6 +226,10 @@ com.example.AnnotationTestClass
   of a class without a property of the same name, which Kotlin reads instead, like `key` of `java.util.Map.Entry` of `getKey()`,
   also a property of another type, unrelated to the getter, like a `val title: Int` next to the `getTitle(): String`
   of a Java superclass, which is inherited next to it.
+  Resolving the name of the synthetic property, like `com.example.MyThread.name`, finds the getter so hinted,
+  and the setter of a `var`, like `fun setName(arg0: String?)`,
+  next to the other members, and the extensions, of the name, which are no properties, like a function `name()`,
+  or which Kotlin does not read instead, like an extension property `val MyThread.name: Int`, even of the same package.
 * A typealias is rendered as its declaration,
   like `typealias ArrayList<E> = java.util.ArrayList<E>` for `kotlin.collections.ArrayList`,
   as a Java class it might expand to is not rendered,

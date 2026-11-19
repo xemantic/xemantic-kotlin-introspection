@@ -8002,13 +8002,14 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve bound of type parameter of Java method marked by NullMarked in class not marked as platform type`() {
-        // the compiler reads the bounds by the mark of the class, not of the method
+        // the compiler reads the bounds by the mark of the class, not of the method,
+        // and so the type variable, so that id<String>(null) compiles, returning String!
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.InheritedJavaMethodNullMarked.id"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.InheritedJavaMethodNullMarked.id [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.other.JavaMethodNullMarked
-            abstract fun <U> id(arg0: U): U
+            abstract fun <U> id(arg0: U?): U
         """.trimIndent()
     }
 
@@ -8242,6 +8243,53 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.test.InheritedJavaTypeVariables.max [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypeVariables
             open fun <T : Comparable<in T>?> max(arg0: T?, arg1: T?): T
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve parameter of type variable of Java method marked in class not marked as nullable`() {
+        // kotlinc accepts marked<String>(null), as only a mark of the class keeps the type variables of its methods as given
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaMethodTypeVariables.marked"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaMethodTypeVariables.marked [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaMethodTypeVariables
+            open fun <T> marked(arg0: T?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve parameter of Java method marked in class not marked as not nullable next to type variable`() {
+        // kotlinc rejects markedString<String>("", null), but accepts markedString<String>(null, "")
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaMethodTypeVariables.markedString"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaMethodTypeVariables.markedString [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaMethodTypeVariables
+            open fun <T> markedString(arg0: T?, arg1: String): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve parameter of type variable of Java method bounded by type variable taken as given as given`() {
+        // kotlinc rejects bounded<String, String>(null), and bounded<BigDecimal, BigDecimal>(null)
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaMethodTypeVariables.bounded"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaMethodTypeVariables.bounded [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaMethodTypeVariables
+            open fun <T : Any, U : T?> bounded(arg0: U)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve type parameter of Java method of Object bound next to another one without Object bound`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaMethodTypeVariables.objectAndComparable"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaMethodTypeVariables.objectAndComparable [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaMethodTypeVariables
+            open fun <T : Comparable<in T>?> objectAndComparable(arg0: T?)
         """.trimIndent()
     }
 
@@ -8758,6 +8806,126 @@ class KotlinIntrospectorTest {
                 fun getOwn(): String
             }
         """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve synthetic property name to getter and setter inherited from JDK class`() {
+        // kotlinc reads thread.name as getName(), and assigns thread.name = "" by setName(String)
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.SyntheticPropertyThread.name"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SyntheticPropertyThread.name [page 1/1]
+            // inherited from java.lang.Thread
+            // also property: var name
+            fun getName(): String
+            fun setName(arg0: String?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve synthetic property name to declared getter and inherited setter`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.SyntheticPropertyGenericHolder.value"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SyntheticPropertyGenericHolder.value [page 1/1]
+            // also property: var value
+            override fun getValue(): T
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyBox
+            open fun setValue(arg0: T?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve synthetic property name to getter only when setter takes another type`() {
+        // setCount(String) does not set the count of getCount(): Int
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.SyntheticPropertyHolder.count"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SyntheticPropertyHolder.count [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyBase
+            // also property: val count
+            open fun getCount(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve synthetic property name to getter only when setter is less visible`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.SyntheticPropertyHolder.pr"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SyntheticPropertyHolder.pr [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyBase
+            // also property: val pr
+            open fun getPr(): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve synthetic property name of acronym to getter`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.SyntheticPropertyHolder.url"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SyntheticPropertyHolder.url [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyBase
+            // also property: val url
+            open fun getURL(): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve synthetic property name of JVM-only getter of built-in type`() {
+        // kotlinc reads throwable.stackTrace as getStackTrace(), not as the extension property of kotlin
+        resolver.resolve("kotlin.Throwable.stackTrace") sameAsKotlin """
+            // kotlin.Throwable.stackTrace [page 1/1]
+            // also property: var stackTrace
+            open fun getStackTrace(): Array<java.lang.StackTraceElement>
+            open fun setStackTrace(arg0: Array<java.lang.StackTraceElement>?)
+            // from kotlin
+            val Throwable.stackTrace: Array<java.lang.StackTraceElement>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve synthetic property name to getter before extension property of the name`() {
+        // kotlinc reads extended.name as getName(), not as the extension property of the same package
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.SyntheticPropertyExtended.name"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SyntheticPropertyExtended.name [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyBase
+            // also property: var name
+            fun getName(): String
+            fun setName(arg0: String?)
+            // from com.xemantic.kotlin.introspection.test
+            val SyntheticPropertyExtended.name: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve synthetic property name shadowed by Java field`() {
+        // kotlinc reads the field code instead of getCode()
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.SyntheticPropertyHolder.code"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SyntheticPropertyHolder.code [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyBase
+            var code: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve synthetic property name shadowed by Kotlin property`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.KotlinIntTitle.title"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.KotlinIntTitle.title [page 1/1]
+            val title: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve synthetic property name of Kotlin function overriding no Java getter`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertyHolder.own") == null)
     }
 
     @Test
