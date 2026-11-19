@@ -1670,7 +1670,10 @@ private fun isContravariantlyProjected(kClass: KClass<*>, arguments: List<KmType
  */
 private fun reflectedClassName(kClass: KClass<*>): String {
     val qualifiedName = kClass.qualifiedName
-    return if (qualifiedName != null && qualifiedName != kClass.java.canonicalName) {
+    // the class of a mutable collection type has no Java class, like the one of the MutableCollection<Int> kotlin-reflect tells
+    // of the addAll2(Collection<Integer>) of a Java class overriding a Kotlin member taking it
+    val javaClass = reflectedValue<Class<*>?>(default = null) { kClass.java }
+    return if (qualifiedName != null && qualifiedName != javaClass?.canonicalName) {
         kotlinClassName(qualifiedName)
     } else {
         kotlinClassName(kClass.java)

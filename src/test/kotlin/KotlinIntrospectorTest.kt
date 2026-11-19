@@ -6187,6 +6187,136 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve Kotlin vararg member taking types of Java vararg method merged with it declared first`() {
+        // the String... of Java is an Array<(out) String!>!, merged with the Array<out String> of the vararg parameter,
+        // so that a concrete subclass compiles, and acceptAll(null), acceptAll("", null) compile, also acceptAll(values = arrayOf(""))
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaVarargStringVarargAcceptorJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaVarargStringVarargAcceptorJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.StringVarargAcceptor
+            open fun acceptAll(vararg values: String?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin vararg member declared before Java vararg method merged with it`() {
+        // the compiler picks the acceptAll(vararg values: String) of the interface, declared first, which the Java class implements
+        resolver.resolve("com.xemantic.kotlin.introspection.test.StringVarargAcceptorJavaVarargJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.StringVarargAcceptorJavaVarargJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.StringVarargAcceptor
+            open fun acceptAll(vararg values: String)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member taking array as vararg of Java method merged with it declared first`() {
+        // acceptAll("") compiles, as the compiler picks the acceptAll(String...) of the Java class, while acceptAll(arrayOf("")) does not
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaVarargStringArrayAcceptorJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaVarargStringArrayAcceptorJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.StringArrayAcceptor
+            open fun acceptAll(vararg values: String?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin vararg member taking array of Java method merged with it declared first`() {
+        // acceptAll(arrayOf("")) and acceptAll(null) compile, as the compiler picks the acceptAll(String[]) of the Java class, while acceptAll("") does not
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaArrayStringVarargAcceptorJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaArrayStringVarargAcceptorJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.StringVarargAcceptor
+            open fun acceptAll(values: Array<String>?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member taking projected array declared before Java method taking array as implemented`() {
+        // the String[] of Java is merged with an Array<out String> as well as with an Array<String>
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OutStringArrayAcceptorJavaArrayJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OutStringArrayAcceptorJavaArrayJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.OutStringArrayAcceptor
+            open fun acceptAll(values: Array<out String>)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin generic vararg member declared before Java vararg method as one member`() {
+        // the acceptAll(vararg values: T) of VarargAcceptor<String>, taking Object[] on the JVM, is merged with acceptAll(String...)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.GenericVarargAcceptorJavaVarargJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GenericVarargAcceptorJavaVarargJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.VarargAcceptor
+            open fun acceptAll(vararg values: String)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of Java interface declared first of members winning over each other in circle`() {
+        // the accept(String) of the Java interface wins over the accept(t: T) of GenericAcceptor<String>, declared after it,
+        // which wins over the one of the Java class, declared last, which wins over the one of the Java interface, implementing it:
+        // kotlinc picks the one declared first, and accept(null) compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaInterfaceGenericAcceptorJavaClassJoin.accept") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaInterfaceGenericAcceptorJavaClassJoin.accept [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaStringAcceptorInterface
+            open fun accept(arg0: String?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member taking mutable collection implemented by Java superclass as open`() {
+        // kotlin-reflect tells the Collection<Integer> of the method of the Java class as the MutableCollection<Int> of the member
+        // it overrides, of a class which has no Java class, and a concrete subclass compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaMutableIntCollectionAdderSubclass.addAll2") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaMutableIntCollectionAdderSubclass.addAll2 [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.MutableIntCollectionAdder
+            open fun addAll2(c: MutableCollection<Int>): Boolean
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member taking projected mutable collection taking types of Java method merged with it declared first`() {
+        // the Collection<Integer> of Java, a (Mutable)Collection<Int!>!, is merged with a MutableCollection<out Int>,
+        // between its MutableCollection<Int> and its Collection<Int>, so that a concrete subclass compiles, and addAll2(null) too
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaIntegerOutMutableCollectionAdderJoin.addAll2") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaIntegerOutMutableCollectionAdderJoin.addAll2 [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.OutMutableIntCollectionAdder
+            open fun addAll2(c: Collection<Int>?): Boolean
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member taking projected mutable collection declared before Java method merged with it`() {
+        // a concrete subclass compiles, while addAll2(null) does not
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OutMutableCollectionAdderJavaIntegerJoin.addAll2") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OutMutableCollectionAdderJavaIntegerJoin.addAll2 [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.OutMutableIntCollectionAdder
+            open fun addAll2(c: MutableCollection<out Int>): Boolean
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java method taking nullable type argument apart from Kotlin member taking type which is not nullable`() {
+        // the T of accept(T) given String? is no platform type, so that the accept(Object) of Java never implements accept(s: String):
+        // a concrete subclass has to implement it, and accept(null) compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NullableStringJavaTypedAcceptorJoin.accept") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NullableStringJavaTypedAcceptorJoin.accept [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypedAcceptor
+            open fun accept(arg0: String?)
+            // inherited from com.xemantic.kotlin.introspection.test.StringAcceptor
+            fun accept(s: String)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member taking type which is not nullable declared before Java method taking nullable type argument as abstract`() {
+        // like with the Java class declared first
+        resolver.resolve("com.xemantic.kotlin.introspection.test.StringAcceptorNullableJavaTypedJoin.accept") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.StringAcceptorNullableJavaTypedJoin.accept [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.StringAcceptor
+            fun accept(s: String)
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypedAcceptor
+            open fun accept(arg0: String?)
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve Kotlin member taking platform type of Java member merged with it declared first by superclass`() {
         // the subclass inherits the member its superclass picks, the accept(String) of the Java class, declared first there
         resolver.resolve("com.xemantic.kotlin.introspection.test.StringJavaAcceptorJoinSubclass.accept") sameAsKotlin """

@@ -148,6 +148,18 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 
 - Kotlin never passes named arguments to a Java method, even one compiled with `-parameters`, so a Java method taking parameters never shadows an extension — see `isShadowingJavaMethod`.
 
+- kotlin-reflect tells a mutable collection type of a Java method overriding a Kotlin member taking it,
+  like the `MutableCollection<Int>` of an `addAll2(Collection<Integer>)`, by a `KClass` which has no Java class:
+  `kClass.java` throws a `ClassCastException`, which `reflectedValue` swallows, dropping the whole member silently — see `reflectedClassName`.
+
+- kotlinc compiling many probe files in one run reports the errors of the backend, like `inherited platform declarations clash`,
+  only when no file of the run has an error of the frontend —
+  compile the files which passed again, without the failing ones, until none of them fails.
+
+- A call missing an argument names the parameter of the member kotlinc picks, like the `p0` of a Java method,
+  while a named call still takes the name of a Kotlin member merged with it, like `m13(a = arrayOf(""))` —
+  so the message does not tell which names a call may use, probe the named call itself.
+
 ## Anti-patterns to avoid
 
 - Do not add content to this file that is already discoverable by reading the source or build scripts — that inflates context without adding signal, reducing AI agent task success rates (see [arxiv 2602.11988](https://arxiv.org/abs/2602.11988)).
