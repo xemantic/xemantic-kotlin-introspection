@@ -1893,7 +1893,23 @@ class KotlinIntrospectorTest {
                 fun nothingOfStar(x: Comparable<Nothing>): Int
                 fun pairOfTypeParameter(x: Pair<CharSequence, CharSequence>): Int
                 fun receiverFunctionType(x: String.() -> CharSequence): Int
+                fun listOfReceiverFunctionType(x: List<String.() -> Unit>): Int
+                fun listOfFunctionType(x: List<(String) -> Unit>): Int
+                fun collectionOfReceiverFunctionType(x: Collection<String.() -> CharSequence>): Int
+                fun returningReceiverFunctionType(x: () -> String.() -> Unit): Int
+                fun takingReceiverFunctionType(x: (String.() -> Unit) -> Unit): Int
             }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extension shadowed by more specific one taking function type of another shape as type argument`() {
+        // shapeSpecific.describeAll(listOf({ a -> })) calls the one on ShapeSpecificReceiver, like with any other argument
+        resolver.resolve("com.xemantic.kotlin.introspection.test.ShapeSpecificReceiver") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ShapeSpecificReceiver [page 1/1]
+            class ShapeSpecificReceiver : ShapeGeneralReceiver
+            // from com.xemantic.kotlin.introspection.test
+            fun ShapeSpecificReceiver.describeAll(x: List<String.() -> Unit>): Int
         """.trimIndent()
     }
 

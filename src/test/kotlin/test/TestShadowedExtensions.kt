@@ -51,6 +51,11 @@ class ProjectedShadowing : ProjectedShadowedSupertype {
     fun nothingOfStar(x: Comparable<Nothing>): Int = 0
     fun pairOfTypeParameter(x: Pair<CharSequence, CharSequence>): Int = 0
     fun receiverFunctionType(x: String.() -> CharSequence): Int = 0
+    fun listOfReceiverFunctionType(x: List<String.() -> Unit>): Int = 0
+    fun listOfFunctionType(x: List<(String) -> Unit>): Int = 0
+    fun collectionOfReceiverFunctionType(x: Collection<String.() -> CharSequence>): Int = 0
+    fun returningReceiverFunctionType(x: () -> (String.() -> Unit)): Int = 0
+    fun takingReceiverFunctionType(x: (String.() -> Unit) -> Unit): Int = 0
 }
 
 fun ProjectedShadowedSupertype.outProjected(x: List<out String>): Int = 1
@@ -82,6 +87,18 @@ fun ProjectedShadowedSupertype.nothingOfStar(x: Comparable<*>): Int = 1
 fun <T : CharSequence> ProjectedShadowedSupertype.pairOfTypeParameter(x: Pair<T, T>): Int = 1
 
 fun ProjectedShadowedSupertype.receiverFunctionType(x: CharSequence.() -> String): Int = 1
+
+// a function type with a receiver as a type argument takes the lambdas of the one without it,
+// like projectedShadowing.listOfReceiverFunctionType(listOf({ a -> })), unlike as the type of the parameter itself
+fun ProjectedShadowedSupertype.listOfReceiverFunctionType(x: List<(String) -> Unit>): Int = 1
+
+fun ProjectedShadowedSupertype.listOfFunctionType(x: List<String.() -> Unit>): Int = 1
+
+fun ProjectedShadowedSupertype.collectionOfReceiverFunctionType(x: List<(CharSequence) -> String>): Int = 1
+
+fun ProjectedShadowedSupertype.returningReceiverFunctionType(x: () -> ((String) -> Unit)): Int = 1
+
+fun ProjectedShadowedSupertype.takingReceiverFunctionType(x: ((String) -> Unit) -> Unit): Int = 1
 
 // and the ones whose type arguments do not accept them, so that the extension is still called,
 // like projectedUnshadowing.invariant(box), of a ProjectedBox<String>, which is no ProjectedBox<CharSequence>
@@ -145,6 +162,16 @@ fun FunctionShapeSupertype.receiverAndParameter(x: (Int, String) -> String): Int
 fun FunctionShapeSupertype.contextAndParameter(x: (String, Int) -> String): Int = 1
 
 fun FunctionShapeSupertype.sameReceiver(x: (String) -> Unit): Int = 1
+
+// a more specific extension taking a function type with a receiver as a type argument, called instead of the one
+// taking the function type without it, like shapeSpecific.describeAll(listOf({ a -> })) of the one on ShapeSpecificReceiver
+interface ShapeGeneralReceiver
+
+class ShapeSpecificReceiver : ShapeGeneralReceiver
+
+fun ShapeGeneralReceiver.describeAll(x: List<(String) -> Unit>): Int = 0
+
+fun ShapeSpecificReceiver.describeAll(x: List<String.() -> Unit>): Int = 1
 
 // member properties of a Java type with an invoke method, which Kotlin calls as an operator, invoked instead of the extension
 // functions of their names, like javaInvokedShadowing.task(), also through an inherited invoke,

@@ -402,7 +402,7 @@ com.example.AnnotationTestClass
   like `fun addAll(x: Collection<CharSequence>)`, `fun addAll(x: Collection<out CharSequence>)`,
   or `fun sortWith(x: Comparator<in String>)` next to `fun Bar.sortWith(x: Comparator<CharSequence>)`,
   or star projections, like `fun addAll(x: Collection<*>)`,
-  while a function type accepts only one of as many context parameters and receivers,
+  while a function type of the parameter itself, not a type argument, accepts only one of as many context parameters and receivers,
   as `fun run(x: String.() -> Unit)` does not take the lambda of `bar.run { s -> }`, which `fun Bar.run(x: (String) -> Unit)` takes,
   where a type parameter of the class stands for the type argument of the receiver of an extension on the class itself,
   like `fun put(x: T)` of `class Box<T>` next to `fun Box<String>.put(x: String)`,

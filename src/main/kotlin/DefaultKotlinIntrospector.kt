@@ -5240,13 +5240,14 @@ internal class DefaultKotlinIntrospector(
             }
             if (classifier !is KmClassifier.Class || (argument.isNullable && !type.isNullable)) return false
             val expected = if (argument.isNullable) type else type.notNullable()
-            if (isSameType(argument, expected, pinnedId, className)) return true
+            if (isSameType(argument, expected, pinnedId, className, isTypeArgument)) return true
             return when (val argumentClassifier = argument.classifier) {
                 is KmClassifier.Class -> if (type.arguments.isEmpty()) isSubclass(argumentClassifier.name, classifier.name) else {
                     val supertype = if (argumentClassifier.name == classifier.name) argument else asSupertype(argument, type)
                     // each type argument accepting the one of the argument, by its variance
                     supertype != null && acceptsTypeArguments(
-                        type, supertype, isSame = { actual, same -> isSameType(actual, same, pinnedId, className) }
+                        type, supertype, isTypeArgument,
+                        isSame = { actual, same -> isSameType(actual, same, pinnedId, className, isTypeArgument = true) }
                     ) { accepting, accepted, isOfExtension ->
                         when {
                             isOfExtension -> accepts(accepting, accepted, visited, isTypeArgument = true)
@@ -5294,16 +5295,19 @@ internal class DefaultKotlinIntrospector(
      * as the bounds of the type parameter, which could tell more, are not looked up.
      * Both are function types, or suspend function types, as neither is a subtype of the other,
      * and function types of the same shape, see [isFunctionTypeShapedLike], as a lambda naming its parameters,
-     * like `{ s -> }`, is taken by `(String) -> Unit`, but not by `String.() -> Unit`, so that the extension is still called with it.
+     * like `{ s -> }`, is taken by `(String) -> Unit`, but not by `String.() -> Unit`, so that the extension is still called with it,
+     * unless they are type arguments themselves, when [isTypeArgument], like of `List<String.() -> Unit>`,
+     * or of `() -> (String.() -> Unit)`, where Kotlin takes the lambdas of either shape.
      */
     private fun acceptsTypeArguments(
         type: KmType,
         argument: KmType,
+        isTypeArgument: Boolean,
         isSame: (actual: KmType, same: KmType) -> Boolean,
         accepts: (accepting: KmType, accepted: KmType, isOfExtension: Boolean) -> Boolean
     ): Boolean {
         val variances = declaredVariances((type.classifier as KmClassifier.Class).name)
-        if (type.isSuspend != argument.isSuspend || !type.isFunctionTypeShapedLike(argument) ||
+        if (type.isSuspend != argument.isSuspend || (!isTypeArgument && !type.isFunctionTypeShapedLike(argument)) ||
             variances?.size != type.arguments.size || argument.arguments.size != type.arguments.size
         ) {
             return false
@@ -12628,9 +12632,17 @@ private fun KmType.appendStructure(key: StringBuilder) {
  * like `T` for `Int`, or `ClosedRange<T>` for `ClosedRange<Int>`, but not `T?` for `Int`,
  * while any other type parameter is never told to be the same type,
  * nor are function types of different shapes, see [isFunctionTypeShapedLike], like `String.() -> Unit` and `(String) -> Unit`,
- * of the same type arguments, as only the latter one takes a lambda naming its parameter.
+ * of the same type arguments, as only the latter one takes a lambda naming its parameter,
+ * unless they are type arguments themselves, when [isTypeArgument], like of `List<String.() -> Unit>`,
+ * where Kotlin takes the lambdas of either shape.
  */
-private fun isSameType(shadowedType: KmType, type: KmType, receiverTypeParameterId: Int, className: String): Boolean {
+private fun isSameType(
+    shadowedType: KmType,
+    type: KmType,
+    receiverTypeParameterId: Int,
+    className: String,
+    isTypeArgument: Boolean = false
+): Boolean {
     if (shadowedType.isNullable != type.isNullable) return false
     val classifier = type.classifier as? KmClassifier.Class ?: return false
     return when (val shadowedClassifier = shadowedType.classifier) {
@@ -12639,13 +12651,13 @@ private fun isSameType(shadowedType: KmType, type: KmType, receiverTypeParameter
         is KmClassifier.Class ->
             shadowedClassifier.name == classifier.name &&
                 shadowedType.arguments.size == type.arguments.size &&
-                shadowedType.isFunctionTypeShapedLike(type) &&
+                (isTypeArgument || shadowedType.isFunctionTypeShapedLike(type)) &&
                 shadowedType.arguments.zip(type.arguments).all { (shadowedArgument, argument) ->
                     val shadowedArgumentType = shadowedArgument.type
                     val argumentType = argument.type
                     shadowedArgument.variance == argument.variance && when {
                         shadowedArgumentType == null || argumentType == null -> shadowedArgumentType == argumentType
-                        else -> isSameType(shadowedArgumentType, argumentType, receiverTypeParameterId, className)
+                        else -> isSameType(shadowedArgumentType, argumentType, receiverTypeParameterId, className, isTypeArgument = true)
                     }
                 }
         is KmClassifier.TypeAlias -> false
