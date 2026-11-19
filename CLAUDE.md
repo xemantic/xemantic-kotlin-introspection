@@ -98,14 +98,6 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   K2 fails on it with `Unexpected type: class ConeDefinitelyNotNullType` (`FirJavaElementFinder`), while compiling the Kotlin sources —
   such a class goes to a source set compiled before, see `PlatformBoxes.kt` of `otherModuleTestFixtures`.
 
-- A platform type given through Java for a type parameter used as `T & Any`, or as `T?`, is no platform type for kotlinc any more:
-  `String! & Any` is `String`, `W<String!>!?` is `W<String!>?` — so a supertype reached through Java with such a type argument
-  is kept next to the same one reached through Kotlin, see `isPlatformType`, and `keptSupertypes`.
-
-- A JDK interface named directly as a supertype, like `abstract class X : java.util.List<O>`, is no `kotlin.collections.List` for K2:
-  `fun List<O>.f()` does not compile on it, `fun Collection<O>.f()` does, through `java.util.SequencedCollection` since JDK 21,
-  while kotlin-reflect describes `java.util.List::class.java.kotlin` as the built-in `List`, of its supertypes, see `javaSignatureSupertypes`.
-
 - Two supertypes of the same class with different type arguments compile only when one of them is reached through Java,
   like `Box<List<String>>` next to `Box<List<String!>>` — two Kotlin ones are rejected (`has inconsistent values`),
   so a sweep of supertypes reached through several paths needs Java fixtures.
