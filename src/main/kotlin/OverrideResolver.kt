@@ -3545,7 +3545,7 @@ internal fun jvmPrimitives(function: KmFunction): List<Boolean> {
 }
 
 // the built-in types of the primitive types on the JVM, see jvmPrimitives
-private val PRIMITIVE_CLASS_NAMES: Set<String> =
+internal val PRIMITIVE_CLASS_NAMES: Set<String> =
     listOf("Boolean", "Byte", "Short", "Char", "Int", "Long", "Float", "Double").mapTo(HashSet()) { "kotlin/$it" }
 
 /**
