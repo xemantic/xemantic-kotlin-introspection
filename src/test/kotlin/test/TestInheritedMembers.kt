@@ -676,6 +676,15 @@ abstract class BoxedJavaIntPutOverIntegerBaseImpl : com.xemantic.kotlin.introspe
 // the put(@Nullable Integer) of the Java class takes Int?, the put(t: T) of GenericPut, given Integer annotated not null, takes Int
 abstract class NullableBoxedJavaNotNullIntegerPutInterfaceJoin : com.xemantic.kotlin.introspection.test.other.JavaNullableBoxedPut(), com.xemantic.kotlin.introspection.test.other.JavaNotNullIntegerPutInterface
 
+// K2 walks the supertypes of a Kotlin class in the order it names them, the interface before the superclass here
+abstract class IntPutBeforeJavaIntegerPutBase : IntPut, com.xemantic.kotlin.introspection.test.other.JavaIntegerPutBase()
+
+abstract class JavaIntegerPutBaseBeforeIntPut : com.xemantic.kotlin.introspection.test.other.JavaIntegerPutBase(), IntPut
+
+abstract class BoxedJavaPutOverIntPutBeforeIntegerBaseImpl : com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOverIntPutBeforeIntegerBase()
+
+abstract class BoxedJavaPutOverIntegerBaseBeforeIntPutImpl : com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOverIntegerBaseBeforeIntPut()
+
 abstract class IntArrayList : ArrayList<Int>()
 
 abstract class BoxedJavaIntArrayListImpl : com.xemantic.kotlin.introspection.test.other.JavaBoxedIntArrayList()

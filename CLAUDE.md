@@ -149,7 +149,8 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 - Kotlin never passes named arguments to a Java method, even one compiled with `-parameters`, so a Java method taking parameters never shadows an extension — see `isShadowingJavaMethod`.
 
 - Of several paths from a Java class to a generic Kotlin supertype, K2 judges the override of a Java method by the first one depth-first,
-  in the order of declaration, the superclass first, not by the nearest one — see `typeArgumentGivers`.
+  in the order of declaration, not by the nearest one: of a Java class the superclass first,
+  of a Kotlin class as it names them, which only its metadata tells — see `typeArgumentGivers`.
 
 - A type argument a Java class gives stays boxed for K2 whatever its nullability:
   a Java `put(int)` does not implement the `put(t: T)` of `GenericPut<@NotNull Integer>`, though it takes `Int` — see `javaGivenPositions`.

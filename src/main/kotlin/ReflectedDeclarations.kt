@@ -904,9 +904,24 @@ private val kotlinTypeArguments = object : ClassValue<Map<String, Map<Int, Kotli
 }
 
 /**
+ * The number of the interfaces a Kotlin class names before its superclass, like `1` of `abstract class Mid : IntPut, Base()`,
+ * as its Kotlin metadata tells, read once per class, while its JVM class tells the superclass apart from the interfaces,
+ * or `0` of a Java class, or when not told, like of a superclass the metadata does not name, see [typeArgumentGivers].
+ */
+private val kotlinSuperclassPositions = object : ClassValue<Int>() {
+    override fun computeValue(type: Class<*>): Int = reflectedValue(default = 0) {
+        val superclass = type.superclass?.takeIf { type.isKotlinClass && it != Any::class.java } ?: return@reflectedValue 0
+        val name = readKmClass(superclass)?.name ?: kotlinClassName(superclass)
+        val position = readKmClass(type)?.supertypes.orEmpty().indexOfFirst { (it.classifier as? KmClassifier.Class)?.name == name }
+        position.coerceIn(0, type.interfaces.size)
+    }
+}
+
+/**
  * The classes giving the type argument of the type parameter at the [index] of the [typeClass], a supertype of the [javaClass],
  * as seen by it, through the type parameters of the classes between them, see [isJavaTypeArgument], each naming the [typeClass]
- * as its direct supertype, depth-first in the order of declaration of the supertypes, the superclass first, as K2 walks them,
+ * as its direct supertype, depth-first in the order of declaration of the supertypes, as K2 walks them: of a Java class
+ * the superclass first, of a Kotlin class as its metadata names them, see [kotlinSuperclassPositions],
  * the first one telling what K2 takes a method of the [javaClass] for an override of, see [isPrimitiveKotlinTypeArgument],
  * like the Java `Base implements GenericPut<Integer>` of `class X extends Base implements IntPut`, or none if not found.
  * The supertypes of a class whose generic signature cannot be read are taken raw.
@@ -924,8 +939,11 @@ private fun typeArgumentGivers(
     val visited = HashSet<Class<*>>()
     fun walk(type: Class<*>) {
         if (!visited.add(type)) return
-        val supertypes: List<Type> = reflectedValue(default = null) { listOfNotNull(type.genericSuperclass) + type.genericInterfaces }
-            ?: reflectedValue(default = emptyList()) { listOfNotNull(type.superclass) + type.interfaces }
+        val superclassPosition = kotlinSuperclassPositions.get(type)
+        fun <T> ordered(superclass: T?, interfaces: List<T>): List<T> =
+            if (superclass == null) interfaces else interfaces.take(superclassPosition) + superclass + interfaces.drop(superclassPosition)
+        val supertypes: List<Type> = reflectedValue(default = null) { ordered(type.genericSuperclass, type.genericInterfaces.toList()) }
+            ?: reflectedValue(default = emptyList()) { ordered<Type>(type.superclass, type.interfaces.toList()) }
         supertypes.forEach { supertype ->
             val supertypeClass = (supertype as? ParameterizedType)?.rawType as? Class<*> ?: supertype as? Class<*> ?: return@forEach
             when {

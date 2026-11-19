@@ -6188,6 +6188,30 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve Java member taking boxed type next to Kotlin generic one given primitive type by Kotlin interface named before Java superclass by Kotlin class`() {
+        // the first path to GenericPut is through IntPut, which the Kotlin class names before its Java superclass, giving Int,
+        // which put(Integer) does not implement, so that put(null) compiles, while a concrete subclass has to implement put(t: Int)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaPutOverIntPutBeforeIntegerBaseImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaPutOverIntPutBeforeIntegerBaseImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOverIntPutBeforeIntegerBase
+            open fun put(arg0: Int?): String
+            // inherited from com.xemantic.kotlin.introspection.test.GenericPut
+            fun put(t: Int): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking boxed type implementing Kotlin generic one given boxed type by Java superclass named before Kotlin interface by Kotlin class`() {
+        // the first path to GenericPut is through the Java superclass, giving Integer, so that put(Integer) implements put(t: T),
+        // and put(null) compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaPutOverIntegerBaseBeforeIntPutImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaPutOverIntegerBaseBeforeIntPutImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOverIntegerBaseBeforeIntPut
+            open fun put(arg0: Int?): String
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve Kotlin member given platform type by Java subclass contributed before merged Kotlin member`() {
         // the put(t: T) of GenericPutImplementation, given Integer by its Java subclass, is contributed first,
         // though the put(key: Int) of PrimitivePut is reached first, so that put(null) compiles
