@@ -840,44 +840,77 @@ private val Class<*>.isKotlinClass: Boolean get() = isAnnotationPresent(Metadata
  * a supertype of the [javaClass], as seen by it, a platform type then, like the `Integer` of `GenericPut<Integer>`,
  * or the `T` of `GenericPut<T>` of its own type parameter, maybe of a Kotlin class between them, like `Mid<Integer>` of `Mid<T> : GenericPut<T>`,
  * unlike a Kotlin class, like the `Int` of `IntPut : GenericPut<Int>`, which a Java class implements in turn,
- * or a raw Java supertype, also a platform type.
+ * or a raw Java supertype, also a platform type, along the first path to the [typeClass], see [typeArgumentGivers],
+ * unless the Java class gives it as no platform type, like annotated, see [TypeArgumentGiver.Java.isPlatform],
+ * or a Kotlin class gives a type which is not nullable along another path, like the `Int` of `IntPut`
+ * for a Java class implementing `GenericPut<Integer>` first, through a Java interface, and `IntPut`,
+ * whose `put(Integer)` K2 enhances by both, taking `Int`, so that `put(null)` does not compile.
  */
-private fun isJavaTypeArgument(javaClass: Class<*>, typeClass: Class<*>, index: Int): Boolean =
-    typeArgumentGiver(javaClass, typeClass, index) == TypeArgumentGiver.Java
+private fun isJavaTypeArgument(javaClass: Class<*>, typeClass: Class<*>, index: Int): Boolean {
+    val givers = typeArgumentGivers(javaClass, typeClass, index)
+    return (givers.firstOrNull() as? TypeArgumentGiver.Java)?.isPlatform == true &&
+        givers.none { giver -> giver is TypeArgumentGiver.Kotlin && giver.argument?.isNullable == false }
+}
 
 /**
  * Whether a Kotlin class gives a primitive type, not nullable, as the type argument of the type parameter at the [index]
  * of the [typeClass], a supertype of the [javaClass], as seen by it, like the `Int` of `IntPut : GenericPut<Int>`,
  * as its Kotlin metadata tells, unlike the `Integer` of the generic signature of its JVM class, telling no nullability,
- * see [isJavaTypeArgument].
+ * along the first path to the [typeClass], see [typeArgumentGivers], which K2 tells the override by, see [isJavaTypeArgument].
  */
 private fun isPrimitiveKotlinTypeArgument(javaClass: Class<*>, typeClass: Class<*>, index: Int): Boolean {
-    val giver = typeArgumentGiver(javaClass, typeClass, index) as? TypeArgumentGiver.Kotlin ?: return false
-    val name = readKmClass(giver.typeClass)?.name ?: return false
-    val type = readKmClass(giver.kotlinClass)?.supertypes
-        ?.firstOrNull { (it.classifier as? KmClassifier.Class)?.name == name }
-        ?.arguments?.getOrNull(giver.index)?.type ?: return false
-    return !type.isNullable && (type.classifier as? KmClassifier.Class)?.name in PRIMITIVE_CLASS_NAMES
+    val giver = typeArgumentGivers(javaClass, typeClass, index).firstOrNull() as? TypeArgumentGiver.Kotlin ?: return false
+    return giver.argument?.let { !it.isNullable && it.isPrimitive } == true
 }
 
 /**
- * The class giving the type argument of the type parameter of a supertype, see [typeArgumentGiver].
+ * The class giving the type argument of the type parameter of a supertype, see [typeArgumentGivers].
  */
 private sealed interface TypeArgumentGiver {
 
-    // a Java class, giving a platform type, or a raw Java supertype
-    data object Java : TypeArgumentGiver
+    // a Java class, giving a platform type, or a raw Java supertype, or giving it as read, see givesPlatformTypeArguments
+    class Java(val isPlatform: Boolean) : TypeArgumentGiver
 
-    // the Kotlin class naming the type parameter at the index of the type class as its direct supertype
-    class Kotlin(val kotlinClass: Class<*>, val typeClass: Class<*>, val index: Int) : TypeArgumentGiver
+    // a Kotlin class naming the type class as its direct supertype, giving the argument, if told, see kotlinTypeArguments
+    class Kotlin(val argument: KotlinTypeArgument?) : TypeArgumentGiver
 
 }
 
 /**
- * The class giving the type argument of the type parameter at the [index] of the [typeClass], a supertype of the [javaClass],
- * as seen by it, through the type parameters of the classes between them, see [isJavaTypeArgument], or `null` if not found.
+ * A type argument a Kotlin class gives to its direct supertype, as its Kotlin metadata tells, see [kotlinTypeArguments].
  */
-private fun typeArgumentGiver(javaClass: Class<*>, typeClass: Class<*>, index: Int): TypeArgumentGiver? {
+private class KotlinTypeArgument(val isNullable: Boolean, val isPrimitive: Boolean)
+
+/**
+ * The type arguments which are classes, see [KotlinTypeArgument], a Kotlin class gives to its direct supertypes,
+ * by their indices, by the JVM names of the supertypes, read once per class, see [typeArgumentGivers],
+ * none of a class whose metadata cannot be read.
+ */
+private val kotlinTypeArguments = object : ClassValue<Map<String, Map<Int, KotlinTypeArgument>>>() {
+    override fun computeValue(type: Class<*>): Map<String, Map<Int, KotlinTypeArgument>> = reflectedValue(default = emptyMap()) {
+        val supertypes = readKmClass(type)?.supertypes.orEmpty()
+        // the supertypes of the metadata by the Kotlin ones of the JVM class, by the names their own metadata tells
+        (listOfNotNull(type.superclass) + type.interfaces).filter { it.isKotlinClass }.associate { supertypeClass ->
+            val name = readKmClass(supertypeClass)?.name
+            val supertype = supertypes.firstOrNull { (it.classifier as? KmClassifier.Class)?.name == name }
+            supertypeClass.name to supertype?.arguments.orEmpty().withIndex().mapNotNull { (index, argument) ->
+                val argumentType = argument.type
+                (argumentType?.classifier as? KmClassifier.Class)?.let { classifier ->
+                    index to KotlinTypeArgument(argumentType.isNullable, classifier.name in PRIMITIVE_CLASS_NAMES)
+                }
+            }.toMap()
+        }
+    }
+}
+
+/**
+ * The classes giving the type argument of the type parameter at the [index] of the [typeClass], a supertype of the [javaClass],
+ * as seen by it, through the type parameters of the classes between them, see [isJavaTypeArgument], each naming the [typeClass]
+ * as its direct supertype, breadth-first in the order of declaration of the supertypes, the first one telling what K2
+ * takes a method of the [javaClass] for an override of, see [isPrimitiveKotlinTypeArgument], or none if not found.
+ */
+private fun typeArgumentGivers(javaClass: Class<*>, typeClass: Class<*>, index: Int): List<TypeArgumentGiver> {
+    val givers = ArrayList<TypeArgumentGiver>()
     val visited = HashSet<Class<*>>()
     val pending = ArrayDeque(listOf(javaClass))
     while (pending.isNotEmpty()) {
@@ -885,17 +918,20 @@ private fun typeArgumentGiver(javaClass: Class<*>, typeClass: Class<*>, index: I
         if (!visited.add(type)) continue
         val supertypes = listOfNotNull(type.genericSuperclass) + type.genericInterfaces
         val supertype = supertypes.firstOrNull { (it as? ParameterizedType)?.rawType == typeClass || it == typeClass }
-        if (supertype == null) {
-            pending += listOfNotNull(type.superclass) + type.interfaces
-            continue
+        pending += listOfNotNull(type.superclass) + type.interfaces
+        when {
+            supertype == null -> {}
+            supertype !is ParameterizedType -> givers += TypeArgumentGiver.Java(isPlatform = true)
+            !type.isKotlinClass -> givers += TypeArgumentGiver.Java(givesPlatformTypeArguments(type, typeClass, index))
+            else -> when (val argument = supertype.actualTypeArguments.getOrNull(index)) {
+                is TypeVariable<*> -> (argument.genericDeclaration as? Class<*>)?.let { argumentClass ->
+                    givers += typeArgumentGivers(javaClass, argumentClass, argumentClass.typeParameters.indexOf(argument))
+                }
+                else -> givers += TypeArgumentGiver.Kotlin(kotlinTypeArguments.get(type)[typeClass.name]?.get(index))
+            }
         }
-        if (supertype !is ParameterizedType || !type.isKotlinClass) return TypeArgumentGiver.Java
-        val argument = supertype.actualTypeArguments.getOrNull(index) as? TypeVariable<*>
-            ?: return TypeArgumentGiver.Kotlin(type, typeClass, index)
-        val argumentClass = argument.genericDeclaration as? Class<*> ?: return null
-        return typeArgumentGiver(javaClass, argumentClass, argumentClass.typeParameters.indexOf(argument))
     }
-    return null
+    return givers
 }
 
 /**

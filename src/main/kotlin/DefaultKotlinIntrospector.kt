@@ -2500,6 +2500,7 @@ internal class DefaultKotlinIntrospector(
         inheritedBy: ClassKind? = null,
         typeParameters: TypeParameterScope,
         isJvmOnlyOverride: Boolean = false,
+        isBoxedOverload: Boolean = false,
         inheriting: Pair<KmClass, ClassDeclarations>? = null
     ): List<String> {
         // a member inherited by an interface is rendered as within it, like the ones of kotlin.Any
@@ -2526,6 +2527,7 @@ internal class DefaultKotlinIntrospector(
                     isOwnerOpenForOverrides = isOwnerOpenForOverrides, isInheritedByFinalClass = isInheritedByFinalClass,
                     declaration = member.declaration,
                     isJvmOnlyOverride = isJvmOnlyOverride,
+                    isBoxedOverload = isBoxedOverload,
                     jvmDescriptor = (declarations as? JavaClass)?.jvmDescriptorOf(member.declaration)
                 )
             )
@@ -2658,36 +2660,39 @@ internal class DefaultKotlinIntrospector(
      *   with `put(key: Int)`, one intersection override through a bridge, but never a nullable one, like the `Integer`
      *   of `put(key: Int?)`, nor the one of `G<Int?>`, as a Java primitive type is never a platform type, nor one of a Java member,
      *   like `put(Integer)`, or `put(T)` of a Java class given `Integer`, nor of a JVM-only member, like `putIfAbsent` of `MutableMap`,
-     *   nor, with the primitive type of a Java member, like `put(int)`, the one taking a platform type, [isPlatform], or [isOtherPlatform],
-     *   like `put(t: T)` of `G<T>` given `Integer` by a Java class, though it is merged with the one of a Kotlin member, like `put(key: Int)`,
+     *   nor, with the primitive type of a Java member, like `put(int)`, the one taking the type argument a Java class gives,
+     *   [isJavaGiven], or [isOtherJavaGiven], see [InheritedCandidate.takesJavaTypeArguments],
+     *   like `put(t: T)` of `G<T>` given `Integer` by a Java class, also annotated not null, like `G<@NotNull Integer>`,
+     *   though it is merged with the one of a Kotlin member, like `put(key: Int)`,
      * - of arrays of reference types, like `Array<IntArray>` with the `Array<T>` of `G<IntArray>`,
      *   as an array of a primitive type is never merged with another one,
      *   like the `IntArray` of `vararg key: Int` with the `Array<out Int>` of `vararg t: T` of `G<Int>`,
      * - of reference types otherwise, like the `Object` of `put(T)` of a Java class with the `Integer` of `put(Integer)`,
      *   but a boxed type of a Java member, like `put(Integer)`, also annotated not null, with the erased one of a Kotlin member
-     *   which is not nullable, like `put(t: T)` of `G<Int>`, unlike of `G<Int?>`.
+     *   which is not nullable, like `put(t: T)` of `G<Int>`, unlike of `G<Int?>`, or of the one taking the type argument
+     *   a Java class gives, like of `G<Integer>`, one member taking `Int!`, or of `G<@NotNull Integer>`, one taking `Int`.
      */
     private fun isMergedJvmParameter(
         parameter: JvmParameter,
         other: JvmParameter,
-        isPlatform: Boolean,
-        isOtherPlatform: Boolean
+        isJavaGiven: Boolean,
+        isOtherJavaGiven: Boolean
     ): Boolean {
-        fun JvmParameter.isBoxedJavaAgainst(kotlin: JvmParameter) =
-            isJava && type.internalName in BOXED_JVM_NAMES && !kotlin.isJava && !kotlin.isNullable
+        fun JvmParameter.isBoxedJavaAgainst(kotlin: JvmParameter, isKotlinJavaGiven: Boolean) =
+            isJava && type.internalName in BOXED_JVM_NAMES && !kotlin.isJava && !kotlin.isNullable && !isKotlinJavaGiven
         return when {
             parameter.type == other.type -> true
             parameter.type.isPrimitive || other.type.isPrimitive -> {
                 val isPrimitiveFirst = parameter.type.isPrimitive
                 val primitive = if (isPrimitiveFirst) parameter else other
                 val reference = if (isPrimitiveFirst) other else parameter
-                val isReferencePlatform = if (isPrimitiveFirst) isOtherPlatform else isPlatform
+                val isReferenceJavaGiven = if (isPrimitiveFirst) isOtherJavaGiven else isJavaGiven
                 !reference.isJava && !reference.isNullable && reference.type.sort == AsmType.OBJECT &&
-                    !(primitive.isJava && isReferencePlatform)
+                    !(primitive.isJava && isReferenceJavaGiven)
             }
             parameter.type.sort == AsmType.ARRAY && other.type.sort == AsmType.ARRAY ->
                 !parameter.type.isPrimitiveArray && !other.type.isPrimitiveArray
-            else -> !parameter.isBoxedJavaAgainst(other) && !other.isBoxedJavaAgainst(parameter)
+            else -> !parameter.isBoxedJavaAgainst(other, isOtherJavaGiven) && !other.isBoxedJavaAgainst(parameter, isJavaGiven)
         }
     }
 
@@ -2701,9 +2706,19 @@ internal class DefaultKotlinIntrospector(
 
     /**
      * The member contributed by a direct supertype, reached by the [reach], which [takesPlatformTypes],
-     * or [returnsPlatformType], see [inheritedCandidates].
+     * but at the [givenPositions], see [InheritedCandidate.givenPositions], or [returnsPlatformType], see [inheritedCandidates].
      */
-    private class Contribution(val reach: Reach, val takesPlatformTypes: Boolean, val returnsPlatformType: Boolean)
+    private class Contribution(
+        val reach: Reach,
+        val takesPlatformTypes: Boolean,
+        val returnsPlatformType: Boolean,
+        val givenPositions: Set<Int> = emptySet()
+    ) {
+
+        // whether a Java class gives the type arguments the member takes, see InheritedCandidate.takesJavaTypeArguments
+        val takesJavaTypeArguments: Boolean get() = takesPlatformTypes || givenPositions.isNotEmpty()
+
+    }
 
     /**
      * A [member] named like the one looked up, declared by a supertype, the [kmClass] of the [declarations],
@@ -2845,9 +2860,18 @@ internal class DefaultKotlinIntrospector(
         /**
          * The [classTypeParameterPositions] which take the type arguments as given, though the [member] [takesPlatformTypes],
          * of the type parameters of a Java class marked by `@NullMarked`, of bounds which are not nullable,
-         * next to the ones of nullable bounds, see [givesPlatformTypeArguments].
+         * next to the ones of nullable bounds, or of the type arguments annotated, like the `@NotNull Integer`
+         * of `GenericPut<@NotNull Integer>`, see [givesPlatformTypeArguments].
          */
         var givenPositions: Set<Int> = emptySet()
+
+        /**
+         * Whether a Java class gives the type arguments the Kotlin [member] takes at the [classTypeParameterPositions],
+         * as platform types, see [takesPlatformTypes], or as given, like the ones annotated not null, see [givenPositions],
+         * like the `Int` of `put(t: T)` of `GenericPut<@NotNull Integer>`, which K2 still tells from the `int` of a Java `put(int)`,
+         * see [isMergedJvmParameter].
+         */
+        var takesJavaTypeArguments: Boolean = false
 
         /**
          * The positions of the value parameters of the [member] whose declared types are type parameters of its class,
@@ -2962,6 +2986,14 @@ internal class DefaultKotlinIntrospector(
          * though the override resolver does not tell, see [inheritedCandidates].
          */
         var isJvmOnlyOverride: Boolean = false
+
+        /**
+         * Whether the [member], of a Java class, overrides no member for K2, though it overrides a JDK method on the JVM,
+         * taking a boxed type where a Kotlin class gives a primitive type for the type parameter of the member of a built-in type,
+         * like the `set(int, Integer)` of a Java subclass of `abstract class KIntList : AbstractMutableList<Int>()`,
+         * the `set(int, Object)` of `java.util.List`, a member of its own, see [inheritedCandidates].
+         */
+        var isBoxedOverload: Boolean = false
 
         // the function returning a type which is not nullable, which might be a platform type, see returnsPlatformType
         private val platformCandidate: KmFunction? by lazy(LazyThreadSafetyMode.NONE) {
@@ -3114,30 +3146,32 @@ internal class DefaultKotlinIntrospector(
 
         // whether the value parameters of the JVM methods of both members are merged position by position, where both are told
         private fun isMergedOnJvm(other: InheritedCandidate): Boolean {
-            val parameters = jvmParameters ?: return true
-            val otherParameters = other.jvmParameters ?: return true
+            val parameters = jvmParametersAgainst(other) ?: return true
+            val otherParameters = other.jvmParametersAgainst(this) ?: return true
             return parameters.size != otherParameters.size || parameters.indices.all { index ->
                 val parameter = parameters[index]
                 val otherParameter = otherParameters[index]
                 parameter == null || otherParameter == null ||
-                    isMergedJvmParameter(parameter, otherParameter, index in platformPositions, index in other.platformPositions)
+                    isMergedJvmParameter(parameter, otherParameter, isJavaGivenPosition(index), other.isJavaGivenPosition(index))
             }
         }
 
-        // the positions of the value parameters of a Kotlin member taking the platform types a Java class gives,
-        // see takesPlatformTypes, unless it stands for the method of the Java class implementing it, see isMergedJvmParameter
-        private val platformPositions: Set<Int>
-            get() = if (!takesPlatformTypes || declarations is JavaClass || jvmMethod != null || implementingJvmMethod != null) {
-                emptySet()
-            } else {
-                classTypeParameterPositions - givenPositions
-            }
+        // whether the value parameter at the position, of a Kotlin member, takes the type argument a Java class gives,
+        // see takesJavaTypeArguments, unless the member stands for the method of the Java class implementing it, see isMergedJvmParameter,
+        // told on each merge, as the JVM parameters are cached before takesJavaTypeArguments is told, see inheritedCandidates
+        private fun isJavaGivenPosition(position: Int): Boolean =
+            takesJavaTypeArguments && declarations !is JavaClass && jvmMethod == null && implementingJvmMethod == null &&
+                position in classTypeParameterPositions
 
         // a JVM-only member is a Java method of its own, see jvmMethod, merged like the members of a Java class,
         // and so is a member standing for the method of the Java class implementing it, see implementingJvmMethod,
-        // told while the Java candidates are walked, see inheritedCandidates, which asks isMergedWith only afterwards
-        private val jvmParameters: List<JvmParameter?>?
-            get() = if (implementingJvmMethod == null) declaredJvmParameters else implementingJvmParameters
+        // told while the Java candidates are walked, see inheritedCandidates, which asks isMergedWith only afterwards,
+        // but against a Java method K2 tells from the member itself by a boxed type, see isBoxedOverload,
+        // which stays apart from it, whatever implements it, like the add(Integer) of a Java subclass of
+        // `abstract class KIntList : AbstractMutableList<Int>()` from the add(element: Int) of MutableList,
+        // which the add(Object) of java.util.AbstractList implements
+        private fun jvmParametersAgainst(other: InheritedCandidate): List<JvmParameter?>? =
+            if (implementingJvmMethod == null || other.isBoxedOverload) declaredJvmParameters else implementingJvmParameters
 
         // the value parameters of the JVM method of the function, see JvmParameter, by its JVM signature,
         // of a member of a Java class, or of a JVM-only member, or else told by the metadata,
@@ -3333,6 +3367,7 @@ internal class DefaultKotlinIntrospector(
                     inheritedBy = kmClass.kind,
                     typeParameters = candidate.typeParameters,
                     isJvmOnlyOverride = candidate.isJvmOnlyOverride,
+                    isBoxedOverload = candidate.isBoxedOverload,
                     inheriting = kmClass to declarations
                 )
             )
@@ -3718,6 +3753,7 @@ internal class DefaultKotlinIntrospector(
             val given = picked?.let { givenPositions(candidate, it) }.orEmpty()
             candidate.takesPlatformTypes = picked?.isPlatform == true && given != candidate.classTypeParameterPositions
             candidate.givenPositions = given
+            candidate.takesJavaTypeArguments = picked?.isPlatform == true
         }
         candidates.filter { it.declarations is JavaClass && it.classTypeParameterPositions.isNotEmpty() }.forEach(::pickPlatformTypes)
         // the method of a Java class is merged alike with the methods of the Java supertypes it overrides, each contributed
@@ -3810,7 +3846,14 @@ internal class DefaultKotlinIntrospector(
             val contributions = reaches(rivalsByClass.keys + candidate.name).map { reach ->
                 val rival = rivalsByClass[reach.name]?.first()
                 if (rival == null) {
-                    Contribution(reach, reach.isPlatform && positions.isNotEmpty(), reach.isPlatform && candidate.returnsClassTypeParameter)
+                    // but the type arguments the Java class gives annotated, like the @NotNull Integer of GenericPut<@NotNull Integer>
+                    val given = if (positions.isEmpty()) emptySet() else givenPositions(candidate, reach)
+                    Contribution(
+                        reach,
+                        takesPlatformTypes = reach.isPlatform && positions.isNotEmpty() && given != positions,
+                        returnsPlatformType = reach.isPlatform && candidate.returnsClassTypeParameter,
+                        givenPositions = given
+                    )
                 } else {
                     val parameters = (rival.member as? Member.Function)?.function?.valueParameters
                     val takesPlatformTypes = positions.any { parameters?.getOrNull(it)?.type?.isNullable == true } ||
@@ -3830,6 +3873,8 @@ internal class DefaultKotlinIntrospector(
             } else {
                 candidate.keepsKotlinTypes = !picked.takesPlatformTypes
                 candidate.takesPlatformTypes = picked.takesPlatformTypes
+                candidate.givenPositions = picked.givenPositions
+                candidate.takesJavaTypeArguments = picked.takesJavaTypeArguments
                 // returning a platform type then, which an unrelated member merged with it, returning the type it declares,
                 // wins over, like the get(index: Int) of a Kotlin interface over the one of List of a subclass of a Java subclass
                 // of java.util.AbstractList<String>, returning String!, though contributed after it, see listed,
@@ -3931,8 +3976,21 @@ internal class DefaultKotlinIntrospector(
             ) {
                 overriddenBelow += candidate
             }
+            // but the method taking a boxed type where a Kotlin class gives a primitive type for the type parameter of the member
+            // of a built-in type, which it does not override then, see OverrideResolver.overriddenMembers, a member of its own,
+            // like the set(int, Integer) of a Java subclass of `abstract class KIntList : AbstractMutableList<Int>()`, taking Int!,
+            // next to the abstract set(index: Int, element: Int), though it overrides the set(int, Object) of java.util.List on the JVM
+            val isBoxedOverload = lazy(LazyThreadSafetyMode.NONE) {
+                candidate.jvmMethod?.signature?.descriptor
+                    ?.let { descriptor -> AsmType.getArgumentTypes(descriptor).any { it.sort == AsmType.OBJECT && it.internalName in BOXED_JVM_NAMES } } == true &&
+                    kotlinCandidates.any { kotlin ->
+                        kotlin.jvmMethod == null && kotlin.member is Member.Function && kotlin.rivalrySignatures.matches(candidate.rivalrySignatures)
+                    }
+            }
+            val overridesHiddenJdkMethod = candidate.overridden.isEmpty() && candidate.overridesHiddenJdkMethod(exposedJdkMethods)
+            if (overridesHiddenJdkMethod && isBoxedOverload.value) candidate.isBoxedOverload = true
             val isRemoved = implemented.isNotEmpty() ||
-                (candidate.overridden.isEmpty() && candidate.overridesHiddenJdkMethod(exposedJdkMethods)) ||
+                (overridesHiddenJdkMethod && !candidate.isBoxedOverload) ||
                 standingJvmOnly.isNotEmpty() ||
                 method.value?.let { overridesHiddenJdkMethod(it) } == true ||
                 isOverriddenBelow.value
@@ -4368,8 +4426,12 @@ internal class DefaultKotlinIntrospector(
             val throughApi = ArrayList<InheritedCandidate>()
             candidates.forEach { candidate ->
                 val apiClass = inheritedThroughApi[candidate.name]
-                if (apiClass == null || candidate.isApi || candidate.isHidden ||
-                    candidate.key in overridden || candidate.signature in untoldOverrideSignatures ||
+                if (apiClass == null || candidate.isApi || candidate.isHidden) return@forEach
+                // told first, as a member taking the platform type a Java class gives is not merged with its method
+                // taking the primitive type, see isMergedJvmParameter, like the put(t: T) of an internal class
+                // given Integer with put(int)
+                if (candidate.classTypeParameterPositions.isNotEmpty()) pickPlatformTypes(candidate)
+                if (candidate.key in overridden || candidate.signature in untoldOverrideSignatures ||
                     walked.any { it !== candidate && it.overrides(candidate) } ||
                     (walked.any { it.isHidden && it.isMergedWith(candidate) } && !isPickedOverHidden(candidate)) ||
                     (listed + throughApi).any { it.isMergedWith(candidate) } ||
@@ -4378,7 +4440,6 @@ internal class DefaultKotlinIntrospector(
                     return@forEach
                 }
                 candidate.inheritedThrough = apiClass.takeUnless { it == kmClass.name }
-                if (candidate.classTypeParameterPositions.isNotEmpty()) pickPlatformTypes(candidate)
                 throughApi += candidate
             }
             if (throughApi.isEmpty()) return listed
@@ -10067,6 +10128,8 @@ internal class DefaultKotlinIntrospector(
      *   when the rendered one is a copy with the type arguments of an inheriting class substituted, see [inheritedMembers].
      * @param isJvmOnlyOverride whether the [function] is an override of a JVM-only member of a built-in type,
      *   which the [owner] does not tell, see [InheritedCandidate.isJvmOnlyOverride].
+     * @param isBoxedOverload whether the [function] is no override, though the [owner] tells one,
+     *   see [InheritedCandidate.isBoxedOverload].
      * @param jvmDescriptor the JVM descriptor of the Java method of the [function], if it is one,
      *   telling its overrides by its primitive types, see [OverrideResolver.overriddenMembers].
      */
@@ -10086,6 +10149,7 @@ internal class DefaultKotlinIntrospector(
         isInheritedByFinalClass: Boolean = false,
         declaration: KmFunction = function,
         isJvmOnlyOverride: Boolean = false,
+        isBoxedOverload: Boolean = false,
         jvmDescriptor: String? = null
     ): String = buildString {
         val typeParameters = classTypeParameters.withDeclared(function.typeParameters)
@@ -10101,7 +10165,8 @@ internal class DefaultKotlinIntrospector(
 
         val override = override(owner, declaration, jvmDescriptor)
         +formatModalityModifiers(
-            function.modality, override != null || isJvmOnlyOverride, inInterface, isOwnerOpenForOverrides, isInheritedByFinalClass
+            function.modality, (override != null || isJvmOnlyOverride) && !isBoxedOverload,
+            inInterface, isOwnerOpenForOverrides, isInheritedByFinalClass
         )
 
         // Function-specific modifiers

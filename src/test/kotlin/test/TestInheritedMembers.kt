@@ -628,6 +628,8 @@ interface MidPut<T> : GenericPut<T>
 
 abstract class BoxedJavaIntPutImpl : com.xemantic.kotlin.introspection.test.other.JavaBoxedIntPut()
 
+abstract class PrimitiveJavaIntPutImpl : com.xemantic.kotlin.introspection.test.other.JavaPrimitiveIntPut()
+
 abstract class EmptyJavaStringPutImpl : com.xemantic.kotlin.introspection.test.other.JavaEmptyStringPut()
 
 abstract class PrimitiveJavaIntegerPutImpl : com.xemantic.kotlin.introspection.test.other.JavaPrimitiveIntegerPut()
@@ -646,6 +648,22 @@ abstract class PrimitiveAndBoxedJavaIntPutImpl : com.xemantic.kotlin.introspecti
 abstract class PrimitiveJavaIntPutOverBoxedImpl : com.xemantic.kotlin.introspection.test.other.JavaPrimitiveIntPutOverBoxed()
 
 abstract class BoxedJavaIntPutOverPrimitiveImpl : com.xemantic.kotlin.introspection.test.other.JavaBoxedIntPutOverPrimitive()
+
+// the put(Integer) of JavaBoxedPut is merged with the put(t: T) of GenericPut, given Integer by the Java interface, both taking Int!
+abstract class BoxedJavaIntegerPutInterfaceJoin : com.xemantic.kotlin.introspection.test.other.JavaBoxedPut(), com.xemantic.kotlin.introspection.test.other.JavaIntegerPutInterface
+
+abstract class NotNullBoxedJavaIntegerPutInterfaceJoin : com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPut(), com.xemantic.kotlin.introspection.test.other.JavaIntegerPutInterface
+
+abstract class BoxedJavaIntegerAndIntPutImpl : com.xemantic.kotlin.introspection.test.other.JavaBoxedIntegerAndIntPut()
+
+abstract class PrimitiveJavaNotNullIntegerPutImpl : com.xemantic.kotlin.introspection.test.other.JavaPrimitiveNotNullIntegerPut()
+
+// the put(Integer) of JavaBoxedPut is merged with the put(t: T) of GenericPut, given Integer annotated not null, taking Int
+abstract class BoxedJavaNotNullIntegerPutInterfaceJoin : com.xemantic.kotlin.introspection.test.other.JavaBoxedPut(), com.xemantic.kotlin.introspection.test.other.JavaNotNullIntegerPutInterface
+
+abstract class IntMutableList : AbstractMutableList<Int>()
+
+abstract class BoxedJavaIntMutableListImpl : com.xemantic.kotlin.introspection.test.other.JavaBoxedIntMutableList()
 
 abstract class GenericPutImplementation<T> : GenericPut<T> {
     override fun put(t: T): String = ""
@@ -1036,6 +1054,8 @@ class JavaBoxedPutBelowInternalPrimitiveConcrete : JavaBoxedPutBelowInternalPrim
 internal abstract class InternalGenericPut<T> {
     abstract fun put(t: T): Int
 }
+
+abstract class PrimitiveJavaInternalIntegerPutImpl : com.xemantic.kotlin.introspection.test.other.JavaPrimitiveInternalIntegerPut()
 
 abstract class JavaNotImplementingInternalGenericPutSub : com.xemantic.kotlin.introspection.test.other.JavaNotImplementingInternalGenericPut()
 
