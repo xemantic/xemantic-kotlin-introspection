@@ -2065,6 +2065,124 @@ class OverrideResolverTest {
         assert(overrides == listOf(true, false))
     }
 
+    /**
+     * A class implementing a Java interface declaring only `sh(String)`, the JVM method of its override `sh(p/ext/Event, p/lib/Event)`
+     * removed together with the method of the interface it overrides, like by R8, next to the `@JvmOverloads` function
+     * `sh(p/ext/Event, p/lib/sub/Event, Int)`, with the JVM-only method `sh(p/ext/Event, p/lib/sub/Event)`,
+     * as the JVM methods of its class file, found by the name [owner], name the [event] of `p/ext/` and the [subEvent] of `p/lib/sub/`,
+     * the interface found by the name [listener], and the Kotlin [classes] by their JVM names.
+     */
+    private fun shrunkOverrideNextToJvmOverloads(
+        owner: String,
+        listener: String,
+        event: String,
+        subEvent: String,
+        classes: Map<String, KmClass>
+    ): List<Boolean> {
+        val ownerClass = kmClass("p/app/Owner", supertype = listener.removePrefix("shaded/").removePrefix("p/app/shaded/")).apply {
+            functions += functionTaking("sh", "p/ext/Event", "p/lib/Event")
+            functions += functionTaking("sh", "p/ext/Event", "p/lib/sub/Event", "kotlin/Int")
+        }
+        // no supertype is missing, which would call for comparing the JVM methods
+        val resolver = overrideResolver(
+            builtinClasses = mapOf("kotlin/Any" to kmClass("kotlin/Any")),
+            classes = classes,
+            loadClass = { name -> Any::class.java.takeIf { name == "java/lang/Object" } },
+            classFiles = mapOf(
+                owner to classFile(
+                    owner, listOf("sh(L$event;L$subEvent;Lkotlin/Int;)V", "sh(L$event;L$subEvent;)V"), interfaces = listOf(listener)
+                )
+            ),
+            unloadableClassFiles = mapOf(listener to classFile(listener, listOf("sh(Ljava/lang/String;)V"), isInterface = true))
+        )
+        return ownerClass.functions.map { resolver.isOverride(OverrideResolver.Owner(ownerClass, owner), it) }
+    }
+
+    @Test
+    fun `should not take member for shrunk override next to JVM method naming its relocated Kotlin class when nothing else tells relocation`() {
+        // when
+        // like an app shading only p/ext/, to p/app/shaded/p/ext/, its Java interface p/app/JListener taking no class which might be relocated
+        val overrides = shrunkOverrideNextToJvmOverloads(
+            owner = "p/app/Owner",
+            listener = "p/app/JListener",
+            event = "p/app/shaded/p/ext/Event",
+            subEvent = "p/lib/sub/Event",
+            classes = kotlinClasses("p/app/shaded/p/ext/Event" to "p/ext/Event", "p/lib/sub/Event" to "p/lib/sub/Event")
+        )
+
+        // then
+        // the JVM method naming p/app/shaded/p/ext/Event, the Kotlin class whose own metadata tells p/ext/Event,
+        // is the one of the @JvmOverloads function, which is not shrunk then, unlike the override
+        assert(overrides == listOf(true, false))
+    }
+
+    @Test
+    fun `should tell shrunk override of relocated owner next to JVM method of no member naming another Kotlin class of its simple name`() {
+        // when
+        // like an app relocated with its dependencies, from p/ to shaded/p/
+        val overrides = shrunkOverrideNextToJvmOverloads(
+            owner = "shaded/p/app/Owner",
+            listener = "shaded/p/app/JListener",
+            event = "shaded/p/ext/Event",
+            subEvent = "shaded/p/lib/sub/Event",
+            classes = kotlinClasses("shaded/p/ext/Event" to "p/ext/Event", "shaded/p/lib/sub/Event" to "p/lib/sub/Event")
+        )
+
+        // then
+        // the JVM-only method names shaded/p/lib/sub/Event, the Kotlin class whose own metadata tells p/lib/sub/Event,
+        // so it is not the relocated JVM method of the override, taking p/lib/Event, which is shrunk then, as without relocation
+        assert(overrides == listOf(true, false))
+    }
+
+    @Test
+    fun `should tell shrunk override of relocated Java supertype next to JVM method of no member when no Java member of its name takes its classes`() {
+        // when
+        // like an app shading its dependencies, relocating p/lib/ to p/app/shaded/p/lib/
+        val overrides = shrunkOverrideNextToJvmOverloads(
+            owner = "p/app/Owner",
+            listener = "p/app/shaded/p/lib/JListener",
+            event = "p/ext/Event",
+            subEvent = "p/app/shaded/p/lib/sub/Event",
+            classes = kotlinClasses("p/ext/Event" to "p/ext/Event", "p/app/shaded/p/lib/sub/Event" to "p/lib/sub/Event")
+        )
+
+        // then
+        // the JVM methods are compared with the JVM signatures of the metadata, telling the relocation, but the JVM method of no member
+        // is told only when it would be without relocation, so that the member is a shrunk override, as it is there
+        assert(overrides == listOf(true, false))
+    }
+
+    @Test
+    fun `should tell relocated Java supertype next to shrunk override paired with JVM method naming Kotlin class which the metadata does not`() {
+        // given
+        // like an app shading its dependencies, relocating p/lib/ to p/app/shaded/p/lib/, the override on(p/ext/Event, p/lib/Event)
+        // shrunk away, next to the JVM-only method of a @JvmStatic function of its companion object, taking p/lib/sub/Event,
+        // which no member of the class takes
+        val shaded = "p/app/shaded/p/lib"
+        val owner = kmClass("p/app/Owner", supertype = "p/lib/JListener").apply {
+            functions += functionTaking("on", "p/lib/Other")
+            functions += functionTaking("on", "p/ext/Event", "p/lib/Event")
+        }
+        val resolver = overrideResolver(
+            classes = kotlinClasses("$shaded/sub/Event" to "p/lib/sub/Event", "p/ext/Event" to "p/ext/Event"),
+            classFiles = mapOf(
+                "p/app/Owner" to classFile(
+                    "p/app/Owner", listOf("on(L$shaded/Other;)V", "on(Lp/ext/Event;L$shaded/sub/Event;)V"), interfaces = listOf("$shaded/JListener")
+                )
+            ),
+            unloadableClassFiles = mapOf("$shaded/JListener" to classFile("$shaded/JListener", listOf("on(L$shaded/Other;)V"), isInterface = true))
+        )
+
+        // when
+        val overrides = owner.functions.map { resolver.isOverride(OverrideResolver.Owner(owner), it) }
+
+        // then
+        // the JVM-only method names the Kotlin class whose own metadata tells p/lib/sub/Event, so it is not paired
+        // with the shrunk member, which would name p/lib/Event so, relocating p/lib/ to two packages, and telling none,
+        // nor is it the relocated JVM method of the shrunk member, a shrunk override then, as without relocation
+        assert(overrides == listOf(true, true))
+    }
+
     @Test
     fun `should tell override of relocated Java supertype next to shrunk overload paired with JVM method naming class of subpackage`() {
         // given
@@ -2095,6 +2213,156 @@ class OverrideResolverTest {
         // the JVM-only method names the Kotlin class whose own metadata tells p/lib/sub/Event,
         // so it is not paired with the shrunk overload, which would name p/lib/Event so, relocating p/lib/ to two packages
         assert(overrides == listOf(true, false, false))
+    }
+
+    @Test
+    fun `should tell relocated Java supertype next to shrunk overload paired with JVM method naming class which tells no name`() {
+        // given
+        // like an app shading its dependencies, relocating p/lib/ to p/app/shaded/p/lib/, the overload on(p/ext/Event, p/lib/Event)
+        // shrunk away, next to the JVM-only method of a @JvmOverloads function, the only one of its shape,
+        // taking a class which is not found, or a Java class, so that it does not tell its name, as a Kotlin class would
+        val shaded = "p/app/shaded/p/lib"
+        val owner = kmClass("p/app/Owner", supertype = "p/lib/JListener").apply {
+            functions += functionTaking("on", "p/lib/Other")
+            functions += functionTaking("on", "p/ext/Event", "p/lib/Event")
+            functions += functionTaking("on", "p/ext/Event", "p/lib/sub/Event", "kotlin/Int")
+        }
+        val resolver = overrideResolver(
+            classFiles = mapOf(
+                "p/app/Owner" to classFile(
+                    "p/app/Owner",
+                    listOf("on(L$shaded/Other;)V", "on(Lp/ext/Event;L$shaded/sub/Event;Lkotlin/Int;)V", "on(Lp/ext/Event;L$shaded/sub/Event;)V"),
+                    interfaces = listOf("$shaded/JListener")
+                )
+            ),
+            unloadableClassFiles = mapOf("$shaded/JListener" to classFile("$shaded/JListener", listOf("on(L$shaded/Other;)V"), isInterface = true))
+        )
+
+        // when
+        val overrides = owner.functions.map { resolver.isOverride(OverrideResolver.Owner(owner), it) }
+
+        // then
+        // the JVM-only method, paired with the shrunk overload, would tell p/lib/Event relocated to p/app/shaded/p/lib/sub/,
+        // against the Java interface, which the class file names p/app/shaded/p/lib/JListener, telling the package
+        assert(overrides == listOf(true, false, false))
+    }
+
+    @Test
+    fun `should tell override of Java supertype taking class relocated apart from its package next to the original ones`() {
+        // given
+        // like an app shading its dependencies, relocating p/lib/ to p/app/shaded/p/lib/, but p/lib/Other to zz/Other,
+        // next to the original Java interface
+        val shaded = "p/app/shaded/p/lib"
+        val owner = kmClass("p/app/Owner", supertype = "p/lib/JListener").apply {
+            functions += functionTaking("on", "p/lib/Other")
+        }
+        val resolver = overrideResolver(
+            classes = kotlinClasses("zz/Other" to "p/lib/Other"),
+            classFiles = mapOf("p/app/Owner" to classFile("p/app/Owner", listOf("on(Lzz/Other;)V"), interfaces = listOf("$shaded/JListener"))),
+            unloadableClassFiles = mapOf(
+                "$shaded/JListener" to classFile("$shaded/JListener", listOf("on(Lzz/Other;)V"), isInterface = true),
+                "p/lib/JListener" to classFile("p/lib/JListener", listOf("on(Lp/lib/Other;)V"), isInterface = true)
+            )
+        )
+
+        // when
+        val isOverride = resolver.isOverride(OverrideResolver.Owner(owner), owner.functions.single())
+
+        // then
+        // the class named zz/Other is not left out for the package the Java interface tells, which would find the relocated interface,
+        // taking a class which nothing tells to be p/lib/Other: p/lib/, relocated to two packages, is not told, as before
+        assert(isOverride)
+    }
+
+    @Test
+    fun `should not take member for shrunk override next to JVM methods naming Java class of package relocated to the one of the metadata`() {
+        // given
+        // like an app shading its dependencies, relocating p/lib/sub/ to p/lib/, and p/lib/ to p/lib/old/,
+        // the override sh(p/ext/JEvent, p/lib/JEv) shrunk away, next to the @JvmOverloads function taking p/lib/sub/JEv, a Java class,
+        // which the JVM methods name p/lib/JEv, like the class of the shrunk member
+        val owner = kmClass("p/app/Owner", supertype = "p/lib/JListener").apply {
+            functions += functionTaking("sh", "p/ext/JEvent", "p/lib/JEv")
+            functions += functionTaking("sh", "p/ext/JEvent", "p/lib/sub/JEv", "kotlin/Int")
+        }
+        // no supertype is missing, which would call for comparing the JVM methods also without relocation
+        val resolver = overrideResolver(
+            builtinClasses = mapOf("kotlin/Any" to kmClass("kotlin/Any")),
+            loadClass = { name -> Any::class.java.takeIf { name == "java/lang/Object" } },
+            classFiles = mapOf(
+                "p/app/Owner" to classFile(
+                    "p/app/Owner",
+                    listOf("sh(Lp/ext/JEvent;Lp/lib/JEv;Lkotlin/Int;)V", "sh(Lp/ext/JEvent;Lp/lib/JEv;)V"),
+                    interfaces = listOf("p/lib/old/JListener")
+                )
+            ),
+            unloadableClassFiles = mapOf(
+                "p/lib/old/JListener" to classFile("p/lib/old/JListener", listOf("sh(Ljava/lang/String;)V"), isInterface = true)
+            )
+        )
+
+        // when
+        val isOverride = resolver.isOverride(OverrideResolver.Owner(owner), owner.functions[1])
+
+        // then
+        // nothing tells the JVM method of no member apart from the one of the @JvmOverloads function, which is not shrunk then
+        assert(!isOverride)
+    }
+
+    @Test
+    fun `should tell override of Java supertype taking Kotlin class of package relocated to the one of another class of the metadata`() {
+        // given
+        // like an app shading its dependencies, relocating p/lib/sub/ to p/lib/, and p/lib/ to p/lib/old/
+        val owner = kmClass("p/app/Owner", supertype = "p/lib/JListener").apply {
+            functions += functionTaking("more", "p/lib/sub/Event")
+            functions += functionTaking("more", "p/lib/Event")
+        }
+        val resolver = overrideResolver(
+            classes = kotlinClasses("p/lib/Event" to "p/lib/sub/Event", "p/lib/old/Event" to "p/lib/Event"),
+            classFiles = mapOf(
+                "p/app/Owner" to classFile(
+                    "p/app/Owner", listOf("more(Lp/lib/Event;)V", "more(Lp/lib/old/Event;)V"), interfaces = listOf("p/lib/old/JListener")
+                )
+            ),
+            unloadableClassFiles = mapOf(
+                "p/lib/old/JListener" to classFile("p/lib/old/JListener", listOf("more(Lp/lib/Event;)V"), isInterface = true)
+            )
+        )
+
+        // when
+        val isOverride = resolver.isOverride(OverrideResolver.Owner(owner), owner.functions.first())
+
+        // then
+        // the Kotlin class found by the name p/lib/Event tells that it is p/lib/sub/Event, by its own metadata
+        assert(isOverride)
+    }
+
+    @Test
+    fun `should tell shrunk override next to own JVM method of another member taking the relocated class by its JVM name`() {
+        // given
+        // a class compiled against a shaded jar, its member sh(p/app/shaded/p/ext/Event) declared as its metadata tells,
+        // next to the member sh(p/ext/Event), whose JVM method is removed
+        val owner = kmClass("p/app/Owner", supertype = "p/app/JListener").apply {
+            functions += functionTaking("sh", "p/ext/Event")
+            functions += functionTaking("sh", "p/app/shaded/p/ext/Event")
+        }
+        val resolver = overrideResolver(
+            builtinClasses = mapOf("kotlin/Any" to kmClass("kotlin/Any")),
+            classes = kotlinClasses("p/app/shaded/p/ext/Event" to "p/ext/Event"),
+            loadClass = { name -> Any::class.java.takeIf { name == "java/lang/Object" } },
+            classFiles = mapOf(
+                "p/app/Owner" to classFile("p/app/Owner", listOf("sh(Lp/app/shaded/p/ext/Event;)V"), interfaces = listOf("p/app/JListener"))
+            ),
+            unloadableClassFiles = mapOf(
+                "p/app/JListener" to classFile("p/app/JListener", listOf("sh(Ljava/lang/String;)V"), isInterface = true)
+            )
+        )
+
+        // when
+        val overrides = owner.functions.map { resolver.isOverride(OverrideResolver.Owner(owner), it) }
+
+        // then
+        // the JVM method is the one of the other member, not the relocated one of the member removed
+        assert(overrides == listOf(true, false))
     }
 
     @Test
