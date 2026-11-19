@@ -590,7 +590,9 @@ com.example.AnnotationTestClass
     or the class still declares a JVM method of the same name, and of types of the same simple names,
     which is the JVM method of none of its members, like the one of a `@JvmOverloads` or a `@JvmStatic` function,
     next to which the member is not marked,
-    when the class refers to relocated classes, or might, like when a Java member of the same name takes a class of a library.
+    when the class might refer to relocated classes:
+    when a supertype is not found, or a member of the class overrides none of the Java members of its name taking a class of a library —
+    whether the classes are relocated or not, so that a relocated class is told like the original one.
 * The whole classpath visible to the given class loader is scanned on creation, which takes a while,
   so the instance should be created once and reused.
   The scan can be disabled with `KotlinIntrospector(scanEntireClasspath = false)`,

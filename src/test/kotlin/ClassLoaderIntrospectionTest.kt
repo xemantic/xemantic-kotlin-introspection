@@ -715,6 +715,43 @@ class ClassLoaderIntrospectionTest {
         """.trimIndent()
     }
 
+    @Test
+    fun `should name relocated Java class taken by member of Java supertype of indirect supertype next to supertype relocated elsewhere`() {
+        // given
+        // like by shading two libraries, the Kotlin interface to shaded/, as the class file of the class implementing it tells,
+        // and the Java class of the subpackage, with the Java class its method takes, to other/, as only the class file of the superclass tells
+        val isolated = "com/xemantic/kotlin/introspection/isolated"
+        val relocated = mapOf(
+            "$isolated/RelocatedDefaultInterface" to "shaded/$isolated/RelocatedDefaultInterface",
+            "$isolated/sub/RelocatedArgJavaBase" to "other/$isolated/sub/RelocatedArgJavaBase",
+            "$isolated/sub/RelocatedSubJavaArg" to "other/$isolated/sub/RelocatedSubJavaArg"
+        )
+        val root = isolatedTestFixturesCopy(
+            "relocatedTwoLibraries", "RelocatedDefaultInterface.class", "RelocatedArgJavaBase.class", "RelocatedSubJavaArg.class"
+        ) { fileName, bytes ->
+            if (fileName.endsWith(".class")) withRelocatedNames(bytes, relocated::get) else bytes
+        }
+        relocated.forEach { (name, relocatedName) ->
+            val original = isolatedTestFixtures.map { it.resolve("$name.class") }.single { it.exists() }
+            val target = root.resolve("$relocatedName.class")
+            target.parent.createDirectories()
+            target.writeBytes(withRelocatedNames(original.readBytes(), relocated::get))
+        }
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.RelocatedTwoLibrariesImpl.ja")
+
+        // then
+        // the relocation the Kotlin superclass tells, by the name it refers to the Java class by, is not left out
+        // for the one the class itself tells, so that the Java class, telling no name itself, is named as the metadata would
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.RelocatedTwoLibrariesImpl.ja [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.isolated.sub.RelocatedArgJavaBase
+            fun ja(arg0: com.xemantic.kotlin.introspection.isolated.sub.RelocatedSubJavaArg?)
+        """.trimIndent()
+    }
+
     /**
      * An introspector of the classes implementing the Java interface `RelocatedListener` through the class `RelocatedListenerMid`
      * of the app, the interface relocated, like by shading, with the types its method takes, next to an older version
