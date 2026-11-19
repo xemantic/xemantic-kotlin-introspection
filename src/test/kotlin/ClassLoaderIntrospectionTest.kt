@@ -753,6 +753,66 @@ class ClassLoaderIntrospectionTest {
     }
 
     /**
+     * The signature of the `on` of the `RelocatedListenerImpl`, implementing the Java interface `RelocatedListener`,
+     * with only the Kotlin class `RelocatedEvent` relocated, like by shading, which the method of the interface takes,
+     * so that neither class file tells a relocated supertype, and the JVM method of the override removed from the class only,
+     * like by a shrinker, the method of the interface kept, the class file of the class [transformed][transform] further.
+     */
+    private fun shrunkOverrideOfRelocatedEventSignature(name: String, transform: (ByteArray) -> ByteArray = { it }): String? {
+        val isolated = "com/xemantic/kotlin/introspection/isolated"
+        val dependents = listOf("RelocatedListener.class", "RelocatedListenerImpl.class")
+        val root = isolatedTestFixturesCopy(name, "RelocatedEvent.class", *dependents.toTypedArray())
+        relocatedCopy(root, "RelocatedEvent.class", dependents = dependents)
+        val impl = root.resolve("$isolated/RelocatedListenerImpl.class")
+        impl.writeBytes(
+            transform(withoutMethods(impl.readBytes()) { methodName, descriptor ->
+                methodName == "on" && descriptor == "(Lshaded/$isolated/RelocatedEvent;)V"
+            })
+        )
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+        return introspector.resolve("com.xemantic.kotlin.introspection.isolated.RelocatedListenerImpl.on")
+    }
+
+    // the Java method, taking the Kotlin class by its relocated JVM name, is not listed as inherited next to its override
+    private val shrunkOverrideOfRelocatedEventSignature = /* language=kotlin */ """
+        // com.xemantic.kotlin.introspection.isolated.RelocatedListenerImpl.on [page 1/1]
+        override fun on(event: RelocatedEvent)
+        fun on(event: RelocatedOther)
+    """.trimIndent()
+
+    @Test
+    fun `should not list Java method taking relocated Kotlin class as inherited next to its shrunk override`() {
+        // when
+        val signature = shrunkOverrideOfRelocatedEventSignature("shrunkOverrideOfRelocatedEvent")
+
+        // then
+        signature sameAsKotlin shrunkOverrideOfRelocatedEventSignature
+    }
+
+    @Test
+    fun `should not list Java method taking relocated Kotlin class as inherited next to its shrunk override and JVM method of no member`() {
+        // when
+        // a JVM-only method of the shape of the override, like the one of a @JvmStatic function of the companion object,
+        // taking the class of the same simple name of the subpackage
+        val signature = shrunkOverrideOfRelocatedEventSignature("shrunkOverrideOfRelocatedEventNextToStatic") { bytes ->
+            val writer = ClassWriter(0)
+            ClassReader(bytes).accept(writer, 0)
+            writer.visitMethod(
+                Opcodes.ACC_PUBLIC or Opcodes.ACC_STATIC, "on", "(Lcom/xemantic/kotlin/introspection/isolated/sub/RelocatedEvent;)V", null, null
+            ).apply {
+                visitCode()
+                visitInsn(Opcodes.RETURN)
+                visitMaxs(0, 1)
+                visitEnd()
+            }
+            writer.toByteArray()
+        }
+
+        // then
+        signature sameAsKotlin shrunkOverrideOfRelocatedEventSignature
+    }
+
+    /**
      * An introspector of the classes implementing the Java interface `RelocatedListener` through the class `RelocatedListenerMid`
      * of the app, the interface relocated, like by shading, with the types its method takes, next to an older version
      * of the original one, whose method is named differently.
