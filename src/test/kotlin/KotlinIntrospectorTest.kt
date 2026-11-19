@@ -6445,6 +6445,19 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve Kotlin member taking array of arrays apart from Java vararg of nullable array type argument`() {
+        // the elements of the T... of Java given Array<String>? are nullable, no platform types, so that the compiler keeps it apart
+        // from acceptAll(a: T) given Array<Array<String>>: a concrete subclass has to implement both
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NullableArrayJavaVarargArrayOfArraysJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NullableArrayJavaVarargArrayOfArraysJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.VarargAcceptor
+            fun acceptAll(vararg values: Array<String>?)
+            // inherited from com.xemantic.kotlin.introspection.test.TypedAllAcceptor
+            fun acceptAll(a: Array<Array<String>>)
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve Kotlin member taking platform type of Java member merged with it declared first by superclass`() {
         // the subclass inherits the member its superclass picks, the accept(String) of the Java class, declared first there
         resolver.resolve("com.xemantic.kotlin.introspection.test.StringJavaAcceptorJoinSubclass.accept") sameAsKotlin """

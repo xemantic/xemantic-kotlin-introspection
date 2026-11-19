@@ -1499,3 +1499,11 @@ interface TypedFeeder<T> {
 interface OutMutableStringListFeederJavaNullableListJoin : TypedFeeder<MutableList<out String>>, com.xemantic.kotlin.introspection.test.other.JavaNullableListFeeder
 
 abstract class GenericVarargAcceptorJavaNullableArrayJoin : VarargAcceptor<String>, com.xemantic.kotlin.introspection.test.other.JavaNullableArrayAcceptor()
+
+// A Java vararg of a nullable array given for its type parameter, next to a Kotlin member taking an array of arrays (#337)
+interface TypedAllAcceptor<T> {
+    fun acceptAll(a: T)
+}
+
+abstract class NullableArrayJavaVarargArrayOfArraysJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaTypedVarargAcceptorInterface<Array<String>?>, VarargAcceptor<Array<String>?>, TypedAllAcceptor<Array<Array<String>>>

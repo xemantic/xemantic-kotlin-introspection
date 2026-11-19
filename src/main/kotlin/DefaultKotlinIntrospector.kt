@@ -3148,6 +3148,9 @@ internal class DefaultKotlinIntrospector(
          * The types of the value parameters themselves have to agree too, the one of a Java member being a platform type,
          * agreeing with either, unless annotated, see [javaNullabilityOf]: a `@Nullable List<@NotNull String>` of Java
          * never implements a `MutableList<out String>`, nor a `@NotNull String @Nullable []` a `vararg a: String`.
+         * A vararg parameter of Java of nullable elements, no platform types, like a `T...` given `Array<String>?`, agrees with none:
+         * merged with the `vararg a: T` of a Kotlin interface given the same, it would join the group of a member the Java method
+         * is merged with otherwise, like an `a: T` given `Array<Array<String>>`, which the compiler keeps apart.
          */
         private fun hasNestedNullabilityOf(other: InheritedCandidate): Boolean {
             val parameters = nestedNullability ?: return false
@@ -3176,6 +3179,7 @@ internal class DefaultKotlinIntrospector(
                 val elementType = parameter.varargElementType
                 val isPlatformElement = declarations is JavaClass && elementType != null && elementType.isNullable && flags.firstOrNull() == false
                 if (isPlatformElement) flags[0] = null
+                if (declarations is JavaClass && elementType != null && flags.firstOrNull() == true) return@lazy null
                 val isNullable = if (declarations !is JavaClass) parameter.type.isNullable else {
                     javaNullability?.let { it.types[position] ?: false.takeIf { _ -> it.isMarkedNotNull(position) } }
                 }
