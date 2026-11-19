@@ -1541,3 +1541,35 @@ class InferredReceiverFunctionStringBiSink : InferredReceiverBiSink<(String) -> 
 class InferredReceiverFunctionsBiSink : InferredReceiverBiSink<() -> String, () -> String>
 
 class InferredReceiverFunctionCharSequenceBiSink : InferredReceiverBiSink<() -> String, CharSequence>
+
+// a function type next to a type parameter which only a bound tells, like A of B : A, or U of T : () -> U, see #343,
+// is inferred like kotlinc does: no Comparable, nor String, while T is inferred as the intersection of its upper bounds,
+// like (() -> Unit) & (() -> CharSequence), or String & (() -> CharSequence), which kotlinc only warns about
+interface InferredFunctionSink<in T>
+
+fun <A : Comparable<A>, B : A> InferredFunctionSink<B>.sinkUnderComparable() {}
+
+fun <T : () -> U, U : CharSequence> InferredFunctionSink<T>.sinkOfSupplier() {}
+
+class InferredFunctionSupplierSink : InferredFunctionSink<() -> Unit>
+
+class InferredFunctionStringSink : InferredFunctionSink<String>
+
+interface InferredFunctionSource<out T>
+
+fun <A : String, B : A> InferredFunctionSource<B>.sourceUnderString() {}
+
+fun <T : () -> U, U : CharSequence> InferredFunctionSource<T>.sourceOfSupplier() {}
+
+class InferredFunctionSupplierSource : InferredFunctionSource<() -> String>
+
+class InferredFunctionTransformSource : InferredFunctionSource<(String) -> String>
+
+// but a function type is still matched leniently where kotlinc cannot infer a type parameter, like U of T : List<U>,
+// to be given explicitly, as x.sinkOfList<_, Nothing>() compiles, and where the inference is not modelled exactly,
+// like for S inferred as (() -> () -> String) & (() -> CharSequence), an intersection of generic types
+fun <T : List<U>, U> InferredFunctionSink<T>.sinkOfList() {}
+
+fun <S : T, T : () -> U, U : CharSequence> InferredFunctionSink<S>.sinkUnderSupplier() {}
+
+class InferredFunctionSupplierOfSupplierSink : InferredFunctionSink<() -> () -> String>

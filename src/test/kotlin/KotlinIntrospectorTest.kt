@@ -13358,6 +13358,78 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve function type class without extension on type parameter under recursively bounded one`() {
+        // A is told only by the bound of B, and a function type is no Comparable
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InferredFunctionSupplierSink"
+        ) should {
+            have("fun <A : Comparable<A>, B : A> InferredFunctionSink<B>.sinkUnderComparable()" !in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve function type class with extension on type parameter bounded by function type of bounded one`() {
+        // kotlinc infers T as (() -> Unit) & (() -> CharSequence)
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InferredFunctionSupplierSink"
+        ) should {
+            have("fun <T : () -> U, U : CharSequence> InferredFunctionSink<T>.sinkOfSupplier()" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve class with extension on type parameter bounded by function type of bounded one`() {
+        // kotlinc infers T as String & (() -> CharSequence), only warning about the final class next to the function type
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InferredFunctionStringSink"
+        ) should {
+            have("fun <T : () -> U, U : CharSequence> InferredFunctionSink<T>.sinkOfSupplier()" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve function type class without extension on type parameter under one bounded by class`() {
+        // A is told only by the bound of B, and a function type is no String
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InferredFunctionSupplierSource"
+        ) should {
+            have("fun <A : String, B : A> InferredFunctionSource<B>.sourceUnderString()" !in lines())
+            have("fun <T : () -> U, U : CharSequence> InferredFunctionSource<T>.sourceOfSupplier()" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve function type class without extension on type parameter bounded by function type of other arity`() {
+        // U is told only by the bound of T, and (String) -> String is no () -> U
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InferredFunctionTransformSource"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InferredFunctionTransformSource [page 1/1]
+            class InferredFunctionTransformSource : InferredFunctionSource<(String) -> String>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve function type class with extension of type parameter kotlinc cannot infer`() {
+        // x.sinkOfList() is rejected with: cannot infer type for type parameter 'U', while x.sinkOfList<_, Nothing>() compiles
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InferredFunctionSupplierSink"
+        ) should {
+            have("fun <T : List<U>, U> InferredFunctionSink<T>.sinkOfList()" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve function type class with extension inferring intersection of function types`() {
+        // kotlinc infers S as (() -> () -> String) & (() -> CharSequence), and U as (() -> String) & CharSequence
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InferredFunctionSupplierOfSupplierSink"
+        ) should {
+            have("fun <S : T, T : () -> U, U : CharSequence> InferredFunctionSink<S>.sinkUnderSupplier()" in lines())
+        }
+    }
+
+    @Test
     fun `should resolve class without extension inferring reified type parameter as intersection`() {
         // A is inferred as CharSequence & Int, which kotlinc cannot reify
         resolver.resolve(

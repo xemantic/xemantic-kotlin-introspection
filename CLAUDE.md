@@ -129,6 +129,15 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 - With a type argument given explicitly, like `x.ext<_, Nothing, _>()`, kotlinc reports the violated bound of an inferred type parameter
   as an error also next to an empty intersection, unlike when all of them are inferred, see `CallInference`.
 
+- When judging a sweep by calls with explicit type arguments, give explicitly only a type parameter kotlinc cannot infer
+  (`cannot infer type for type parameter 'W'. Specify it explicitly.`), or one nothing refers to, like `W` of `W : U`:
+  one it infers, given as `Nothing`, like in `x.ext<Nothing, _>()` of `<A : Comparable<A>, B : A> Sink<B>.ext()`,
+  compiles on nearly any contravariant receiver, and would judge every such row as callable.
+
+- `CallInference` rejects where kotlinc accepts an intersection of generic types, like `(() -> CharSequence) & (() -> Plain)`
+  as a `() -> CharSequence & Plain`, also without function types, like for `<S : T, T : List<U>, U : CharSequence> Sink<S>.ext()`
+  on a `Sink<List<Plain>>` — next to a function type it gives up instead (`isCautious`, #343), as the lenient matching listed such rows before.
+
 - In a kotlinc probe `import java.util.function.*` does not bring `Function`: the default import of `kotlin.Function` wins over a star import,
   so `Function<String, String>` fails with `one type argument expected` — import `java.util.function.Function` explicitly.
 
