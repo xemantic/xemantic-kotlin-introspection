@@ -122,6 +122,16 @@ internal fun withoutNestedClassInMetadata(bytes: ByteArray, nestedClass: String)
 }
 
 /**
+ * Names the class by the [name] in its metadata, like a class compiled by that name, which a relocation does not do,
+ * see [withRelocatedNames].
+ */
+internal fun withClassNameInMetadata(bytes: ByteArray, name: String): ByteArray = withMetadata(bytes) {
+    val metadata = KotlinClassMetadata.readStrict(it) as KotlinClassMetadata.Class
+    metadata.kmClass.name = name
+    metadata.write()
+}
+
+/**
  * Adds the legacy context receivers of the [types] to the class metadata,
  * like of `context(Logger) class Foo` compiled with `-Xcontext-receivers`, which the current compiler no longer compiles.
  */

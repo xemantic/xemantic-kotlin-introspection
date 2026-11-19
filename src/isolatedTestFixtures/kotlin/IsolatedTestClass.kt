@@ -202,3 +202,6 @@ class RelocatedSubEventJavaBaseImpl : RelocatedSubEventJavaBase()
 
 // tests relocate, like shading, the Java class it extends, and the Kotlin class of the subpackage that one extends, each elsewhere
 class RelocatedSubBaseImpl : RelocatedSubBaseJavaMid()
+
+// tests relocate, like shading, the Kotlin class taken by the method of its Java supertypes, but neither them, nor itself
+abstract class RelocatedPickImpl : RelocatedPickListener, RelocatedPickJavaBase()
