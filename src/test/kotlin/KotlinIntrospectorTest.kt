@@ -6052,6 +6052,18 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve Kotlin member taking platform type of Java member merged with it declared first by superclass of Java superclass`() {
+        // the Java superclass joins nothing, inheriting the member its superclass picks, unlike a Java class joining them
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaStringJavaAcceptorJoinSubclass.accept"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaStringJavaAcceptorJoinSubclass.accept [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.StringAcceptor
+            open fun accept(s: String?)
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve Kotlin member as declared when declared before Java member merged with it`() {
         resolver.resolve("com.xemantic.kotlin.introspection.test.StringAcceptorJavaJoin.accept") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.StringAcceptorJavaJoin.accept [page 1/1]
@@ -6748,6 +6760,32 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve implementation of Java class returning platform type as member of its interface declared again by superclass of Java superclass`() {
+        // the Java superclass, of no type parameters, gives no platform type arguments to the Kotlin class joining them
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaFunctionImplementationDiamondSubclass.apply"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaFunctionImplementationDiamondSubclass.apply [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaSameTypeFunctionImplementation
+            override fun apply(arg0: String): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve implementation of Java class returning platform type as member of its interface declared again next to unrelated overload`() {
+        // the apply(x: Int) of the Kotlin interface is merged with neither, so that apply(null) does not compile still
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaFunctionImplementationDiamondWithOverload.apply"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaFunctionImplementationDiamondWithOverload.apply [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaSameTypeFunctionImplementation
+            override fun apply(arg0: String): String
+            // inherited from com.xemantic.kotlin.introspection.test.IntApplier
+            fun apply(x: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve implementation of Java class returning platform type as member of its interface declared again of nullable type arguments`() {
         // K2 picks the apply of Function<String?, String?>, so that it returns String?, not the String! of the Java class
         resolver.resolve(
@@ -6839,6 +6877,17 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.test.InheritedJavaLinkedHashSetSubclass.add [page 1/1]
             // inherited from kotlin.collections.MutableSet
             open override fun add(element: String?): Boolean
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java override of collection method hidden by Kotlin of Java class whose members cannot be described`() {
+        // the toArray of java.util.Collection is no member of Collection in Kotlin, so that the override is the member
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaToArrayLinkedHashSetSubclass.toArray") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaToArrayLinkedHashSetSubclass.toArray [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaToArrayLinkedHashSetSubclass
+            override fun toArray(): Array<Any>
+            override fun <T> toArray(arg0: Array<T>?): Array<T>
         """.trimIndent()
     }
 

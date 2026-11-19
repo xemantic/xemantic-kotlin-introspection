@@ -158,7 +158,8 @@ internal fun overridesHiddenJdkMethod(method: Method): Boolean =
  * like the `contains(Object)` of `java.util.Collection`, described as `Collection`, or the `hashCode()` of `java.lang.Object`,
  * by the same name and parameter types, or of the erasures of the type arguments given for its type variables,
  * see [toKmJavaFunction], like `compareTo(File)` of `java.io.File` the `compareTo(T)` of `java.lang.Comparable<File>`,
- * erased to `Object`, unlike an overload, like `equals(File)`, or `clone()`, a member of `java.lang.Object` but not of `kotlin.Any`.
+ * erased to `Object`, unlike an overload, like `equals(File)`, or `clone()`, a member of `java.lang.Object` but not of `kotlin.Any`,
+ * or `toArray`, which Kotlin hides of the collection types, like `Set`, but not of a Java class, so that the override is the member.
  */
 internal fun overridesBuiltinJavaMethod(method: Method): Boolean {
     val parameterTypes = method.parameterTypes
@@ -177,6 +178,7 @@ internal fun overridesBuiltinJavaMethod(method: Method): Boolean {
         if (type.kotlin.qualifiedName != type.canonicalName &&
             type.declaredMethods.any { overridden ->
                 overridden.name == method.name && overridden.parameterCount == parameterTypes.size &&
+                    (overridden.name != "toArray" || !Collection::class.java.isAssignableFrom(type)) &&
                     (type != Any::class.java || overridden.name in ANY_MEMBER_NAMES) &&
                     overridden.genericParameterTypes.indices.all { index ->
                         val erased = overridden.parameterTypes[index]

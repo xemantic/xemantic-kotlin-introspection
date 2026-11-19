@@ -496,6 +496,10 @@ abstract class StringJavaAcceptorJoin : com.xemantic.kotlin.introspection.test.o
 // and so does a subclass of the join, inheriting the member the join picks
 abstract class StringJavaAcceptorJoinSubclass : StringJavaAcceptorJoin()
 
+// also through a Java subclass of the join, which joins nothing itself
+abstract class InheritedJavaStringJavaAcceptorJoinSubclass :
+    com.xemantic.kotlin.introspection.test.other.JavaStringJavaAcceptorJoinSubclass()
+
 // while the accept(s: String) of the Kotlin interface, declared first, is inherited as declared, also by a subclass of the join
 abstract class StringAcceptorJavaJoin : StringAcceptor, com.xemantic.kotlin.introspection.test.other.JavaStringAcceptor()
 
@@ -1061,6 +1065,10 @@ abstract class InheritedJavaComparableArrayList : com.xemantic.kotlin.introspect
 abstract class InheritedJavaLinkedHashSetSubclass :
     com.xemantic.kotlin.introspection.test.other.JavaLinkedHashSetSubclass<String>()
 
+// A Java subclass of java.util.LinkedHashSet overriding toArray, which kotlin-reflect cannot describe either
+abstract class InheritedJavaToArrayLinkedHashSetSubclass :
+    com.xemantic.kotlin.introspection.test.other.JavaToArrayLinkedHashSetSubclass<String>()
+
 // java.util.function.Function reached first through a Java interface giving it platform type arguments, and then directly,
 // whose apply K2 takes of the second one, not returning a platform type
 abstract class InheritedJavaFunctionDiamond :
@@ -1078,6 +1086,19 @@ abstract class InheritedJavaConsumerDiamond :
 abstract class InheritedJavaFunctionImplementationDiamond :
     com.xemantic.kotlin.introspection.test.other.JavaSameTypeFunctionImplementation<String>(),
     java.util.function.Function<String, String>
+
+// and through a Java subclass of it, which joins nothing itself, the same apply
+abstract class InheritedJavaFunctionImplementationDiamondSubclass :
+    com.xemantic.kotlin.introspection.test.other.JavaFunctionImplementationDiamondSubclass()
+
+interface IntApplier {
+    fun apply(x: Int): Int
+}
+
+// and next to an unrelated overload of a Kotlin interface, the same apply
+abstract class InheritedJavaFunctionImplementationDiamondWithOverload :
+    com.xemantic.kotlin.introspection.test.other.JavaSameTypeFunctionImplementation<String>(),
+    java.util.function.Function<String, String>, IntApplier
 
 // given nullable type arguments when declared again, which the apply K2 takes is of
 abstract class InheritedJavaNullableFunctionImplementationDiamond :
