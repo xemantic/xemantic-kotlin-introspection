@@ -840,7 +840,7 @@ private val Class<*>.isKotlinClass: Boolean get() = isAnnotationPresent(Metadata
  * a supertype of the [javaClass], as seen by it, a platform type then, like the `Integer` of `GenericPut<Integer>`,
  * or the `T` of `GenericPut<T>` of its own type parameter, maybe of a Kotlin class between them, like `Mid<Integer>` of `Mid<T> : GenericPut<T>`,
  * unlike a Kotlin class, like the `Int` of `IntPut : GenericPut<Int>`, which a Java class implements in turn,
- * or a raw Java supertype, also a platform type, along the first path to the [typeClass], see [typeArgumentGivers],
+ * or a raw Java supertype, also a platform type, along the first path to the [typeClass], depth-first, see [typeArgumentGivers],
  * unless the Java class gives it as no platform type, like annotated, see [TypeArgumentGiver.Java.isPlatform],
  * or a Kotlin class gives a type which is not nullable along another path, like the `Int` of `IntPut`
  * for a Java class implementing `GenericPut<Integer>` first, through a Java interface, and `IntPut`,
@@ -906,31 +906,43 @@ private val kotlinTypeArguments = object : ClassValue<Map<String, Map<Int, Kotli
 /**
  * The classes giving the type argument of the type parameter at the [index] of the [typeClass], a supertype of the [javaClass],
  * as seen by it, through the type parameters of the classes between them, see [isJavaTypeArgument], each naming the [typeClass]
- * as its direct supertype, breadth-first in the order of declaration of the supertypes, the first one telling what K2
- * takes a method of the [javaClass] for an override of, see [isPrimitiveKotlinTypeArgument], or none if not found.
+ * as its direct supertype, depth-first in the order of declaration of the supertypes, the superclass first, as K2 walks them,
+ * the first one telling what K2 takes a method of the [javaClass] for an override of, see [isPrimitiveKotlinTypeArgument],
+ * like the Java `Base implements GenericPut<Integer>` of `class X extends Base implements IntPut`, or none if not found.
+ * The supertypes of a class whose generic signature cannot be read are taken raw.
  */
-private fun typeArgumentGivers(javaClass: Class<*>, typeClass: Class<*>, index: Int): List<TypeArgumentGiver> {
+private fun typeArgumentGivers(
+    javaClass: Class<*>,
+    typeClass: Class<*>,
+    index: Int,
+    resolved: MutableMap<Pair<Class<*>, Int>, List<TypeArgumentGiver>> = HashMap()
+): List<TypeArgumentGiver> {
+    resolved[typeClass to index]?.let { return it }
+    // a type parameter given in terms of itself is never met, but must not recurse
+    resolved[typeClass to index] = emptyList()
     val givers = ArrayList<TypeArgumentGiver>()
     val visited = HashSet<Class<*>>()
-    val pending = ArrayDeque(listOf(javaClass))
-    while (pending.isNotEmpty()) {
-        val type = pending.removeFirst()
-        if (!visited.add(type)) continue
-        val supertypes = listOfNotNull(type.genericSuperclass) + type.genericInterfaces
-        val supertype = supertypes.firstOrNull { (it as? ParameterizedType)?.rawType == typeClass || it == typeClass }
-        pending += listOfNotNull(type.superclass) + type.interfaces
-        when {
-            supertype == null -> {}
-            supertype !is ParameterizedType -> givers += TypeArgumentGiver.Java(isPlatform = true)
-            !type.isKotlinClass -> givers += TypeArgumentGiver.Java(givesPlatformTypeArguments(type, typeClass, index))
-            else -> when (val argument = supertype.actualTypeArguments.getOrNull(index)) {
-                is TypeVariable<*> -> (argument.genericDeclaration as? Class<*>)?.let { argumentClass ->
-                    givers += typeArgumentGivers(javaClass, argumentClass, argumentClass.typeParameters.indexOf(argument))
+    fun walk(type: Class<*>) {
+        if (!visited.add(type)) return
+        val supertypes: List<Type> = reflectedValue(default = null) { listOfNotNull(type.genericSuperclass) + type.genericInterfaces }
+            ?: reflectedValue(default = emptyList()) { listOfNotNull(type.superclass) + type.interfaces }
+        supertypes.forEach { supertype ->
+            val supertypeClass = (supertype as? ParameterizedType)?.rawType as? Class<*> ?: supertype as? Class<*> ?: return@forEach
+            when {
+                supertypeClass != typeClass -> walk(supertypeClass)
+                supertype !is ParameterizedType -> givers += TypeArgumentGiver.Java(isPlatform = true)
+                !type.isKotlinClass -> givers += TypeArgumentGiver.Java(givesPlatformTypeArguments(type, typeClass, index))
+                else -> when (val argument = supertype.actualTypeArguments.getOrNull(index)) {
+                    is TypeVariable<*> -> (argument.genericDeclaration as? Class<*>)?.let { argumentClass ->
+                        givers += typeArgumentGivers(javaClass, argumentClass, argumentClass.typeParameters.indexOf(argument), resolved)
+                    }
+                    else -> givers += TypeArgumentGiver.Kotlin(kotlinTypeArguments.get(type)[typeClass.name]?.get(index))
                 }
-                else -> givers += TypeArgumentGiver.Kotlin(kotlinTypeArguments.get(type)[typeClass.name]?.get(index))
             }
         }
     }
+    walk(javaClass)
+    resolved[typeClass to index] = givers
     return givers
 }
 

@@ -148,13 +148,11 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 
 - Kotlin never passes named arguments to a Java method, even one compiled with `-parameters`, so a Java method taking parameters never shadows an extension — see `isShadowingJavaMethod`.
 
-- The order of the supertypes of a Java class tells whether K2 takes its `put(Integer)` for an override of a Kotlin `put(t: T)` reached twice:
-  with `implements JIntegerPut, IntPut`, the `GenericPut<Integer>` first, it is the one member, taking the `Int` of the other path, not `Int!`,
-  with `implements IntPut, JIntegerPut` it is a `put(Int!)` next to the abstract `put(t: Int)` — see `typeArgumentGivers`.
+- Of several paths from a Java class to a generic Kotlin supertype, K2 judges the override of a Java method by the first one depth-first,
+  in the order of declaration, the superclass first, not by the nearest one — see `typeArgumentGivers`.
 
-- A type argument a Java class gives annotated not null, like `GenericPut<@NotNull Integer>`, or as a `@NullMarked` class, is `Int` only by its nullability:
-  a Java `put(int)` still does not implement the `put(t: T)`, which stays abstract next to it, while a `put(Integer)` does,
-  also the one of an unrelated superclass, merged with it — see `takesJavaTypeArguments`.
+- A type argument a Java class gives stays boxed for K2 whatever its nullability:
+  a Java `put(int)` does not implement the `put(t: T)` of `GenericPut<@NotNull Integer>`, though it takes `Int` — see `javaGivenPositions`.
 
 ## Anti-patterns to avoid
 

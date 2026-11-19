@@ -661,6 +661,25 @@ abstract class PrimitiveJavaNotNullIntegerPutImpl : com.xemantic.kotlin.introspe
 // the put(Integer) of JavaBoxedPut is merged with the put(t: T) of GenericPut, given Integer annotated not null, taking Int
 abstract class BoxedJavaNotNullIntegerPutInterfaceJoin : com.xemantic.kotlin.introspection.test.other.JavaBoxedPut(), com.xemantic.kotlin.introspection.test.other.JavaNotNullIntegerPutInterface
 
+interface Put2<K, V> {
+    fun put(k: K, v: V): String
+}
+
+interface MidPut2<T> : Put2<Int, T>
+
+abstract class BoxedJavaMidPut2Impl : com.xemantic.kotlin.introspection.test.other.JavaBoxedMidPut2()
+
+abstract class BoxedJavaIntAndIntegerPutImpl : com.xemantic.kotlin.introspection.test.other.JavaBoxedIntAndIntegerPut()
+
+abstract class BoxedJavaIntPutOverIntegerBaseImpl : com.xemantic.kotlin.introspection.test.other.JavaBoxedIntPutOverIntegerBase()
+
+// the put(@Nullable Integer) of the Java class takes Int?, the put(t: T) of GenericPut, given Integer annotated not null, takes Int
+abstract class NullableBoxedJavaNotNullIntegerPutInterfaceJoin : com.xemantic.kotlin.introspection.test.other.JavaNullableBoxedPut(), com.xemantic.kotlin.introspection.test.other.JavaNotNullIntegerPutInterface
+
+abstract class IntArrayList : ArrayList<Int>()
+
+abstract class BoxedJavaIntArrayListImpl : com.xemantic.kotlin.introspection.test.other.JavaBoxedIntArrayList()
+
 abstract class IntMutableList : AbstractMutableList<Int>()
 
 abstract class BoxedJavaIntMutableListImpl : com.xemantic.kotlin.introspection.test.other.JavaBoxedIntMutableList()
@@ -1054,6 +1073,8 @@ class JavaBoxedPutBelowInternalPrimitiveConcrete : JavaBoxedPutBelowInternalPrim
 internal abstract class InternalGenericPut<T> {
     abstract fun put(t: T): Int
 }
+
+abstract class JavaInternalIntegerPutWithDefaultBoxedImpl : com.xemantic.kotlin.introspection.test.other.JavaInternalIntegerPutWithDefaultBoxed()
 
 abstract class PrimitiveJavaInternalIntegerPutImpl : com.xemantic.kotlin.introspection.test.other.JavaPrimitiveInternalIntegerPut()
 
