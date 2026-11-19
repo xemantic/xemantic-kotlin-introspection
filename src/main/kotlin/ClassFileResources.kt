@@ -70,19 +70,33 @@ internal fun classReader(bytes: ByteArray): ClassReader = try {
 
 /**
  * Whether the class file of this reader names each of its direct supertypes by a `Class` entry of its constant pool,
- * unlike a malformed one, whose superclass or interface index ASM reads all the same:
- * the entry 0 as no name, and an entry of another kind, like a `Utf8` one, as an unrelated name.
- * The superclass of the entry 0 is none, like of `java/lang/Object`.
+ * named by a `Utf8` one, unlike a malformed one, whose superclass or interface index ASM reads all the same:
+ * the entry 0, or a `Class` entry of the name index 0, as no name, and an entry of another kind, like a `Utf8` one,
+ * or a `Class` entry whose name index is of an entry of another kind, as an unrelated name.
+ * The superclass of the entry 0 is none, which only `java/lang/Object`, and a module descriptor, have,
+ * so it is a malformed one of any other class, which the JVM rejects, the members of its superclass unknown.
  */
 internal fun ClassReader.namesSupertypesByClassEntries(): Boolean {
+    // the offset of an entry follows its tag, while the second entry taken by a Long or a Double has none
+    fun isEntry(index: Int, tag: Int): Boolean =
+        index in 1 until itemCount && getItem(index).let { it > 0 && readByte(it - 1) == tag }
     fun isClassEntry(index: Int): Boolean =
-        // the offset of an entry follows its tag, while the second entry taken by a Long or a Double has none
-        index in 1 until itemCount && getItem(index).let { it > 0 && readByte(it - 1) == CONSTANT_CLASS_TAG }
+        isEntry(index, CONSTANT_CLASS_TAG) && isEntry(readUnsignedShort(getItem(index)), CONSTANT_UTF8_TAG)
     // the access flags are followed by this class, the superclass, the interface count, and the interfaces
     val superclass = readUnsignedShort(header + 4)
-    return (superclass == 0 || isClassEntry(superclass)) &&
-        (0 until readUnsignedShort(header + 6)).all { isClassEntry(readUnsignedShort(header + 8 + 2 * it)) }
+    val hasSuperclass = if (superclass != 0) isClassEntry(superclass) else {
+        readUnsignedShort(header) and Opcodes.ACC_MODULE != 0 ||
+            (isClassEntry(readUnsignedShort(header + 2)) && className == OBJECT_INTERNAL_NAME)
+    }
+    return hasSuperclass && (0 until readUnsignedShort(header + 6)).all { isClassEntry(readUnsignedShort(header + 8 + 2 * it)) }
 }
+
+/**
+ * The JVM internal name of the only class of no superclass.
+ */
+internal const val OBJECT_INTERNAL_NAME = "java/lang/Object"
+
+private const val CONSTANT_UTF8_TAG = 1
 
 private const val CONSTANT_CLASS_TAG = 7
 

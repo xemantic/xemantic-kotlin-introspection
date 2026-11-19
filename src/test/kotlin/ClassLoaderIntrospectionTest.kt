@@ -3505,12 +3505,16 @@ class ClassLoaderIntrospectionTest {
      *
      * @param methodTables whether the constant pools, the supertypes and the method tables of the class files can still be read,
      *   like of a class file only too new to be parsed.
+     * @param absentClassFiles the other class files missing from the classpath.
      */
     private fun introspectorWithUnreadableClassFiles(
         vararg unreadableClasses: String,
-        methodTables: Boolean = true
+        methodTables: Boolean = true,
+        absentClassFiles: List<String> = emptyList()
     ): KotlinIntrospector {
-        val root = isolatedTestFixturesCopy("unreadable" + (if (methodTables) "" else "-constant-pools"), "Absent.class")
+        val root = isolatedTestFixturesCopy(
+            "unreadable" + (if (methodTables) "" else "-constant-pools"), "Absent.class", *absentClassFiles.toTypedArray()
+        )
         val unreadableResources = unreadableClasses.map { it.replace('.', '/') + ".class" }.toSet()
         val classLoader = object : URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader) {
             override fun getResourceAsStream(name: String): InputStream? {
@@ -3524,6 +3528,74 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should name nested class whose outer class is missing from the classpath by its class file too new to be parsed`() {
+        // given
+        // like a class of a library compiled for a JVM newer than ASM knows, which the JVM running it still loads
+        val introspector = introspectorWithUnreadableClassFiles(
+            "com.xemantic.kotlin.introspection.isolated.DollarHolder\$Dollar\$Nested",
+            absentClassFiles = listOf("DollarHolder.class")
+        )
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.AbsentJavaSubclass.take"
+        )
+
+        // then
+        // the InnerClasses attribute tells the nested class Dollar$Nested of DollarHolder, not Nested of DollarHolder.Dollar
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.AbsentJavaSubclass.take [page 1/1]
+            override fun take(nested: DollarHolder.`Dollar${'$'}Nested`)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve types of Java class marked by NullMarked whose class file is too new to be parsed`() {
+        // given
+        // like a class of a library compiled for a JVM newer than ASM knows, which the JVM running it still loads
+        val unreadableClass = "com.xemantic.kotlin.introspection.test.other.JavaNullMarkedBase"
+        val definedClasses = setOf(unreadableClass, "com.xemantic.kotlin.introspection.test.InheritedJavaNullMarked")
+        // defining the classes itself, as the nullability annotations are read through the class loader of the class
+        val classLoader = object : ClassLoader(javaClass.classLoader) {
+            override fun loadClass(name: String, resolve: Boolean): Class<*> =
+                if (name in definedClasses) {
+                    synchronized(getClassLoadingLock(name)) {
+                        findLoadedClass(name) ?: parent.getResourceAsStream(name.replace('.', '/') + ".class")!!
+                            .use { it.readBytes() }
+                            .let { defineClass(name, it, 0, it.size) }
+                    }
+                } else {
+                    super.loadClass(name, resolve)
+                }
+
+            override fun getResourceAsStream(name: String): InputStream? {
+                val stream = super.getResourceAsStream(name)
+                return if (stream != null && name == unreadableClass.replace('.', '/') + ".class") {
+                    tooNew(stream.use { it.readBytes() }).inputStream()
+                } else stream
+            }
+        }
+        val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
+
+        // when
+        val label = introspector.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaNullMarked.label")
+        val find = introspector.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaNullMarked.find")
+
+        // then
+        // the annotations of JSpecify are read from the class file all the same
+        label sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaNullMarked.label [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNullMarkedBase
+            abstract fun label(arg0: String): String
+        """.trimIndent()
+        find sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaNullMarked.find [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNullMarkedBase
+            abstract fun find(arg0: String?): String?
+        """.trimIndent()
+    }
+
+    @Test
     fun `should mark overrides of internal members of friend module by class whose class file cannot be parsed`() {
         // given
         val unreadableResource = "com/xemantic/kotlin/introspection/friendmodule/FriendModuleSubclass.class"
@@ -3532,7 +3604,7 @@ class ClassLoaderIntrospectionTest {
             override fun getResourceAsStream(name: String): InputStream? {
                 val stream = super.getResourceAsStream(name)
                 return if (stream != null && name == unreadableResource) {
-                    tooNew(stream.use { it.readBytes() }).inputStream()
+                    tooNew(stream.use { it.readBytes() }, constantPool = false).inputStream()
                 } else stream
             }
         }
@@ -4213,7 +4285,8 @@ class ClassLoaderIntrospectionTest {
     fun `should mark overrides of class whose class file cannot be parsed`() {
         // given
         val introspector = introspectorWithUnreadableClassFiles(
-            "com.xemantic.kotlin.introspection.isolated.AbsentJavaSubclass"
+            "com.xemantic.kotlin.introspection.isolated.AbsentJavaSubclass",
+            methodTables = false
         )
 
         // when
