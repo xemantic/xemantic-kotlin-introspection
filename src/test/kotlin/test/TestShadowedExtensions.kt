@@ -49,6 +49,8 @@ class ProjectedShadowing : ProjectedShadowedSupertype {
     fun outOfInvariant(x: ProjectedBox<out CharSequence>): Int = 0
     fun inOfInvariant(x: ProjectedBox<in String>): Int = 0
     fun nothingOfStar(x: Comparable<Nothing>): Int = 0
+    fun pairOfTypeParameter(x: Pair<CharSequence, CharSequence>): Int = 0
+    fun receiverFunctionType(x: String.() -> CharSequence): Int = 0
 }
 
 fun ProjectedShadowedSupertype.outProjected(x: List<out String>): Int = 1
@@ -76,6 +78,10 @@ fun ProjectedShadowedSupertype.outOfInvariant(x: ProjectedBox<String>): Int = 1
 fun ProjectedShadowedSupertype.inOfInvariant(x: ProjectedBox<Any>): Int = 1
 
 fun ProjectedShadowedSupertype.nothingOfStar(x: Comparable<*>): Int = 1
+
+fun <T : CharSequence> ProjectedShadowedSupertype.pairOfTypeParameter(x: Pair<T, T>): Int = 1
+
+fun ProjectedShadowedSupertype.receiverFunctionType(x: CharSequence.() -> String): Int = 1
 
 // and the ones whose type arguments do not accept them, so that the extension is still called,
 // like projectedUnshadowing.invariant(box), of a ProjectedBox<String>, which is no ProjectedBox<CharSequence>
@@ -116,6 +122,29 @@ fun ProjectedUnshadowedSupertype.functionTypeParameter(x: (String) -> String): I
 fun ProjectedUnshadowedSupertype.notSuspendFunctionType(x: suspend () -> String): Int = 1
 
 fun <T : CharSequence> ProjectedUnshadowedSupertype.contravariantTypeParameter(x: Comparable<T>): Int = 1
+
+// members taking a function type with a receiver, or with a context parameter, next to the extensions of the same name
+// taking a function type without them, also of the same parameter types, which Kotlin calls for a lambda naming its parameters,
+// like functionShapeUnshadowing.receiver { a -> "" }, which a lambda with a receiver cannot
+interface FunctionShapeSupertype
+
+class FunctionShapeUnshadowing : FunctionShapeSupertype {
+    fun receiver(x: String.() -> CharSequence): Int = 0
+    fun context(x: context(String) () -> CharSequence): Int = 0
+    fun receiverAndParameter(x: Int.(String) -> CharSequence): Int = 0
+    fun contextAndParameter(x: context(String) (Int) -> CharSequence): Int = 0
+    fun sameReceiver(x: String.() -> Unit): Int = 0
+}
+
+fun FunctionShapeSupertype.receiver(x: (CharSequence) -> String): Int = 1
+
+fun FunctionShapeSupertype.context(x: (String) -> String): Int = 1
+
+fun FunctionShapeSupertype.receiverAndParameter(x: (Int, String) -> String): Int = 1
+
+fun FunctionShapeSupertype.contextAndParameter(x: (String, Int) -> String): Int = 1
+
+fun FunctionShapeSupertype.sameReceiver(x: (String) -> Unit): Int = 1
 
 // member properties of a Java type with an invoke method, which Kotlin calls as an operator, invoked instead of the extension
 // functions of their names, like javaInvokedShadowing.task(), also through an inherited invoke,

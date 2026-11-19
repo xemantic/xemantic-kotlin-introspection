@@ -1891,7 +1891,31 @@ class KotlinIntrospectorTest {
                 fun outOfInvariant(x: ProjectedBox<out CharSequence>): Int
                 fun inOfInvariant(x: ProjectedBox<in String>): Int
                 fun nothingOfStar(x: Comparable<Nothing>): Int
+                fun pairOfTypeParameter(x: Pair<CharSequence, CharSequence>): Int
+                fun receiverFunctionType(x: String.() -> CharSequence): Int
             }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extensions next to members taking function types with receiver or context parameter`() {
+        // a lambda naming its parameters, like functionShapeUnshadowing.receiver { a -> "" }, or .sameReceiver { a -> },
+        // calls the extension, as the function type of the member, with a receiver, or a context parameter, does not take it
+        resolver.resolve("com.xemantic.kotlin.introspection.test.FunctionShapeUnshadowing") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.FunctionShapeUnshadowing [page 1/1]
+            class FunctionShapeUnshadowing : FunctionShapeSupertype {
+                fun receiver(x: String.() -> CharSequence): Int
+                fun context(x: context(String) () -> CharSequence): Int
+                fun receiverAndParameter(x: Int.(String) -> CharSequence): Int
+                fun contextAndParameter(x: context(String) (Int) -> CharSequence): Int
+                fun sameReceiver(x: String.() -> Unit): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun FunctionShapeSupertype.context(x: (String) -> String): Int
+            fun FunctionShapeSupertype.contextAndParameter(x: (String, Int) -> String): Int
+            fun FunctionShapeSupertype.receiver(x: (CharSequence) -> String): Int
+            fun FunctionShapeSupertype.receiverAndParameter(x: (Int, String) -> String): Int
+            fun FunctionShapeSupertype.sameReceiver(x: (String) -> Unit): Int
         """.trimIndent()
     }
 

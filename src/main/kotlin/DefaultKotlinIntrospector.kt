@@ -2140,8 +2140,8 @@ internal class DefaultKotlinIntrospector(
      * rendered as resolved by their own names, the getter following the `// also property` hint naming the property,
      * or none, like when the [kmClass] has a property of the name, which Kotlin reads instead, see [syntheticPropertyOf].
      * As verified with kotlinc 2.4.21, Kotlin reads the synthetic property also when the [kmClass] has a function of the name,
-     * like `name()`, which is no property, or an extension property of the name, like `val Holder.name: Int`, even of its own package,
-     * so they are found next to them.
+     * like `name()`, which is no property, found next to them, or an extension property of the name, like `val Holder.name: Int`,
+     * even of its own package, which is not listed then, see [hasPublicSyntheticProperty].
      * A getter named like the property itself, like `isActive()` of `isActive`, is found by its name already, so only its setter is added.
      * The setter is the one taking the type the getter returns, as rendered, regardless of its nullability,
      * like `setName(arg0: String?)` of `getName(): String`, the one the `var` of the hint tells, see [syntheticPropertyOf].
@@ -5262,11 +5262,13 @@ internal class DefaultKotlinIntrospector(
                     if (typeParameter == null || !visited.add(typeParameter.id)) return false
                     val bounds = (listOfNotNull(receiverTypeArguments[typeParameter.id]) + typeParameter.upperBounds)
                         .ifEmpty { listOf(classType(ANY_CLASS_NAME, nullable = true)) }
+                    // visited only while its bounds are followed, so that it is accepted again as another type argument,
+                    // like both T of Pair<T, T>
                     bounds.any { bound ->
                         accepts(
                             type, if (argument.isNullable) bound.copy().also { it.isNullable = true } else bound, visited, isTypeArgument
                         )
-                    }
+                    }.also { visited.remove(typeParameter.id) }
                 }
                 is KmClassifier.TypeAlias -> false
             }
@@ -5290,7 +5292,9 @@ internal class DefaultKotlinIntrospector(
      * A star projection, or a projection the other way round, is accepted only for what it is at least:
      * a covariant `Any?`, like `Collection<*>` by `Collection<Any?>`, or a contravariant `Nothing`,
      * as the bounds of the type parameter, which could tell more, are not looked up.
-     * Both are function types, or suspend function types, as neither is a subtype of the other.
+     * Both are function types, or suspend function types, as neither is a subtype of the other,
+     * and function types of the same shape, see [isFunctionTypeShapedLike], as a lambda naming its parameters,
+     * like `{ s -> }`, is taken by `(String) -> Unit`, but not by `String.() -> Unit`, so that the extension is still called with it.
      */
     private fun acceptsTypeArguments(
         type: KmType,
@@ -5299,8 +5303,8 @@ internal class DefaultKotlinIntrospector(
         accepts: (accepting: KmType, accepted: KmType, isOfExtension: Boolean) -> Boolean
     ): Boolean {
         val variances = declaredVariances((type.classifier as KmClassifier.Class).name)
-        if (type.isSuspend != argument.isSuspend || variances?.size != type.arguments.size ||
-            argument.arguments.size != type.arguments.size
+        if (type.isSuspend != argument.isSuspend || !type.isFunctionTypeShapedLike(argument) ||
+            variances?.size != type.arguments.size || argument.arguments.size != type.arguments.size
         ) {
             return false
         }
@@ -12622,7 +12626,9 @@ private fun KmType.appendStructure(key: StringBuilder) {
  * Whether the [shadowedType] of a parameter of an extension on the type parameter of the [receiverTypeParameterId]
  * is the [type], where the type parameter stands for the class named [className], with the same nullability,
  * like `T` for `Int`, or `ClosedRange<T>` for `ClosedRange<Int>`, but not `T?` for `Int`,
- * while any other type parameter is never told to be the same type.
+ * while any other type parameter is never told to be the same type,
+ * nor are function types of different shapes, see [isFunctionTypeShapedLike], like `String.() -> Unit` and `(String) -> Unit`,
+ * of the same type arguments, as only the latter one takes a lambda naming its parameter.
  */
 private fun isSameType(shadowedType: KmType, type: KmType, receiverTypeParameterId: Int, className: String): Boolean {
     if (shadowedType.isNullable != type.isNullable) return false
@@ -12633,6 +12639,7 @@ private fun isSameType(shadowedType: KmType, type: KmType, receiverTypeParameter
         is KmClassifier.Class ->
             shadowedClassifier.name == classifier.name &&
                 shadowedType.arguments.size == type.arguments.size &&
+                shadowedType.isFunctionTypeShapedLike(type) &&
                 shadowedType.arguments.zip(type.arguments).all { (shadowedArgument, argument) ->
                     val shadowedArgumentType = shadowedArgument.type
                     val argumentType = argument.type
