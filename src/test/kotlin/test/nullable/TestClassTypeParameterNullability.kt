@@ -19,6 +19,7 @@
 package com.xemantic.kotlin.introspection.test.nullable
 
 import com.xemantic.kotlin.introspection.test.PlatformBox
+import com.xemantic.kotlin.introspection.test.PlatformMixed
 import com.xemantic.kotlin.introspection.test.PlatformSink
 import com.xemantic.kotlin.introspection.test.other.JavaPlatformBoxes
 
@@ -189,3 +190,18 @@ interface TypedNullableListsBox<V> : TypedSelfBox<List<V?>>
 fun <P : TypedSelfBox<T & Any>, T : List<T>?> P.selfBoxReceiverOfNotNull() {}
 
 fun <T : List<T>?, U : T> TypedSelfBox<T & Any>.selfBoxOfNotNullAndBounded() {}
+
+// but not of W which another bound refers to, like X : MutableList<W>, pinning it to Int, no supertype of String?
+
+interface TypedPinnedBoundMixed<W, V : W, X : MutableList<W>> : TypedNotNullMixed<V>, TypedOther<X>
+
+fun <P> P.mixedOfNullableStringAndOtherOfIntList() where P : TypedMixed<String, String?>, P : TypedOther<MutableList<Int>> {}
+
+// V? against a platform type, like String! of PlatformBox<String!>, tells nothing where the types a type parameter
+// is inferred from are compared, like T of PlatformMixed<T, T>, nor next to a bound which is another type parameter, like V : K
+
+interface TypedMixedOfNullableBoxes<V> : JavaPlatformBoxes.MixedOfBoxes<V?>, TypedOther<V>
+
+fun <P, T> P.mixedOfSameAndIntOther() where P : PlatformMixed<T, T>, P : TypedOther<Int> {}
+
+interface TypedSinkOfNullableKeyBoxAndOther<K, V : K> : TypedSink<PlatformBox<K?>>, TypedOther<V>

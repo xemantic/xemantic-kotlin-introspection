@@ -49,4 +49,6 @@ public interface JavaPlatformBoxes {
     class SameKeyMap<V> extends java.util.HashMap<V, V> {}
 
     interface SinkOfString extends PlatformSink<String> {}
+
+    interface MixedOfBoxes<T> extends PlatformMixed<PlatformBox<T>, PlatformBox<String>> {}
 }

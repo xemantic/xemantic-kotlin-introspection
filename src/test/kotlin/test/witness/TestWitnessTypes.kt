@@ -31,7 +31,7 @@ fun <K : Comparable<K>, V> Map<K, V>.witnessComparableKeys() {}
 fun <T : Comparable<T>> Map<T, List<T>>.witnessComparableKeysOfLists() {}
 
 // a V of String makes a HashMap<V, V>, or a Map<V, V>, a Map<T, T> of T : Comparable<T>,
-// and a V of Nothing a Map<T, List<T>>
+// and a V of Nothing a Map<V, V> a Map<T, List<T>>
 
 abstract class WitnessSameKeyHashMap<V> : HashMap<V, V>()
 
@@ -56,3 +56,24 @@ interface WitnessComparableValueMap<V> : Map<V, Comparable<V>>
 // a K of String, and a V of Nothing, make a Map<K, V> a Map<T, List<T>>
 
 interface WitnessKeyValueMap<K, V> : Map<K, V>
+
+// no witness is given for a function type, like (V) -> Unit, which kotlinc matches in ways not modelled
+
+fun <T : Comparable<T>> List<T>.witnessComparableElements() {}
+
+interface WitnessFunctionList<V> : List<(V) -> Unit>
+
+// nor Nothing for a type parameter passed through Java, the platform type V!, which kotlinc does not take Nothing! for,
+// like the only V of V : WitnessFinal making a Map<V, V> a Map<K, V> of V : Comparable<V>
+
+class WitnessFinal
+
+fun <K, V : Comparable<V>> Map<K, V>.witnessComparableValues() {}
+
+abstract class WitnessJavaFinalKeyMap<V : WitnessFinal> : JavaPlatformBoxes.SameKeyMap<V>()
+
+interface WitnessFinalKeyMap<V : WitnessFinal> : Map<V, V>
+
+// each type parameter is given its own witness, also of more of them than can all be combined
+
+interface WitnessThreeKeyValueMap<A, K, V> : Map<K, V>

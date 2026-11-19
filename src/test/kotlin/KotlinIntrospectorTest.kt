@@ -10254,14 +10254,13 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve class with repeated type parameter in JDK map supertype with extensions on recursively bounded type parameter`() {
-        // V of String makes a HashMap<V, V> a Map<T, T> of T : Comparable<T>, and V of Nothing a Map<T, List<T>>
+        // V of String makes a HashMap<V, V> a Map<T, T> of T : Comparable<T>
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.witness.WitnessSameKeyHashMap",
             pageSize = 10000
         ) should {
             have(lines().any { ".witnessSameComparables()" in it })
             have(lines().any { ".witnessComparableKeys()" in it })
-            have(lines().any { ".witnessComparableKeysOfLists()" in it })
         }
     }
 
@@ -10287,7 +10286,6 @@ class KotlinIntrospectorTest {
         ) should {
             have(lines().any { ".witnessSameComparables()" in it })
             have(lines().any { ".witnessComparableKeys()" in it })
-            have(lines().any { ".witnessComparableKeysOfLists()" in it })
         }
     }
 
@@ -10335,6 +10333,53 @@ class KotlinIntrospectorTest {
         // K of String, and V of Nothing, make a Map<K, V> a Map<T, List<T>> of T : Comparable<T>
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.witness.WitnessKeyValueMap",
+            pageSize = 10000
+        ) should {
+            have(lines().any { ".witnessSameComparables()" in it })
+            have(lines().any { ".witnessComparableKeys()" in it })
+            have(lines().any { ".witnessComparableKeysOfLists()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of list of function type of type parameter without extension on recursively bounded type parameter`() {
+        // no V makes a List<(V) -> Unit> a List<T> of T : Comparable<T>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.witness.WitnessFunctionList",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".witnessComparableElements()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve class extending Java map of type parameter bounded by final class without extension on recursively bounded value`() {
+        // WitnessFinal is no Comparable, and kotlinc does not take the platform type Nothing! for V
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.witness.WitnessJavaFinalKeyMap",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".witnessComparableValues()" in it })
+            have(lines().none { ".witnessSameComparables()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of map of type parameter bounded by final class with extension on recursively bounded value`() {
+        // V of Nothing makes a Map<V, V> a Map<K, V> of V : Comparable<V>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.witness.WitnessFinalKeyMap",
+            pageSize = 10000
+        ) should {
+            have(lines().any { ".witnessComparableValues()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of map of two of three type parameters with extensions on recursively bounded type parameter`() {
+        // K of String, and V of Nothing, make a Map<K, V> a Map<T, List<T>> of T : Comparable<T>, whatever A is
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.witness.WitnessThreeKeyValueMap",
             pageSize = 10000
         ) should {
             have(lines().any { ".witnessSameComparables()" in it })
@@ -12589,6 +12634,39 @@ class KotlinIntrospectorTest {
         ) should {
             have(lines().any { ".selfBoxReceiverOfNotNull()" in it })
             have(lines().any { ".selfBoxOfNotNullAndBounded()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of type parameter bounded by type parameter pinned by other bound without extension on other type`() {
+        // W of X : MutableList<W> is Int for TypedOther<MutableList<Int>>, no supertype of V of String?
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.nullable.TypedPinnedBoundMixed",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".mixedOfNullableStringAndOtherOfIntList()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface passing nullable type parameter to Java boxes of mixed variance without extension on other type`() {
+        // T of PlatformMixed<T, T> is PlatformBox<String>, so that V is String, no Int
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.nullable.TypedMixedOfNullableBoxes",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".mixedOfSameAndIntOther()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of contravariant box of nullable type parameter bounding other one without extension on Java box of other type`() {
+        // K is String for the PlatformBox<String!> of PassingString, and Int is no V : K
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.nullable.TypedSinkOfNullableKeyBoxAndOther",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".sinkOfStringBoxAndIntOther()" in it })
         }
     }
 
