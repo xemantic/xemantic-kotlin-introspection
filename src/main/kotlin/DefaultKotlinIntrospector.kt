@@ -3145,6 +3145,9 @@ internal class DefaultKotlinIntrospector(
          * Only the elements of a vararg parameter of Java are known to be of a platform type, agreeing with either,
          * like the `String...` with a `vararg a: String?`, as annotated not null they are told so,
          * while the other type arguments of a Java member are compared as rendered, not nullable.
+         * The types of the value parameters themselves have to agree too, the one of a Java member being a platform type,
+         * agreeing with either, unless annotated, see [javaNullabilityOf]: a `@Nullable List<@NotNull String>` of Java
+         * never implements a `MutableList<out String>`, nor a `@NotNull String @Nullable []` a `vararg a: String`.
          */
         private fun hasNestedNullabilityOf(other: InheritedCandidate): Boolean {
             val parameters = nestedNullability ?: return false
@@ -3156,22 +3159,27 @@ internal class DefaultKotlinIntrospector(
             }
         }
 
-        // whether each type argument within each value parameter is nullable, depth-first, or null of a platform type,
-        // or of a star projection, see hasNestedNullabilityOf
+        // whether the type of each value parameter, and each type argument within it, depth-first, is nullable,
+        // or null of a platform type, or of a star projection, see hasNestedNullabilityOf
         private val nestedNullability: List<List<Boolean?>>? by lazy(LazyThreadSafetyMode.NONE) {
+            val function = member as? Member.Function
+            val javaNullability = function?.let { (declarations as? JavaClass)?.javaMethodOf(it.declaration) }?.let(::javaNullabilityOf)
             fun KmType.collect(flags: MutableList<Boolean?>) {
                 arguments.forEach { argument ->
                     flags += argument.type?.isNullable
                     argument.type?.collect(flags)
                 }
             }
-            (member as? Member.Function)?.function?.valueParameters?.map { parameter ->
+            function?.function?.valueParameters?.mapIndexed { position, parameter ->
                 val flags = ArrayList<Boolean?>()
                 parameter.type.collect(flags)
                 val elementType = parameter.varargElementType
                 val isPlatformElement = declarations is JavaClass && elementType != null && elementType.isNullable && flags.firstOrNull() == false
                 if (isPlatformElement) flags[0] = null
-                flags
+                val isNullable = if (declarations !is JavaClass) parameter.type.isNullable else {
+                    javaNullability?.let { it.types[position] ?: false.takeIf { _ -> it.isMarkedNotNull(position) } }
+                }
+                listOf(isNullable) + flags
             }
         }
 

@@ -1490,3 +1490,12 @@ interface TypedGetter<T> {
 
 abstract class AnyGetterJavaInterfaceTypedGetterJavaClassJoin :
     AnyGetter, com.xemantic.kotlin.introspection.test.other.JavaStringGetterInterface, TypedGetter<String>, com.xemantic.kotlin.introspection.test.other.JavaStringGetter()
+
+// A collection, or an array, of Java annotated nullable itself, next to a Kotlin member taking the one which is not nullable (#337)
+interface TypedFeeder<T> {
+    fun feed1(a: T)
+}
+
+interface OutMutableStringListFeederJavaNullableListJoin : TypedFeeder<MutableList<out String>>, com.xemantic.kotlin.introspection.test.other.JavaNullableListFeeder
+
+abstract class GenericVarargAcceptorJavaNullableArrayJoin : VarargAcceptor<String>, com.xemantic.kotlin.introspection.test.other.JavaNullableArrayAcceptor()

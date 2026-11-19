@@ -6419,6 +6419,32 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve Java method taking list annotated nullable apart from Kotlin member taking projected mutable list`() {
+        // the @Nullable List<@NotNull String> of Java is no platform type, so that the compiler keeps it apart from
+        // the MutableList<out String> given for the T of feed1(a: T): both have to be implemented, and feed1(null) compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OutMutableStringListFeederJavaNullableListJoin.feed1") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OutMutableStringListFeederJavaNullableListJoin.feed1 [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.TypedFeeder
+            fun feed1(a: MutableList<out String>)
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNullableListFeeder
+            fun feed1(arg0: List<String>?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java method taking array annotated nullable apart from Kotlin vararg member`() {
+        // the @NotNull String @Nullable [] of Java is no platform type, so that it never implements acceptAll(vararg values: T)
+        // given String: a concrete subclass has to implement it, and acceptAll(null) compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.GenericVarargAcceptorJavaNullableArrayJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GenericVarargAcceptorJavaNullableArrayJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.VarargAcceptor
+            fun acceptAll(vararg values: String)
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNullableArrayAcceptor
+            open fun acceptAll(arg0: Array<String>?)
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve Kotlin member taking platform type of Java member merged with it declared first by superclass`() {
         // the subclass inherits the member its superclass picks, the accept(String) of the Java class, declared first there
         resolver.resolve("com.xemantic.kotlin.introspection.test.StringJavaAcceptorJoinSubclass.accept") sameAsKotlin """
