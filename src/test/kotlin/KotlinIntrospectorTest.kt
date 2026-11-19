@@ -18877,6 +18877,16 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve abstract member of internal generic class merged with abstract Java member of interface once`() {
+        // one abstract member for kotlinc, which a single override implements
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaInternalStringPutWithAbstractImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaInternalStringPutWithAbstractImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaAbstractStringPut
+            fun put(arg0: String?): Int
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve member of interface merged with abstract member of internal class left unimplemented by Java class once`() {
         // the abstract member of the interface stands for the one of HiddenMergedInternalAbstract, merged with it
         resolver.resolve(

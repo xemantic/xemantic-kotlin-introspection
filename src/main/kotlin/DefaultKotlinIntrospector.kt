@@ -4478,11 +4478,13 @@ internal class DefaultKotlinIntrospector(
                 }
             }?.let { overridingBelow(it, declarations.clazz) } != null
         }
-        // whether the member is the method of a Java interface, merged with the abstract member of a class taking the type arguments
+        // whether the member is the default method of a Java interface, merged with the abstract member of a class taking the type arguments
         // a Java class gives, which it does not implement, like the default put(Integer) of a Java interface
-        // the put(t: T) of an internal class given Integer, so that both are listed, as a concrete subclass has to implement the latter
+        // the put(t: T) of an internal class given Integer, so that both are listed, as a concrete subclass has to implement the latter,
+        // unlike an abstract method of the interface, one abstract member with it
         fun isDefaultOfJavaInterfaceBeside(member: InheritedCandidate, abstract: InheritedCandidate): Boolean =
             member.declarations is JavaClass && member.kmClass.kind == ClassKind.INTERFACE &&
+                member.member.modality != Modality.ABSTRACT &&
                 abstract.kmClass.kind != ClassKind.INTERFACE && abstract.member.modality == Modality.ABSTRACT &&
                 abstract.javaGivenPositions.isNotEmpty()
         // the members of the supertypes which are not part of the API, inherited through the classes which are, see above,

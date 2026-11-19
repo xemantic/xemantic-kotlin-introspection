@@ -1085,6 +1085,8 @@ internal abstract class InternalGenericPut<T> {
 
 abstract class JavaInternalIntegerPutWithDefaultBoxedImpl : com.xemantic.kotlin.introspection.test.other.JavaInternalIntegerPutWithDefaultBoxed()
 
+abstract class JavaInternalStringPutWithAbstractImpl : com.xemantic.kotlin.introspection.test.other.JavaInternalStringPutWithAbstract()
+
 abstract class PrimitiveJavaInternalIntegerPutImpl : com.xemantic.kotlin.introspection.test.other.JavaPrimitiveInternalIntegerPut()
 
 abstract class JavaNotImplementingInternalGenericPutSub : com.xemantic.kotlin.introspection.test.other.JavaNotImplementingInternalGenericPut()
