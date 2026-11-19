@@ -10389,6 +10389,28 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve interface of Java list of nullable type parameter without extension on recursively bounded type parameter`() {
+        // List<@Nullable V> is a List<V?>, no List<T> of T : Comparable<T>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.witness.WitnessNullableElementList",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".witnessComparableElements()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of list of Java lists of type parameter bounded by final class without extension on recursively bounded type parameter`() {
+        // WitnessFinal is no Comparable, and kotlinc does not take the platform type Nothing! of PassingList<Nothing> for T
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.witness.WitnessListOfJavaLists",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".witnessComparableElementsOfLists()" in it })
+        }
+    }
+
+    @Test
     fun `should resolve extension of its package on Any by name of class with deprecated companion object of other supertype`() {
         // on a supertype of both the class and its companion object, deprecated only when called on the class name, like TaskHolder.describeTask()
         resolver.resolve(
@@ -12667,6 +12689,28 @@ class KotlinIntrospectorTest {
             pageSize = 10000
         ) should {
             have(lines().none { ".sinkOfStringBoxAndIntOther()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of type parameter bounded by unconstrained one and bounding other one without extension on other type`() {
+        // X : V is Int for TypedOther<Int>, no subtype of V of String?
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.nullable.TypedBoundingFreelyBoundedMixed",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".mixedOfNullableStringAndIntOther()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve inner class of contravariant box of nullable type parameter of outer class without extension on Java box of other type`() {
+        // O : Number is no String of the PlatformBox<String!> of PassingString
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.nullable.TypedOuter.Inner",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".sinkOfStringBox()" in it })
         }
     }
 

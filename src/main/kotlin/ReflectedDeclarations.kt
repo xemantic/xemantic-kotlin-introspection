@@ -466,6 +466,17 @@ private fun KmType.enhanceSupertypeArguments(type: Class<*>, supertype: Class<*>
 }
 
 /**
+ * Whether the class [type], or a supertype of it, is a Java class annotating a type argument of its supertype as nullable,
+ * or not, see [JavaClassNullability.supertypeArguments], like `interface NullableList<V> extends List<@Nullable V>`,
+ * whose supertypes told by its generic signature alone are not the ones the compiler sees.
+ */
+internal fun annotatesJavaSupertypeArguments(type: Class<*>, visited: MutableSet<Class<*>> = HashSet()): Boolean {
+    if (type.isJdkClass || !visited.add(type)) return false
+    return (type.getAnnotation(Metadata::class.java) == null && javaNullabilities.get(type).supertypeArguments.isNotEmpty()) ||
+        (listOfNotNull(type.superclass) + type.interfaces).any { annotatesJavaSupertypeArguments(it, visited) }
+}
+
+/**
  * Whether the Java class [type] gives the type arguments of its direct supertype, the class [supertype], as platform types,
  * like the `String!` of `Base<String>`, also its own type parameters, like the `X!` of `Base<X>`,
  * which the members inherited from the supertype take in place of its type parameters, accepting `null`,

@@ -205,3 +205,19 @@ interface TypedMixedOfNullableBoxes<V> : JavaPlatformBoxes.MixedOfBoxes<V?>, Typ
 fun <P, T> P.mixedOfSameAndIntOther() where P : PlatformMixed<T, T>, P : TypedOther<Int> {}
 
 interface TypedSinkOfNullableKeyBoxAndOther<K, V : K> : TypedSink<PlatformBox<K?>>, TypedOther<V>
+
+// nor of W bounding V which another bound refers to, like X : V, of X of Int, no subtype of V of String?
+
+interface TypedBoundingFreelyBoundedMixed<W, V : W, X : V> : TypedNotNullMixed<V>, TypedOther<X>
+
+fun <P> P.mixedOfNullableStringAndIntOther() where P : TypedMixed<String, String?>, P : TypedOther<Int> {}
+
+// nor is the type parameter of an outer class, like O of O : Number, told against a platform type
+
+class TypedOuter<O : Number> {
+
+    abstract inner class Inner<V> : TypedSink<PlatformBox<O?>>, TypedOther<V>
+
+}
+
+fun TypedSink<JavaPlatformBoxes.PassingString>.sinkOfStringBox() {}

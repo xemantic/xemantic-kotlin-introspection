@@ -6342,14 +6342,20 @@ internal class DefaultKotlinIntrospector(
      * each type parameter given each of them, or, when the combinations are more than [MAX_WITNESSES],
      * each of the first ones, as many as can be combined, and all of them the same one of the others,
      * as far as they satisfy the bounds of the type parameters, like only `Nothing` of `V : List<V>`.
-     * `Nothing` is no witness of a type parameter passed through Java, the platform type `V!`, as kotlinc does not take
-     * `Nothing!` where it takes `Nothing`, like for `V` of `V : Comparable<V>` of `fun <K, V : Comparable<V>> Map<K, V>.f()`,
-     * and such a platform type is just the witness, like `String`, so that a type which can be called on only
+     * `Nothing` is no witness of a type parameter passed through Java, the platform type `V!`, also within a type argument
+     * of another class than a built-in type, like `V` of `List<JavaList<V>>`, whose supertypes may pass it to Java:
+     * kotlinc takes `Nothing!` in most shapes, but not in all the ones it takes `Nothing` in, like not for `V`
+     * of `V : Comparable<V>` of `fun <K, V : Comparable<V>> Map<K, V>.f()`, which are not told apart,
+     * so that the extensions callable only with `Nothing` are deliberately not listed there.
+     * Such a platform type is just the witness, like `String`, so that a type which can be called on only
      * as the nullable one is not told.
      * None, when a supertype, or a bound, refers to a type parameter of an outer class, or to the class itself,
      * like `Comparable<K<V>>`, whose supertypes would be the ones of the witness, also of other type arguments, like of `K<Int>`,
      * or when a supertype, or a type of the extension, refers to a function type, like `List<(V) -> Unit>`,
-     * matched leniently, see [ClassSupertypes.lenientToFunctionTypes], where kotlinc rejects the call.
+     * matched leniently, see [ClassSupertypes.lenientToFunctionTypes], where kotlinc rejects the call,
+     * or when the class, or a class a type argument of a supertype refers to, has a Java supertype annotating
+     * a type argument of its own supertype, like `List<@Nullable V>`, see [annotatesJavaSupertypeArguments],
+     * which the supertypes told by the generic signatures do not tell.
      */
     private fun ClassSupertypes.witnessed(extensionTypes: List<KmType>): List<ClassSupertypes> {
         val typeParameters = kmClass.typeParameters
@@ -6364,6 +6370,14 @@ internal class DefaultKotlinIntrospector(
                 type.refersOnlyTo { it in ids } && !type.refersToClass() && !type.refersToFunctionType() && !type.refersToSuspendFunctionType()
             }
         if (!isTold) return emptyList()
+        // the classes the type arguments of the supertypes refer to, other than the built-in types
+        fun KmType.argumentClassNames(isArgument: Boolean = false): List<String> =
+            listOfNotNull((classifier as? KmClassifier.Class)?.name?.takeIf { isArgument && it !in builtinClasses }) +
+                arguments.flatMap { it.type?.argumentClassNames(isArgument = true).orEmpty() }
+        val isAnnotatedByJava = (reached.flatMapTo(LinkedHashSet()) { it.argumentClassNames() } + kmClass.name).any { name ->
+            findClassByMetadataName(name)?.clazz?.let { annotatesJavaSupertypeArguments(it) } == true
+        }
+        if (isAnnotatedByJava) return emptyList()
         // the types of classes referring to no type parameter, each before its type arguments, but no projection
         fun KmType.closedTypes(): List<KmType> =
             listOfNotNull(takeIf { it.classifier is KmClassifier.Class && it.outerType == null && it.refersOnlyTo { false } }) +
@@ -6372,10 +6386,16 @@ internal class DefaultKotlinIntrospector(
             .distinctBy { it.structureKey() }
             .take(MAX_WITNESS_TYPES)
         return witnessed.getOrPut(candidates.joinToString(" ") { it.structureKey() }) {
-            // the type parameters passed through Java, as platform types, like V! of a Java HashMap<V, V>
-            fun KmType.platformTypeParameterIds(): List<Int> =
-                listOfNotNull((classifier as? KmClassifier.TypeParameter)?.id?.takeIf { flexibleTypeUpperBound != null }) +
-                    arguments.flatMap { it.type?.platformTypeParameterIds().orEmpty() } + outerType?.platformTypeParameterIds().orEmpty()
+            // the type parameters passed through Java, as platform types, like V! of a Java HashMap<V, V>,
+            // or which may be, within a type argument of another class than a built-in type, like V of List<JavaList<V>>
+            fun KmType.typeParameterIds(): List<Int> = listOfNotNull((classifier as? KmClassifier.TypeParameter)?.id) +
+                arguments.flatMap { it.type?.typeParameterIds().orEmpty() } + outerType?.typeParameterIds().orEmpty()
+            fun KmType.platformTypeParameterIds(isArgument: Boolean = false): List<Int> = when {
+                isArgument && (classifier as? KmClassifier.Class)?.name?.let { it !in builtinClasses } == true -> typeParameterIds()
+                else -> listOfNotNull((classifier as? KmClassifier.TypeParameter)?.id?.takeIf { flexibleTypeUpperBound != null }) +
+                    arguments.flatMap { it.type?.platformTypeParameterIds(isArgument = true).orEmpty() } +
+                    outerType?.platformTypeParameterIds(isArgument).orEmpty()
+            }
             val platformIds = reached.flatMapTo(HashSet()) { it.platformTypeParameterIds() }
             fun isWitnessOf(id: Int, witness: KmType) =
                 id !in platformIds || (witness.classifier as? KmClassifier.Class)?.name != NOTHING_CLASS_NAME
@@ -6956,14 +6976,18 @@ internal class DefaultKotlinIntrospector(
          * a bound which is another type parameter of the class no supertype refers to, nor any other bound,
          * which would pin it, like `X : MutableList<W>`, like `W` of `V : W` of `interface R<W, V : W> : Mx<V & Any, V>`,
          * replaced by its own bounds, as it takes any type they allow, which `V` is a subtype of then,
-         * nullable ones for a nullable bound, like `W?`.
+         * nullable ones for a nullable bound, like `W?`, unless a bound of another type parameter refers to `V` itself,
+         * like `X : V`, which is not checked against the type `V` takes.
          */
         private fun classTypeParameterBounds(id: Int, visited: MutableSet<Int> = HashSet()): List<KmType> {
             if (!visited.add(id)) return emptyList()
             val reached by lazy(LazyThreadSafetyMode.NONE) { supertypes.types.values.flatten() }
+            val isBounding = supertypes.kmClass.typeParameters.any { typeParameter ->
+                typeParameter.id != id && typeParameter.upperBounds.any { other -> !other.refersOnlyTo { it != id } }
+            }
             return supertypes.kmClass.typeParameters.find { it.id == id }?.upperBounds.orEmpty().flatMap { bound ->
                 val boundId = (bound.classifier as? KmClassifier.TypeParameter)?.id
-                val isFree = boundId != null && !bound.isDefinitelyNonNull &&
+                val isFree = boundId != null && !bound.isDefinitelyNonNull && !isBounding &&
                     supertypes.kmClass.typeParameters.any { it.id == boundId } && reached.all { type -> type.refersOnlyTo { it != boundId } } &&
                     supertypes.kmClass.typeParameters.all { typeParameter ->
                         typeParameter.upperBounds.all { other -> other === bound || other.refersOnlyTo { it != boundId } }
@@ -7085,10 +7109,13 @@ internal class DefaultKotlinIntrospector(
         // whether the type a type parameter of the class takes against a platform type, like V? against String!, is told,
         // see isClassTypeParameterTyped: not where the types a type parameter is inferred from are compared, see typeMatcher,
         // whose positions are not told, nor when a bound of the class refers to a type parameter, like V : K,
-        // which is not checked against the types the other one takes
+        // which is not checked against the types the other one takes, nor when a supertype refers to a type parameter
+        // of an outer class, like O of an inner class, whose bounds are not told here
         private val isClassTypeParameterTold by lazy(LazyThreadSafetyMode.NONE) {
+            val ids = supertypes.kmClass.typeParameters.mapTo(HashSet()) { it.id }
             !isRememberingTypesMatched &&
-                supertypes.kmClass.typeParameters.all { typeParameter -> typeParameter.upperBounds.all { it.refersOnlyTo { false } } }
+                supertypes.kmClass.typeParameters.all { typeParameter -> typeParameter.upperBounds.all { it.refersOnlyTo { false } } } &&
+                supertypes.types.values.all { types -> types.all { type -> type.refersOnlyTo { it in ids } } }
         }
 
         // whether this is a platform type of a bound of the extension being checked, see satisfiesBounds, substituted

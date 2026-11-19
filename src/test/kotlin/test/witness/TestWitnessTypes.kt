@@ -74,6 +74,16 @@ abstract class WitnessJavaFinalKeyMap<V : WitnessFinal> : JavaPlatformBoxes.Same
 
 interface WitnessFinalKeyMap<V : WitnessFinal> : Map<V, V>
 
+// nor for a type parameter passed to a Java class within a type argument, like V of List<PassingList<V>>
+
+fun <T : Comparable<T>> List<List<T>>.witnessComparableElementsOfLists() {}
+
+interface WitnessListOfJavaLists<V : WitnessFinal> : List<JavaPlatformBoxes.PassingList<V>>
+
+// no witness is given through a Java supertype annotating a type argument, like List<@Nullable V>, a List<V?>
+
+interface WitnessNullableElementList<V> : JavaPlatformBoxes.NullableElementList<V>
+
 // each type parameter is given its own witness, also of more of them than can all be combined
 
 interface WitnessThreeKeyValueMap<A, K, V> : Map<K, V>

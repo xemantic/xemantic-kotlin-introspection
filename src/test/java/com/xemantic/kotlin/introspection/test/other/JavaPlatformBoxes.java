@@ -51,4 +51,8 @@ public interface JavaPlatformBoxes {
     interface SinkOfString extends PlatformSink<String> {}
 
     interface MixedOfBoxes<T> extends PlatformMixed<PlatformBox<T>, PlatformBox<String>> {}
+
+    interface NullableElementList<V> extends java.util.List<@org.jetbrains.annotations.Nullable V> {}
+
+    interface PassingList<V> extends java.util.List<V> {}
 }
