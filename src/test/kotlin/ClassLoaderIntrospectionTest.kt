@@ -3596,30 +3596,35 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
-    fun `should mark overrides of internal members of friend module by class whose class file cannot be parsed`() {
+    fun `should mark overrides of internal members of friend module by class whose class file is too new to be parsed, or cannot be read at all`() {
         // given
         val unreadableResource = "com/xemantic/kotlin/introspection/friendmodule/FriendModuleSubclass.class"
-        // the class is still loaded by the parent class loader, only its class file is served unparsable
-        val classLoader = object : ClassLoader(javaClass.classLoader) {
-            override fun getResourceAsStream(name: String): InputStream? {
-                val stream = super.getResourceAsStream(name)
-                return if (stream != null && name == unreadableResource) {
-                    tooNew(stream.use { it.readBytes() }, constantPool = false).inputStream()
-                } else stream
+        // the class is still loaded by the parent class loader, only its class file is served too new to be parsed,
+        // its constant pool, supertypes and methods readable all the same, or not
+        val introspectors = listOf(true, false).map { constantPool ->
+            val classLoader = object : ClassLoader(javaClass.classLoader) {
+                override fun getResourceAsStream(name: String): InputStream? {
+                    val stream = super.getResourceAsStream(name)
+                    return if (stream != null && name == unreadableResource) {
+                        tooNew(stream.use { it.readBytes() }, constantPool).inputStream()
+                    } else stream
+                }
             }
+            KotlinIntrospector(classLoader, scanEntireClasspath = false)
         }
-        val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
 
         // when
-        val signature = introspector.resolve("com.xemantic.kotlin.introspection.friendmodule.FriendModuleSubclass")
+        val signatures = introspectors.map { it.resolve("com.xemantic.kotlin.introspection.friendmodule.FriendModuleSubclass") }
 
         // then
-        signature sameAsKotlin """
-            // com.xemantic.kotlin.introspection.friendmodule.FriendModuleSubclass [page 1/1]
-            class FriendModuleSubclass : com.xemantic.kotlin.introspection.othermodule.InternalBase {
-                override val state: Int
-            }
-        """.trimIndent()
+        signatures.forEach { signature ->
+            signature sameAsKotlin """
+                // com.xemantic.kotlin.introspection.friendmodule.FriendModuleSubclass [page 1/1]
+                class FriendModuleSubclass : com.xemantic.kotlin.introspection.othermodule.InternalBase {
+                    override val state: Int
+                }
+            """.trimIndent()
+        }
     }
 
     @Test
@@ -4282,32 +4287,37 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
-    fun `should mark overrides of class whose class file cannot be parsed`() {
+    fun `should mark overrides of class whose class file is too new to be parsed, or cannot be read at all`() {
         // given
-        val introspector = introspectorWithUnreadableClassFiles(
-            "com.xemantic.kotlin.introspection.isolated.AbsentJavaSubclass",
-            methodTables = false
-        )
+        // the constant pool, the supertypes and the methods of the class file readable all the same, or not
+        val introspectors = listOf(true, false).map { methodTables ->
+            introspectorWithUnreadableClassFiles(
+                "com.xemantic.kotlin.introspection.isolated.AbsentJavaSubclass",
+                methodTables = methodTables
+            )
+        }
 
         // when
-        val signature = introspector.resolve(
-            "com.xemantic.kotlin.introspection.isolated.AbsentJavaSubclass"
-        )
+        val signatures = introspectors.map {
+            it.resolve("com.xemantic.kotlin.introspection.isolated.AbsentJavaSubclass")
+        }
 
         // then
-        signature sameAsKotlin """
-            // com.xemantic.kotlin.introspection.isolated.AbsentJavaSubclass [page 1/1]
-            class AbsentJavaSubclass : AbsentJavaBase<String> {
-                override fun process(item: String)
-                fun process(item: Int)
-                override fun run()
-                fun run(times: Int)
-                fun prim(x: Int?)
-                override fun <S : String> bounded(x: S)
-                fun <S : Number> bounded(x: S)
-                override fun take(nested: DollarHolder.`Dollar${'$'}Nested`)
-            }
-        """.trimIndent()
+        signatures.forEach { signature ->
+            signature sameAsKotlin """
+                // com.xemantic.kotlin.introspection.isolated.AbsentJavaSubclass [page 1/1]
+                class AbsentJavaSubclass : AbsentJavaBase<String> {
+                    override fun process(item: String)
+                    fun process(item: Int)
+                    override fun run()
+                    fun run(times: Int)
+                    fun prim(x: Int?)
+                    override fun <S : String> bounded(x: S)
+                    fun <S : Number> bounded(x: S)
+                    override fun take(nested: DollarHolder.`Dollar${'$'}Nested`)
+                }
+            """.trimIndent()
+        }
     }
 
     @Test

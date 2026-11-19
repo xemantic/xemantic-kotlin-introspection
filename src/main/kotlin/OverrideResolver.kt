@@ -1568,7 +1568,7 @@ internal class OverrideResolver(
      * the declared [methods], and whether the class is annotated with the Kotlin metadata, see [isKotlin],
      * also when its annotations cannot be read, so that it cannot be told.
      *
-     * @param hasMalformedSupertype whether a direct supertype is left out, as the class file does not tell its name.
+     * @param malformedSupertypes how many direct supertypes are left out, as the class file does not tell their names.
      * @param classAttributes the generic signature, and whether the class is annotated with the Kotlin metadata,
      *   read from the attributes of the class, which a scanned class file reads only when needed, see [scanClass].
      */
@@ -1578,8 +1578,9 @@ internal class OverrideResolver(
         val interfaces: List<String>,
         val methods: List<DeclaredMethod>,
         private val classAttributes: Lazy<Pair<String?, Boolean>>,
-        val hasMalformedSupertype: Boolean = false
+        val malformedSupertypes: Int = 0
     ) {
+        val hasMalformedSupertype: Boolean get() = malformedSupertypes > 0
         val signature: String? get() = classAttributes.value.first
         val isKotlin: Boolean get() = classAttributes.value.second
         val supertypes: List<String> get() = listOfNotNull(superName) + interfaces
@@ -1693,9 +1694,10 @@ internal class OverrideResolver(
         fun className(index: Int): String? = classNameIndexes.getOrNull(index)?.let { utf8.getOrNull(it) }
         val classAccess = input.readUnsignedShort()
         val name = className(input.readUnsignedShort())
-        // the superclass, of the entry 0 for java/lang/Object, which has none, like a module descriptor
-        val superName = className(input.readUnsignedShort())
-        val hasNoSuperclass = name == OBJECT_INTERNAL_NAME || classAccess and Opcodes.ACC_MODULE != 0
+        // the superclass, of the entry 0 only for java/lang/Object, which has none, like a module descriptor
+        val superclass = input.readUnsignedShort()
+        val superName = className(superclass)
+        val hasNoSuperclass = superclass == 0 && (name == OBJECT_INTERNAL_NAME || classAccess and Opcodes.ACC_MODULE != 0)
         val interfaces = List(input.readUnsignedShort()) { className(input.readUnsignedShort()) }
         // the fields, by their access flags, names and descriptors, followed by their attributes
         repeat(input.readUnsignedShort()) {
@@ -1725,7 +1727,7 @@ internal class OverrideResolver(
         }
         ClassFileContent(
             name, superName, interfaces.filterNotNull(), methods, classAttributes,
-            hasMalformedSupertype = (superName == null && !hasNoSuperclass) || interfaces.any { it == null }
+            malformedSupertypes = (if (superName == null && !hasNoSuperclass) 1 else 0) + interfaces.count { it == null }
         )
     } catch (_: IOException) {
         null
@@ -2278,7 +2280,7 @@ internal class OverrideResolver(
      */
     private fun jvmSupertypeNames(name: String, content: () -> ClassFileContent?): JvmSupertypes? =
         reflectedSupertypeNames(name)?.let { JvmSupertypes(it) }
-            ?: content()?.let { JvmSupertypes(it.supertypes.toHashSet(), isComplete = !it.hasMalformedSupertype) }
+            ?: content()?.let { JvmSupertypes(it.supertypes.toHashSet(), leftOut = it.malformedSupertypes) }
 
     /**
      * The JVM internal names of the direct supertypes of the class of the [name], as reflected, or `null` if it cannot be loaded.
@@ -2290,31 +2292,43 @@ internal class OverrideResolver(
     /**
      * The JVM internal [names] of the direct supertypes of a class, see [jvmSupertypeNames].
      *
-     * @param isComplete whether they are all of them, unlike when a malformed class file leaves one out,
-     *   see [ClassFileContent.hasMalformedSupertype].
+     * @param leftOut how many of them a malformed class file leaves out, see [ClassFileContent.malformedSupertypes].
      */
-    private inner class JvmSupertypes(val names: Set<String>, private val isComplete: Boolean = true) {
+    private inner class JvmSupertypes(val names: Set<String>, private val leftOut: Int = 0) {
 
         /**
          * The names of the supertypes of the [kmClass] which these supertypes are relocated from, see [relocatedNames].
          * If a supertype is left out, it might be the one of the same simple name which a metadata name is relocated to,
-         * rather than the only one left, so that a supertype is paired only when it is the only one of its simple name
-         * of all the supertypes of the metadata which these supertypes do not have, like `lib/Base` next to `lib/Listener`,
-         * but not `a/Base` next to `b/Base`, and neither with a built-in type, nor with a JDK class, which no class is relocated to,
-         * as `java/util/List` might be of the `kotlin/collections/List` of the metadata, next to a `lib/List` left out:
-         * the one left out is then of another supertype of the metadata, as a relocated class keeps its simple name.
+         * rather than the only one left, so that a supertype is paired only when each of these supertypes is of a supertype
+         * of the metadata, of its simple name, and the one paired is the only one of its simple name it might be of:
+         * - the metadata names no built-in type which these supertypes do not have, but `kotlin/Any`,
+         *   as it is another class for the JVM, of another name, like `java/util/List` of `kotlin/collections/MutableList`,
+         *   or `kotlin/jvm/functions/FunctionN` of `kotlin/Function23`, maybe a relocated one, when the standard library is shaded,
+         *   next to the classes the compiler adds, like `kotlin/jvm/internal/markers/KMappedMarker`,
+         * - there are no more of these supertypes, the ones left out too, but the superclass `java/lang/Object`,
+         *   than the supertypes of the metadata, unlike with an interface added by the compiler, or by a bytecode tool,
+         * - the supertype is the only one of its simple name of the supertypes of the metadata which these supertypes do not have,
+         *   like `lib/Base` next to `other/Listener`, but not `a/Base` next to `b/Base`,
+         * - it is not paired with a built-in type, nor with a JDK class, which no class is relocated to,
+         * - and every other supertype of its package which these supertypes do not have is paired too,
+         *   as the one left out might be relocated to another package, like `lib/Base` to `s1/Base` next to `lib/Listener`
+         *   in `s2/Listener`, which tells no relocation of the package when both are there.
          */
         fun relocatedFrom(kmClass: KmClass): Map<String, String> {
             val relocated = relocatedNames(kmClass.relocatableSupertypes().keys, names)
-            if (isComplete || relocated.isEmpty()) return relocated
-            val unmatchedSimpleNames = kmClass.supertypes
-                .mapNotNull { (it.classifier as? KmClassifier.Class)?.name?.let { name -> internalNameOf(name) } }
-                .filter { it !in names }
-                .groupingBy { it.substringAfterLast('/') }
-                .eachCount()
-            return relocated.filter { (metadataName, jvmName) ->
+            if (leftOut == 0 || relocated.isEmpty()) return relocated
+            val metadataNames = kmClass.supertypes.map { (it.classifier as? KmClassifier.Class)?.name ?: return emptyMap() }
+                .filter { it != "kotlin/Any" }
+                .map { internalNameOf(it) }
+            val unmatched = metadataNames.filter { it !in names }
+            if (unmatched.any { !it.isRelocatable }) return emptyMap()
+            if (names.count { it != OBJECT_INTERNAL_NAME } + leftOut > metadataNames.size) return emptyMap()
+            val unmatchedSimpleNames = unmatched.groupingBy { it.substringAfterLast('/') }.eachCount()
+            val paired = relocated.filter { (metadataName, jvmName) ->
                 jvmName.isRelocatable && unmatchedSimpleNames[metadataName.substringAfterLast('/')] == 1
             }
+            val unpairedPackages = unmatched.filter { it !in paired }.mapTo(HashSet()) { packageOf(it) }
+            return paired.filterKeys { packageOf(it) !in unpairedPackages }
         }
 
     }
