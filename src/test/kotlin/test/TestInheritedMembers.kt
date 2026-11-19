@@ -1041,9 +1041,62 @@ abstract class JavaNotImplementingInternalGenericPutSub : com.xemantic.kotlin.in
 
 fun JavaNotImplementingInternalGenericPutSub.putNull(): Int = put(null)
 
-// while a Kotlin class exposes an internal supertype only with an error suppressed, the members of which are not inherited
+// and so through a Kotlin class exposing an internal supertype, though only with an error suppressed
 @Suppress("EXPOSED_SUPER_CLASS")
 abstract class KotlinNotImplementingInternal : HiddenMergedInternalAbstract()
+
+abstract class KotlinNotImplementingInternalSub : KotlinNotImplementingInternal()
+
+class KotlinNotImplementingInternalConcrete : KotlinNotImplementingInternalSub() {
+    override fun f(): Int = 1
+}
+
+// inherited from the nearest public Java class, which the user code can name, below a package-private one
+abstract class JavaBelowPackagePrivateNotImplementingInternalSub :
+    com.xemantic.kotlin.introspection.test.other.JavaPublicBelowPackagePrivateNotImplementingInternal()
+
+// next to a member of an interface deprecated as hidden, merged with it, inherited when the Java class is declared first,
+// while the compiler picks the hidden one when the interface is declared first, though a concrete subclass has to implement it
+interface HiddenFaceOverInternal {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    fun f(): Int
+}
+
+abstract class JavaNotImplementingInternalHiddenFaceSub :
+    com.xemantic.kotlin.introspection.test.other.JavaNotImplementingInternal(), HiddenFaceOverInternal
+
+fun JavaNotImplementingInternalHiddenFaceSub.callF(): Int = f()
+
+abstract class HiddenFaceJavaNotImplementingInternalSub :
+    HiddenFaceOverInternal, com.xemantic.kotlin.introspection.test.other.JavaNotImplementingInternal()
+
+// the members of an internal class, or interface, which are not abstract, inherited through a Java class alike,
+// open, or final, so that a concrete subclass need not override them
+internal abstract class InternalOpenMembers {
+    open fun g(): Int = 1
+    fun h(): Int = 2
+    val pv: Int = 1
+}
+
+abstract class JavaExtendingInternalOpenSub : com.xemantic.kotlin.introspection.test.other.JavaExtendingInternalOpen()
+
+class JavaExtendingInternalOpenConcrete : JavaExtendingInternalOpenSub() {
+    override fun g(): Int = 3
+}
+
+internal interface InternalDefaultFace {
+    fun d(): Int = 1
+}
+
+abstract class JavaImplementingInternalDefaultSub : com.xemantic.kotlin.introspection.test.other.JavaImplementingInternalDefault()
+
+class JavaImplementingInternalDefaultConcrete : JavaImplementingInternalDefaultSub()
+
+// the method of a Java class implements the member of an internal interface a Java subclass implements, unrelated to it,
+// so that a subclass of JavaPlainFImplementingInternalFaceSub need not override f()
+abstract class JavaPlainFImplementingInternalFaceSub : com.xemantic.kotlin.introspection.test.other.JavaPlainFImplementingInternalFace()
+
+class JavaPlainFImplementingInternalFaceConcrete : JavaPlainFImplementingInternalFaceSub()
 
 // A Kotlin class extending java.util.AbstractList and implementing MutableList, whose members K2 merges,
 // picking the Java method of AbstractList, first, when not returning a platform type
