@@ -340,6 +340,10 @@ com.example.AnnotationTestClass
   as nullable, like `V?`, as definitely not nullable, like `V & Any`, or as a platform type, satisfying its bounds,
   like `fun Map<String?, String>.ext()` for `interface Index<V> : Map<V, V & Any>`, of `Index<String?>`,
   but not `fun Box<String?>.ext()` for `interface NotNullBox<V> : Box<V & Any>`.
+  An extension of the package of the class on a `kotlin.*` or `java.*` supertype, bounded by itself, like `fun <T : Comparable<T>> Map<T, T>.ext()`,
+  is listed for a generic class when it can be called for some type argument tried,
+  like `String`, `Int`, `Nothing`, or a type the extension names:
+  for `class SameKeyMap<V> : HashMap<V, V>()`, of `SameKeyMap<String>`, but not for `interface Scores<V> : Map<V, Comparable<V>>`.
   A JDK interface named as a supertype, like `abstract class Orders : java.util.List<Order>`,
   is the Java one, with the supertypes Java declares,
   so that `fun Collection<Order>.count()` is listed for it, but not `fun List<Order>.total()`, as the compiler tells,

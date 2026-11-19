@@ -47,4 +47,6 @@ public interface JavaPlatformBoxes {
     interface NotNullList<T> extends PlatformNotNullBox<java.util.List<T>> {}
 
     class SameKeyMap<V> extends java.util.HashMap<V, V> {}
+
+    interface SinkOfString extends PlatformSink<String> {}
 }

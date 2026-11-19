@@ -19,6 +19,7 @@
 package com.xemantic.kotlin.introspection.test.nullable
 
 import com.xemantic.kotlin.introspection.test.PlatformBox
+import com.xemantic.kotlin.introspection.test.PlatformSink
 import com.xemantic.kotlin.introspection.test.other.JavaPlatformBoxes
 
 // A type parameter of a class standing for a type of either nullability, like V of V!, V?, or V & Any,
@@ -156,3 +157,35 @@ fun <P, T : List<T>?> P.selfBoxAndOther() where P : TypedSelfBox<T & Any>, P : T
 // of the class is taken as its nullable type, not modelled otherwise
 
 fun <P, T : List<T>?> P.selfBoxAndIntOther() where P : TypedSelfBox<T & Any>, P : TypedOther<Int> {}
+
+// T & Any in a contravariant position is a subtype of String, also of the platform type String! given through Java,
+// of T inferred as String?, which is no Comparable<String?>, unlike T : List<T>?, which no String? contradicts
+
+interface TypedStringSink : PlatformSink<String>
+
+interface TypedJavaStringSink : JavaPlatformBoxes.SinkOfString
+
+fun <T : Comparable<T>?> PlatformSink<T & Any>.sinkOfNotNullComparable() {}
+
+fun <T : List<T>?> PlatformSink<T & Any>.sinkOfNotNullSelfList() {}
+
+fun <T> PlatformSink<T & Any>.sinkOfNotNull() {}
+
+// V of V : W, of W which no supertype refers to, takes any type, like String?, as W does
+
+interface TypedFreelyBoundedMixed<W, V : W> : TypedNotNullMixed<V>
+
+// V? is the platform type String! of PlatformBox<String!> of PassingString, either String, or String?, for V of String
+
+interface TypedSinkOfNullableBoxAndOther<V> : TypedSink<PlatformBox<V?>>, TypedOther<V>
+
+fun <P> P.sinkOfStringBoxAndStringOther() where P : TypedSink<JavaPlatformBoxes.PassingString>, P : TypedOther<String> {}
+
+// T & Any satisfies its bounds as the nullable type also on a type parameter receiver of that sole bound,
+// and next to a type parameter bounded only by T, which nothing refers to, telling nothing more of T
+
+interface TypedNullableListsBox<V> : TypedSelfBox<List<V?>>
+
+fun <P : TypedSelfBox<T & Any>, T : List<T>?> P.selfBoxReceiverOfNotNull() {}
+
+fun <T : List<T>?, U : T> TypedSelfBox<T & Any>.selfBoxOfNotNullAndBounded() {}
