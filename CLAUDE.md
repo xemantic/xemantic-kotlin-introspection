@@ -148,9 +148,9 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 
 - Kotlin never passes named arguments to a Java method, even one compiled with `-parameters`, so a Java method taking parameters never shadows an extension — see `isShadowingJavaMethod`.
 
-- kotlin-reflect tells a mutable collection type of a Java method overriding a Kotlin member taking it,
-  like the `MutableCollection<Int>` of an `addAll2(Collection<Integer>)`, by a `KClass` which has no Java class:
-  `kClass.java` throws a `ClassCastException`, which `reflectedValue` swallows, dropping the whole member silently — see `reflectedClassName`.
+- `reflectedValue` swallows what a conversion of a reflected member throws, dropping the whole member silently,
+  like every Java method overriding a Kotlin member taking a mutable collection was, see `reflectedClassName` —
+  a member missing from a listing may be a conversion failing, not a rule of the listing.
 
 - kotlinc compiling many probe files in one run reports the errors of the backend, like `inherited platform declarations clash`,
   only when no file of the run has an error of the frontend —

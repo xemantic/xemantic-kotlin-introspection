@@ -1436,3 +1436,57 @@ abstract class NullableStringJavaTypedAcceptorJoin :
 
 abstract class StringAcceptorNullableJavaTypedJoin :
     StringAcceptor, com.xemantic.kotlin.introspection.test.other.JavaTypedAcceptor<String?>()
+
+// A nullable type argument within a vararg, or a collection, of a Java class, next to a Kotlin member taking the type not nullable (#337)
+abstract class StringVarargAcceptorNullableJavaTypedJoin : StringVarargAcceptor, com.xemantic.kotlin.introspection.test.other.JavaTypedVarargAcceptor<String?>()
+
+abstract class NullableJavaTypedStringVarargAcceptorJoin : com.xemantic.kotlin.introspection.test.other.JavaTypedVarargAcceptor<String?>(), StringVarargAcceptor
+
+abstract class OutMutableCollectionAdderNullableJavaTypedJoin : OutMutableIntCollectionAdder, com.xemantic.kotlin.introspection.test.other.JavaTypedCollectionAdder<Int?>()
+
+// A nullable array given to a Java class next to a Java vararg method, one member (#337)
+abstract class NullableArrayJavaTypedVarargInterfaceJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaTypedAcceptor<Array<String>?>(), com.xemantic.kotlin.introspection.test.other.JavaStringVarargAcceptInterface
+
+// A nullable type argument given to a Java interface, next to a member of its JVM signature, and one of another (#337)
+abstract class AbstractStringAcceptor {
+    abstract fun accept(s: String)
+}
+
+abstract class NullableJavaTypedInterfaceRedeclaredAcceptorJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaTypedAcceptorInterface<String?>, AbstractStringAcceptor(), com.xemantic.kotlin.introspection.test.other.JavaRedeclaringGenericAcceptor
+
+// A type parameter annotated not null, given a nullable type argument, merged with a Kotlin member (#337)
+interface StringPairPutter {
+    fun put2n(a: String, b: String)
+}
+
+abstract class NullableJavaNotNullTypedPutterJoin : com.xemantic.kotlin.introspection.test.other.JavaNotNullTypedPutter<String?>(), StringPairPutter
+
+// Five nested collection types of a Java method, merged with a Kotlin member taking the mutable map of them (#337)
+interface NestedMutableMapTaker {
+    fun big(m: MutableMap<List<List<String>>, List<List<String>>>)
+}
+
+abstract class JavaNestedMapTakerJoin : com.xemantic.kotlin.introspection.test.other.JavaNestedMapTaker(), NestedMutableMapTaker
+
+// A hidden member between the ones of a Java interface and of a Java class, winning over each other in a circle (#337)
+interface HiddenStringAcceptor {
+    @Deprecated("Hidden", level = DeprecationLevel.HIDDEN)
+    fun accept(s: String)
+}
+
+abstract class JavaInterfaceHiddenAcceptorJavaClassJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaStringAcceptorInterface, HiddenStringAcceptor, com.xemantic.kotlin.introspection.test.other.JavaStringAcceptor()
+
+// Members winning over each other in a circle, next to one of a less specific return type, declared first (#337)
+interface AnyGetter {
+    fun get2(k: String): Any
+}
+
+interface TypedGetter<T> {
+    fun get2(t: T): String
+}
+
+abstract class AnyGetterJavaInterfaceTypedGetterJavaClassJoin :
+    AnyGetter, com.xemantic.kotlin.introspection.test.other.JavaStringGetterInterface, TypedGetter<String>, com.xemantic.kotlin.introspection.test.other.JavaStringGetter()

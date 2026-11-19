@@ -6317,6 +6317,108 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve Java vararg method taking nullable type argument apart from Kotlin vararg member declared first`() {
+        // the T... of the Java class given String? takes no platform type, so that it never implements acceptAll(vararg values: String):
+        // a concrete subclass has to implement it, and acceptAll(null) compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.StringVarargAcceptorNullableJavaTypedJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.StringVarargAcceptorNullableJavaTypedJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.StringVarargAcceptor
+            fun acceptAll(vararg values: String)
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypedVarargAcceptor
+            open fun acceptAll(vararg arg0: String?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java vararg method taking nullable type argument declared first apart from Kotlin vararg member`() {
+        // like with the Kotlin interface declared first
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NullableJavaTypedStringVarargAcceptorJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NullableJavaTypedStringVarargAcceptorJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypedVarargAcceptor
+            open fun acceptAll(vararg arg0: String?)
+            // inherited from com.xemantic.kotlin.introspection.test.StringVarargAcceptor
+            fun acceptAll(vararg values: String)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member taking projected mutable collection as abstract next to Java method taking collection of nullable type argument`() {
+        // the Collection<T> of the Java class given Int? is no collection of a platform type, so that it never implements the member,
+        // which a concrete subclass has to implement
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OutMutableCollectionAdderNullableJavaTypedJoin.addAll2") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OutMutableCollectionAdderNullableJavaTypedJoin.addAll2 [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.OutMutableIntCollectionAdder
+            fun addAll2(c: MutableCollection<out Int>): Boolean
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java method given nullable array merged with Java vararg method as one member`() {
+        // the String... of the Java interface is a platform type, merged with the Array<String>? given for T: a concrete subclass compiles,
+        // and accept("") does not
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NullableArrayJavaTypedVarargInterfaceJoin.accept") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NullableArrayJavaTypedVarargInterfaceJoin.accept [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypedAcceptor
+            open fun accept(arg0: Array<String>?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member merged with Java method given nullable type argument next to member of its JVM signature`() {
+        // the accept(T) of the Java interface given String? is of the JVM signature of the accept(t: T) of GenericAcceptor<String>,
+        // which the other Java interface declares again, so that it is not kept apart, and accept(null) compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NullableJavaTypedInterfaceRedeclaredAcceptorJoin.accept") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NullableJavaTypedInterfaceRedeclaredAcceptorJoin.accept [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.AbstractStringAcceptor
+            abstract fun accept(s: String?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java method taking type parameter annotated not null given nullable type argument merged with Kotlin member`() {
+        // the @NotNull T given String? is a String, merged with the put2n(a: String, b: String) of the interface, which it implements
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NullableJavaNotNullTypedPutterJoin.put2n") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NullableJavaNotNullTypedPutterJoin.put2n [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNotNullTypedPutter
+            open fun put2n(arg0: String, arg1: String?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member taking mutable map of nested lists merged with Java method declared first`() {
+        // each of the five collection types of the Java method is either the read-only, or the mutable one, in Kotlin
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaNestedMapTakerJoin.big") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaNestedMapTakerJoin.big [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.NestedMutableMapTaker
+            open fun big(m: Map<List<List<String>>, List<List<String>>>?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of Java interface declared first of members winning over each other in circle next to hidden member`() {
+        // the accept(String) of the Java interface wins over the hidden accept(s: String), declared after it, which wins over the one
+        // of the Java class, declared last, which wins over the one of the Java interface, implementing it:
+        // kotlinc picks the one declared first, not the hidden one, and accept(null) compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaInterfaceHiddenAcceptorJavaClassJoin.accept") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaInterfaceHiddenAcceptorJavaClassJoin.accept [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaStringAcceptorInterface
+            open fun accept(arg0: String?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of most specific return type of members winning over each other in circle`() {
+        // the get2 of the Java interface, of TypedGetter<String>, and of the Java class win over each other in a circle,
+        // and each of them over the get2(k: String): Any of the interface declared first, of a less specific return type,
+        // which is never listed then: kotlinc types get2("") as String
+        resolver.resolve("com.xemantic.kotlin.introspection.test.AnyGetterJavaInterfaceTypedGetterJavaClassJoin.get2") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.AnyGetterJavaInterfaceTypedGetterJavaClassJoin.get2 [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaStringGetterInterface
+            open fun get2(arg0: String?): String
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve Kotlin member taking platform type of Java member merged with it declared first by superclass`() {
         // the subclass inherits the member its superclass picks, the accept(String) of the Java class, declared first there
         resolver.resolve("com.xemantic.kotlin.introspection.test.StringJavaAcceptorJoinSubclass.accept") sameAsKotlin """
