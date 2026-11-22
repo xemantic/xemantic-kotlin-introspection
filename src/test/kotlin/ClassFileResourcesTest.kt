@@ -20,6 +20,7 @@ package com.xemantic.kotlin.introspection
 
 import com.xemantic.kotlin.test.assert
 import kotlin.test.Test
+import org.objectweb.asm.Opcodes
 
 class ClassFileResourcesTest {
 
@@ -45,6 +46,27 @@ class ClassFileResourcesTest {
 
         // then
         assert(namesSupertypes == listOf(true, true, true, false))
+    }
+
+    @Test
+    fun `should not take class file flagged as module of another name for one of no superclass`() {
+        // given
+        // a class whose superclass index is replaced by 0, flagged as a module descriptor, which is named module-info
+        val stringClassFile = ClassLoader.getSystemResourceAsStream("java/lang/String.class")!!.use { it.readBytes() }
+        val flaggedAsModule = stringClassFile.copyOf().apply {
+            // the access flags are followed by this class, and the superclass
+            val header = classReader(this).header
+            this[header] = (Opcodes.ACC_MODULE shr 8).toByte()
+            this[header + 1] = 0
+            this[header + 4] = 0
+            this[header + 5] = 0
+        }
+
+        // when
+        val namesSupertypes = classReader(flaggedAsModule).namesSupertypesByClassEntries()
+
+        // then
+        assert(!namesSupertypes)
     }
 
     @Test
