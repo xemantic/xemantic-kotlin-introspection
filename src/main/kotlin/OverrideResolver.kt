@@ -2321,14 +2321,15 @@ internal class OverrideResolver(
         }.uniquePairs()
         // a supertype the class file does not tell is not looked up in a relocated package enclosing its own, where another class is,
         // but where the relocation of the owner alone tells, or guesses, like by its prefix, relocated class by class then,
-        // or else by its metadata name
+        // or else by its metadata name, while the class declared there, which the class might inherit from otherwise,
+        // like through a Java supertype naming it by its JVM name, is not named back by the name of the supertype
         val misplaced = jvmSupertypes.misplacedSupertypes(owner.kmClass, dependencies, packages)
-        val misplacedClasses = misplaced.mapNotNull { metadataName ->
+        val misplacedClasses = misplaced.keys.mapNotNull { metadataName ->
             own?.located(metadataName)?.let {
                 Relocation.topLevelClassOf(internalNameOf(metadataName)) to Relocation.topLevelClassOf(internalNameOf(it))
             }
         }.toMap()
-        val notRelocated = excluded + misplaced.filter { own?.located(it) == null }
+        val notRelocated = excluded + misplaced.keys.filter { own?.located(it) == null } + misplaced.values
         val relocation = own?.withDependencies(packages, notRelocated, classes + misplacedClasses, rootPackages)
             ?: Relocation.ofDependencies(packages, notRelocated, classes, rootPackages)
         return OwnerRelocation(relocation, classFile(declared), hasDependencies = true)
@@ -2473,16 +2474,19 @@ internal class OverrideResolver(
          * by yet another name than the class does, like `okio/Sink` found for `lib/internal/okio/Sink`,
          * the copy a library bundles, relocated once more with the library.
          * A Java class found there cannot be told from the relocated one, and is taken for it.
+         *
+         * @return the supertypes mapped to the names of the classes declared where they are looked up.
          */
-        fun misplacedSupertypes(kmClass: KmClass, dependencies: Map<String, String>, packages: Map<String, String>): Set<String> {
-            val relocation = Relocation.ofDependencies(packages, excluded = emptySet()) ?: return emptySet()
+        fun misplacedSupertypes(kmClass: KmClass, dependencies: Map<String, String>, packages: Map<String, String>): Map<String, String> {
+            val relocation = Relocation.ofDependencies(packages, excluded = emptySet()) ?: return emptyMap()
             return kmClass.relocatableSupertypes()
                 .filter { (internalName, metadataName) ->
                     internalName !in names && internalName !in dependencies && packageOf(metadataName) !in packages
                 }
-                .values.filterTo(HashSet()) { metadataName ->
-                    relocation.located(metadataName)?.let { located -> declaration(located).kotlin?.name == located } == true
+                .values.mapNotNull { metadataName ->
+                    relocation.located(metadataName)?.takeIf { declaration(it).kotlin?.name == it }?.let { metadataName to it }
                 }
+                .toMap()
         }
 
     }

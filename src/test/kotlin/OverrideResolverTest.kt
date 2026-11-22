@@ -1736,6 +1736,39 @@ class OverrideResolverTest {
     }
 
     @Test
+    fun `should tell override of another class of subpackage of relocated package inherited through Java supertype next to supertype left out`() {
+        // given
+        // like above, lib/Base relocated to s1/, the index of lib/sub/Listener malformed, and the class declared in s1/sub/,
+        // which the owner does inherit from, through a Java interface of the app, which cannot be loaded, naming it by its JVM name
+        val owner = kmClass("app/Owner", supertype = "lib/Base").apply {
+            supertypes += type("lib/sub/Listener")
+            supertypes += type("app/JMid")
+        }
+        val ownerClassFiles = withMalformedSecondInterface("s1/Base", "s2/Listener", "app/JMid")
+        val javaMid = classFile("app/JMid", listOf(), interfaces = listOf("s1/sub/Listener"), isInterface = true)
+
+        // when
+        val overrides = ownerClassFiles.map { classFile ->
+            val resolver = overrideResolver(
+                classes = mapOf(
+                    "s1/Base" to kmClass("lib/Base", null, "relocatedBase"),
+                    "s1/sub/Listener" to kmClass("s1/sub/Listener", null, "declared")
+                ),
+                classFiles = mapOf("app/Owner" to classFile),
+                unloadableClassFiles = mapOf("app/JMid" to javaMid)
+            )
+            listOf(
+                resolver.isOverride(OverrideResolver.Owner(owner), function("relocatedBase")),
+                resolver.isOverride(OverrideResolver.Owner(owner), function("declared"))
+            )
+        }
+
+        // then
+        // the class declared in s1/sub/ is not named lib/sub/Listener back, the name of the supertype left out, which it is not
+        assert(overrides == List(6) { listOf(true, true) })
+    }
+
+    @Test
     fun `should find supertype left out in subpackage of relocated package when its class file has malformed supertype index`() {
         // given
         // like an app shading its dependencies, lib/ with its subpackages relocated to app/shaded/lib/, the index of the second interface malformed
