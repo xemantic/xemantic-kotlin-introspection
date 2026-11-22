@@ -24,6 +24,30 @@ import kotlin.test.Test
 class ClassFileResourcesTest {
 
     @Test
+    fun `should tell class files of no superclass naming their supertypes from one of malformed superclass index`() {
+        // given
+        // the only class files of the superclass index 0: of java.lang.Object, and of a module descriptor
+        val objectClassFile = ClassLoader.getSystemResourceAsStream("java/lang/Object.class")!!.use { it.readBytes() }
+        val moduleDescriptor = Any::class.java.module.getResourceAsStream("module-info.class")!!.use { it.readBytes() }
+        // and of another class, whose superclass index is replaced by 0, like a malformed one
+        val stringClassFile = ClassLoader.getSystemResourceAsStream("java/lang/String.class")!!.use { it.readBytes() }
+        val withoutSuperclass = stringClassFile.copyOf().apply {
+            // the access flags are followed by this class, and the superclass
+            val superclass = classReader(this).header + 4
+            this[superclass] = 0
+            this[superclass + 1] = 0
+        }
+
+        // when
+        val namesSupertypes = listOf(objectClassFile, moduleDescriptor, stringClassFile, withoutSuperclass).map {
+            classReader(it).namesSupertypesByClassEntries()
+        }
+
+        // then
+        assert(namesSupertypes == listOf(true, true, true, false))
+    }
+
+    @Test
     fun `should locate metadata name in package of relocated binary name`() {
         // when
         val name = locatedNameOf("shaded.com.example.Outer\$Nested", "com/example/Outer.Nested")

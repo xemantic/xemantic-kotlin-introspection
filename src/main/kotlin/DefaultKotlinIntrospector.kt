@@ -4568,7 +4568,7 @@ internal class DefaultKotlinIntrospector(
         val bridges = readClassBytes(declaringClass.name)?.let { bytes ->
             try {
                 buildList<JvmMethodSignature> {
-                    ClassReader(bytes).accept(object : ClassVisitor(Opcodes.ASM9) {
+                    classReader(bytes).accept(object : ClassVisitor(Opcodes.ASM9) {
                         override fun visitMethod(
                             access: Int,
                             name: String,

@@ -1568,7 +1568,7 @@ internal class OverrideResolver(
      * the declared [methods], and whether the class is annotated with the Kotlin metadata, see [isKotlin],
      * also when its annotations cannot be read, so that it cannot be told.
      *
-     * @param hasMalformedSupertype whether a direct supertype is left out, as the class file does not tell its name.
+     * @param malformedSupertypes how many direct supertypes are left out, as the class file does not tell their names.
      * @param classAttributes the generic signature, and whether the class is annotated with the Kotlin metadata,
      *   read from the attributes of the class, which a scanned class file reads only when needed, see [scanClass].
      */
@@ -1578,8 +1578,9 @@ internal class OverrideResolver(
         val interfaces: List<String>,
         val methods: List<DeclaredMethod>,
         private val classAttributes: Lazy<Pair<String?, Boolean>>,
-        val hasMalformedSupertype: Boolean = false
+        val malformedSupertypes: Int = 0
     ) {
+        val hasMalformedSupertype: Boolean get() = malformedSupertypes > 0
         val signature: String? get() = classAttributes.value.first
         val isKotlin: Boolean get() = classAttributes.value.second
         val supertypes: List<String> get() = listOfNotNull(superName) + interfaces
@@ -1652,12 +1653,13 @@ internal class OverrideResolver(
      * or `null` if they cannot be read either, like when the constant pool has an entry of an unknown kind,
      * whose size is unknown then, or the class file is malformed.
      * A malformed index of the class itself, or of a supertype, which is out of the constant pool,
-     * or not of a `Class` entry, only leaves that name out, the methods being read all the same,
+     * or not of a `Class` entry named by a `Utf8` one, or the superclass index 0 of a class other than `java/lang/Object`,
+     * see [namesSupertypesByClassEntries], only leaves that name out, the methods being read all the same,
      * as they are when the attributes of the class, following them, cannot be read,
      * the class then of no generic signature, and deemed annotated with the Kotlin metadata, as it cannot be told.
      */
     private fun scanClass(bytes: ByteArray): ClassFileContent? = try {
-        val input = DataInputStream(bytes.inputStream())
+        val input = ClassFileInput(bytes)
         if (input.readInt() != 0xCAFEBABE.toInt()) return null
         // the minor and the major version
         input.skipNBytes(4)
@@ -1690,33 +1692,33 @@ internal class OverrideResolver(
         // the name of the Class entry of the index, the entry 0 of no name, as is any entry of another kind,
         // or an index out of the constant pool
         fun className(index: Int): String? = classNameIndexes.getOrNull(index)?.let { utf8.getOrNull(it) }
-        // the access flags
-        input.skipNBytes(2)
+        val classAccess = input.readUnsignedShort()
         val name = className(input.readUnsignedShort())
-        // the superclass, of the entry 0 for java/lang/Object, which has none
+        // the superclass, of the entry 0 only for java/lang/Object, which has none, like a module descriptor
         val superclass = input.readUnsignedShort()
         val superName = className(superclass)
+        val hasNoSuperclass = superclass == 0 && (name == OBJECT_INTERNAL_NAME || classAccess and Opcodes.ACC_MODULE != 0)
         val interfaces = List(input.readUnsignedShort()) { className(input.readUnsignedShort()) }
         // the fields, by their access flags, names and descriptors, followed by their attributes
         repeat(input.readUnsignedShort()) {
             input.skipNBytes(6)
-            scanAttributes(input, bytes, utf8)
+            scanAttributes(input, utf8)
         }
         val methods = List(input.readUnsignedShort()) {
             val access = input.readUnsignedShort()
             val methodName = utf8[input.readUnsignedShort()] ?: return null
             val descriptor = utf8[input.readUnsignedShort()] ?: return null
-            val (isSynthetic, signature) = scanAttributes(input, bytes, utf8)
+            val (isSynthetic, signature) = scanAttributes(input, utf8)
             DeclaredMethod(access or (if (isSynthetic) Opcodes.ACC_SYNTHETIC else 0), methodName, descriptor, signature)
         }
         // the attributes of the class, following all the rest, read only when needed, and guarded on their own,
         // so that the supertypes and the methods are known also when they cannot be read,
         // the class then of no generic signature, and maybe a Kotlin one
-        val classAttributesOffset = bytes.size - input.available()
+        val classAttributesOffset = input.offset
         val classAttributes = lazy {
             try {
-                val classInput = DataInputStream(ByteArrayInputStream(bytes, classAttributesOffset, bytes.size - classAttributesOffset))
-                scanAttributes(classInput, bytes, utf8, ofClass = true).let { (_, signature, isKotlin) -> signature to isKotlin }
+                scanAttributes(ClassFileInput(bytes, classAttributesOffset), utf8, ofClass = true)
+                    .let { (_, signature, isKotlin) -> signature to isKotlin }
             } catch (_: IOException) {
                 null to true
             } catch (_: IndexOutOfBoundsException) {
@@ -1725,7 +1727,7 @@ internal class OverrideResolver(
         }
         ClassFileContent(
             name, superName, interfaces.filterNotNull(), methods, classAttributes,
-            hasMalformedSupertype = (superclass != 0 && superName == null) || interfaces.any { it == null }
+            malformedSupertypes = (if (superName == null && !hasNoSuperclass) 1 else 0) + interfaces.count { it == null }
         )
     } catch (_: IOException) {
         null
@@ -1734,7 +1736,26 @@ internal class OverrideResolver(
     }
 
     /**
-     * Scans the attributes of a field, of a method, or [ofClass], from the [input] of the class file [bytes],
+     * The input of the class file [bytes], scanned from the [offset], see [scanClass],
+     * telling the [offset] it has got to, so that a part of the class file is read in place, or later.
+     */
+    private class ClassFileInput private constructor(
+        val bytes: ByteArray,
+        private val stream: PositionedInputStream
+    ) : DataInputStream(stream) {
+
+        constructor(bytes: ByteArray, offset: Int = 0) : this(bytes, PositionedInputStream(bytes, offset))
+
+        val offset: Int get() = stream.position
+
+    }
+
+    private class PositionedInputStream(bytes: ByteArray, offset: Int) : ByteArrayInputStream(bytes, offset, bytes.size - offset) {
+        val position: Int get() = pos
+    }
+
+    /**
+     * Scans the attributes of a field, of a method, or [ofClass], from the [input] of the class file,
      * see [scanClass], each skipped by its length, but the `Signature` one, and the annotations of the class,
      * telling whether the `Synthetic` one is there, the generic signature, if any,
      * and whether an annotation is the Kotlin metadata, or might be, see [hasMetadataAnnotation].
@@ -1742,8 +1763,7 @@ internal class OverrideResolver(
      * @param utf8 the `Utf8` entries of the constant pool, by their indexes.
      */
     private fun scanAttributes(
-        input: DataInputStream,
-        bytes: ByteArray,
+        input: ClassFileInput,
         utf8: Array<String?>,
         ofClass: Boolean = false
     ): Triple<Boolean, String?, Boolean> {
@@ -1756,9 +1776,9 @@ internal class OverrideResolver(
             if (attribute == "Signature" && length == 2L) {
                 signature = utf8[input.readUnsignedShort()]
             } else if (ofClass && (attribute == "RuntimeVisibleAnnotations" || attribute == "RuntimeInvisibleAnnotations")) {
-                // read in place, the input of an array having no buffer of its own
+                // read in place
                 if (length > input.available()) throw EOFException()
-                if (hasMetadataAnnotation(bytes, offset = bytes.size - input.available(), length.toInt(), utf8)) isKotlin = true
+                if (hasMetadataAnnotation(input.bytes, input.offset, length.toInt(), utf8)) isKotlin = true
                 input.skipNBytes(length)
             } else {
                 if (attribute == "Synthetic") isSynthetic = true
@@ -2126,7 +2146,7 @@ internal class OverrideResolver(
         }
         // the ones the Kotlin supertypes reached tell, of the supertypes they have in common, are told by the class itself
         val supertypeDependencies =
-            (indirectSupertypeDependencies + jvmSupertypes.relocatedFrom(metadataSupertypes.keys)).notRelocatedByOwner()
+            (indirectSupertypeDependencies + jvmSupertypes.relocatedFrom(owner.kmClass)).notRelocatedByOwner()
         val signatures = owner.kmClass.jvmSignatures()
         // neither a built-in type, nor a JDK class, nor a class the relocation of the owner already tells, is told,
         // the prefix of the owner only guessing the relocation of the other packages, like not of one relocated to the root package
@@ -2260,7 +2280,7 @@ internal class OverrideResolver(
      */
     private fun jvmSupertypeNames(name: String, content: () -> ClassFileContent?): JvmSupertypes? =
         reflectedSupertypeNames(name)?.let { JvmSupertypes(it) }
-            ?: content()?.let { JvmSupertypes(it.supertypes.toHashSet(), isComplete = !it.hasMalformedSupertype) }
+            ?: content()?.let { JvmSupertypes(it.supertypes.toHashSet(), leftOut = it.malformedSupertypes) }
 
     /**
      * The JVM internal names of the direct supertypes of the class of the [name], as reflected, or `null` if it cannot be loaded.
@@ -2272,18 +2292,44 @@ internal class OverrideResolver(
     /**
      * The JVM internal [names] of the direct supertypes of a class, see [jvmSupertypeNames].
      *
-     * @param isComplete whether they are all of them, unlike when a malformed class file leaves one out,
-     *   see [ClassFileContent.hasMalformedSupertype].
+     * @param leftOut how many of them a malformed class file leaves out, see [ClassFileContent.malformedSupertypes].
      */
-    private inner class JvmSupertypes(val names: Set<String>, private val isComplete: Boolean = true) {
+    private inner class JvmSupertypes(val names: Set<String>, private val leftOut: Int = 0) {
 
         /**
-         * The [metadataNames] which these supertypes are relocated from, see [relocatedNames], or none,
-         * if a supertype is left out, as it might be the one of the same simple name which a metadata name is relocated to,
-         * rather than the only one left.
+         * The names of the supertypes of the [kmClass] which these supertypes are relocated from, see [relocatedNames].
+         * If a supertype is left out, it might be the one of the same simple name which a metadata name is relocated to,
+         * rather than the only one left, so that a supertype is paired only when each of these supertypes is of a supertype
+         * of the metadata, of its simple name, and the one paired is the only one of its simple name it might be of:
+         * - the metadata names no built-in type which these supertypes do not have, but `kotlin/Any`,
+         *   as it is another class for the JVM, of another name, like `java/util/List` of `kotlin/collections/MutableList`,
+         *   or `kotlin/jvm/functions/FunctionN` of `kotlin/Function23`, maybe a relocated one, when the standard library is shaded,
+         *   next to the classes the compiler adds, like `kotlin/jvm/internal/markers/KMappedMarker`,
+         * - there are no more of these supertypes, the ones left out too, but the superclass `java/lang/Object`,
+         *   than the supertypes of the metadata, unlike with an interface added by the compiler, or by a bytecode tool,
+         * - the supertype is the only one of its simple name of the supertypes of the metadata which these supertypes do not have,
+         *   like `lib/Base` next to `other/Listener`, but not `a/Base` next to `b/Base`,
+         * - it is not paired with a built-in type, nor with a JDK class, which no class is relocated to,
+         * - and every other supertype of its package which these supertypes do not have is paired too,
+         *   as the one left out might be relocated to another package, like `lib/Base` to `s1/Base` next to `lib/Listener`
+         *   in `s2/Listener`, which tells no relocation of the package when both are there.
          */
-        fun relocatedFrom(metadataNames: Set<String>): Map<String, String> =
-            if (isComplete) relocatedNames(metadataNames, names) else emptyMap()
+        fun relocatedFrom(kmClass: KmClass): Map<String, String> {
+            val relocated = relocatedNames(kmClass.relocatableSupertypes().keys, names)
+            if (leftOut == 0 || relocated.isEmpty()) return relocated
+            val metadataNames = kmClass.supertypes.map { (it.classifier as? KmClassifier.Class)?.name ?: return emptyMap() }
+                .filter { it != "kotlin/Any" }
+                .map { internalNameOf(it) }
+            val unmatched = metadataNames.filter { it !in names }
+            if (unmatched.any { !it.isRelocatable }) return emptyMap()
+            if (names.count { it != OBJECT_INTERNAL_NAME } + leftOut > metadataNames.size) return emptyMap()
+            val unmatchedSimpleNames = unmatched.groupingBy { it.substringAfterLast('/') }.eachCount()
+            val paired = relocated.filter { (metadataName, jvmName) ->
+                jvmName.isRelocatable && unmatchedSimpleNames[metadataName.substringAfterLast('/')] == 1
+            }
+            val unpairedPackages = unmatched.filter { it !in paired }.mapTo(HashSet()) { packageOf(it) }
+            return paired.filterKeys { packageOf(it) !in unpairedPackages }
+        }
 
     }
 
@@ -2305,7 +2351,7 @@ internal class OverrideResolver(
         supertypeClasses.flatMap { (name, kmClass) ->
             val jvmSupertypes = jvmSupertypeNames(name) { readClassBytesByMetadataName(name)?.let { readClass(it) } }
                 ?: return@flatMap emptyList()
-            jvmSupertypes.relocatedFrom(kmClass.relocatableSupertypes().keys).toList()
+            jvmSupertypes.relocatedFrom(kmClass).toList()
         }.uniquePairs()
 
     /**
@@ -3460,7 +3506,7 @@ private fun Class<*>.nestedClassNameWithoutDeclaringClass(): String {
     val innerClasses = mutableMapOf<String, Pair<String, String>>()
     (classLoader ?: ClassLoader.getSystemClassLoader()).readClassBytes(name)?.let { bytes ->
         try {
-            ClassReader(bytes).accept(object : ClassVisitor(Opcodes.ASM9) {
+            classReader(bytes).accept(object : ClassVisitor(Opcodes.ASM9) {
                 override fun visitInnerClass(name: String, outerName: String?, innerName: String?, access: Int) {
                     if (outerName != null && innerName != null) innerClasses[name] = outerName to innerName
                 }
