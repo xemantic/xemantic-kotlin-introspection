@@ -148,12 +148,17 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 
 - Kotlin never passes named arguments to a Java method, even one compiled with `-parameters`, so a Java method taking parameters never shadows an extension — see `isShadowingJavaMethod`.
 
-- Of several paths from a Java class to a generic Kotlin supertype, K2 judges the override of a Java method by the first one depth-first,
-  in the order of declaration, not by the nearest one: of a Java class the superclass first,
-  of a Kotlin class as it names them, which only its metadata tells — see `typeArgumentGivers`.
+- K2 judges the override of a Java method by the first path to a generic Kotlin supertype, not by the nearest one, see `typeArgumentGivers`.
 
-- A type argument a Java class gives stays boxed for K2 whatever its nullability:
-  a Java `put(int)` does not implement the `put(t: T)` of `GenericPut<@NotNull Integer>`, though it takes `Int` — see `javaGivenPositions`.
+- A Java `put(int)` never implements a Kotlin `put(t: T)` given `Integer` by a Java class, whatever its nullability, see `javaGivenPositions` —
+  the listing does not follow it for a `@NullMarked` class yet.
+
+- A Java method overriding a Kotlin member, or merged with one, takes its parameter names for kotlinc, so `put(t = 1)` compiles,
+  while a named-argument probe of a member merged only of Java methods fails —
+  the listing still names a Java override `arg0`, so a row lost in a merge may take the only Kotlin name with it, see `withInheritedThroughApi`.
+
+- A kotlinc run per probe takes seconds, and tens of them under parallel load: for a sweep of thousands of probes
+  call `K2JVMCompiler().exec(…)` of `kotlinc/lib/kotlin-compiler.jar` per probe file in a few warm JVMs, which gives the same verdicts.
 
 ## Anti-patterns to avoid
 

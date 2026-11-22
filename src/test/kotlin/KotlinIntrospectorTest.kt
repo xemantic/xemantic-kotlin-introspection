@@ -6397,7 +6397,9 @@ class KotlinIntrospectorTest {
     @Test
     fun `should resolve Java member taking boxed type next to Kotlin generic one given primitive type by Kotlin interface and other type by Java`() {
         // put(Integer, String) does not implement the put(k: K, v: V) given Int by MidPut2, though the String is given by the Java class,
-        // so that a concrete subclass has to implement it
+        // so that a concrete subclass has to implement it, while the abstract member is not listed as kotlinc has it yet,
+        // put(k: Int, v: String!), rejecting put(null, ""): the Int given by MidPut2 is still taken for a platform type,
+        // like the String given by the Java class
         resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaMidPut2Impl.put") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.BoxedJavaMidPut2Impl.put [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedMidPut2
@@ -19138,24 +19140,107 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should resolve abstract member of internal generic class next to default Java member taking boxed type`() {
-        // the default put(Integer) of the Java interface does not implement the abstract put(t: T) of the internal class
+    fun `should resolve abstract member of internal generic class merged with default Java member taking boxed type once`() {
+        // the default put(Integer) of the Java interface does not implement the abstract put(t: T) of the internal class,
+        // which wins over it, like the one of a public class: one abstract member for kotlinc, naming its argument t
         resolver.resolve("com.xemantic.kotlin.introspection.test.JavaInternalIntegerPutWithDefaultBoxedImpl.put") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.JavaInternalIntegerPutWithDefaultBoxedImpl.put [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.other.JavaInternalIntegerPutWithDefaultBoxed
             abstract fun put(t: Int?): Int
-            // inherited from com.xemantic.kotlin.introspection.test.other.JavaDefaultBoxedPut
-            open fun put(arg0: Int?): Int
         """.trimIndent()
     }
 
     @Test
     fun `should resolve abstract member of internal generic class merged with abstract Java member of interface once`() {
-        // one abstract member for kotlinc, which a single override implements
+        // one abstract member for kotlinc, which a single override implements, naming its argument t
         resolver.resolve("com.xemantic.kotlin.introspection.test.JavaInternalStringPutWithAbstractImpl.put") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.JavaInternalStringPutWithAbstractImpl.put [page 1/1]
-            // inherited from com.xemantic.kotlin.introspection.test.other.JavaAbstractStringPut
-            fun put(arg0: String?): Int
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaInternalStringPutWithAbstract
+            abstract fun put(t: String?): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve open member of internal generic class implementing abstract Java member of interface taking boxed type`() {
+        // the put(t: T) of InternalOpenPut<Integer> implements the put(Integer) of the Java interface, one member for kotlinc,
+        // the one of the class, so that a concrete subclass compiles, and put(t = 1) names its argument
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaInternalOpenIntegerPutWithAbstractBoxedImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaInternalOpenIntegerPutWithAbstractBoxedImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaInternalOpenIntegerPutWithAbstractBoxed
+            open fun put(t: Int?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking boxed type overriding member of internal generic class given boxed type annotated nullable`() {
+        // the @Nullable Integer the Java class gives is no platform type, but Int?, so that put(null) compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaPutOverInternalNullableIntegerImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaPutOverInternalNullableIntegerImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOverInternalNullableInteger
+            override fun put(arg0: Int?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin generic member given boxed type annotated nullable by Java superclass declared before Java interface giving boxed type`() {
+        // the first path to GenericPut gives Int?, not Int, so that put(null) compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaNullableIntegerPutBaseBeforeIntegerPutJoin.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaNullableIntegerPutBaseBeforeIntegerPutJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.GenericPut
+            fun put(t: Int?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve open member of internal generic class next to abstract Java member of interface taking primitive type`() {
+        // the put(t: T) of InternalOpenPut<Integer>, taking Int!, does not implement the put(int) of the Java interface,
+        // which a concrete subclass has to implement
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaInternalOpenIntegerPutWithAbstractPrimitiveImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaInternalOpenIntegerPutWithAbstractPrimitiveImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaInternalOpenIntegerPutWithAbstractPrimitive
+            open fun put(t: Int?): String
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaPrimitivePutInterface
+            fun put(arg0: Int): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve abstract member of internal generic class merged with default Java member taking String once`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaInternalStringPutWithDefaultImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaInternalStringPutWithDefaultImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaInternalStringPutWithDefault
+            abstract fun put(t: String?): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve abstract member of internal generic class next to default Java member taking primitive type`() {
+        // the default put(int) of the Java interface is a member of its own, of a body
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaInternalIntegerPutWithDefaultPrimitiveImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaInternalIntegerPutWithDefaultPrimitiveImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaInternalIntegerPutWithDefaultPrimitive
+            abstract fun put(t: Int?): Int
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaDefaultPrimitivePut
+            open fun put(arg0: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve abstract member of internal generic interface implemented by default Java member taking boxed type as open`() {
+        // of the members of the interfaces the one of a body implements the abstract one, named by the Kotlin member
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaInternalIntegerPutFaceWithDefaultBoxed.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaInternalIntegerPutFaceWithDefaultBoxed.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaInternalIntegerPutFace
+            open fun put(t: Int?): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of internal generic interface implementing abstract Java member of interface taking boxed type as open`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaInternalOpenIntegerPutFaceWithAbstractBoxed.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaInternalOpenIntegerPutFaceWithAbstractBoxed.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaInternalOpenIntegerPutFace
+            open fun put(t: Int?): String
         """.trimIndent()
     }
 

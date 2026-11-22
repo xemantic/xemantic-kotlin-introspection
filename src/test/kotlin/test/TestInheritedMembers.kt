@@ -1093,6 +1093,85 @@ abstract class JavaNotImplementingInternalGenericPutSub : com.xemantic.kotlin.in
 
 fun JavaNotImplementingInternalGenericPutSub.putNull(): Int = put(null)
 
+// or its member of a body, implementing the abstract method of a Java interface merged with it, taking a boxed type,
+// so that a concrete subclass compiles, checked by the build, like put(null), and the argument named by the Kotlin member
+internal abstract class InternalOpenPut<T> {
+    open fun put(t: T): String = ""
+}
+
+abstract class JavaInternalOpenIntegerPutWithAbstractBoxedImpl : com.xemantic.kotlin.introspection.test.other.JavaInternalOpenIntegerPutWithAbstractBoxed()
+
+class JavaInternalOpenIntegerPutWithAbstractBoxedConcrete : JavaInternalOpenIntegerPutWithAbstractBoxedImpl()
+
+fun JavaInternalOpenIntegerPutWithAbstractBoxedImpl.putNull(): String = put(null)
+
+fun JavaInternalOpenIntegerPutWithAbstractBoxedImpl.putNamed(): String = put(t = 1)
+
+// and a type argument the Java class gives annotated nullable is taken as given, so that put(null) compiles,
+// by the method of the Java class overriding the member, and next to another path giving a platform type, declared after it
+abstract class BoxedJavaPutOverInternalNullableIntegerImpl : com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOverInternalNullableInteger()
+
+fun BoxedJavaPutOverInternalNullableIntegerImpl.putNull(): String = put(null)
+
+abstract class JavaNullableIntegerPutBaseBeforeIntegerPutJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaNullableIntegerPutBase(), com.xemantic.kotlin.introspection.test.other.JavaIntegerPutInterface
+
+fun JavaNullableIntegerPutBaseBeforeIntegerPutJoin.putNull(): String = put(null)
+
+// while the abstract method of a Java interface taking the primitive type is a member of its own, left to a concrete subclass
+abstract class JavaInternalOpenIntegerPutWithAbstractPrimitiveImpl : com.xemantic.kotlin.introspection.test.other.JavaInternalOpenIntegerPutWithAbstractPrimitive()
+
+class JavaInternalOpenIntegerPutWithAbstractPrimitiveConcrete : JavaInternalOpenIntegerPutWithAbstractPrimitiveImpl() {
+    override fun put(key: Int): String = ""
+}
+
+// and so the abstract member of the internal class merged with the method of a Java interface, also a default one,
+// which does not implement it, the argument named by the Kotlin member
+fun JavaInternalStringPutWithAbstractImpl.putNamed(): Int = put(t = "")
+
+fun JavaInternalIntegerPutWithDefaultBoxedImpl.putNamed(): Int = put(t = 1)
+
+class JavaInternalIntegerPutWithDefaultBoxedConcrete : JavaInternalIntegerPutWithDefaultBoxedImpl() {
+    override fun put(t: Int?): Int = 0
+}
+
+abstract class JavaInternalStringPutWithDefaultImpl : com.xemantic.kotlin.introspection.test.other.JavaInternalStringPutWithDefault()
+
+class JavaInternalStringPutWithDefaultConcrete : JavaInternalStringPutWithDefaultImpl() {
+    override fun put(t: String?): Int = 0
+}
+
+// next to a default method taking the primitive type, a member of its own
+abstract class JavaInternalIntegerPutWithDefaultPrimitiveImpl : com.xemantic.kotlin.introspection.test.other.JavaInternalIntegerPutWithDefaultPrimitive()
+
+class JavaInternalIntegerPutWithDefaultPrimitiveConcrete : JavaInternalIntegerPutWithDefaultPrimitiveImpl() {
+    override fun put(t: Int?): Int = 0
+}
+
+// and the member of an internal interface, which the default method of a Java interface implements, or the other way round,
+// so that a concrete subclass compiles, checked by the build
+internal interface InternalGenericPutFace<T> {
+    fun put(t: T): Int
+}
+
+abstract class JavaInternalIntegerPutFaceWithDefaultBoxed :
+    com.xemantic.kotlin.introspection.test.other.JavaInternalIntegerPutFace(), com.xemantic.kotlin.introspection.test.other.JavaDefaultBoxedPut
+
+class JavaInternalIntegerPutFaceWithDefaultBoxedConcrete : JavaInternalIntegerPutFaceWithDefaultBoxed()
+
+fun JavaInternalIntegerPutFaceWithDefaultBoxed.putNamed(): Int = put(t = null)
+
+internal interface InternalOpenPutFace<T> {
+    fun put(t: T): String = ""
+}
+
+abstract class JavaInternalOpenIntegerPutFaceWithAbstractBoxed :
+    com.xemantic.kotlin.introspection.test.other.JavaInternalOpenIntegerPutFace(), com.xemantic.kotlin.introspection.test.other.JavaBoxedPutInterface
+
+class JavaInternalOpenIntegerPutFaceWithAbstractBoxedConcrete : JavaInternalOpenIntegerPutFaceWithAbstractBoxed()
+
+fun JavaInternalOpenIntegerPutFaceWithAbstractBoxed.putNamed(): String = put(t = null)
+
 // and so through a Kotlin class exposing an internal supertype, though only with an error suppressed
 @Suppress("EXPOSED_SUPER_CLASS")
 abstract class KotlinNotImplementingInternal : HiddenMergedInternalAbstract()

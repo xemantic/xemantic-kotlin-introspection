@@ -492,6 +492,16 @@ internal fun givesPlatformTypeArguments(type: Class<*>, supertype: Class<*>, ind
 }
 
 /**
+ * Whether the Java class [type] gives the type argument of the type parameter at the [index] of its direct supertype,
+ * the class [supertype], annotated nullable, like the `@Nullable Integer` of `Base<@Nullable Integer>`, no platform type,
+ * see [givesPlatformTypeArguments], yet accepting `null` like one, unlike the one annotated not null.
+ */
+internal fun givesNullableTypeArgument(type: Class<*>, supertype: Class<*>, index: Int): Boolean = reflectedValue(default = false) {
+    val supertypeIndex = if (type.superclass == supertype) -1 else type.interfaces.indexOf(supertype)
+    javaNullabilities.get(type).supertypeArguments[supertypeIndex]?.get("$index;") == true
+}
+
+/**
  * Erases the type arguments of this raw supertype of a Java class, when it is a Kotlin class, declared by the [supertypeClass],
  * to the bounds of its type parameters, as kotlinc erases them, see [rawErasure], like `Any?` of `T`,
  * or `CharSequence` of `T : CharSequence`, like `Box<List<Any?>>` of the raw `ListBox`, where `interface ListBox<T> : Box<List<T>>`,
@@ -868,7 +878,8 @@ private fun isPrimitiveKotlinTypeArgument(javaClass: Class<*>, typeClass: Class<
  */
 private sealed interface TypeArgumentGiver {
 
-    // a Java class, giving a platform type, or a raw Java supertype, or giving it as read, see givesPlatformTypeArguments
+    // a Java class, giving a platform type, or a raw Java supertype, or one annotated nullable, accepting null alike,
+    // see givesNullableTypeArgument, or giving it as read, not nullable, see givesPlatformTypeArguments
     class Java(val isPlatform: Boolean) : TypeArgumentGiver
 
     // a Kotlin class naming the type class as its direct supertype, giving the argument, if told, see kotlinTypeArguments
@@ -949,7 +960,9 @@ private fun typeArgumentGivers(
             when {
                 supertypeClass != typeClass -> walk(supertypeClass)
                 supertype !is ParameterizedType -> givers += TypeArgumentGiver.Java(isPlatform = true)
-                !type.isKotlinClass -> givers += TypeArgumentGiver.Java(givesPlatformTypeArguments(type, typeClass, index))
+                !type.isKotlinClass -> givers += TypeArgumentGiver.Java(
+                    givesPlatformTypeArguments(type, typeClass, index) || givesNullableTypeArgument(type, typeClass, index)
+                )
                 else -> when (val argument = supertype.actualTypeArguments.getOrNull(index)) {
                     is TypeVariable<*> -> (argument.genericDeclaration as? Class<*>)?.let { argumentClass ->
                         givers += typeArgumentGivers(javaClass, argumentClass, argumentClass.typeParameters.indexOf(argument), resolved)

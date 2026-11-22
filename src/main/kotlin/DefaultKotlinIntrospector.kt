@@ -3744,7 +3744,9 @@ internal class DefaultKotlinIntrospector(
                 giver == null || given == null || givesPlatformTypeArguments(giver, given)
             }
         // the positions of the value parameters of the candidate, of the type parameters of its class, reached by the reach,
-        // which take the type arguments as given, see InheritedCandidate.givenPositions
+        // which take the type arguments as given, see InheritedCandidate.givenPositions, but the ones given annotated nullable,
+        // which accept null like the platform ones, whatever the type arguments of the path the member is walked by,
+        // like the Int? of GenericPut<@Nullable Integer> of a Java superclass declared before a Java interface giving Integer
         fun givenPositions(candidate: InheritedCandidate, reach: Reach): Set<Int> {
             if (!reach.isPlatform || reach.isPlatformBelow) return emptySet()
             val giver = (if (reach.giver == kmClass.name) declarations.clazz else walkedClasses[reach.giver]) ?: return emptySet()
@@ -3754,7 +3756,7 @@ internal class DefaultKotlinIntrospector(
                 val id = (declaration.valueParameters[position].type.classifier as? KmClassifier.TypeParameter)?.id
                 val index = candidate.kmClass.typeParameters.indexOfFirst { it.id == id }
                 index >= 0 && candidate.kmClass.typeParameters.size == given.typeParameters.size &&
-                    !givesPlatformTypeArguments(giver, given, index)
+                    !givesPlatformTypeArguments(giver, given, index) && !givesNullableTypeArgument(giver, given, index)
             }
         }
         // the positions of the value parameters of the candidate, of the type parameters of its class, reached by the reach,
@@ -4124,6 +4126,10 @@ internal class DefaultKotlinIntrospector(
         // merged with the member of an unrelated interface, open then, or the member of an internal interface, see overrides
         val unlistedOverrides = unlistedKotlinCandidates.filter { !it.isHidden }
         if (unlistedOverrides.isNotEmpty()) {
+            // taking the type arguments a Java class gives, told before they are merged, see isMergedJvmParameter,
+            // like the put(t: T) of an internal class given Integer, which does not implement the put(int) of a Java interface,
+            // listed next to it, abstract, or of a body
+            unlistedOverrides.filter { !it.isApi && it.classTypeParameterPositions.isNotEmpty() }.forEach(::pickPlatformTypes)
             val classMembers = candidates.filter { !it.isHidden && it.kmClass.kind != ClassKind.INTERFACE }
             val unlistedClassMembers = classMembers.filter { !it.isApi }
             fun nearest(overriding: List<InheritedCandidate>) =
@@ -4513,23 +4519,36 @@ internal class DefaultKotlinIntrospector(
                 }
             }?.let { overridingBelow(it, declarations.clazz) } != null
         }
-        // whether the member is the default method of a Java interface, merged with the abstract member of a class taking the type arguments
-        // a Java class gives, which it does not implement, like the default put(Integer) of a Java interface
-        // the put(t: T) of an internal class given Integer, so that both are listed, as a concrete subclass has to implement the latter,
-        // unlike an abstract method of the interface, one abstract member with it
-        fun isDefaultOfJavaInterfaceBeside(member: InheritedCandidate, abstract: InheritedCandidate): Boolean =
-            member.declarations is JavaClass && member.kmClass.kind == ClassKind.INTERFACE &&
-                member.member.modality != Modality.ABSTRACT &&
-                abstract.kmClass.kind != ClassKind.INTERFACE && abstract.member.modality == Modality.ABSTRACT &&
-                abstract.javaGivenPositions.isNotEmpty()
+        // whether the member is a method of a Java interface, whose parameters cannot be named in a call, see withInheritedThroughApi
+        fun isJavaInterfaceMethod(member: InheritedCandidate): Boolean =
+            member.declarations is JavaClass && member.kmClass.kind == ClassKind.INTERFACE && member.member is Member.Function
+        // whether the member is a function naming its parameters, which a method of a Java interface merged with it does not
+        fun namesParameters(member: InheritedCandidate): Boolean =
+            (member.member as? Member.Function)?.function?.valueParameters?.isNotEmpty() == true
+        // the modality of the member which is not part of the API, merged with the methods of the Java interfaces,
+        // listed in their place, see withInheritedThroughApi: the member of a class wins over the ones of the interfaces,
+        // also when abstract, like the put(t: T) of an internal class a default put(Integer), which does not implement it,
+        // while of the members of the interfaces the one of a body implements the abstract ones,
+        // like the put(t: T) of an internal interface the put(Integer) of a Java one, or the other way round
+        fun modalityBesideJavaInterfaceMethods(candidate: InheritedCandidate, methods: List<InheritedCandidate>): Modality? =
+            candidate.implementationModality ?: methods
+                .takeIf { candidate.kmClass.kind == ClassKind.INTERFACE && candidate.member.modality == Modality.ABSTRACT }
+                ?.firstNotNullOfOrNull { method ->
+                    (method.implementationModality ?: method.member.modality).takeUnless { it == Modality.ABSTRACT }
+                }
         // the members of the supertypes which are not part of the API, inherited through the classes which are, see above,
-        // but the ones merged with a hidden member, unless picked in its place, see contribution
+        // but the ones merged with a hidden member, unless picked in its place, see contribution,
+        // or with a listed one, standing for it, unless merged only with methods of Java interfaces, which are listed
+        // in its place then, as one member for the compiler, which names its parameters after the Kotlin member,
+        // the only one telling their names, like the put(t: T) of an internal class given Integer by its Java subclass,
+        // merged with the put(Integer) of a Java interface the subclass implements, so that put(t = 1) compiles
         fun withInheritedThroughApi(
             listed: List<InheritedCandidate>,
             isPickedOverHidden: (InheritedCandidate) -> Boolean = { false }
         ): List<InheritedCandidate> {
             if (notApiClasses.isEmpty()) return listed
             val throughApi = ArrayList<InheritedCandidate>()
+            val replaced = Collections.newSetFromMap(IdentityHashMap<InheritedCandidate, Boolean>())
             candidates.forEach { candidate ->
                 val apiClass = inheritedThroughApi[candidate.name]
                 if (apiClass == null || candidate.isApi || candidate.isHidden) return@forEach
@@ -4540,17 +4559,24 @@ internal class DefaultKotlinIntrospector(
                 if (candidate.key in overridden || candidate.signature in untoldOverrideSignatures ||
                     walked.any { it !== candidate && it.overrides(candidate) } ||
                     (walked.any { it.isHidden && it.isMergedWith(candidate) } && !isPickedOverHidden(candidate)) ||
-                    (listed + throughApi).any { it.isMergedWith(candidate) && !isDefaultOfJavaInterfaceBeside(it, candidate) } ||
                     isImplementedBelow(candidate)
                 ) {
                     return@forEach
+                }
+                val merged = (listed + throughApi).filter { it !in replaced && it.isMergedWith(candidate) }
+                if (merged.isNotEmpty()) {
+                    if (!namesParameters(candidate) || !merged.all { isJavaInterfaceMethod(it) && !candidate.overrides(it) }) {
+                        return@forEach
+                    }
+                    candidate.implementationModality = modalityBesideJavaInterfaceMethods(candidate, merged)
+                    replaced += merged
                 }
                 candidate.inheritedThrough = apiClass.takeUnless { it == kmClass.name }
                 throughApi += candidate
             }
             if (throughApi.isEmpty()) return listed
             // in the order walked, like the listed ones
-            val listing = (listed + throughApi).toCollection(Collections.newSetFromMap(IdentityHashMap()))
+            val listing = (listed + throughApi).filterTo(Collections.newSetFromMap(IdentityHashMap())) { it !in replaced }
             return walked.filter { it in listing }
         }
         if (candidates.none { it.isHidden }) return withInheritedThroughApi(listed(notOverridden, isContributionOrdered = true).withoutCalledInstead())
