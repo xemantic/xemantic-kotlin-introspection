@@ -2320,10 +2320,16 @@ internal class OverrideResolver(
             Relocation.topLevelClassOf(metadataName) to Relocation.topLevelClassOf(jvmName)
         }.uniquePairs()
         // a supertype the class file does not tell is not looked up in a relocated package enclosing its own, where another class is,
-        // unless the relocation of the owner tells where it is
-        val notRelocated = excluded +
-            jvmSupertypes.misplacedSupertypes(owner.kmClass, dependencies, packages).filter { own?.tells(it) != true }
-        val relocation = own?.withDependencies(packages, notRelocated, classes, rootPackages)
+        // but where the relocation of the owner alone tells, or guesses, like by its prefix, relocated class by class then,
+        // or else by its metadata name
+        val misplaced = jvmSupertypes.misplacedSupertypes(owner.kmClass, dependencies, packages)
+        val misplacedClasses = misplaced.mapNotNull { metadataName ->
+            own?.located(metadataName)?.let {
+                Relocation.topLevelClassOf(internalNameOf(metadataName)) to Relocation.topLevelClassOf(internalNameOf(it))
+            }
+        }.toMap()
+        val notRelocated = excluded + misplaced.filter { own?.located(it) == null }
+        val relocation = own?.withDependencies(packages, notRelocated, classes + misplacedClasses, rootPackages)
             ?: Relocation.ofDependencies(packages, notRelocated, classes, rootPackages)
         return OwnerRelocation(relocation, classFile(declared), hasDependencies = true)
     }
@@ -2461,8 +2467,11 @@ internal class OverrideResolver(
          * and the [dependencies] do not tell, by their JVM internal names, mistaken by the relocation of the [packages],
          * which relocates a package with its subpackages, see [Relocation]: the ones of a subpackage of a relocated package,
          * like `lib/sub/Listener` next to `lib/Base` in `s1/Base`, where a Kotlin class is found, like `s1/sub/Listener`,
-         * which its own metadata, not rewritten by a relocation, names otherwise, so that it is another class,
-         * the supertype relocated elsewhere, like to `s2/Listener`, or not at all.
+         * which its own metadata, not rewritten by a relocation, names by the name it is found by, so that it is declared there,
+         * another class, the supertype relocated elsewhere, like to `s2/Listener`, or not at all.
+         * A Kotlin class named otherwise is a relocated one, taken for the supertype, also when its metadata names it
+         * by yet another name than the class does, like `okio/Sink` found for `lib/internal/okio/Sink`,
+         * the copy a library bundles, relocated once more with the library.
          * A Java class found there cannot be told from the relocated one, and is taken for it.
          */
         fun misplacedSupertypes(kmClass: KmClass, dependencies: Map<String, String>, packages: Map<String, String>): Set<String> {
@@ -2472,7 +2481,7 @@ internal class OverrideResolver(
                     internalName !in names && internalName !in dependencies && packageOf(metadataName) !in packages
                 }
                 .values.filterTo(HashSet()) { metadataName ->
-                    relocation.located(metadataName)?.let { declaration(it).kotlin }?.let { it.name != metadataName } == true
+                    relocation.located(metadataName)?.let { located -> declaration(located).kotlin?.name == located } == true
                 }
         }
 
@@ -2899,11 +2908,12 @@ internal class OverrideResolver(
      * or returns `null` if it cannot be read, or it is of another class, like one of a name differing only in case,
      * or it is a Kotlin class, whose metadata cannot be read, as its JVM methods are not its Kotlin members,
      * or a supertype of it is malformed, and left out, whose members the class would then miss,
-     * or named like an array type, like `[Lcom/example/Foo;`, by a valid `Class` entry, which is no class to inherit the members of.
+     * or named like an array type, like `[Lcom/example/Foo;`, or of an empty name, by a valid `Class` entry,
+     * which is no class to inherit the members of.
      */
     private fun readJavaClassFile(bytes: ByteArray, name: String): JavaClassFile? {
         val content = readClass(bytes)
-            ?.takeIf { !it.isKotlin && !it.hasMalformedSupertype && it.supertypes.none { supertype -> supertype.startsWith('[') } }
+            ?.takeIf { !it.isKotlin && !it.hasMalformedSupertype && it.supertypes.none { supertype -> supertype.isEmpty() || supertype.startsWith('[') } }
             ?: return null
         val internalName = content.name?.takeIf { it == binaryNameOf(name).replace('.', '/') } ?: return null
         return JavaClassFile(internalName, content.methods, content.signature, content.superName, content.interfaces)
