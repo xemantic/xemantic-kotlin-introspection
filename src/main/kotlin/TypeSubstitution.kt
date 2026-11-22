@@ -252,7 +252,7 @@ internal fun KmType.nullable(): KmType = copy().also { it.isNullable = true }
 /**
  * The ids of the type parameters this type refers to.
  */
-private fun KmType.typeParameterIds(): Sequence<Int> = when (val classifier = classifier) {
+internal fun KmType.typeParameterIds(): Sequence<Int> = when (val classifier = classifier) {
     is KmClassifier.TypeParameter -> sequenceOf(classifier.id)
     else -> arguments.asSequence().mapNotNull { it.type }.flatMap { it.typeParameterIds() } +
         (outerType?.typeParameterIds() ?: emptySequence())

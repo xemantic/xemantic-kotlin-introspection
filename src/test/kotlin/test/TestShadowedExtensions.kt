@@ -18,10 +18,16 @@
 
 package com.xemantic.kotlin.introspection.test
 
+import com.xemantic.kotlin.introspection.test.other.JavaInvokedGenericTask
+import com.xemantic.kotlin.introspection.test.other.JavaInvokedGetterBase
 import com.xemantic.kotlin.introspection.test.other.JavaInvokedInheritedTask
+import com.xemantic.kotlin.introspection.test.other.JavaInvokedKotlinSubTask
 import com.xemantic.kotlin.introspection.test.other.JavaInvokedTask
 import com.xemantic.kotlin.introspection.test.other.JavaInvokedTaskOf
+import com.xemantic.kotlin.introspection.test.other.JavaInvokedVarargTask
 import com.xemantic.kotlin.introspection.test.other.JavaSyntheticShadowingBase
+import kotlin.reflect.KCallable
+import kotlin.reflect.KFunction1
 
 // members taking a type whose type arguments accept the ones of the parameter of the extension of the same name,
 // by their variance, called instead of it, like projectedShadowing.outProjected(listOf("")):
@@ -270,3 +276,520 @@ class InfixCompanionHolder {
 infix fun InfixCompanionSupertype.inf(other: Int): Int = 1
 
 infix fun InfixCompanionSupertype.bothWays(other: Int): Int = 1
+
+// the members which a companion object inherits, called on the name of its class too, like InheritingCompanionHolder.inherited(),
+// next to the ones it declares, and next to an extension on its supertype, called for other arguments
+open class InheritingCompanionBase {
+    fun inherited(): Int = 0
+    val inheritedProperty: Int = 0
+    fun overloaded(x: Int): Int = 0
+}
+
+class InheritingCompanionHolder {
+    companion object : InheritingCompanionBase() {
+        fun overloaded(): Int = 0
+    }
+}
+
+fun InheritingCompanionBase.overloaded(x: String): Int = 1
+
+// members accepting Nothing, a subtype of every type, also where a contravariant type argument is expected,
+// called instead of the extensions of their names, like nothingShadowing.sink(sinkOfString),
+// unlike the ones taking a nullable Nothing where the type is not nullable, or an invariant one
+interface NothingShadowedSupertype
+
+interface NothingSink<in T>
+
+class NothingShadowing : NothingShadowedSupertype {
+    fun sink(x: NothingSink<Nothing>): Int = 0
+    fun comparable(x: Comparable<Nothing>): Int = 0
+    fun comparableOfTypeParameter(x: Comparable<Nothing>): Int = 0
+    fun nested(x: Comparable<List<Nothing>>): Int = 0
+    fun returningNothing(x: (String) -> Unit): Int = 0
+    fun pair(x: Pair<CharSequence, Comparable<Nothing>>): Int = 0
+    fun listOfNothing(x: List<String>): Int = 0
+    fun nothing(x: String): Int = 0
+    fun nullableNothing(x: String?): Int = 0
+    fun sinkOfNullableNothing(x: NothingSink<Nothing?>): Int = 0
+    fun invariantNothing(x: ProjectedBox<Nothing>): Int = 0
+    fun onlyNull(x: String): Int = 0
+}
+
+fun NothingShadowedSupertype.sink(x: NothingSink<String>): Int = 1
+
+fun NothingShadowedSupertype.comparable(x: String): Int = 1
+
+fun <T> NothingShadowedSupertype.comparableOfTypeParameter(x: Comparable<T>): Int = 1
+
+fun NothingShadowedSupertype.nested(x: ProjectedComparable<String>): Int = 1
+
+fun NothingShadowedSupertype.returningNothing(x: (Any?) -> Nothing): Int = 1
+
+fun <T : CharSequence> NothingShadowedSupertype.pair(x: Pair<T, Comparable<T>>): Int = 1
+
+fun NothingShadowedSupertype.listOfNothing(x: List<Nothing>): Int = 1
+
+fun NothingShadowedSupertype.nothing(x: Nothing): Int = 1
+
+fun NothingShadowedSupertype.nullableNothing(x: Nothing?): Int = 1
+
+fun NothingShadowedSupertype.sinkOfNullableNothing(x: NothingSink<String>): Int = 1
+
+fun NothingShadowedSupertype.invariantNothing(x: ProjectedBox<String>): Int = 1
+
+fun NothingShadowedSupertype.onlyNull(x: Nothing?): Int = 1
+
+// members accepting what a star projection of a bounded type parameter is at least, called instead of the extensions,
+// like boundedStarShadowing.source(sourceOfAnything), unlike the ones accepting less
+interface BoundedStarShadowedSupertype
+
+interface BoundedSource<out T : Any>
+
+interface BoundedBox<T : CharSequence>
+
+class BoundedStarShadowing : BoundedStarShadowedSupertype {
+    fun source(x: BoundedSource<Any>): Int = 0
+    fun box(x: BoundedBox<out CharSequence>): Int = 0
+    fun inProjectedBox(x: BoundedBox<out CharSequence>): Int = 0
+    fun narrowerSource(x: BoundedSource<CharSequence>): Int = 0
+    fun narrowerBox(x: BoundedBox<out String>): Int = 0
+}
+
+fun BoundedStarShadowedSupertype.source(x: BoundedSource<*>): Int = 1
+
+fun BoundedStarShadowedSupertype.box(x: BoundedBox<*>): Int = 1
+
+fun BoundedStarShadowedSupertype.inProjectedBox(x: BoundedBox<in String>): Int = 1
+
+fun BoundedStarShadowedSupertype.narrowerSource(x: BoundedSource<*>): Int = 1
+
+fun BoundedStarShadowedSupertype.narrowerBox(x: BoundedBox<*>): Int = 1
+
+// members taking a supertype of the function type, or of the function reference type, of the extension, called instead of it,
+// like functionSupertypeShadowing.function { "" }, or functionSupertypeShadowing.reference(::describe),
+// unlike one returning a narrower type, or a suspend function type, which takes no anonymous function,
+// so that functionSupertypeShadowing.suspendConversion(fun(): String = "") calls the extension
+interface FunctionSupertypeShadowedSupertype
+
+class FunctionSupertypeShadowing : FunctionSupertypeShadowedSupertype {
+    fun function(x: Function<CharSequence>): Int = 0
+    fun starFunction(x: Function<*>): Int = 0
+    fun receiverFunction(x: Function<Unit>): Int = 0
+    fun reference(x: (String) -> CharSequence): Int = 0
+    fun receiverReference(x: String.() -> Unit): Int = 0
+    fun callable(x: KCallable<Unit>): Int = 0
+    fun narrowerFunction(x: Function<String>): Int = 0
+    fun otherReference(x: (Int) -> Unit): Int = 0
+    fun suspendConversion(x: suspend () -> CharSequence): Int = 0
+}
+
+fun FunctionSupertypeShadowedSupertype.function(x: () -> String): Int = 1
+
+fun FunctionSupertypeShadowedSupertype.starFunction(x: (Int) -> String): Int = 1
+
+fun FunctionSupertypeShadowedSupertype.receiverFunction(x: String.() -> Unit): Int = 1
+
+fun FunctionSupertypeShadowedSupertype.reference(x: KFunction1<CharSequence, String>): Int = 1
+
+fun FunctionSupertypeShadowedSupertype.receiverReference(x: KFunction1<String, Unit>): Int = 1
+
+fun FunctionSupertypeShadowedSupertype.callable(x: KFunction1<String, Unit>): Int = 1
+
+fun FunctionSupertypeShadowedSupertype.narrowerFunction(x: () -> CharSequence): Int = 1
+
+fun FunctionSupertypeShadowedSupertype.otherReference(x: KFunction1<String, Unit>): Int = 1
+
+fun FunctionSupertypeShadowedSupertype.suspendConversion(x: () -> String): Int = 1
+
+// members accepting a type parameter of the extension bounded by another one, like its bounds, called instead of the extensions,
+// like boundedTypeParameterShadowing.boundedByOther(listOf("")), unlike one accepting less
+interface BoundedTypeParameterShadowedSupertype
+
+class BoundedTypeParameterShadowing : BoundedTypeParameterShadowedSupertype {
+    fun boundedByOther(x: Collection<CharSequence>): Int = 0
+    fun boundedByTypeOfOther(x: Collection<Collection<CharSequence>>): Int = 0
+    fun pairBoundedByTypeOfOther(x: Pair<Collection<CharSequence>, Collection<CharSequence>>): Int = 0
+    fun wholeBoundedByOther(x: CharSequence): Int = 0
+    fun narrower(x: Collection<String>): Int = 0
+}
+
+fun <T : CharSequence, U : T> BoundedTypeParameterShadowedSupertype.boundedByOther(x: List<U>): Int = 1
+
+fun <T : String, L : List<T>> BoundedTypeParameterShadowedSupertype.boundedByTypeOfOther(x: List<L>): Int = 1
+
+fun <T : String, L : List<T>> BoundedTypeParameterShadowedSupertype.pairBoundedByTypeOfOther(x: Pair<L, L>): Int = 1
+
+fun <T : CharSequence, U : T> BoundedTypeParameterShadowedSupertype.wholeBoundedByOther(x: U): Int = 1
+
+fun <T : CharSequence, U : T> BoundedTypeParameterShadowedSupertype.narrower(x: List<U>): Int = 1
+
+// members with a type parameter of their own, inferred from a type argument of the argument of the extension,
+// or bounded by a type accepting it, called instead of the extensions, like memberTypeParameterShadowing.covariant(listOf("")),
+// unlike the ones whose type parameter cannot be inferred so: of a bound which the type argument violates,
+// captured from a projection nested in a type argument, inferred from two types, bounded by another type parameter,
+// or having no subtype in common with the type argument
+interface MemberTypeParameterShadowedSupertype
+
+class MemberTypeParameterShadowing : MemberTypeParameterShadowedSupertype {
+    fun <U> covariant(x: Collection<U>): Int = 0
+    fun <U : CharSequence> boundedCovariant(x: Collection<U>): Int = 0
+    fun <U : CharSequence> bounded(x: U): Int = 0
+    fun <U> inProjected(x: ProjectedBox<in U>): Int = 0
+    fun <U> functionParameter(x: (U) -> Unit): Int = 0
+    fun <U> invariant(x: ProjectedBox<U>): Int = 0
+    fun <U> captured(x: ProjectedBox<U>): Int = 0
+    fun <U : CharSequence> boundedContravariant(x: Comparable<U>): Int = 0
+    fun <U> nullable(x: Collection<U?>): Int = 0
+    fun <U : CharSequence> boundViolated(x: Collection<U>): Int = 0
+    fun <U : Any> notNullBoundViolated(x: Collection<U>): Int = 0
+    fun <U> nestedCaptured(x: Collection<ProjectedBox<U>>): Int = 0
+    fun <U> twice(x: (U) -> U): Int = 0
+    fun <U, V : U> boundedByOther(x: Map<U, V>): Int = 0
+    fun <U : CharSequence> nothingInCommon(x: ProjectedBox<in U>): Int = 0
+    fun <U> receiverFunction(x: U.() -> Unit): Int = 0
+}
+
+fun MemberTypeParameterShadowedSupertype.covariant(x: List<String>): Int = 1
+
+fun MemberTypeParameterShadowedSupertype.boundedCovariant(x: List<String>): Int = 1
+
+fun MemberTypeParameterShadowedSupertype.bounded(x: String): Int = 1
+
+fun MemberTypeParameterShadowedSupertype.inProjected(x: ProjectedBox<String>): Int = 1
+
+fun MemberTypeParameterShadowedSupertype.functionParameter(x: (String) -> Unit): Int = 1
+
+fun MemberTypeParameterShadowedSupertype.invariant(x: ProjectedBox<String>): Int = 1
+
+fun MemberTypeParameterShadowedSupertype.captured(x: ProjectedBox<*>): Int = 1
+
+fun MemberTypeParameterShadowedSupertype.boundedContravariant(x: Comparable<Any>): Int = 1
+
+fun MemberTypeParameterShadowedSupertype.nullable(x: List<String>): Int = 1
+
+fun MemberTypeParameterShadowedSupertype.boundViolated(x: List<Int>): Int = 1
+
+fun MemberTypeParameterShadowedSupertype.notNullBoundViolated(x: List<String?>): Int = 1
+
+fun MemberTypeParameterShadowedSupertype.nestedCaptured(x: List<ProjectedBox<*>>): Int = 1
+
+fun MemberTypeParameterShadowedSupertype.twice(x: (String) -> Int): Int = 1
+
+fun MemberTypeParameterShadowedSupertype.boundedByOther(x: HashMap<String, Int>): Int = 1
+
+fun MemberTypeParameterShadowedSupertype.nothingInCommon(x: ProjectedBox<Int>): Int = 1
+
+fun MemberTypeParameterShadowedSupertype.receiverFunction(x: (String) -> Unit): Int = 1
+
+// members of a generic class, whose type parameter stands for the type argument of the receiver of an extension on the class,
+// also for a type parameter of the extension, or for a supertype of a contravariant projection, called instead of the extensions,
+// like classTypeParameterShadowing.typeParameterReceiver(listOf("")), unlike the ones which the receiver tells too little of
+class ClassTypeParameterShadowing<T> {
+    fun inProjectedReceiver(x: Collection<T>): Int = 0
+    fun typeParameterReceiver(x: Collection<T>): Int = 0
+    fun boundedTypeParameterReceiver(x: Collection<T>): Int = 0
+    fun boundedByTypeParameterReceiver(x: Collection<T>): Int = 0
+    fun contravariant(x: Comparable<T>): Int = 0
+    fun contravariantAny(x: Comparable<T>): Int = 0
+    fun invariant(x: ProjectedBox<T>): Int = 0
+    fun nested(x: T): Int = 0
+    fun outProjectedReceiver(x: Collection<T>): Int = 0
+    fun contravariantInProjectedReceiver(x: Comparable<T>): Int = 0
+    fun nullableTypeParameter(x: T): Int = 0
+    fun starProjectedReceiver(x: Collection<T>): Int = 0
+}
+
+fun ClassTypeParameterShadowing<in String>.inProjectedReceiver(x: List<String>): Int = 1
+
+fun <T> ClassTypeParameterShadowing<T>.typeParameterReceiver(x: List<T>): Int = 1
+
+fun <T : CharSequence> ClassTypeParameterShadowing<T>.boundedTypeParameterReceiver(x: List<T>): Int = 1
+
+fun <T, U : T> ClassTypeParameterShadowing<T>.boundedByTypeParameterReceiver(x: List<U>): Int = 1
+
+fun <T> ClassTypeParameterShadowing<T>.contravariant(x: Comparable<T>): Int = 1
+
+fun <T> ClassTypeParameterShadowing<T>.contravariantAny(x: Comparable<Any?>): Int = 1
+
+fun <T> ClassTypeParameterShadowing<T>.invariant(x: ProjectedBox<T>): Int = 1
+
+fun <T> ClassTypeParameterShadowing<List<T>>.nested(x: List<T>): Int = 1
+
+fun <T> ClassTypeParameterShadowing<out T>.outProjectedReceiver(x: List<T>): Int = 1
+
+fun ClassTypeParameterShadowing<in String>.contravariantInProjectedReceiver(x: Comparable<CharSequence>): Int = 1
+
+fun <T> ClassTypeParameterShadowing<T>.nullableTypeParameter(x: T?): Int = 1
+
+fun ClassTypeParameterShadowing<*>.starProjectedReceiver(x: List<String>): Int = 1
+
+// and of a class with two type parameters, each standing for its own type argument of the receiver
+class TwoClassTypeParametersShadowing<T, U> {
+    fun map(x: Map<T, U>): Int = 0
+    fun sameTypeParameter(x: Map<T, U>): Int = 0
+    fun swapped(x: Map<T, U>): Int = 0
+}
+
+fun <A, B> TwoClassTypeParametersShadowing<A, B>.map(x: Map<A, B>): Int = 1
+
+fun <A> TwoClassTypeParametersShadowing<A, A>.sameTypeParameter(x: HashMap<A, A>): Int = 1
+
+fun <A, B> TwoClassTypeParametersShadowing<B, A>.swapped(x: Map<A, B>): Int = 1
+
+// members of a final class called instead of the extensions on a type parameter bounded by the class, which stands for it,
+// like pinnedReceiverShadowing.pinned { }, unlike one bounded by the nullable class, inferred also as the nullable one
+class PinnedReceiverShadowing {
+    fun pinned(x: PinnedReceiverShadowing.() -> Unit): Int = 0
+    fun box(x: ProjectedBox<PinnedReceiverShadowing>): Int = 0
+    fun nullableBound(x: ProjectedBox<PinnedReceiverShadowing>): Int = 0
+}
+
+fun <T : PinnedReceiverShadowing> T.pinned(x: T.() -> Unit): Int = 1
+
+fun <T : PinnedReceiverShadowing> T.box(x: ProjectedBox<T>): Int = 1
+
+fun <T : PinnedReceiverShadowing?> T.nullableBound(x: ProjectedBox<T>): Int = 1
+
+// and one of an open class, whose subclass the type parameter is inferred as, like openReceiverSubclass.openBox(boxOfSubclass)
+open class OpenReceiverUnshadowing {
+    fun openBox(x: ProjectedBox<OpenReceiverUnshadowing>): Int = 0
+}
+
+fun <T : OpenReceiverUnshadowing> T.openBox(x: ProjectedBox<T>): Int = 1
+
+// members of a class with a covariant type parameter in a contravariant position, accepting the argument of the extension
+// for any receiver, like covariantShadowing.contravariant(comparableToCharSequence), also on a CovariantShadowing<Nothing>,
+// unlike in a covariant position, where covariantShadowingOfNothing.covariant(listOf("")) calls the extension
+class CovariantShadowing<out T> {
+    fun contravariant(x: Comparable<@UnsafeVariance T>): Int = 0
+    fun functionParameter(x: (T) -> Unit): Int = 0
+    fun covariant(x: Collection<@UnsafeVariance T>): Int = 0
+}
+
+fun CovariantShadowing<String>.contravariant(x: Comparable<CharSequence>): Int = 1
+
+fun CovariantShadowing<CharSequence>.functionParameter(x: (Any) -> Unit): Int = 1
+
+fun CovariantShadowing<String>.covariant(x: List<String>): Int = 1
+
+// and one of a class with a contravariant type parameter in a contravariant position, where
+// contravariantUnshadowingOfAny.contravariant(comparableToString) calls the extension
+class ContravariantUnshadowing<in T> {
+    fun contravariant(x: Comparable<@UnsafeVariance T>): Int = 0
+    fun covariant(x: T): Int = 0
+}
+
+fun ContravariantUnshadowing<String>.contravariant(x: Comparable<String>): Int = 1
+
+fun ContravariantUnshadowing<String>.covariant(x: String): Int = 1
+
+// a member taking an inner class of a generic outer class, called instead of the extension only when its outer type
+// accepts the one of the extension, like innerShadowing.sameOuter(inner), unlike innerShadowing.otherOuter(inner)
+class ShadowingOuter<T> {
+    inner class Inner
+}
+
+interface InnerShadowedSupertype
+
+class InnerShadowing : InnerShadowedSupertype {
+    fun sameOuter(x: ShadowingOuter<String>.Inner): Int = 0
+    fun projectedOuter(x: ShadowingOuter<out CharSequence>.Inner): Int = 0
+    fun otherOuter(x: ShadowingOuter<CharSequence>.Inner): Int = 0
+    fun listOfOtherOuter(x: List<ShadowingOuter<CharSequence>.Inner>): Int = 0
+}
+
+fun InnerShadowedSupertype.sameOuter(x: ShadowingOuter<String>.Inner): Int = 1
+
+fun InnerShadowedSupertype.projectedOuter(x: ShadowingOuter<String>.Inner): Int = 1
+
+fun InnerShadowedSupertype.otherOuter(x: ShadowingOuter<String>.Inner): Int = 1
+
+fun InnerShadowedSupertype.listOfOtherOuter(x: List<ShadowingOuter<String>.Inner>): Int = 1
+
+// a more specific extension taking an inner class of another outer type, which does not shadow the general one
+interface InnerGeneralReceiver
+
+class InnerSpecificReceiver : InnerGeneralReceiver
+
+fun InnerGeneralReceiver.inner(x: ShadowingOuter<String>.Inner): Int = 0
+
+fun InnerSpecificReceiver.inner(x: ShadowingOuter<CharSequence>.Inner): Int = 1
+
+// member properties of the Java types whose invoke Kotlin calls instead of the extension functions of their names:
+// taking only a vararg, like javaInvokeShapesShadowing.varargTask(), of a generic type, like genericTask(),
+// of a Java getter read as a synthetic property, like got(), or run(), of a function type,
+// or inherited from a Kotlin class, taking the named arguments, like kotlinSubTask(x = 1),
+// and of a generic Kotlin type, whose type argument its invoke takes, like genericKotlinTask(1),
+// unlike gotOf(x = 1), as Kotlin passes no named argument to a Java method
+open class KotlinInvokedOpenTask {
+    operator fun invoke(x: Int): Int = 0
+}
+
+class KotlinInvokedGenericTask<T> {
+    operator fun invoke(x: T): Int = 0
+}
+
+interface JavaInvokeShapesShadowedSupertype
+
+class JavaInvokeShapesShadowing : JavaInvokedGetterBase(), JavaInvokeShapesShadowedSupertype {
+    val varargTask: JavaInvokedVarargTask = JavaInvokedVarargTask()
+    val genericTask: JavaInvokedGenericTask<String> = JavaInvokedGenericTask()
+    val kotlinSubTask: JavaInvokedKotlinSubTask = JavaInvokedKotlinSubTask()
+    val genericKotlinTask: KotlinInvokedGenericTask<Int> = KotlinInvokedGenericTask()
+    val otherGenericKotlinTask: KotlinInvokedGenericTask<String> = KotlinInvokedGenericTask()
+}
+
+fun JavaInvokeShapesShadowedSupertype.varargTask(): Int = 1
+
+fun JavaInvokeShapesShadowedSupertype.genericTask(): Int = 1
+
+fun JavaInvokeShapesShadowedSupertype.got(): Int = 1
+
+fun JavaInvokeShapesShadowedSupertype.run(): Int = 1
+
+fun JavaInvokeShapesShadowedSupertype.kotlinSubTask(x: Int): Int = 1
+
+fun JavaInvokeShapesShadowedSupertype.genericKotlinTask(x: Int): Int = 1
+
+fun JavaInvokeShapesShadowedSupertype.otherGenericKotlinTask(x: Int): Int = 1
+
+fun JavaInvokeShapesShadowedSupertype.gotOf(x: Int): Int = 1
+
+// members taking more parameters than the extension of their name, all of them optional, called instead of it,
+// like optionalParametersShadowing.defaulted(), or optionalParametersShadowing.trailingDefault(x = 1),
+// unlike one with a required parameter, a vararg which takes no named argument, like variadicNamed(x = 1),
+// and one whose last parameter takes the trailing lambda instead, like trailingLambda { }
+interface OptionalParametersShadowedSupertype
+
+class OptionalParametersShadowing : OptionalParametersShadowedSupertype {
+    fun defaulted(x: Int = 0): Int = 0
+    fun variadic(vararg x: Int): Int = 0
+    fun trailingDefault(x: Int, more: Int = 0): Int = 0
+    fun required(x: Int, more: Int = 0): Int = 0
+    fun variadicNamed(vararg x: Int): Int = 0
+    fun trailingLambda(x: () -> Unit, more: Int = 0): Int = 0
+    fun trailingAny(x: Any, more: Int = 0): Int = 0
+}
+
+fun OptionalParametersShadowedSupertype.defaulted(): Int = 1
+
+fun OptionalParametersShadowedSupertype.variadic(): Int = 1
+
+fun OptionalParametersShadowedSupertype.trailingDefault(x: Int): Int = 1
+
+fun OptionalParametersShadowedSupertype.required(): Int = 1
+
+fun OptionalParametersShadowedSupertype.variadicNamed(x: Int): Int = 1
+
+fun OptionalParametersShadowedSupertype.trailingLambda(x: () -> Unit): Int = 1
+
+fun OptionalParametersShadowedSupertype.trailingAny(x: Any): Int = 1
+
+// extensions on a nullable supertype, never called next to the more specific ones on a nullable receiver,
+// like nullableSpecificShadowing.bothNullable, also on a nullable value, unlike next to the ones which are not nullable,
+// like nullableValue.onlyGeneralNullable, also of an object, whose value can be null too
+open class NullableGeneralReceiver
+
+open class NullableSpecificReceiver : NullableGeneralReceiver()
+
+class NullableSpecificShadowing : NullableSpecificReceiver()
+
+object NullableSpecificObject : NullableSpecificReceiver() {
+    val member: Int = 0
+}
+
+class NullableSpecificCompanionHolder {
+    companion object : NullableSpecificReceiver()
+}
+
+val NullableSpecificReceiver?.bothNullable: Int get() = 1
+
+val NullableGeneralReceiver?.bothNullable: Int get() = 0
+
+val NullableSpecificReceiver?.boundedNullable: Int get() = 1
+
+val <T : NullableGeneralReceiver?> T.boundedNullable: Int get() = 0
+
+val NullableSpecificReceiver.onlyGeneralNullable: Int get() = 1
+
+val NullableGeneralReceiver?.onlyGeneralNullable: Int get() = 0
+
+val NullableSpecificReceiver.same: Int get() = 1
+
+val NullableSpecificReceiver?.same: Int @JvmName("getNullableSame") get() = 0
+
+val NullableSpecificReceiver.boundedGeneralNullable: Int get() = 1
+
+val <T : NullableGeneralReceiver?> T.boundedGeneralNullable: Int get() = 0
+
+val NullableGeneralReceiver?.member: Int get() = 1
+
+fun NullableSpecificReceiver?.describeNullable(x: Int): Int = 1
+
+fun NullableGeneralReceiver?.describeNullable(x: Int): Int = 0
+
+// infix extensions on the supertype of a companion object, called only as InfixMembersCompanionHolder invoked 1,
+// or optional 1, next to its members called for InfixMembersCompanionHolder.invoked(1), or optional(other = 1):
+// a property of a type with an operator invoke, and a function taking one more parameter, which is optional,
+// unlike the ones next to a vararg, or a function type, called also as InfixMembersCompanionHolder.variadic(other = 1)
+class InfixInvokedTask {
+    operator fun invoke(other: Int): Int = 0
+}
+
+class InfixMembersCompanionHolder {
+    companion object : InfixCompanionSupertype {
+        val invoked: InfixInvokedTask = InfixInvokedTask()
+        fun optional(other: Int, more: Int = 0): Int = 0
+        fun variadic(vararg other: Int): Int = 0
+        val functionTyped: (Int) -> Int = { it }
+    }
+}
+
+infix fun InfixCompanionSupertype.invoked(other: Int): Int = 1
+
+infix fun InfixCompanionSupertype.optional(other: Int): Int = 1
+
+infix fun InfixCompanionSupertype.variadic(other: Int): Int = 1
+
+infix fun InfixCompanionSupertype.functionTyped(other: Int): Int = 1
+
+// operator extensions on the supertype of a companion object, called only as OperatorCompanionHolder + 1,
+// OperatorCompanionHolder[1], 1 in OperatorCompanionHolder, -OperatorCompanionHolder, or OperatorCompanionHolder(1),
+// next to its members which are no operators, called for OperatorCompanionHolder.plus(1),
+// and one called both ways, like OperatorCompanionHolder - 1, or OperatorCompanionHolder.minus(1)
+interface OperatorCompanionSupertype
+
+class OperatorCompanionHolder {
+    companion object : OperatorCompanionSupertype {
+        fun plus(other: Int): Int = 0
+        fun get(index: Int): Int = 0
+        fun contains(other: Int): Boolean = false
+        fun unaryMinus(): Int = 0
+        fun invoke(other: Int): Int = 0
+        fun rangeTo(other: Int): Int = 0
+        fun inc(): OperatorCompanionSupertype = this
+    }
+}
+
+// and one whose invoke the constructor is called instead of, like OperatorConstructedCompanionHolder(1)
+class OperatorConstructedCompanionHolder(val value: Int) {
+    companion object : OperatorCompanionSupertype {
+        fun invoke(other: Int): Int = 0
+    }
+}
+
+operator fun OperatorCompanionSupertype.plus(other: Int): Int = 1
+
+operator fun OperatorCompanionSupertype.minus(other: Int): Int = 1
+
+operator fun OperatorCompanionSupertype.get(index: Int): Int = 1
+
+operator fun OperatorCompanionSupertype.contains(other: Int): Boolean = true
+
+operator fun OperatorCompanionSupertype.unaryMinus(): Int = 1
+
+operator fun OperatorCompanionSupertype.invoke(other: Int): Int = 1
+
+operator fun OperatorCompanionSupertype.rangeTo(other: Int): Int = 1
+
+operator fun OperatorCompanionSupertype.inc(): OperatorCompanionSupertype = this

@@ -1413,7 +1413,7 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve operator extension of supertype of companion object next to member not operator`() {
-        // UnshadowingCompanionHolder + 1 calls the extension
+        // UnshadowingCompanionHolder + 1 calls the extension, while UnshadowingCompanionHolder.plus(1) calls the member
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.UnshadowingCompanionHolder.plus"
         ) sameAsKotlin """
@@ -1422,7 +1422,7 @@ class KotlinIntrospectorTest {
                 fun plus(other: Int): Int
             }
             // from com.xemantic.kotlin.introspection.test
-            /* called as UnshadowingCompanionHolder.plus(…) */ operator fun UnshadowedSupertype.plus(other: Int): Int
+            /* called as UnshadowingCompanionHolder + … */ operator fun UnshadowedSupertype.plus(other: Int): Int
         """.trimIndent()
     }
 
@@ -2039,13 +2039,15 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve object without extension properties shadowed by synthetic properties of Java getters`() {
-        // SyntheticShadowingObject.title reads the getter, and so does SyntheticShadowingObject.nullableTitle, as its name is never null
+        // SyntheticShadowingObject.title reads the getter, and so does SyntheticShadowingObject.nullableTitle,
+        // while a nullable value of the object, like nullableObject.nullableTitle, reads the extension
         resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticShadowingObject") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.SyntheticShadowingObject [page 1/1]
             object SyntheticShadowingObject : com.xemantic.kotlin.introspection.test.other.JavaSyntheticShadowingBase, SyntheticShadowedSupertype
             // from com.xemantic.kotlin.introspection.test
             val SyntheticShadowedSupertype.active: Boolean
             val SyntheticShadowedSupertype.kotlinTitle: String
+            val SyntheticShadowedSupertype?.nullableTitle: String
             val SyntheticShadowedSupertype.protectedTitle: String
             val SyntheticShadowedSupertype.staticTitle: String
         """.trimIndent()
@@ -2085,19 +2087,22 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should resolve object without extensions on nullable supertype shadowed by more specific ones`() {
-        // SpecificObject.nullableRank and SpecificObject.nullableDescribe() call the ones on SpecificReceiver
+    fun `should resolve object with extensions on nullable supertype next to more specific ones`() {
+        // SpecificObject.nullableRank and SpecificObject.nullableDescribe() call the ones on SpecificReceiver,
+        // while a nullable value of the object, like nullableObject.nullableRank, calls the ones on GeneralReceiver?
         resolver.resolve("com.xemantic.kotlin.introspection.test.SpecificObject") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.SpecificObject [page 1/1]
             object SpecificObject : SpecificReceiver
             // from com.xemantic.kotlin.introspection.test
             val SpecificReceiver.boundedRank: Int
             val SpecificReceiver.nullableRank: Int
+            val GeneralReceiver?.nullableRank: Int
             val SpecificReceiver.rank: Int
             fun SpecificReceiver.describe(): Int
             fun SpecificReceiver.describeNamed(y: Int): Int
             fun GeneralReceiver.describeNamed(x: Int): Int
             fun SpecificReceiver.nullableDescribe(): Int
+            fun GeneralReceiver?.nullableDescribe(): Int
         """.trimIndent()
     }
 
@@ -2143,6 +2148,599 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.test.InfixCompanionHolder.bothWays [page 1/1]
             // from com.xemantic.kotlin.introspection.test
             /* called as InfixCompanionHolder.bothWays(…) */ infix fun InfixCompanionSupertype.bothWays(other: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve getter inherited by companion object from Java class by synthetic property name on class name`() {
+        // SyntheticShadowingCompanionHolder.title reads the getter of the Java supertype of the companion object, not the extension property
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticShadowingCompanionHolder.title") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SyntheticShadowingCompanionHolder.title [page 1/1]
+            companion object : com.xemantic.kotlin.introspection.test.other.JavaSyntheticShadowingBase, SyntheticShadowedSupertype {
+                // inherited from com.xemantic.kotlin.introspection.test.other.JavaSyntheticShadowingBase
+                // also property: val title
+                fun getTitle(): String
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve getter and setter inherited by companion object from Java class by synthetic property name on class name`() {
+        // SyntheticShadowingCompanionHolder.name reads, and assigns, through the accessors of the Java supertype of the companion object
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticShadowingCompanionHolder.name") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SyntheticShadowingCompanionHolder.name [page 1/1]
+            companion object : com.xemantic.kotlin.introspection.test.other.JavaSyntheticShadowingBase, SyntheticShadowedSupertype {
+                // inherited from com.xemantic.kotlin.introspection.test.other.JavaSyntheticShadowingBase
+                // also property: var name
+                fun getName(): String
+                fun setName(arg0: String?)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve function inherited by companion object on class name`() {
+        // InheritingCompanionHolder.inherited() calls the function which the companion object inherits
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritingCompanionHolder.inherited") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritingCompanionHolder.inherited [page 1/1]
+            companion object : InheritingCompanionBase {
+                // inherited from com.xemantic.kotlin.introspection.test.InheritingCompanionBase
+                fun inherited(): Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve property inherited by companion object on class name`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritingCompanionHolder.inheritedProperty") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritingCompanionHolder.inheritedProperty [page 1/1]
+            companion object : InheritingCompanionBase {
+                // inherited from com.xemantic.kotlin.introspection.test.InheritingCompanionBase
+                val inheritedProperty: Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve function inherited by companion object next to declared overload and extension on its supertype`() {
+        // InheritingCompanionHolder.overloaded(), overloaded(1) and overloaded("") call the declared one, the inherited one, and the extension
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritingCompanionHolder.overloaded") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritingCompanionHolder.overloaded [page 1/1]
+            companion object : InheritingCompanionBase {
+                fun overloaded(): Int
+                // inherited from com.xemantic.kotlin.introspection.test.InheritingCompanionBase
+                fun overloaded(x: Int): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            /* called as InheritingCompanionHolder.overloaded(…) */ fun InheritingCompanionBase.overloaded(x: String): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extensions shadowed by members accepting Nothing`() {
+        // each call with an argument of the type of the hidden extension, like nothingShadowing.sink(sinkOfString), calls the member,
+        // as Nothing is a subtype of every type, but not the nullable one of a type which is not nullable, nor as an invariant type argument
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NothingShadowing", pageSize = 20) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NothingShadowing [page 1/1]
+            class NothingShadowing : NothingShadowedSupertype {
+                fun sink(x: NothingSink<Nothing>): Int
+                fun comparable(x: Comparable<Nothing>): Int
+                fun comparableOfTypeParameter(x: Comparable<Nothing>): Int
+                fun nested(x: Comparable<List<Nothing>>): Int
+                fun returningNothing(x: (String) -> Unit): Int
+                fun pair(x: Pair<CharSequence, Comparable<Nothing>>): Int
+                fun listOfNothing(x: List<String>): Int
+                fun nothing(x: String): Int
+                fun nullableNothing(x: String?): Int
+                fun sinkOfNullableNothing(x: NothingSink<Nothing?>): Int
+                fun invariantNothing(x: ProjectedBox<Nothing>): Int
+                fun onlyNull(x: String): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun NothingShadowedSupertype.invariantNothing(x: ProjectedBox<String>): Int
+            fun NothingShadowedSupertype.onlyNull(x: Nothing?): Int
+            fun NothingShadowedSupertype.sinkOfNullableNothing(x: NothingSink<String>): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extensions shadowed by members accepting bounds of star projections`() {
+        // boundedStarShadowing.source(sourceOfAnything) calls the member, as a BoundedSource<*> is a BoundedSource<Any>,
+        // while narrowerSource(sourceOfAnything) calls the extension
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoundedStarShadowing") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedStarShadowing [page 1/1]
+            class BoundedStarShadowing : BoundedStarShadowedSupertype {
+                fun source(x: BoundedSource<Any>): Int
+                fun box(x: BoundedBox<out CharSequence>): Int
+                fun inProjectedBox(x: BoundedBox<out CharSequence>): Int
+                fun narrowerSource(x: BoundedSource<CharSequence>): Int
+                fun narrowerBox(x: BoundedBox<out String>): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedStarShadowedSupertype.narrowerBox(x: BoundedBox<*>): Int
+            fun BoundedStarShadowedSupertype.narrowerSource(x: BoundedSource<*>): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extensions shadowed by members taking supertypes of function types`() {
+        // functionSupertypeShadowing.function { "" }, or .reference(::describe), call the members,
+        // while .suspendConversion(fun(): String = "") calls the extension, as an anonymous function is not converted to a suspend one
+        resolver.resolve("com.xemantic.kotlin.introspection.test.FunctionSupertypeShadowing", pageSize = 20) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.FunctionSupertypeShadowing [page 1/1]
+            class FunctionSupertypeShadowing : FunctionSupertypeShadowedSupertype {
+                fun function(x: Function<CharSequence>): Int
+                fun starFunction(x: Function<*>): Int
+                fun receiverFunction(x: Function<Unit>): Int
+                fun reference(x: (String) -> CharSequence): Int
+                fun receiverReference(x: String.() -> Unit): Int
+                fun callable(x: KCallable<Unit>): Int
+                fun narrowerFunction(x: Function<String>): Int
+                fun otherReference(x: (Int) -> Unit): Int
+                fun suspendConversion(x: suspend () -> CharSequence): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun FunctionSupertypeShadowedSupertype.narrowerFunction(x: () -> CharSequence): Int
+            fun FunctionSupertypeShadowedSupertype.otherReference(x: KFunction1<String, Unit>): Int
+            fun FunctionSupertypeShadowedSupertype.suspendConversion(x: () -> String): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extensions of type parameters bounded by each other shadowed by members accepting their bounds`() {
+        // boundedTypeParameterShadowing.boundedByOther(listOf("")) calls the member, while .narrower(listOfCharSequences) calls the extension
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoundedTypeParameterShadowing") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedTypeParameterShadowing [page 1/1]
+            class BoundedTypeParameterShadowing : BoundedTypeParameterShadowedSupertype {
+                fun boundedByOther(x: Collection<CharSequence>): Int
+                fun boundedByTypeOfOther(x: Collection<Collection<CharSequence>>): Int
+                fun pairBoundedByTypeOfOther(x: Pair<Collection<CharSequence>, Collection<CharSequence>>): Int
+                fun wholeBoundedByOther(x: CharSequence): Int
+                fun narrower(x: Collection<String>): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun <T : CharSequence, U : T> BoundedTypeParameterShadowedSupertype.narrower(x: List<U>): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extensions shadowed by members inferring their type parameters from type arguments`() {
+        // memberTypeParameterShadowing.covariant(listOf("")), or .bounded(""), call the members, inferring U as String,
+        // while each call with an argument of the type of a listed extension, like .boundViolated(listOf(1)), calls the extension
+        resolver.resolve("com.xemantic.kotlin.introspection.test.MemberTypeParameterShadowing", pageSize = 30) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.MemberTypeParameterShadowing [page 1/1]
+            class MemberTypeParameterShadowing : MemberTypeParameterShadowedSupertype {
+                fun <U> covariant(x: Collection<U>): Int
+                fun <U : CharSequence> boundedCovariant(x: Collection<U>): Int
+                fun <U : CharSequence> bounded(x: U): Int
+                fun <U> inProjected(x: ProjectedBox<in U>): Int
+                fun <U> functionParameter(x: (U) -> Unit): Int
+                fun <U> invariant(x: ProjectedBox<U>): Int
+                fun <U> captured(x: ProjectedBox<U>): Int
+                fun <U : CharSequence> boundedContravariant(x: Comparable<U>): Int
+                fun <U> nullable(x: Collection<U?>): Int
+                fun <U : CharSequence> boundViolated(x: Collection<U>): Int
+                fun <U : Any> notNullBoundViolated(x: Collection<U>): Int
+                fun <U> nestedCaptured(x: Collection<ProjectedBox<U>>): Int
+                fun <U> twice(x: (U) -> U): Int
+                fun <U, V : U> boundedByOther(x: Map<U, V>): Int
+                fun <U : CharSequence> nothingInCommon(x: ProjectedBox<in U>): Int
+                fun <U> receiverFunction(x: U.() -> Unit): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun MemberTypeParameterShadowedSupertype.boundViolated(x: List<Int>): Int
+            fun MemberTypeParameterShadowedSupertype.boundedByOther(x: java.util.HashMap<String, Int>): Int
+            fun MemberTypeParameterShadowedSupertype.nestedCaptured(x: List<ProjectedBox<*>>): Int
+            fun MemberTypeParameterShadowedSupertype.notNullBoundViolated(x: List<String?>): Int
+            fun MemberTypeParameterShadowedSupertype.nothingInCommon(x: ProjectedBox<Int>): Int
+            fun MemberTypeParameterShadowedSupertype.receiverFunction(x: (String) -> Unit): Int
+            fun MemberTypeParameterShadowedSupertype.twice(x: (String) -> Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve generic class without extensions shadowed by members taking its type parameter told by their receivers`() {
+        // classTypeParameterShadowing.typeParameterReceiver(listOf("")) calls the member, whose T is the one of the receiver of the extension,
+        // while .outProjectedReceiver(listOfAnything) calls the extension, inferring its T as a supertype of the one of the class
+        resolver.resolve("com.xemantic.kotlin.introspection.test.ClassTypeParameterShadowing", pageSize = 20) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ClassTypeParameterShadowing [page 1/1]
+            class ClassTypeParameterShadowing<T> {
+                fun inProjectedReceiver(x: Collection<T>): Int
+                fun typeParameterReceiver(x: Collection<T>): Int
+                fun boundedTypeParameterReceiver(x: Collection<T>): Int
+                fun boundedByTypeParameterReceiver(x: Collection<T>): Int
+                fun contravariant(x: Comparable<T>): Int
+                fun contravariantAny(x: Comparable<T>): Int
+                fun invariant(x: ProjectedBox<T>): Int
+                fun nested(x: T): Int
+                fun outProjectedReceiver(x: Collection<T>): Int
+                fun contravariantInProjectedReceiver(x: Comparable<T>): Int
+                fun nullableTypeParameter(x: T): Int
+                fun starProjectedReceiver(x: Collection<T>): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun ClassTypeParameterShadowing<in String>.contravariantInProjectedReceiver(x: Comparable<CharSequence>): Int
+            fun <T> ClassTypeParameterShadowing<T>.nullableTypeParameter(x: T?): Int
+            fun <T> ClassTypeParameterShadowing<out T>.outProjectedReceiver(x: List<T>): Int
+            fun ClassTypeParameterShadowing<*>.starProjectedReceiver(x: List<String>): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class of two type parameters without extensions shadowed by members taking them told by their receivers`() {
+        // twoClassTypeParametersShadowing.map(mapOf("" to 1)) calls the member, while .swapped(mapOf(1 to "")) calls the extension
+        resolver.resolve("com.xemantic.kotlin.introspection.test.TwoClassTypeParametersShadowing") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.TwoClassTypeParametersShadowing [page 1/1]
+            class TwoClassTypeParametersShadowing<T, U> {
+                fun map(x: Map<T, U>): Int
+                fun sameTypeParameter(x: Map<T, U>): Int
+                fun swapped(x: Map<T, U>): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun <A, B> TwoClassTypeParametersShadowing<B, A>.swapped(x: Map<A, B>): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve final class without extensions on type parameter bounded by it shadowed by its members`() {
+        // pinnedReceiverShadowing.pinned { } calls the member, as T can only be the class,
+        // while .nullableBound(boxOfNullable) calls the extension, inferring T as the nullable class
+        resolver.resolve("com.xemantic.kotlin.introspection.test.PinnedReceiverShadowing") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PinnedReceiverShadowing [page 1/1]
+            class PinnedReceiverShadowing {
+                fun pinned(x: PinnedReceiverShadowing.() -> Unit): Int
+                fun box(x: ProjectedBox<PinnedReceiverShadowing>): Int
+                fun nullableBound(x: ProjectedBox<PinnedReceiverShadowing>): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun <T : PinnedReceiverShadowing?> T.nullableBound(x: ProjectedBox<T>): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve open class with extension on type parameter bounded by it next to its member`() {
+        // openReceiverSubclass.openBox(boxOfSubclass) calls the extension, inferring T as the subclass
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OpenReceiverUnshadowing") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OpenReceiverUnshadowing [page 1/1]
+            open class OpenReceiverUnshadowing {
+                fun openBox(x: ProjectedBox<OpenReceiverUnshadowing>): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun <T : OpenReceiverUnshadowing> T.openBox(x: ProjectedBox<T>): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extensions shadowed by members taking its covariant type parameter in contravariant position`() {
+        // covariantShadowing.contravariant(comparableToCharSequence) calls the member, also on a CovariantShadowing<Nothing>,
+        // on which .covariant(listOf("")) calls the extension
+        resolver.resolve("com.xemantic.kotlin.introspection.test.CovariantShadowing") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.CovariantShadowing [page 1/1]
+            class CovariantShadowing<out T> {
+                fun contravariant(x: Comparable<T>): Int
+                fun functionParameter(x: (T) -> Unit): Int
+                fun covariant(x: Collection<T>): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun CovariantShadowing<String>.covariant(x: List<String>): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extension next to member taking its contravariant type parameter in contravariant position`() {
+        // contravariantUnshadowingOfAny.contravariant(comparableToString) calls the extension, as the member takes a Comparable<Any>,
+        // while .covariant("") calls the member
+        resolver.resolve("com.xemantic.kotlin.introspection.test.ContravariantUnshadowing") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ContravariantUnshadowing [page 1/1]
+            class ContravariantUnshadowing<in T> {
+                fun contravariant(x: Comparable<T>): Int
+                fun covariant(x: T): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun ContravariantUnshadowing<String>.contravariant(x: Comparable<String>): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extensions next to members taking inner class of another outer type`() {
+        // innerShadowing.otherOuter(innerOfOuterOfString) calls the extension, as a ShadowingOuter<String>.Inner
+        // is no ShadowingOuter<CharSequence>.Inner, unlike a ShadowingOuter<out CharSequence>.Inner
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InnerShadowing") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InnerShadowing [page 1/1]
+            class InnerShadowing : InnerShadowedSupertype {
+                fun sameOuter(x: ShadowingOuter<String>.Inner): Int
+                fun projectedOuter(x: ShadowingOuter<out CharSequence>.Inner): Int
+                fun otherOuter(x: ShadowingOuter<CharSequence>.Inner): Int
+                fun listOfOtherOuter(x: List<ShadowingOuter<CharSequence>.Inner>): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun InnerShadowedSupertype.listOfOtherOuter(x: List<ShadowingOuter<String>.Inner>): Int
+            fun InnerShadowedSupertype.otherOuter(x: ShadowingOuter<String>.Inner): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extension next to more specific one taking inner class of another outer type`() {
+        // innerSpecificReceiver.inner(innerOfOuterOfString) calls the one on InnerGeneralReceiver
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InnerSpecificReceiver") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InnerSpecificReceiver [page 1/1]
+            class InnerSpecificReceiver : InnerGeneralReceiver
+            // from com.xemantic.kotlin.introspection.test
+            fun InnerSpecificReceiver.inner(x: ShadowingOuter<CharSequence>.Inner): Int
+            fun InnerGeneralReceiver.inner(x: ShadowingOuter<String>.Inner): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extensions shadowed by its properties and Java getters of invoked types`() {
+        // javaInvokeShapesShadowing.varargTask(), .genericTask(), .got(), .run(), .kotlinSubTask(x = 1) and .genericKotlinTask(1)
+        // invoke the properties, while .gotOf(x = 1) calls the extension, as Kotlin passes no named argument to a Java method,
+        // and so does .otherGenericKotlinTask(1), whose invoke takes a String
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaInvokeShapesShadowing") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaInvokeShapesShadowing [page 1/1]
+            class JavaInvokeShapesShadowing : com.xemantic.kotlin.introspection.test.other.JavaInvokedGetterBase, JavaInvokeShapesShadowedSupertype {
+                val varargTask: com.xemantic.kotlin.introspection.test.other.JavaInvokedVarargTask
+                val genericTask: com.xemantic.kotlin.introspection.test.other.JavaInvokedGenericTask<String>
+                val kotlinSubTask: com.xemantic.kotlin.introspection.test.other.JavaInvokedKotlinSubTask
+                val genericKotlinTask: KotlinInvokedGenericTask<Int>
+                val otherGenericKotlinTask: KotlinInvokedGenericTask<String>
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun JavaInvokeShapesShadowedSupertype.gotOf(x: Int): Int
+            fun JavaInvokeShapesShadowedSupertype.otherGenericKotlinTask(x: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extensions shadowed by members taking more parameters which are optional`() {
+        // optionalParametersShadowing.defaulted(), .variadic() and .trailingDefault(x = 1) call the members,
+        // while .required(), .variadicNamed(x = 1), .trailingLambda { } and .trailingAny { } call the extensions
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OptionalParametersShadowing", pageSize = 20) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OptionalParametersShadowing [page 1/1]
+            class OptionalParametersShadowing : OptionalParametersShadowedSupertype {
+                fun defaulted(x: Int = …): Int
+                fun variadic(vararg x: Int): Int
+                fun trailingDefault(x: Int, more: Int = …): Int
+                fun required(x: Int, more: Int = …): Int
+                fun variadicNamed(vararg x: Int): Int
+                fun trailingLambda(x: () -> Unit, more: Int = …): Int
+                fun trailingAny(x: Any, more: Int = …): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun OptionalParametersShadowedSupertype.required(): Int
+            fun OptionalParametersShadowedSupertype.trailingAny(x: Any): Int
+            fun OptionalParametersShadowedSupertype.trailingLambda(x: () -> Unit): Int
+            fun OptionalParametersShadowedSupertype.variadicNamed(x: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extensions on nullable supertype shadowed by more specific ones on nullable receiver`() {
+        // nullableSpecificShadowing.bothNullable reads the one on NullableSpecificReceiver?, also on a nullable value,
+        // on which .onlyGeneralNullable, .boundedGeneralNullable and .same read the ones on the nullable receivers
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NullableSpecificShadowing", pageSize = 20) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NullableSpecificShadowing [page 1/1]
+            class NullableSpecificShadowing : NullableSpecificReceiver
+            // from com.xemantic.kotlin.introspection.test
+            val NullableSpecificReceiver?.bothNullable: Int
+            val NullableSpecificReceiver.boundedGeneralNullable: Int
+            val <T : NullableGeneralReceiver?> T.boundedGeneralNullable: Int
+            val NullableSpecificReceiver?.boundedNullable: Int
+            val NullableGeneralReceiver?.member: Int
+            val NullableSpecificReceiver.onlyGeneralNullable: Int
+            val NullableGeneralReceiver?.onlyGeneralNullable: Int
+            val NullableSpecificReceiver.same: Int
+            val NullableSpecificReceiver?.same: Int
+            fun NullableSpecificReceiver?.describeNullable(x: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve object with extensions on nullable receivers read on its nullable value`() {
+        // a nullable value of the object, like nullableObject.onlyGeneralNullable, or nullableObject.member, reads the extensions on the nullable
+        // receivers, which NullableSpecificObject.onlyGeneralNullable, and NullableSpecificObject.member, do not
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NullableSpecificObject", pageSize = 20) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NullableSpecificObject [page 1/1]
+            object NullableSpecificObject : NullableSpecificReceiver {
+                val member: Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            val NullableSpecificReceiver?.bothNullable: Int
+            val NullableSpecificReceiver.boundedGeneralNullable: Int
+            val <T : NullableGeneralReceiver?> T.boundedGeneralNullable: Int
+            val NullableSpecificReceiver?.boundedNullable: Int
+            val NullableGeneralReceiver?.member: Int
+            val NullableSpecificReceiver.onlyGeneralNullable: Int
+            val NullableGeneralReceiver?.onlyGeneralNullable: Int
+            val NullableSpecificReceiver.same: Int
+            val NullableSpecificReceiver?.same: Int
+            fun NullableSpecificReceiver?.describeNullable(x: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve extension on nullable receiver of same class as more specific one on class name`() {
+        // NullableSpecificCompanionHolder.same reads the one on NullableSpecificReceiver, as the name of a class is never null
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NullableSpecificCompanionHolder.same") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NullableSpecificCompanionHolder.same [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            /* called as NullableSpecificCompanionHolder.same */ val NullableSpecificReceiver.same: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve extension on type parameter of nullable bound shadowed by more specific one on class name`() {
+        // NullableSpecificCompanionHolder.boundedGeneralNullable reads the one on NullableSpecificReceiver
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NullableSpecificCompanionHolder.boundedGeneralNullable") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NullableSpecificCompanionHolder.boundedGeneralNullable [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            /* called as NullableSpecificCompanionHolder.boundedGeneralNullable */ val NullableSpecificReceiver.boundedGeneralNullable: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should hint infix extension on supertype of companion object as called only infix next to property invoked by operator`() {
+        // InfixMembersCompanionHolder.invoked(1), and .invoked(other = 1), invoke the property, only InfixMembersCompanionHolder invoked 1 calls the extension
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InfixMembersCompanionHolder.invoked") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InfixMembersCompanionHolder.invoked [page 1/1]
+            companion object : InfixCompanionSupertype {
+                val invoked: InfixInvokedTask
+            }
+            // from com.xemantic.kotlin.introspection.test
+            /* called as InfixMembersCompanionHolder invoked … */ infix fun InfixCompanionSupertype.invoked(other: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should hint infix extension on supertype of companion object as called only infix next to member taking one more optional parameter`() {
+        // InfixMembersCompanionHolder.optional(1), and .optional(other = 1), call the member, only InfixMembersCompanionHolder optional 1 calls the extension
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InfixMembersCompanionHolder.optional") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InfixMembersCompanionHolder.optional [page 1/1]
+            companion object : InfixCompanionSupertype {
+                fun optional(other: Int, more: Int = …): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            /* called as InfixMembersCompanionHolder optional … */ infix fun InfixCompanionSupertype.optional(other: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should hint infix extension on supertype of companion object as called on class name next to member taking vararg`() {
+        // InfixMembersCompanionHolder.variadic(other = 1) calls the extension too, as a vararg takes no single named argument
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InfixMembersCompanionHolder.variadic") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InfixMembersCompanionHolder.variadic [page 1/1]
+            companion object : InfixCompanionSupertype {
+                fun variadic(vararg other: Int): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            /* called as InfixMembersCompanionHolder.variadic(…) */ infix fun InfixCompanionSupertype.variadic(other: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should hint infix extension on supertype of companion object as called on class name next to property of function type`() {
+        // InfixMembersCompanionHolder.functionTyped(other = 1) calls the extension too, as a function type takes no named argument
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InfixMembersCompanionHolder.functionTyped") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InfixMembersCompanionHolder.functionTyped [page 1/1]
+            companion object : InfixCompanionSupertype {
+                val functionTyped: (Int) -> Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            /* called as InfixMembersCompanionHolder.functionTyped(…) */ infix fun InfixCompanionSupertype.functionTyped(other: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should hint operator extension plus on supertype of companion object as called only as operator next to member which is no operator`() {
+        // OperatorCompanionHolder.plus(1) calls the member, only the operator form calls the extension
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OperatorCompanionHolder.plus") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OperatorCompanionHolder.plus [page 1/1]
+            companion object : OperatorCompanionSupertype {
+                fun plus(other: Int): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            /* called as OperatorCompanionHolder + … */ operator fun OperatorCompanionSupertype.plus(other: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should hint operator extension get on supertype of companion object as called only as operator next to member which is no operator`() {
+        // OperatorCompanionHolder.get(1) calls the member, only the operator form calls the extension
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OperatorCompanionHolder.get") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OperatorCompanionHolder.get [page 1/1]
+            companion object : OperatorCompanionSupertype {
+                fun get(index: Int): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            /* called as OperatorCompanionHolder[…] */ operator fun OperatorCompanionSupertype.get(index: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should hint operator extension contains on supertype of companion object as called only as operator next to member which is no operator`() {
+        // OperatorCompanionHolder.contains(1) calls the member, only the operator form calls the extension
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OperatorCompanionHolder.contains") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OperatorCompanionHolder.contains [page 1/1]
+            companion object : OperatorCompanionSupertype {
+                fun contains(other: Int): Boolean
+            }
+            // from com.xemantic.kotlin.introspection.test
+            /* called as … in OperatorCompanionHolder */ operator fun OperatorCompanionSupertype.contains(other: Int): Boolean
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should hint operator extension unaryMinus on supertype of companion object as called only as operator next to member which is no operator`() {
+        // OperatorCompanionHolder.unaryMinus() calls the member, only the operator form calls the extension
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OperatorCompanionHolder.unaryMinus") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OperatorCompanionHolder.unaryMinus [page 1/1]
+            companion object : OperatorCompanionSupertype {
+                fun unaryMinus(): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            /* called as -OperatorCompanionHolder */ operator fun OperatorCompanionSupertype.unaryMinus(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should hint operator extension invoke on supertype of companion object as called only as operator next to member which is no operator`() {
+        // OperatorCompanionHolder.invoke(1) calls the member, only the operator form calls the extension
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OperatorCompanionHolder.invoke") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OperatorCompanionHolder.invoke [page 1/1]
+            companion object : OperatorCompanionSupertype {
+                fun invoke(other: Int): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            /* called as OperatorCompanionHolder(…) */ operator fun OperatorCompanionSupertype.invoke(other: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should hint operator extension rangeTo on supertype of companion object as called only as operator next to member which is no operator`() {
+        // OperatorCompanionHolder.rangeTo(1) calls the member, only the operator form calls the extension
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OperatorCompanionHolder.rangeTo") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OperatorCompanionHolder.rangeTo [page 1/1]
+            companion object : OperatorCompanionSupertype {
+                fun rangeTo(other: Int): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            /* called as OperatorCompanionHolder..… */ operator fun OperatorCompanionSupertype.rangeTo(other: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should hint operator extension on supertype of companion object as called on class name without member of its name`() {
+        // both OperatorCompanionHolder - 1 and OperatorCompanionHolder.minus(1) call the extension
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OperatorCompanionHolder.minus") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OperatorCompanionHolder.minus [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            /* called as OperatorCompanionHolder.minus(…) */ operator fun OperatorCompanionSupertype.minus(other: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should hint operator extension inc on supertype of companion object by its name, as it has no operator form on class name`() {
+        // the name of a class cannot be assigned, so OperatorCompanionHolder++ does not compile, and OperatorCompanionHolder.inc() calls the member
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OperatorCompanionHolder.inc") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OperatorCompanionHolder.inc [page 1/1]
+            companion object : OperatorCompanionSupertype {
+                fun inc(): OperatorCompanionSupertype
+            }
+            // from com.xemantic.kotlin.introspection.test
+            /* called as OperatorCompanionHolder.inc() */ operator fun OperatorCompanionSupertype.inc(): OperatorCompanionSupertype
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should hint operator extension invoke on supertype of companion object by its name next to constructor taking as many arguments`() {
+        // OperatorConstructedCompanionHolder(1) calls the constructor, and OperatorConstructedCompanionHolder.invoke(1) the member
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OperatorConstructedCompanionHolder.invoke") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OperatorConstructedCompanionHolder.invoke [page 1/1]
+            companion object : OperatorCompanionSupertype {
+                fun invoke(other: Int): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            /* called as OperatorConstructedCompanionHolder.invoke(…) */ operator fun OperatorCompanionSupertype.invoke(other: Int): Int
         """.trimIndent()
     }
 

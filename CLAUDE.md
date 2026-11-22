@@ -147,6 +147,18 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   see `givenTypeVariableNames`.
 
 - Kotlin never passes named arguments to a Java method, even one compiled with `-parameters`, so a Java method taking parameters never shadows an extension — see `isShadowingJavaMethod`.
+  A Java method overriding a Kotlin function takes them though, by the names of the Kotlin one, like `k.over(x = 1)`,
+  which is not modelled: the extension next to it stays listed.
+
+- kotlinc does not convert an anonymous function to a suspend function type:
+  `k.f(fun(): String = "")` calls the extension taking `() -> String` next to a member taking `suspend () -> CharSequence`,
+  which a lambda, a callable reference, and a value of the function type call —
+  so probe a parameter of a function type with an anonymous function too, see `acceptsTypeArguments`.
+
+- A member / extension pair is told as never reaching the extension only as far as its probes go:
+  `fun f(x: Comparable<String>)` next to `fun <T : CharSequence> S.f(x: Comparable<T>)` calls the member for a `Comparable<String>`
+  and a `Comparable<CharSequence>`, but the extension for a `Comparable<StringBuilder>` —
+  probe a type parameter of the extension with an unrelated type satisfying its bounds, and a generic receiver also with `Nothing`.
 
 ## Anti-patterns to avoid
 
