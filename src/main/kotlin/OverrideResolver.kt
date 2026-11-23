@@ -2322,7 +2322,8 @@ internal class OverrideResolver(
         // a supertype the class file does not tell is not looked up in a relocated package enclosing its own, where another class is,
         // but where the relocation of the owner alone tells, or guesses, like by its prefix, relocated class by class then,
         // or else by its metadata name, while the class declared there, which the class might inherit from otherwise,
-        // like through a Java supertype naming it by its JVM name, is not named back by the name of the supertype
+        // like through a Java supertype naming it by its JVM name, is not named back by the name of the supertype,
+        // nor are its nested classes, which the relocation of the supertype would relocate with it otherwise
         val misplaced = jvmSupertypes.misplacedSupertypes(owner.kmClass, dependencies, packages)
         val misplacedClasses = misplaced.keys.mapNotNull { metadataName ->
             own?.located(metadataName)?.let {
@@ -2330,8 +2331,8 @@ internal class OverrideResolver(
             }
         }.toMap()
         val notRelocated = excluded + misplaced.keys.filter { own?.located(it) == null } + misplaced.values
-        val relocation = own?.withDependencies(packages, notRelocated, classes + misplacedClasses, rootPackages)
-            ?: Relocation.ofDependencies(packages, notRelocated, classes, rootPackages)
+        val relocation = own?.withDependencies(packages, notRelocated, classes + misplacedClasses, rootPackages, misplaced.values.toSet())
+            ?: Relocation.ofDependencies(packages, notRelocated, classes, rootPackages, misplaced.values.toSet())
         return OwnerRelocation(relocation, classFile(declared), hasDependencies = true)
     }
 
@@ -2470,6 +2471,8 @@ internal class OverrideResolver(
          * like `lib/sub/Listener` next to `lib/Base` in `s1/Base`, where a Kotlin class is found, like `s1/sub/Listener`,
          * which its own metadata, not rewritten by a relocation, names by the name it is found by, so that it is declared there,
          * another class, the supertype relocated elsewhere, like to `s2/Listener`, or not at all.
+         * A class which these supertypes name, while the metadata does not, is the supertype itself, like of a package renamed,
+         * its classes renamed too, not paired by its simple name, like next to an interface of its simple name added by a bytecode tool.
          * A Kotlin class named otherwise is a relocated one, taken for the supertype, also when its metadata names it
          * by yet another name than the class does, like `okio/Sink` found for `lib/internal/okio/Sink`,
          * the copy a library bundles, relocated once more with the library.
@@ -2479,12 +2482,17 @@ internal class OverrideResolver(
          */
         fun misplacedSupertypes(kmClass: KmClass, dependencies: Map<String, String>, packages: Map<String, String>): Map<String, String> {
             val relocation = Relocation.ofDependencies(packages, excluded = emptySet()) ?: return emptyMap()
-            return kmClass.relocatableSupertypes()
+            val supertypes = kmClass.relocatableSupertypes()
+            // a supertype which these supertypes name, but the metadata does not, is relocated there
+            fun isRelocatedSupertype(locatedName: String) = internalNameOf(locatedName).let { it in names && it !in supertypes }
+            return supertypes
                 .filter { (internalName, metadataName) ->
                     internalName !in names && internalName !in dependencies && packageOf(metadataName) !in packages
                 }
                 .values.mapNotNull { metadataName ->
-                    relocation.located(metadataName)?.takeIf { declaration(it).kotlin?.name == it }?.let { metadataName to it }
+                    relocation.located(metadataName)
+                        ?.takeIf { !isRelocatedSupertype(it) && declaration(it).kotlin?.name == it }
+                        ?.let { metadataName to it }
                 }
                 .toMap()
         }
@@ -3910,7 +3918,8 @@ private fun internalNameOf(name: String): String = name.removePrefix(".").replac
  * as the class of a package which is not relocated would be looked up in vain,
  * while a class excluded from the relocation is still found by its metadata name, see `OverrideResolver`,
  * and so are the [excluded] ones, which the class file refers to by their metadata names,
- * kept by their JVM internal names, see [internalNameOf], as they are checked also for the names of the descriptors.
+ * and the nested classes of the [excludedOuters], kept by their JVM internal names, see [internalNameOf],
+ * as they are checked also for the names of the descriptors.
  */
 internal class Relocation private constructor(
     private val packages: Map<String, String>,
@@ -3918,7 +3927,8 @@ internal class Relocation private constructor(
     private val excluded: Set<String> = emptySet(),
     private val classes: Map<String, String> = emptyMap(),
     private val rootPackages: Set<String> = emptySet(),
-    private val removedPrefix: String? = null
+    private val removedPrefix: String? = null,
+    private val excludedOuters: Set<String> = emptySet()
 ) {
 
     // the root package, to which the other classes of the root packages are relocated too, is not translated back,
@@ -3929,11 +3939,27 @@ internal class Relocation private constructor(
     private val unlocatedClasses: Map<String, String> = inverse(classes.toList())
 
     /**
+     * Whether the class of the [name] is [excluded] from this relocation, or nested in one of the [excludedOuters].
+     */
+    private fun isExcluded(name: String): Boolean {
+        if (excluded.isEmpty() && excludedOuters.isEmpty()) return false
+        val internalName = internalNameOf(name)
+        if (internalName in excluded) return true
+        if (excludedOuters.isEmpty()) return false
+        var nested = internalName.indexOf('$', internalName.lastIndexOf('/') + 1)
+        while (nested >= 0) {
+            if (internalName.substring(0, nested) in excludedOuters) return true
+            nested = internalName.indexOf('$', nested + 1)
+        }
+        return false
+    }
+
+    /**
      * Whether this relocation tells the name the class of the [metadataName] is found by, see [located],
      * not only guessed by the [prefix], or that it is [excluded] from the relocation.
      */
     fun tells(metadataName: String): Boolean {
-        if (excluded.isNotEmpty() && internalNameOf(metadataName) in excluded) return true
+        if (isExcluded(metadataName)) return true
         val name = metadataName.removePrefix(".")
         return relocatedClass(name, classes) != null || relocated(name, packages) != null
     }
@@ -3943,7 +3969,7 @@ internal class Relocation private constructor(
      * or `null` if it is not known to be relocated.
      */
     fun located(metadataName: String): String? {
-        if (excluded.isNotEmpty() && internalNameOf(metadataName) in excluded) return null
+        if (isExcluded(metadataName)) return null
         // the leading '.' of a local class, see locatedNameOf, is not part of its package
         val localPrefix = if (metadataName.startsWith('.')) "." else ""
         val name = metadataName.removePrefix(".")
@@ -3962,7 +3988,7 @@ internal class Relocation private constructor(
      */
     fun locatedInRootPackage(metadataName: String): String? {
         if (rootPackages.isEmpty() || packageOf(metadataName.removePrefix(".")) !in rootPackages) return null
-        if (excluded.isNotEmpty() && internalNameOf(metadataName) in excluded) return null
+        if (isExcluded(metadataName)) return null
         return (if (metadataName.startsWith('.')) "." else "") + metadataName.substringAfterLast('/')
     }
 
@@ -3986,7 +4012,7 @@ internal class Relocation private constructor(
      * like to a type of a Java member, named by its relocated JVM name.
      */
     fun unlocated(locatedName: String): String {
-        if (excluded.isNotEmpty() && internalNameOf(locatedName) in excluded) return locatedName
+        if (isExcluded(locatedName)) return locatedName
         val localPrefix = if (locatedName.startsWith('.')) "." else ""
         val name = locatedName.removePrefix(".")
         return localPrefix + (
@@ -4006,7 +4032,7 @@ internal class Relocation private constructor(
      */
     fun guessedUnlocated(locatedName: String): String? {
         if (unlocated(locatedName) != locatedName) return null
-        if (excluded.isNotEmpty() && internalNameOf(locatedName) in excluded) return null
+        if (isExcluded(locatedName)) return null
         val localPrefix = if (locatedName.startsWith('.')) "." else ""
         val name = locatedName.removePrefix(".")
         if (!name.isRelocatable) return null
@@ -4026,16 +4052,18 @@ internal class Relocation private constructor(
     /**
      * This relocation, also of the [dependencies], the packages relocated from and to, as the class file tells,
      * unless relocated by this one, and of the [dependencyClasses], relocated from or to the root package,
-     * with the [dependencyRootPackages] relocated there, and of the [excluded] classes, which the class file refers to by their metadata names.
+     * with the [dependencyRootPackages] relocated there, and of the [excluded] classes, which the class file refers to by their metadata names,
+     * also of the classes nested in the [excludedOuters].
      */
     fun withDependencies(
         dependencies: Map<String, String>,
         excluded: Set<String>,
         dependencyClasses: Map<String, String> = emptyMap(),
-        dependencyRootPackages: Set<String> = emptySet()
+        dependencyRootPackages: Set<String> = emptySet(),
+        excludedOuters: Set<String> = emptySet()
     ): Relocation = Relocation(
         dependencies + packages, prefix, this.excluded + excluded.map { internalNameOf(it) }, dependencyClasses + classes,
-        dependencyRootPackages + rootPackages, removedPrefix
+        dependencyRootPackages + rootPackages, removedPrefix, this.excludedOuters + excludedOuters.map { internalNameOf(it) }
     )
 
     companion object {
@@ -4071,11 +4099,13 @@ internal class Relocation private constructor(
             dependencies: Map<String, String>,
             excluded: Set<String>,
             dependencyClasses: Map<String, String> = emptyMap(),
-            dependencyRootPackages: Set<String> = emptySet()
+            dependencyRootPackages: Set<String> = emptySet(),
+            excludedOuters: Set<String> = emptySet()
         ): Relocation? =
             if (dependencies.isEmpty() && dependencyClasses.isEmpty()) null
             else Relocation(
-                dependencies, prefix = null, excluded.mapTo(HashSet()) { internalNameOf(it) }, dependencyClasses, dependencyRootPackages
+                dependencies, prefix = null, excluded.mapTo(HashSet()) { internalNameOf(it) }, dependencyClasses, dependencyRootPackages,
+                excludedOuters = excludedOuters.mapTo(HashSet()) { internalNameOf(it) }
             )
 
         /**

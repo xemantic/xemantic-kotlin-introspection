@@ -1769,6 +1769,107 @@ class OverrideResolverTest {
     }
 
     @Test
+    fun `should tell override of nested class of another class of subpackage of relocated package inherited through Java supertype of relocated owner`() {
+        // given
+        // like above, the owner relocated by the prefix shaded/, with its Java interface, which implements a nested class
+        // of the class declared in s1/sub/, which the relocation of the owner alone would look up in shaded/lib/sub/
+        val owner = kmClass("app/Owner", supertype = "lib/Base").apply {
+            supertypes += type("lib/sub/Listener")
+            supertypes += type("app/JMid")
+        }
+        val ownerClassFile = classFile("shaded/app/Owner", "s1/Base", "s2/Listener", "shaded/app/JMid")
+        val ownerClassFiles = listOf(0, 0xFFFF, utf8IndexOfName(ownerClassFile)).flatMap { index ->
+            val malformed = withSupertypeIndexes(ownerClassFile, interfaces = mapOf(1 to index))
+            listOf(malformed, tooNew(malformed))
+        }
+        val javaMid = classFile("shaded/app/JMid", listOf(), interfaces = listOf("s1/sub/Listener\$Callback"), isInterface = true)
+
+        // when
+        val overrides = ownerClassFiles.map { classFile ->
+            val resolver = overrideResolver(
+                classes = mapOf(
+                    "s1/Base" to kmClass("lib/Base", null, "relocatedBase"),
+                    "s1/sub/Listener" to kmClass("s1/sub/Listener", null, "declared"),
+                    "s1/sub/Listener.Callback" to kmClass("s1/sub/Listener.Callback", null, "onCall")
+                ),
+                classFiles = mapOf("shaded/app/Owner" to classFile),
+                unloadableClassFiles = mapOf("shaded/app/JMid" to javaMid)
+            )
+            val relocatedOwner = OverrideResolver.Owner(owner, "shaded/app/Owner")
+            listOf(
+                resolver.isOverride(relocatedOwner, function("relocatedBase")),
+                resolver.isOverride(relocatedOwner, function("onCall"))
+            )
+        }
+
+        // then
+        // the nested class of the class declared in s1/sub/ is not relocated with the supertype left out either
+        assert(overrides == List(6) { listOf(true, true) })
+    }
+
+    @Test
+    fun `should find supertype in subpackage of relocated package which the class file names when the class there names itself so`() {
+        // given
+        // like a package renamed, old/ to renamed/, the class file complete, but with an interface added by a bytecode tool,
+        // of the simple name of old/sub/Base, so that it is not paired, while the classes found name themselves by their JVM names
+        val owner = kmClass("app/Owner", supertype = "old/sub/Base").apply { supertypes += type("old/Listener") }
+        val ownerClassFile = classFile("app/Owner", "renamed/sub/Base", "renamed/Listener", "tool/Base")
+
+        // when
+        val overrides = listOf(ownerClassFile, tooNew(ownerClassFile)).map { classFile ->
+            val resolver = overrideResolver(
+                classes = mapOf(
+                    "renamed/sub/Base" to kmClass("renamed/sub/Base", null, "base"),
+                    "renamed/Listener" to kmClass("renamed/Listener", null, "listen")
+                ),
+                classFiles = mapOf("app/Owner" to classFile)
+            )
+            listOf(
+                resolver.isOverride(OverrideResolver.Owner(owner), function("base")),
+                resolver.isOverride(OverrideResolver.Owner(owner), function("listen"))
+            )
+        }
+
+        // then
+        // renamed/sub/Base, which the class file names as a direct supertype, is no other class than the supertype
+        assert(overrides == List(2) { listOf(true, true) })
+    }
+
+    @Test
+    fun `should not take another class of subpackage of relocated package which owner names as its supertype too for supertype left out`() {
+        // given
+        // like a library split by shading, lib/Base relocated to s1/, and lib/sub/Listener to s2/, the index of the second interface malformed,
+        // while the owner implements the class declared in s1/sub/ too, which its class file names by its metadata name
+        val owner = kmClass("app/Owner", supertype = "lib/Base").apply {
+            supertypes += type("lib/sub/Listener")
+            supertypes += type("s1/sub/Listener")
+        }
+        val ownerClassFiles = withMalformedSecondInterface("s1/Base", "s2/Listener", "s1/sub/Listener")
+
+        // when
+        val overrides = ownerClassFiles.map { classFile ->
+            val resolver = overrideResolver(
+                classes = mapOf(
+                    "s1/Base" to kmClass("lib/Base", null, "relocatedBase"),
+                    "lib/sub/Listener" to kmClass("lib/sub/Listener", null, "original"),
+                    "s1/sub/Listener" to kmClass("s1/sub/Listener", null, "declared")
+                ),
+                classFiles = mapOf("app/Owner" to classFile)
+            )
+            listOf(
+                resolver.isOverride(OverrideResolver.Owner(owner), function("relocatedBase")),
+                resolver.isOverride(OverrideResolver.Owner(owner), function("original")),
+                resolver.isOverride(OverrideResolver.Owner(owner), function("declared"))
+            )
+        }
+
+        // then
+        // the class file names s1/sub/Listener as the metadata does, not as the supertype left out relocated there,
+        // so that the supertype is still looked up by its metadata name
+        assert(overrides == List(6) { listOf(true, true, true) })
+    }
+
+    @Test
     fun `should find supertype left out in subpackage of relocated package when its class file has malformed supertype index`() {
         // given
         // like an app shading its dependencies, lib/ with its subpackages relocated to app/shaded/lib/, the index of the second interface malformed
