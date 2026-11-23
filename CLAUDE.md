@@ -146,6 +146,13 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   the verdict depends on who declares the type argument, not on the bound, so probe such a shape with Java-declared type arguments too —
   see `givenTypeVariableNames`.
 
+- Telling the relocation right is not enough where a package is relocated onto the name of another relocated one,
+  like `p/lib/sub/` to `p/lib/` next to `p/lib/` to `p/lib/old/`, so that a JVM method equals another signature by identity:
+  a type of a Java member is matched by both its JVM name and the name the relocation translates it back to (`unlocatedType`),
+  and a type argument substituted from the metadata is translated back once more,
+  so a rule pairing these JVM methods right turned missed overrides into false `final override`s on the relocation harness (#355) —
+  the matching has to change together with it.
+
 - Kotlin never passes named arguments to a Java method, even one compiled with `-parameters`, so a Java method taking parameters never shadows an extension — see `isShadowingJavaMethod`.
 
 ## Anti-patterns to avoid
