@@ -2194,3 +2194,35 @@ abstract class NullableJavaTypedCollectionMutableIntOutNullableJoin :
 // A Java array merged with a Kotlin generic member given a projected array (#337)
 abstract class JavaArrayOutArrayTypedAllJoin :
     com.xemantic.kotlin.introspection.test.other.JavaStringArrayAcceptor(), TypedAllAcceptor<Array<out String>>
+
+// A Java array of nullable elements merged with a Java vararg, below a Java subclass of the class joining them (#368)
+abstract class NullableElementArrayJavaTypedVarargJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaNullableElementNotNullArrayAcceptInterface,
+    com.xemantic.kotlin.introspection.test.other.JavaTypedVarargAcceptor<String>()
+
+abstract class InheritedJavaNullableElementArrayTypedVarargJoinSubclass :
+    com.xemantic.kotlin.introspection.test.other.JavaNullableElementArrayTypedVarargJoinSubclass()
+
+// A Java vararg of elements annotated not null merged with a Kotlin member taking an array, next to a Java member kept apart (#368)
+abstract class NotNullJavaVarargStringArrayNullableTypedArrayJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaNotNullStringVarargAcceptInterface, StringArrayAcceptor,
+    com.xemantic.kotlin.introspection.test.other.JavaTypedArrayAcceptInterface<String?>
+
+// A hidden member taking an array, next to a Java member given an array of nullable elements, kept apart (#368)
+abstract class HiddenArrayNullableArrayTypedAllJoin :
+    HiddenStringArrayAcceptor, com.xemantic.kotlin.introspection.test.other.JavaTypedAllAcceptorInterface<Array<String?>>
+
+// A Java collection, and a Java array, of platform elements, implementing a Kotlin member taking nullable ones (#368)
+abstract class JavaIntegerCollectionOutNullableMutableCollectionJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaIntegerCollectionAdder(), OutNullableMutableIntCollectionAdder
+
+abstract class JavaArrayOutNullableArrayTypedAllJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaStringArrayAcceptor(), TypedAllAcceptor<Array<out String?>>
+
+// A Java array of platform elements declared before an open Kotlin member taking an array of nullable elements (#368)
+abstract class OpenNullableStringArrayAcceptor {
+    open fun acceptAll(values: Array<String?>) {}
+}
+
+abstract class NotNullArrayOpenNullableArrayJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaNotNullArrayAcceptInterface, OpenNullableStringArrayAcceptor()
