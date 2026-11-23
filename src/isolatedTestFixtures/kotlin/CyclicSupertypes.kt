@@ -39,3 +39,14 @@ interface CyclicOverloadMid : CyclicOverloadBase {
 }
 
 abstract class CyclicOverloadLeaf : CyclicOverloadMid
+
+// a test rewrites the metadata of the second one, making it a subtype of `CyclicGenericFirst<List<T>>`,
+// so that the type arguments grow on each lap of the cycle
+interface CyclicGenericSecond<T> {
+    fun g(x: T)
+}
+
+interface CyclicGenericFirst<T> : CyclicGenericSecond<List<T>>
+
+abstract class CyclicGenericFunctionLeaf :
+    CyclicFunctionImpl<String>(), java.util.function.Function<String, String>, CyclicGenericFirst<String>

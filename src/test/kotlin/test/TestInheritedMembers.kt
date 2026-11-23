@@ -1817,6 +1817,18 @@ abstract class InheritedDefaultStringAcceptorJavaConsumerNullableStringAcceptorJ
 abstract class InheritedJavaStringApplierHalfNullableFunctionApplierJoin :
     com.xemantic.kotlin.introspection.test.other.JavaStringApplier(), java.util.function.Function<String?, String>, StringApplier
 
+// the one member of the join stays one next to the Kotlin interface named again before it
+abstract class InheritedStringApplierJavaStringApplierNullableFunctionApplierJoin :
+    StringApplier, JavaStringApplierNullableFunctionApplierJoin()
+
+// the apply(String?) of Function<String?, String?> stays apart, as the Java class is declared after the Kotlin interface
+abstract class StringApplierJavaStringApplierNullableFunctionJoin :
+    StringApplier, com.xemantic.kotlin.introspection.test.other.JavaStringApplier(), java.util.function.Function<String?, String?>
+
+// and so it does below, next to the Kotlin interface named again
+abstract class InheritedStringApplierStringApplierJavaStringApplierNullableFunctionJoin :
+    StringApplier, StringApplierJavaStringApplierNullableFunctionJoin()
+
 // The arrays of Java, also of a vararg parameter, merged with the ones of Kotlin members, invariant, projected, or vararg ones (#337)
 interface StringVarargAcceptor {
     fun acceptAll(vararg values: String)

@@ -3418,6 +3418,12 @@ internal class DefaultKotlinIntrospector(
                 (isProjecting && isElementNullabilityClash(other))
 
         /**
+         * Whether the [member] is kept apart from the one of the [other] candidate by a nullable type argument,
+         * see [isNullabilityClash], not by the elements of their arrays.
+         */
+        fun isKeptApartByTypeArgumentFrom(other: InheritedCandidate): Boolean = isNullabilityClash(other, isProjecting = false)
+
+        /**
          * Whether the [member] is kept apart from the one of the [other] candidate by the nullability of the elements
          * of the arrays they take, see [isElementNullabilityClash], unless next to a hidden member, see [isProjectedRivalry].
          */
@@ -4096,6 +4102,57 @@ internal class DefaultKotlinIntrospector(
             }
             if (signature == null || isOverriddenOnJvm) candidate.nullableArgumentPositions = emptySet()
         }
+        // the classes reached from the class, by their order of contribution, depth-first, see contributionOrder
+        val contributionOrders = HashMap<String, Map<String, Int>>()
+        fun contributionOrderOf(root: String): Map<String, Int> = contributionOrders.getOrPut(root) {
+            val order = HashMap<String, Int>()
+            fun walk(name: String) {
+                directSupertypes[name].orEmpty().forEach { supertype ->
+                    if (supertype !in order) {
+                        order[supertype] = order.size
+                        walk(supertype)
+                    }
+                }
+            }
+            walk(root)
+            order
+        }
+        // nor is the member of a Java class given a nullable type argument kept apart when every path to it runs
+        // through a Kotlin class, other than the inheriting one, which merges it with them, its single member inherited as one, like the apply of Function<String?, String?> of
+        // `Join : JavaStringApplier(), Function<String?, String?>, StringApplier`, merged with the apply(x: String) of StringApplier
+        // by the apply(String) of the Java class, of platform types, contributed first, see groupedAroundFirst,
+        // for `X : StringApplier, Join()`, unlike `Join : StringApplier, JavaStringApplier(), Function<String?, String?>`
+        walked.filter { it.nullableArgumentPositions.isNotEmpty() && it.member is Member.Function }.forEach { candidate ->
+            fun mergesBelow(name: String): Boolean {
+                val order = contributionOrderOf(name)
+                val candidateOrder = order[candidate.name] ?: return false
+                return walked.any { java ->
+                    val javaOrder = order[java.name]
+                    javaOrder != null && javaOrder < candidateOrder && java.declarations is JavaClass &&
+                        java.className != candidate.className && java.member is Member.Function && java.isPlainRival(candidate) &&
+                        !java.isKeptApartByTypeArgumentFrom(candidate) && walked.filter { other ->
+                            other.className != candidate.className && other.className != java.className && other.name in order &&
+                                candidate.isPlainRival(other) && candidate.isKeptApartByTypeArgumentFrom(other)
+                        }.let { apart ->
+                            apart.isNotEmpty() && apart.all { other ->
+                                order.getValue(other.name) > javaOrder && java.isPlainRival(other) && !java.isKeptApartByTypeArgumentFrom(other)
+                            }
+                        }
+                }
+            }
+            // false while walked, not to follow a supertype cycle of malformed class files
+            val throughMerging = HashMap<String, Boolean>()
+            fun isMergedThrough(name: String): Boolean = throughMerging[name] ?: run {
+                throughMerging[name] = false
+                val isMerged = name != candidate.name && (
+                    (name != kmClass.name && name !in javaClasses && mergesBelow(name)) ||
+                        directSupertypes[name].orEmpty().filter { it == candidate.name || candidate.name in contributionOrderOf(it) }
+                            .let { reaching -> reaching.isNotEmpty() && reaching.all(::isMergedThrough) }
+                    )
+                isMerged.also { throughMerging[name] = it }
+            }
+            if (isMergedThrough(kmClass.name)) candidate.nullableArgumentPositions = emptySet()
+        }
         walked.forEach { candidate -> candidate.isPlainCollectionRival = walked.any { it !== candidate && candidate.isPlainCollectionRivalOf(it) } }
         // as is the merging by the variants of the arrays and projected collections, next to a hidden member merged so with another one,
         // see InheritedCandidate.isProjectedRivalry, but not a hidden one kept apart from the members by the nullability of the elements
@@ -4347,13 +4404,23 @@ internal class DefaultKotlinIntrospector(
         fun typedReaches(targets: Set<String>): List<Pair<Reach, KmType?>> {
             val reaches = ArrayList<Pair<Reach, KmType?>>()
             val visited = HashSet<Triple<String, Boolean, String?>>()
+            // the classes of the path walked, not to follow a supertype cycle of malformed class files,
+            // whose type arguments may grow on each lap, like `C1<T> : C2<List<T>>` next to `C2<T> : C1<List<T>>`
+            val walking = hashSetOf(kmClass.name)
             fun walk(name: String, path: List<Int>, isPlatform: Boolean) {
                 directSupertypes[name].orEmpty().forEachIndexed { index, supertype ->
+                    if (supertype in walking) return@forEachIndexed
                     val isGivenPlatform = isPlatform || givesPlatformTypes(name, supertype)
                     val reach = Reach(supertype, path + index, isGivenPlatform, giver = name, isPlatformBelow = isPlatform)
                     val type = typeReached(reach)
                     if (!visited.add(Triple(supertype, isGivenPlatform, type?.structureKey()))) return@forEachIndexed
-                    if (supertype in targets) reaches += reach to type else walk(supertype, reach.path, isGivenPlatform)
+                    if (supertype in targets) {
+                        reaches += reach to type
+                    } else {
+                        walking += supertype
+                        walk(supertype, reach.path, isGivenPlatform)
+                        walking -= supertype
+                    }
                 }
             }
             walk(kmClass.name, emptyList(), isPlatform = false)

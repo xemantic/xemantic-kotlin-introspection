@@ -9014,6 +9014,34 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve member merged by Kotlin join of method of Java class declared first once next to Kotlin member named again`() {
+        // the join merges the apply of Function<String?, String?> with both, which its subclass inherits as one member,
+        // so that apply(null) does not compile, and a concrete subclass implements nothing
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedStringApplierJavaStringApplierNullableFunctionApplierJoin.apply"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedStringApplierJavaStringApplierNullableFunctionApplierJoin.apply [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.StringApplier
+            open fun apply(x: String): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of JDK interface given nullable type apart from Kotlin member when Kotlin join declares method of Java class after it`() {
+        // the join keeps the apply of Function<String?, String?> apart, as the Kotlin interface is declared before the Java class,
+        // so that apply(null) compiles, returning String?, and a concrete subclass has to implement it, also below
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedStringApplierStringApplierJavaStringApplierNullableFunctionJoin.apply"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedStringApplierStringApplierJavaStringApplierNullableFunctionJoin.apply [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.StringApplier
+            open fun apply(x: String): String
+            // inherited from java.util.function.Function
+            fun apply(arg0: String?): String?
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve Kotlin member taking nullable type joined by Java interface with member of JDK interface apart from Kotlin interface member of body`() {
         // accept(null) compiles, and a concrete subclass has to implement accept(s: String?)
         resolver.resolve(
