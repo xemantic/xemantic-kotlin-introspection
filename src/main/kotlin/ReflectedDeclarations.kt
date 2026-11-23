@@ -30,6 +30,7 @@ import org.objectweb.asm.signature.SignatureVisitor
 import org.objectweb.asm.Type as AsmType
 import java.lang.reflect.Field
 import java.lang.reflect.GenericArrayType
+import java.lang.reflect.MalformedParameterizedTypeException
 import java.lang.reflect.Method
 import java.lang.reflect.Modifier
 import java.lang.reflect.ParameterizedType
@@ -465,6 +466,38 @@ private fun KmType.enhanceSupertypeArguments(type: Class<*>, supertype: Class<*>
     javaNullabilities.get(type).supertypeArguments[index]?.forEach { (path, isNullable) ->
         nestedType(path)?.markNullable(isNullable)
     }
+}
+
+/**
+ * Whether the class [type], or a class its supertypes reach, also through their type arguments, and the supertypes of these,
+ * like `NullableList` of `interface Holder<V> : Producer<NullableList<V>>` of `List<Holder<V>>`,
+ * is a Java class annotating a type argument of its supertype as nullable, or not,
+ * see [JavaClassNullability.supertypeArguments], like `interface NullableList<V> extends List<@Nullable V>`,
+ * whose supertypes told by its generic signature alone are not the ones the compiler sees,
+ * also when the supertypes of a class cannot be told, like of one referring to a missing class.
+ */
+internal fun annotatesJavaSupertypeArguments(type: Class<*>, visited: MutableSet<Class<*>> = HashSet()): Boolean {
+    if (type.isJdkClass || !visited.add(type)) return false
+    if (type.getAnnotation(Metadata::class.java) == null && javaNullabilities.get(type).supertypeArguments.isNotEmpty()) return true
+    // the classes a type refers to, like List, and Holder, of List<Holder<V>>
+    fun Type.classes(): List<Class<*>> = when (this) {
+        is Class<*> -> listOf(if (isArray) componentType else this)
+        is ParameterizedType -> listOfNotNull(rawType as? Class<*>) + actualTypeArguments.flatMap { it.classes() } +
+            ownerType?.classes().orEmpty()
+        is GenericArrayType -> genericComponentType.classes()
+        is WildcardType -> (upperBounds + lowerBounds).flatMap { it.classes() }
+        else -> emptyList()
+    }
+    val reached = try {
+        (listOfNotNull(type.genericSuperclass) + type.genericInterfaces).flatMap { it.classes() }
+    } catch (_: LinkageError) {
+        return true
+    } catch (_: TypeNotPresentException) {
+        return true
+    } catch (_: MalformedParameterizedTypeException) {
+        return true
+    }
+    return reached.any { annotatesJavaSupertypeArguments(it, visited) }
 }
 
 /**
@@ -1831,7 +1864,10 @@ private fun isContravariantlyProjected(kClass: KClass<*>, arguments: List<KmType
  */
 private fun reflectedClassName(kClass: KClass<*>): String {
     val qualifiedName = kClass.qualifiedName
-    return if (qualifiedName != null && qualifiedName != kClass.java.canonicalName) {
+    // the class of a mutable collection type has no Java class, like the one of the MutableCollection<Int> kotlin-reflect tells
+    // of the addAll2(Collection<Integer>) of a Java class overriding a Kotlin member taking it
+    val javaClass = reflectedValue<Class<*>?>(default = null) { kClass.java }
+    return if (qualifiedName != null && qualifiedName != javaClass?.canonicalName) {
         kotlinClassName(qualifiedName)
     } else {
         kotlinClassName(kClass.java)

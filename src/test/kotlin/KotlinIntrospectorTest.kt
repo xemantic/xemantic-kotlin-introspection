@@ -7563,6 +7563,629 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve Kotlin vararg member taking types of Java vararg method merged with it declared first`() {
+        // the String... of Java is an Array<(out) String!>!, merged with the Array<out String> of the vararg parameter,
+        // so that a concrete subclass compiles, and acceptAll(null), acceptAll("", null) compile, also acceptAll(values = arrayOf(""))
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaVarargStringVarargAcceptorJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaVarargStringVarargAcceptorJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.StringVarargAcceptor
+            open fun acceptAll(vararg values: String?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin vararg member declared before Java vararg method merged with it`() {
+        // the compiler picks the acceptAll(vararg values: String) of the interface, declared first, which the Java class implements
+        resolver.resolve("com.xemantic.kotlin.introspection.test.StringVarargAcceptorJavaVarargJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.StringVarargAcceptorJavaVarargJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.StringVarargAcceptor
+            open fun acceptAll(vararg values: String)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member taking array as vararg of Java method merged with it declared first`() {
+        // acceptAll("") compiles, as the compiler picks the acceptAll(String...) of the Java class, while acceptAll(arrayOf("")) does not
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaVarargStringArrayAcceptorJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaVarargStringArrayAcceptorJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.StringArrayAcceptor
+            open fun acceptAll(vararg values: String?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin vararg member taking array of Java method merged with it declared first`() {
+        // acceptAll(arrayOf("")) and acceptAll(null) compile, as the compiler picks the acceptAll(String[]) of the Java class, while acceptAll("") does not
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaArrayStringVarargAcceptorJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaArrayStringVarargAcceptorJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.StringVarargAcceptor
+            open fun acceptAll(values: Array<String>?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member taking projected array declared before Java method taking array as implemented`() {
+        // the String[] of Java is merged with an Array<out String> as well as with an Array<String>
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OutStringArrayAcceptorJavaArrayJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OutStringArrayAcceptorJavaArrayJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.OutStringArrayAcceptor
+            open fun acceptAll(values: Array<out String>)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin generic vararg member declared before Java vararg method as one member`() {
+        // the acceptAll(vararg values: T) of VarargAcceptor<String>, taking Object[] on the JVM, is merged with acceptAll(String...)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.GenericVarargAcceptorJavaVarargJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GenericVarargAcceptorJavaVarargJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.VarargAcceptor
+            open fun acceptAll(vararg values: String)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of Java interface declared first of members winning over each other in circle`() {
+        // the accept(String) of the Java interface wins over the accept(t: T) of GenericAcceptor<String>, declared after it,
+        // which wins over the one of the Java class, declared last, which wins over the one of the Java interface, implementing it:
+        // kotlinc picks the one declared first, and accept(null) compiles — a guard of the listing of main, kept by the merge of #328
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaInterfaceGenericAcceptorJavaClassJoin.accept") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaInterfaceGenericAcceptorJavaClassJoin.accept [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaStringAcceptorInterface
+            open fun accept(arg0: String?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member taking mutable collection implemented by Java superclass as open`() {
+        // kotlin-reflect tells the Collection<Integer> of the method of the Java class as the MutableCollection<Int> of the member
+        // it overrides, of a class which has no Java class, and a concrete subclass compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaMutableIntCollectionAdderSubclass.addAll2") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaMutableIntCollectionAdderSubclass.addAll2 [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.MutableIntCollectionAdder
+            open fun addAll2(c: MutableCollection<Int>): Boolean
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member taking projected mutable collection taking types of Java method merged with it declared first`() {
+        // the Collection<Integer> of Java, a (Mutable)Collection<Int!>!, is merged with a MutableCollection<out Int>,
+        // between its MutableCollection<Int> and its Collection<Int>, so that a concrete subclass compiles, and addAll2(null) too
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaIntegerOutMutableCollectionAdderJoin.addAll2") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaIntegerOutMutableCollectionAdderJoin.addAll2 [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.OutMutableIntCollectionAdder
+            open fun addAll2(c: Collection<Int>?): Boolean
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member taking projected mutable collection declared before Java method merged with it`() {
+        // a concrete subclass compiles, while addAll2(null) does not
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OutMutableCollectionAdderJavaIntegerJoin.addAll2") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OutMutableCollectionAdderJavaIntegerJoin.addAll2 [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.OutMutableIntCollectionAdder
+            open fun addAll2(c: MutableCollection<out Int>): Boolean
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java method taking nullable type argument apart from Kotlin member taking type which is not nullable`() {
+        // the T of accept(T) given String? is no platform type, so that the accept(Object) of Java never implements accept(s: String):
+        // a concrete subclass has to implement it, and accept(null) compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NullableStringJavaTypedAcceptorJoin.accept") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NullableStringJavaTypedAcceptorJoin.accept [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypedAcceptor
+            open fun accept(arg0: String?)
+            // inherited from com.xemantic.kotlin.introspection.test.StringAcceptor
+            fun accept(s: String)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member taking type which is not nullable declared before Java method taking nullable type argument as abstract`() {
+        // like with the Java class declared first
+        resolver.resolve("com.xemantic.kotlin.introspection.test.StringAcceptorNullableJavaTypedJoin.accept") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.StringAcceptorNullableJavaTypedJoin.accept [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.StringAcceptor
+            fun accept(s: String)
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypedAcceptor
+            open fun accept(arg0: String?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java vararg method taking nullable type argument apart from Kotlin vararg member declared first`() {
+        // the T... of the Java class given String? takes no platform type, so that it never implements acceptAll(vararg values: String):
+        // a concrete subclass has to implement it, and acceptAll(null) compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.StringVarargAcceptorNullableJavaTypedJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.StringVarargAcceptorNullableJavaTypedJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.StringVarargAcceptor
+            fun acceptAll(vararg values: String)
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypedVarargAcceptor
+            open fun acceptAll(vararg arg0: String?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java vararg method taking nullable type argument declared first apart from Kotlin vararg member`() {
+        // like with the Kotlin interface declared first
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NullableJavaTypedStringVarargAcceptorJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NullableJavaTypedStringVarargAcceptorJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypedVarargAcceptor
+            open fun acceptAll(vararg arg0: String?)
+            // inherited from com.xemantic.kotlin.introspection.test.StringVarargAcceptor
+            fun acceptAll(vararg values: String)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member taking projected mutable collection as abstract next to Java method taking collection of nullable type argument`() {
+        // the Collection<T> of the Java class given Int? is no collection of a platform type, so that it never implements the member,
+        // which a concrete subclass has to implement
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OutMutableCollectionAdderNullableJavaTypedJoin.addAll2") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OutMutableCollectionAdderNullableJavaTypedJoin.addAll2 [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.OutMutableIntCollectionAdder
+            fun addAll2(c: MutableCollection<out Int>): Boolean
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java method given nullable array merged with Java vararg method as one member`() {
+        // the String... of the Java interface is a platform type, merged with the Array<String>? given for T: a concrete subclass compiles,
+        // and accept("") does not
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NullableArrayJavaTypedVarargInterfaceJoin.accept") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NullableArrayJavaTypedVarargInterfaceJoin.accept [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypedAcceptor
+            open fun accept(arg0: Array<String>?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member merged with Java method given nullable type argument next to member of its JVM signature`() {
+        // the accept(T) of the Java interface given String? is of the JVM signature of the accept(t: T) of GenericAcceptor<String>,
+        // which the other Java interface declares again, so that it is not kept apart, and accept(null) compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NullableJavaTypedInterfaceRedeclaredAcceptorJoin.accept") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NullableJavaTypedInterfaceRedeclaredAcceptorJoin.accept [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.AbstractStringAcceptor
+            abstract fun accept(s: String?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java method taking type parameter annotated not null given nullable type argument merged with Kotlin member`() {
+        // the @NotNull T given String? is a String, merged with the put2n(a: String, b: String) of the interface, which it implements,
+        // and which names its parameters, so that put2n(a = "", b = "") compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NullableJavaNotNullTypedPutterJoin.put2n") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NullableJavaNotNullTypedPutterJoin.put2n [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNotNullTypedPutter
+            open fun put2n(a: String, b: String?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member taking mutable map of nested lists merged with Java method declared first`() {
+        // each of the five collection types of the Java method is either the read-only, or the mutable one, in Kotlin
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaNestedMapTakerJoin.big") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaNestedMapTakerJoin.big [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.NestedMutableMapTaker
+            open fun big(m: Map<List<List<String>>, List<List<String>>>?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of Java interface declared first of members winning over each other in circle next to hidden member`() {
+        // the accept(String) of the Java interface wins over the hidden accept(s: String), declared after it, which wins over the one
+        // of the Java class, declared last, which wins over the one of the Java interface, implementing it:
+        // kotlinc picks the one declared first, not the hidden one, named by it, so that accept(null) and accept(s = "") compile
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaInterfaceHiddenAcceptorJavaClassJoin.accept") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaInterfaceHiddenAcceptorJavaClassJoin.accept [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaStringAcceptorInterface
+            open fun accept(s: String?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of most specific return type of members winning over each other in circle`() {
+        // the get2 of the Java interface, of TypedGetter<String>, and of the Java class win over each other in a circle,
+        // and each of them over the get2(k: String): Any of the interface declared first, of a less specific return type,
+        // which is never listed then: kotlinc types get2("") as String
+        resolver.resolve("com.xemantic.kotlin.introspection.test.AnyGetterJavaInterfaceTypedGetterJavaClassJoin.get2") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.AnyGetterJavaInterfaceTypedGetterJavaClassJoin.get2 [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaStringGetterInterface
+            open fun get2(arg0: String?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java method taking list annotated nullable apart from Kotlin member taking projected mutable list`() {
+        // the @Nullable List<@NotNull String> of Java is no platform type, so that the compiler keeps it apart from
+        // the MutableList<out String> given for the T of feed1(a: T): both have to be implemented, and feed1(null) compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OutMutableStringListFeederJavaNullableListJoin.feed1") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OutMutableStringListFeederJavaNullableListJoin.feed1 [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.TypedFeeder
+            fun feed1(a: MutableList<out String>)
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNullableListFeeder
+            fun feed1(arg0: List<String>?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java method taking array annotated nullable apart from Kotlin vararg member`() {
+        // the @NotNull String @Nullable [] of Java is no platform type, so that it never implements acceptAll(vararg values: T)
+        // given String: a concrete subclass has to implement it, and acceptAll(null) compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.GenericVarargAcceptorJavaNullableArrayJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GenericVarargAcceptorJavaNullableArrayJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.VarargAcceptor
+            fun acceptAll(vararg values: String)
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNullableArrayAcceptor
+            open fun acceptAll(arg0: Array<String>?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member taking array of arrays apart from Java vararg of nullable array type argument`() {
+        // the elements of the T... of Java given Array<String>? are nullable, no platform types, so that the compiler keeps it apart
+        // from acceptAll(a: T) given Array<Array<String>>: a concrete subclass has to implement both
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NullableArrayJavaVarargArrayOfArraysJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NullableArrayJavaVarargArrayOfArraysJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.VarargAcceptor
+            fun acceptAll(vararg values: Array<String>?)
+            // inherited from com.xemantic.kotlin.introspection.test.TypedAllAcceptor
+            fun acceptAll(a: Array<Array<String>>)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java vararg of elements annotated not null named by Kotlin generic vararg merged with it`() {
+        // the elements of the vararg are not nullable, so that the method is an override for the compiler, though its array is
+        // a platform type: acceptAll(values = arrayOf("")) compiles, and acceptAll(null) does not
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NotNullJavaVarargGenericVarargJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NotNullJavaVarargGenericVarargJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNotNullStringVarargAcceptInterface
+            fun acceptAll(vararg values: String)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java vararg of nullable elements merged with Kotlin member taking projected array of nullable elements`() {
+        // the @Nullable T... given String? is an Array<(out) String?>, merged with the acceptAll(a: T) given Array<out String?>:
+        // one abstract member, acceptAll("", null) and acceptAll(a = arrayOf<String?>(null)) compile, acceptAll(arrayOf("")) does not
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NullableJavaVarargOutNullableArrayJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NullableJavaVarargOutNullableArrayJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNullableTypedVarargAcceptorInterface
+            fun acceptAll(vararg a: String?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java vararg of nullable elements merged with Kotlin member declared first apart from array of other nullability`() {
+        // the Java vararg is merged with the acceptAll(a: T) given Array<out String?>, declared first, standing for it,
+        // and kept apart from acceptAll(values: Array<String>): acceptAll(arrayOf<String?>(null)) compiles, acceptAll("") does not
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OutNullableArrayStringArrayNullableJavaVarargJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OutNullableArrayStringArrayNullableJavaVarargJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.TypedAllAcceptor
+            fun acceptAll(a: Array<out String?>)
+            // inherited from com.xemantic.kotlin.introspection.test.StringArrayAcceptor
+            fun acceptAll(values: Array<String>)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java vararg of elements annotated not null apart from hidden member taking array of nullable elements`() {
+        // of the same JVM signature, String[], but of elements of another nullability: kotlinc keeps them apart,
+        // so that acceptAll(a = arrayOf<String?>(null)) is rejected, the Java method naming no parameter
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NotNullJavaVarargHiddenNullableArrayJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NotNullJavaVarargHiddenNullableArrayJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNotNullStringVarargAcceptInterface
+            fun acceptAll(vararg arg0: String)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java method taking array named by Kotlin generic member given projected array merged with it`() {
+        // the String[] of Java, an Array<(out) String!>!, implements the acceptAll(a: T) given Array<out String>,
+        // so that a concrete subclass compiles, and acceptAll(a = arrayOf("")) as well as acceptAll(null)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaArrayOutArrayTypedAllJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaArrayOutArrayTypedAllJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaStringArrayAcceptor
+            open fun acceptAll(a: Array<String>?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java vararg of type parameter annotated not null merged with Kotlin vararg next to hidden member kept apart from it`() {
+        // the hidden acceptAll(a: Array<String?>) is merged with neither, of elements of another nullability, so that the @NotNull T... given String
+        // is merged with the acceptAll(vararg values: String) by the variants of its array: one abstract member, acceptAll(null) is rejected
+        resolver.resolve("com.xemantic.kotlin.introspection.test.StringVarargHiddenNullableArrayNotNullJavaVarargJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.StringVarargHiddenNullableArrayNotNullJavaVarargJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.StringVarargAcceptor
+            fun acceptAll(vararg values: String)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java vararg of elements annotated not null named by no hidden member merged with it through Java class`() {
+        // the String... of the Java class is merged with both the @NotNull String... and the hidden acceptAll(a: Array<String?>),
+        // which the compiler keeps apart from the former, naming it not: acceptAll(a = arrayOf("")) is rejected
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NotNullJavaVarargHiddenNullableArrayJavaVarargJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NotNullJavaVarargHiddenNullableArrayJavaVarargJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNotNullStringVarargAcceptInterface
+            open fun acceptAll(vararg arg0: String)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member taking types of Java array merged with it next to member kept apart by nullability of elements`() {
+        // the @Nullable String[] of the Java class, an Array<(out) String?>!, implements acceptAll(values: Array<out String?>),
+        // and is kept apart from the acceptAll(a: T) given Array<String>, which stays abstract: acceptAll(null) compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaNullableElementArrayStringArrayOutNullableArrayHiddenJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaNullableElementArrayStringArrayOutNullableArrayHiddenJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.TypedAllAcceptor
+            fun acceptAll(a: Array<String>)
+            // inherited from com.xemantic.kotlin.introspection.test.OutNullableStringArrayAcceptor
+            open fun acceptAll(values: Array<String?>?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java vararg taking array of Java interface member declared before it merged with it`() {
+        // the T... of the Java class given String? implements the acceptAll(T) of the Java interface given Array<out String?>,
+        // declared first, whose form the compiler calls: acceptAll(arrayOf<String?>(null)) and acceptAll(null) compile, acceptAll("") does not
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OutNullableArrayJavaTypedVarargJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OutNullableArrayJavaTypedVarargJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypedVarargAcceptor
+            open fun acceptAll(arg0: Array<out String?>?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java vararg merged with Java array declared before it after member kept apart from them`() {
+        // the String[] of the second Java interface is merged with the @NotNull T... of the Java class, and the compiler calls
+        // the vararg, as the acceptAll(T) of the first Java interface given Array<out String?>, kept apart, is declared before them:
+        // acceptAll("") compiles, a concrete subclass has to implement the acceptAll(T)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OutNullableArrayJavaArrayNotNullJavaVarargJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OutNullableArrayJavaArrayNotNullJavaVarargJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypedAllAcceptorInterface
+            fun acceptAll(arg0: Array<out String?>?)
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNotNullTypedVarargAcceptor
+            open fun acceptAll(vararg arg0: String)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java vararg declared before Java interface member taking array merged with it`() {
+        // the compiler calls the vararg, declared first: acceptAll("", null) compiles, acceptAll(arrayOf<String?>(null)) does not
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaTypedVarargOutNullableArrayJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaTypedVarargOutNullableArrayJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypedVarargAcceptor
+            open fun acceptAll(vararg arg0: String?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member given array named by no Kotlin vararg grouped apart from it`() {
+        // the String[] of the Java interface is merged with the open acceptAll(vararg values: String), contributed first, which names
+        // its group only: the acceptAll(T) given Array<String> stays abstract apart, and acceptAll(values = null) is rejected
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OpenVarargJavaArrayTypedAllJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OpenVarargJavaArrayTypedAllJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.OpenStringVarargAcceptor
+            open fun acceptAll(vararg values: String)
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypedAllAcceptorInterface
+            fun acceptAll(arg0: Array<String>?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java array of nullable elements in its form next to hidden vararg`() {
+        // next to the hidden acceptAll(vararg values: String) the compiler calls the form of the Java class:
+        // acceptAll(arrayOf<String?>(null)) compiles, acceptAll("") does not
+        resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenVarargNotNullJavaVarargNullableElementArrayJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenVarargNotNullJavaVarargNullableElementArrayJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNullableElementNotNullArrayAcceptor
+            open fun acceptAll(arg0: Array<String?>)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java array of type parameter merged with Java vararg in its form below Java subclass`() {
+        // like for the class joining them, which the Java class extends: acceptAll(arrayOf("")) compiles, acceptAll("") does not
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaTypedArrayNullableVarargJoinSubclass.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaTypedArrayNullableVarargJoinSubclass.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypedArrayAcceptor
+            open fun acceptAll(arg0: Array<String?>?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member taking projected array implemented next to Java array of nullable elements in its own types`() {
+        // the open acceptAll(values: Array<out String?>) keeps its projection next to the @Nullable String @NotNull [] of the
+        // Java interface: an Array<out String?> is accepted
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OutTypedArrayNullableElementArrayOpenOutNullableArrayJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OutTypedArrayNullableElementArrayOpenOutNullableArrayJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.OutTypedArrayAcceptor
+            fun acceptAll(a: Array<out String>)
+            // inherited from com.xemantic.kotlin.introspection.test.OpenOutNullableStringArrayAcceptor
+            open fun acceptAll(values: Array<out String?>)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java collection of nullable type argument merged by plain signatures only next to projected collection`() {
+        // the Collection<T> of the Java class given Int? is not merged with the MutableCollection<out Int?> by its projected
+        // variants, as it is merged with the MutableCollection<Int> by the plain ones already, which hides no abstract member
+        // a concrete subclass has to implement, as main lists it
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NullableJavaTypedCollectionMutableIntOutNullableJoin.addAll2") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NullableJavaTypedCollectionMutableIntOutNullableJoin.addAll2 [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.MutableIntCollectionAdder
+            open fun addAll2(c: Collection<Int?>?): Boolean
+            // inherited from com.xemantic.kotlin.introspection.test.OutNullableMutableIntCollectionAdder
+            fun addAll2(c: MutableCollection<out Int?>): Boolean
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java array named by no Kotlin member listed apart from it`() {
+        // the acceptAll(a: Array<out T>) of OutTypedArrayAcceptor<String> is a member of its own, abstract, which alone takes
+        // the name: acceptAll(a = arrayOf("")) compiles, acceptAll(a = null) does not
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NullableArrayOutTypedArrayJavaArrayJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NullableArrayOutTypedArrayJavaArrayJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.OutTypedArrayAcceptor
+            fun acceptAll(a: Array<out String>)
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaStringArrayAcceptor
+            open fun acceptAll(arg0: Array<String>?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member given projected array as abstract next to hidden member taking array`() {
+        // next to the hidden acceptAll(a: Array<String>?) the @Nullable T... of the Java class does not implement
+        // the acceptAll(T) given Array<out String?>, which a concrete subclass has to implement
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OutNullableArrayHiddenNullableArrayNullableJavaVarargJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OutNullableArrayHiddenNullableArrayNullableJavaVarargJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypedAllAcceptorInterface
+            fun acceptAll(arg0: Array<out String?>?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java array named by no hidden member taking array of nullable elements`() {
+        // the hidden acceptAll(a: Array<String?>) names neither the String @Nullable [] of the Java interface,
+        // nor the @NotNull String[] of the Java class implementing it, of elements of another nullability, which the listing
+        // does not tell apart from platform ones: acceptAll(a = arrayOf("")) is rejected, acceptAll(null) compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NullableArrayHiddenNullableArrayNotNullElementArrayJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NullableArrayHiddenNullableArrayNotNullElementArrayJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNullableArrayAcceptInterface
+            open fun acceptAll(arg0: Array<String>?)
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypedAllAcceptorInterface
+            fun acceptAll(arg0: Array<out String?>?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java array of platform elements grouped with Java class member apart from Java vararg annotated not null`() {
+        // the String @Nullable [] of the Java interface is merged with the @NotNull T... given String?, contributed first,
+        // and with the acceptAll(T) of the Java class given Array<String?>, kept apart from the vararg, whose group it joins:
+        // overriding acceptAll(vararg values: String) alone makes a subclass concrete, and acceptAll("") compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NotNullJavaVarargNullableArrayTypedAllJavaClassGenericVarargJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NotNullJavaVarargNullableArrayTypedAllJavaClassGenericVarargJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypedAllAcceptor
+            open fun acceptAll(arg0: Array<String?>?)
+            // inherited from com.xemantic.kotlin.introspection.test.VarargAcceptor
+            fun acceptAll(vararg values: String)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java vararg of nullable type argument apart from Kotlin generic vararg of its JVM signature`() {
+        // the T... of the Java interface given String? and the acceptAll(vararg values: T) of VarargAcceptor<String> both take
+        // an Object[], while the elements disagree: kotlinc keeps them apart, both abstract, and the String... of the other
+        // Java interface is merged with the Kotlin one, so that acceptAll(null) and acceptAll("", null) compile
+        resolver.resolve("com.xemantic.kotlin.introspection.test.GenericVarargJavaVarargNullableJavaTypedVarargJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GenericVarargJavaVarargNullableJavaTypedVarargJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.VarargAcceptor
+            fun acceptAll(vararg values: String)
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypedVarargAcceptorInterface
+            fun acceptAll(vararg arg0: String?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java vararg of nullable type argument as abstract apart from open Kotlin generic vararg of its JVM signature`() {
+        // like next to the abstract one: overriding acceptAll(vararg values: String) alone leaves the Java one to implement
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OpenGenericVarargNullableJavaTypedVarargJavaVarargGenericVarargJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OpenGenericVarargNullableJavaTypedVarargJavaVarargGenericVarargJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.OpenTypedVarargAcceptor
+            open fun acceptAll(vararg values: String)
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypedVarargAcceptorInterface
+            fun acceptAll(vararg arg0: String?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java array of nullable elements next to hidden member taking array of other elements`() {
+        // the hidden acceptAll(a: Array<String>) is kept apart from the @Nullable String @NotNull [] by the elements,
+        // so that the Java method is listed: acceptAll(arrayOf("")) and acceptAll(arrayOf<String?>(null)) compile
+        resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenArrayNullableElementArrayJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenArrayNullableElementArrayJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNullableElementNotNullArrayAcceptor
+            open fun acceptAll(arg0: Array<String?>)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java vararg taking array of Java interface member reached through Kotlin interface declared before it`() {
+        // the acceptAll(T) given Array<out String?>, reached through a Kotlin interface declared first, is the form called:
+        // acceptAll("") is rejected, acceptAll(arrayOf("")) and acceptAll(null) compile
+        resolver.resolve("com.xemantic.kotlin.introspection.test.IndirectOutNullableArrayJavaTypedVarargJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.IndirectOutNullableArrayJavaTypedVarargJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypedVarargAcceptor
+            open fun acceptAll(arg0: Array<out String?>?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java vararg of elements annotated not null merged with open Kotlin member declaring array of its JVM signature`() {
+        // unlike next to a Kotlin vararg of a type parameter, of the JVM signature only by the erasure, the String[] declared by
+        // the open acceptAll(values: Array<out String?>) implements the @NotNull String...: a concrete subclass compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NotNullArrayNotNullVarargOpenOutNullableArrayJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NotNullArrayNotNullVarargOpenOutNullableArrayJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.OpenOutNullableStringArrayAcceptor
+            open fun acceptAll(values: Array<out String?>)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member merged with Kotlin member through Java class named by it`() {
+        // the String[] of the Java class, of platform elements, is merged with both the acceptAll(T) given Array<String?>
+        // and the acceptAll(values: Array<String>), which names the one member: acceptAll(values = arrayOf("")) compiles —
+        // a guard of the listing of main, though the elements of the latter two keep them apart, as the group names it
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaArrayNullableArrayStringArrayJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaArrayNullableArrayStringArrayJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypedAllAcceptorInterface
+            open fun acceptAll(values: Array<String?>?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member given array of nullable elements apart from Java vararg of elements annotated not null merged with Kotlin vararg`() {
+        // the @NotNull String... of the Java interface is merged with the open acceptAll(vararg values: String), which implements it,
+        // but not with the acceptAll(T) given Array<String?>, of elements of another nullability, which a concrete subclass
+        // has to implement: acceptAll(""), acceptAll(values = arrayOf("")), acceptAll(arrayOf<String?>(null)) and acceptAll(null) compile
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NotNullJavaVarargNullableArrayOpenVarargJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NotNullJavaVarargNullableArrayOpenVarargJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypedAllAcceptorInterface
+            fun acceptAll(arg0: Array<String?>?)
+            // inherited from com.xemantic.kotlin.introspection.test.OpenStringVarargAcceptor
+            open fun acceptAll(vararg values: String)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member given array of nullable elements apart from Java vararg of type parameter annotated not null`() {
+        // the @NotNull T... given String? is an array of String, merged with the acceptAll(vararg values: T) of VarargAcceptor<String>,
+        // but not with the acceptAll(a: T) given Array<String?>: a concrete subclass has to implement both,
+        // and acceptAll(arrayOf<String?>(null)) compiles, while acceptAll(null) does not
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NotNullVarargArrayVarargJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NotNullVarargArrayVarargJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.TypedAllAcceptor
+            fun acceptAll(a: Array<String?>)
+            // inherited from com.xemantic.kotlin.introspection.test.VarargAcceptor
+            fun acceptAll(vararg values: String)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member given array of nullable elements apart from Java vararg annotated not null below Java subclass`() {
+        // like for the class joining them, which the Java class extends
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaNotNullVarargArrayVarargJoinSubclass.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaNotNullVarargArrayVarargJoinSubclass.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.TypedAllAcceptor
+            fun acceptAll(a: Array<String?>)
+            // inherited from com.xemantic.kotlin.introspection.test.VarargAcceptor
+            fun acceptAll(vararg values: String)
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve Kotlin member taking platform type of Java member merged with it declared first by superclass`() {
         // the subclass inherits the member its superclass picks, the accept(String) of the Java class, declared first there
         resolver.resolve("com.xemantic.kotlin.introspection.test.StringJavaAcceptorJoinSubclass.accept") sameAsKotlin """
@@ -12032,6 +12655,39 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve interface of projected JDK list named directly with extensions on supertypes of projected element`() {
+        // the out of java.util.List<out String>, of the invariant E of Java, is kept by MutableCollection<out String>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.jdk.JdkProjectedListBox"
+        ) should {
+            have(lines().any { ".mutableOutJdkStrings()" in it })
+            have(lines().any { ".readOnlyJdkStrings()" in it })
+            have(lines().none { ".mutableJdkStrings()" in it })
+            have(lines().none { ".mutableJdkElements()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of JDK list of out Nothing named directly with extension on supertype of type parameter`() {
+        // kotlinc infers the T of MutableCollection<T> from MutableCollection<out Nothing>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.jdk.JdkProjectedNothingListBox"
+        ) should {
+            have(lines().any { ".mutableJdkElements()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of JDK list of out type parameter named directly with extension on supertype of type parameter`() {
+        // V of Nothing makes it a JdkBox<java.util.List<out Nothing>>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.jdk.JdkProjectedElementListBox"
+        ) should {
+            have(lines().any { ".mutableJdkElements()" in it })
+        }
+    }
+
+    @Test
     fun `should resolve class with repeated type parameter in JDK map supertype without extension of other key and value types`() {
         // the V of HashMap<V, V> is the key String of Map<String, CollectionOrder> only when the value is not a CollectionOrder
         resolver.resolve(
@@ -12063,6 +12719,287 @@ class KotlinIntrospectorTest {
             "com.xemantic.kotlin.introspection.test.CollectionComparableMap"
         ) should {
             have(lines().none { "sameComparables" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve class with repeated type parameter in JDK map supertype with extensions on recursively bounded type parameter`() {
+        // V of String makes a HashMap<V, V> a Map<T, T> of T : Comparable<T>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.witness.WitnessSameKeyHashMap",
+            pageSize = 10000
+        ) should {
+            have(lines().any { ".witnessSameComparables()" in it })
+            have(lines().any { ".witnessComparableKeys()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface with repeated type parameter in map supertype with extensions on recursively bounded type parameter`() {
+        // V of String makes a Map<V, V> a Map<T, T> of T : Comparable<T>, and V of Nothing a Map<T, List<T>>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.witness.WitnessSameKeyMap",
+            pageSize = 10000
+        ) should {
+            have(lines().any { ".witnessSameComparables()" in it })
+            have(lines().any { ".witnessComparableKeys()" in it })
+            have(lines().any { ".witnessComparableKeysOfLists()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve class extending Java map of same type parameter with extensions on recursively bounded type parameter`() {
+        // V of String makes a MutableMap<V!, V!> a Map<T, T> of T : Comparable<T>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.witness.WitnessJavaSameKeyMap",
+            pageSize = 10000
+        ) should {
+            have(lines().any { ".witnessSameComparables()" in it })
+            have(lines().any { ".witnessComparableKeys()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of map of type parameter bounded recursively with extensions on recursively bounded type parameter`() {
+        // only V of Nothing is a V : List<V>, which makes a Map<V, V> a Map<T, T> of T : Comparable<T>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.witness.WitnessSelfListMap",
+            pageSize = 10000
+        ) should {
+            have(lines().any { ".witnessSameComparables()" in it })
+            have(lines().any { ".witnessComparableKeys()" in it })
+            have(lines().any { ".witnessComparableKeysOfLists()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of map of nullable values of type parameter only with extension on recursively bounded key`() {
+        // no V : Any makes a Map<V, V?> a Map<T, T>, while V of String makes it a Map<K, V> of K : Comparable<K>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.witness.WitnessNullableValueMap",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".witnessSameComparables()" in it })
+            have(lines().any { ".witnessComparableKeys()" in it })
+            have(lines().none { ".witnessComparableKeysOfLists()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of map of values comparable to type parameter only with extension on recursively bounded key`() {
+        // no V makes a Map<V, Comparable<V>> a Map<T, T> of T : Comparable<T>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.witness.WitnessComparableValueMap",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".witnessSameComparables()" in it })
+            have(lines().any { ".witnessComparableKeys()" in it })
+            have(lines().none { ".witnessComparableKeysOfLists()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of map of two type parameters with extensions on recursively bounded type parameter`() {
+        // K of String, and V of Nothing, make a Map<K, V> a Map<T, List<T>> of T : Comparable<T>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.witness.WitnessKeyValueMap",
+            pageSize = 10000
+        ) should {
+            have(lines().any { ".witnessSameComparables()" in it })
+            have(lines().any { ".witnessComparableKeys()" in it })
+            have(lines().any { ".witnessComparableKeysOfLists()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of list of function type of type parameter without extension on recursively bounded type parameter`() {
+        // no V makes a List<(V) -> Unit> a List<T> of T : Comparable<T>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.witness.WitnessFunctionList",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".witnessComparableElements()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve class extending Java map of type parameter bounded by final class without extension on recursively bounded value`() {
+        // WitnessFinal is no Comparable, and kotlinc does not take the platform type Nothing! for V
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.witness.WitnessJavaFinalKeyMap",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".witnessComparableValues()" in it })
+            have(lines().none { ".witnessSameComparables()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of map of type parameter bounded by final class with extension on recursively bounded value`() {
+        // V of Nothing makes a Map<V, V> a Map<K, V> of V : Comparable<V>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.witness.WitnessFinalKeyMap",
+            pageSize = 10000
+        ) should {
+            have(lines().any { ".witnessComparableValues()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of map of two of three type parameters with extensions on recursively bounded type parameter`() {
+        // K of String, and V of Nothing, make a Map<K, V> a Map<T, List<T>> of T : Comparable<T>, whatever A is
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.witness.WitnessThreeKeyValueMap",
+            pageSize = 10000
+        ) should {
+            have(lines().any { ".witnessSameComparables()" in it })
+            have(lines().any { ".witnessComparableKeys()" in it })
+            have(lines().any { ".witnessComparableKeysOfLists()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of list of one of many type parameters with extension on recursively bounded type parameter`() {
+        // A1 of String makes a List<A1> a List<T> of T : Comparable<T>, the combinations of the witnesses of all
+        // the 32 type parameters, past a Long, not enumerated
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.witness.WitnessManyTypeParametersList",
+            pageSize = 10000
+        ) should {
+            have(lines().any { ".witnessComparableElements()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of pair of same type parameter without extensions taking type parameter and type referring to it`() {
+        // V is both T, and UnifiedWrap<T>, or List<T>, which no T is, nor is any T : Any also T?, while V of String? is T? of T
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.unify.UnifiedSame",
+            pageSize = 10000
+        ) should {
+            have(lines().any { ".unifiedSame()" in it })
+            have(lines().any { ".unifiedNullable()" in it })
+            have(lines().none { ".unifiedWrapped()" in it })
+            have(lines().none { ".unifiedWrapping()" in it })
+            have(lines().none { ".unifiedListed()" in it })
+            have(lines().none { ".unifiedWrappedListed()" in it })
+            have(lines().none { ".unifiedNotNullable()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of pair of same type parameter with extensions on type parameter bounded by class of other type`() {
+        // T of UnifiedWrap<String> is no Comparable, T of String is a CharSequence
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.unify.UnifiedSame",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".unifiedComparableWrapped()" in it })
+            have(lines().any { ".unifiedCharSequences()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of pair of type parameter and type referring to it with extension of same shape`() {
+        // V of Any? is T, and UnifiedWrap<Any?> is U : T
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.unify.UnifiedWrappedPair",
+            pageSize = 10000
+        ) should {
+            have(lines().any { ".unifiedWrapped()" in it })
+            have(lines().none { ".unifiedSame()" in it })
+            have(lines().any { ".unifiedBoundedPair()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of map of enum keys without extensions on map of values of key type`() {
+        // V : Enum<V> is no supertype of String
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.unify.UnifiedEnumKeys",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".unifiedSameKeysAndValues()" in it })
+            have(lines().none { ".unifiedBoundedValues()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of pair of enum type parameter and type referring to it without extension of bounded type parameters`() {
+        // V : Enum<V> is no supertype of UnifiedWrap<V>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.unify.UnifiedEnumWrappedPair",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".unifiedBoundedPair()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of pair of nullable and same type parameter without extension on comparable supertype`() {
+        // V? is U : T, which makes T nullable, and no Comparable<T>, while T, and U, of String? make it callable
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.unify.UnifiedNullablePair",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".unifiedBoundedComparable()" in it })
+            have(lines().any { ".unifiedBounded()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of Java list of nullable type parameter without extension on recursively bounded type parameter`() {
+        // List<@Nullable V> is a List<V?>, no List<T> of T : Comparable<T>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.witness.WitnessNullableElementList",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".witnessComparableElements()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of list of producers of Java lists of nullable type parameter without extension on recursively bounded type parameter`() {
+        // the Iterable<V?> of List<@Nullable V>, reached through the type argument of the supertype of another class,
+        // is no Iterable<T> of T : Comparable<T>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.witness.WitnessListOfProducersOfNullableElementLists",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".witnessComparableElementsOfProducedIterables()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of list of Java lists of Java lists of nullable type parameter without extension on recursively bounded type parameter`() {
+        // nor is the one reached through the type argument of the supertype of a Java class
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.witness.WitnessListOfListsOfNullableElementLists",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".witnessComparableElementsOfIterablesOfIterables()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of map of type parameter bounded by Java list of nullable type parameter with extension on recursively bounded type parameter`() {
+        // V of Nothing makes a Map<V, V> a Map<T, T> of T : Comparable<T>, whatever the bound of V refers to
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.witness.WitnessNullableElementListKeyMap",
+            pageSize = 10000
+        ) should {
+            have(lines().any { ".witnessSameComparables()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of list of Java lists of type parameter bounded by final class without extension on recursively bounded type parameter`() {
+        // WitnessFinal is no Comparable, and kotlinc does not take the platform type Nothing! of PassingList<Nothing> for T
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.witness.WitnessListOfJavaLists",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".witnessComparableElementsOfLists()" in it })
         }
     }
 
@@ -14237,6 +15174,208 @@ class KotlinIntrospectorTest {
         ) should {
             have(lines().none { ".boxOfNullableList()" in it })
             have(lines().any { ".boxOfStringList()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of contravariant type without extension on definitely not nullable type parameter of nullable comparable bound`() {
+        // T & Any is a subtype of String for T of String?, no Comparable<String?>, while no String? contradicts T : List<T>?
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.nullable.TypedStringSink",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".sinkOfNotNullComparable()" in it })
+            have(lines().any { ".sinkOfNotNullSelfList()" in it })
+            have(lines().any { ".sinkOfNotNull()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of contravariant platform type without extension on definitely not nullable type parameter of nullable comparable bound`() {
+        // and so of the platform type String! given through Java, unless U : T, given explicitly, as String, makes T a String
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.nullable.TypedJavaStringSink",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".sinkOfNotNullComparable()" in it })
+            have(lines().any { ".sinkOfNotNullComparableAndBounded()" in it })
+            have(lines().any { ".sinkOfNotNullSelfList()" in it })
+            have(lines().any { ".sinkOfNotNull()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of type parameter bounded by unconstrained type parameter with extension on its nullable type in contravariant position`() {
+        // TypedMixed<V & Any, V> is a TypedMixed<String, String?> for V of String?, a W as well
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.nullable.TypedFreelyBoundedMixed",
+            pageSize = 10000
+        ) should {
+            have(lines().any { ".mixedOfNullableString()" in it })
+            have(lines().any { ".mixedOfString()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of contravariant box of nullable type parameter with extension on Java box of same type`() {
+        // PlatformBox<V?> is the PlatformBox<String!> of PassingString for V of String, no Int
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.nullable.TypedSinkOfNullableBoxAndOther",
+            pageSize = 10000
+        ) should {
+            have(lines().any { ".sinkOfStringBoxAndStringOther()" in it })
+            have(lines().none { ".sinkOfStringBoxAndIntOther()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of list of nullable type parameter with extensions on definitely not nullable type parameter of receiver bound and bounding unused one`() {
+        // T is List<V?>? for V of Nothing, of a List<Nothing?>, also for P : TypedSelfBox<T & Any>, and next to U : T
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.nullable.TypedNullableListsBox",
+            pageSize = 10000
+        ) should {
+            have(lines().any { ".selfBoxOfNotNull()" in it })
+            have(lines().any { ".selfBoxReceiverOfNotNull()" in it })
+            have(lines().any { ".selfBoxOfNotNullAndBounded()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of list of nullable recursive type with extension on definitely not nullable type parameter bounding unused one`() {
+        // T is List<TypedSelfList?>?, which U : T tells nothing more of
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.nullable.TypedNullableSelfListsBox",
+            pageSize = 10000
+        ) should {
+            have(lines().any { ".selfBoxReceiverOfNotNull()" in it })
+            have(lines().any { ".selfBoxOfNotNullAndBounded()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of type parameter bounded by type parameter pinned by other bound without extension on other type`() {
+        // W of X : MutableList<W> is Int for TypedOther<MutableList<Int>>, no supertype of V of String?
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.nullable.TypedPinnedBoundMixed",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".mixedOfNullableStringAndOtherOfIntList()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface passing nullable type parameter to Java boxes of mixed variance without extension on other type`() {
+        // T of PlatformMixed<T, T> is PlatformBox<String>, so that V is String, no Int
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.nullable.TypedMixedOfNullableBoxes",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".mixedOfSameAndIntOther()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of contravariant box of nullable type parameter bounding other one without extension on Java box of other type`() {
+        // K is String for the PlatformBox<String!> of PassingString, and Int is no V : K
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.nullable.TypedSinkOfNullableKeyBoxAndOther",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".sinkOfStringBoxAndIntOther()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of type parameter bounded by unconstrained one and bounding other one without extension on other type`() {
+        // X : V is Int for TypedOther<Int>, no subtype of V of String?
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.nullable.TypedBoundingFreelyBoundedMixed",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".mixedOfNullableStringAndIntOther()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve inner class of contravariant box of nullable type parameter of outer class without extension on Java box of other type`() {
+        // O : Number is no String of the PlatformBox<String!> of PassingString
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.nullable.TypedOuter.Inner",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".sinkOfStringBox()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of type parameter bounded by unconstrained one next to bounded type parameters without extension on other types`() {
+        // X : K is no Int for K of String, while V is String?, as W is
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.nullable.TypedFreelyBoundedMixedAndBoundedOther",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".mixedOfNullableStringAndStringBoxAndIntOther()" in it })
+            have(lines().any { ".mixedOfNullableStringAndStringBoxAndStringOther()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve inner class of type parameter bounded by unconstrained one without extension on other type of outer type parameter`() {
+        // O : Number is no String, but an Int
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.nullable.TypedBoundedOuter.Inner",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".mixedOfNullableStringAndStringOther()" in it })
+            have(lines().any { ".mixedOfNullableStringAndIntOther()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of type parameter bounded by other one only with extension on subtype of type of other one`() {
+        // X : V is no Int for V of String
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.nullable.TypedBoxAndBoundedOther",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".stringBoxAndIntOther()" in it })
+            have(lines().any { ".stringBoxAndStringOther()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of type parameter bounded through other one only with extension on subtype of type of bounding one`() {
+        // C : B, of B : A, is no Int for A of String
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.nullable.TypedChainBoundedBoxAndOther",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".stringBoxAndIntOther()" in it })
+            have(lines().any { ".stringBoxAndStringOther()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of type parameter bounded through unconstrained ones with extension on its nullable type in contravariant position`() {
+        // C is String?, as B, and A, are
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.nullable.TypedChainBoundedMixed",
+            pageSize = 10000
+        ) should {
+            have(lines().any { ".mixedOfNullableString()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve inner class only with extension on type satisfying bound of outer type parameter`() {
+        // O : Number is no String, but an Int
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.nullable.TypedBoundedOuterOfBox.Inner",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".stringBoxAndStringOther()" in it })
+            have(lines().any { ".stringBoxAndIntOther()" in it })
         }
     }
 
@@ -20878,6 +22017,71 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.test.JavaPlainFImplementingInternalFaceSub.f [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.other.JavaPlainF
             open fun f(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve final method of Java superclass merged with member of a body of internal interface as final`() {
+        // the class wins, so that kotlinc rejects an override of f() in a subclass, though the f() of InternalDefaultFG is open
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaFinalFAbstractGImplementingInternalDefaultsSub.f") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaFinalFAbstractGImplementingInternalDefaultsSub.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaFinalFAbstractG
+            fun f(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve abstract method of Java superclass merged with member of a body of internal interface as abstract`() {
+        // the class wins, so that a concrete subclass has to implement g(), though InternalDefaultFG gives it a body
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaFinalFAbstractGImplementingInternalDefaultsSub.g") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaFinalFAbstractGImplementingInternalDefaultsSub.g [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaFinalFAbstractG
+            abstract fun g(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of public interface overridden by internal one merged with final Java method as final`() {
+        // the final f() of JavaFinalFAbstractG wins over the f() of a body of InternalOverridingDefaultFG, overriding PublicFG.f(),
+        // so that kotlinc rejects an override of f() in a subclass
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaFinalFAbstractGImplementingInternalOverridingDefaultsSub.f"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaFinalFAbstractGImplementingInternalOverridingDefaultsSub.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.PublicFG
+            final fun f(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of public interface overridden by internal one merged with abstract Java method as abstract`() {
+        // the abstract g() of JavaFinalFAbstractG wins over the g() of a body of InternalOverridingDefaultFG, overriding PublicFG.g(),
+        // so that a concrete subclass has to implement g()
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaFinalFAbstractGImplementingInternalOverridingDefaultsSub.g"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaFinalFAbstractGImplementingInternalOverridingDefaultsSub.g [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.PublicFG
+            fun g(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve abstract member of internal interface reached through package-private Java interface as inherited from public one`() {
+        // kotlinc rejects naming JavaPackagePrivateFaceExtendingInternal: it is package-private
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaPublicFaceBelowPackagePrivateSub.a3") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaPublicFaceBelowPackagePrivateSub.a3 [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaPublicFaceBelowPackagePrivate
+            fun a3(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of a body of internal interface reached through package-private Java interface as inherited from public one`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaPublicFaceBelowPackagePrivateSub.d3") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaPublicFaceBelowPackagePrivateSub.d3 [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaPublicFaceBelowPackagePrivate
+            open fun d3(): Int
         """.trimIndent()
     }
 

@@ -19,6 +19,8 @@
 package com.xemantic.kotlin.introspection.test.nullable
 
 import com.xemantic.kotlin.introspection.test.PlatformBox
+import com.xemantic.kotlin.introspection.test.PlatformMixed
+import com.xemantic.kotlin.introspection.test.PlatformSink
 import com.xemantic.kotlin.introspection.test.other.JavaPlatformBoxes
 
 // A type parameter of a class standing for a type of either nullability, like V of V!, V?, or V & Any,
@@ -156,3 +158,108 @@ fun <P, T : List<T>?> P.selfBoxAndOther() where P : TypedSelfBox<T & Any>, P : T
 // of the class is taken as its nullable type, not modelled otherwise
 
 fun <P, T : List<T>?> P.selfBoxAndIntOther() where P : TypedSelfBox<T & Any>, P : TypedOther<Int> {}
+
+// T & Any in a contravariant position is a subtype of String, also of the platform type String! given through Java,
+// of T inferred as String?, which is no Comparable<String?>, unlike T : List<T>?, which no String? contradicts
+
+interface TypedStringSink : PlatformSink<String>
+
+interface TypedJavaStringSink : JavaPlatformBoxes.SinkOfString
+
+fun <T : Comparable<T>?> PlatformSink<T & Any>.sinkOfNotNullComparable() {}
+
+fun <T : List<T>?> PlatformSink<T & Any>.sinkOfNotNullSelfList() {}
+
+fun <T> PlatformSink<T & Any>.sinkOfNotNull() {}
+
+// unless a bound of another type parameter refers to T, like U : T, which, given explicitly, as String, makes T a String
+
+fun <T : Comparable<T>?, U : T> PlatformSink<T & Any>.sinkOfNotNullComparableAndBounded() {}
+
+// V of V : W, of W which no supertype refers to, takes any type, like String?, as W does
+
+interface TypedFreelyBoundedMixed<W, V : W> : TypedNotNullMixed<V>
+
+// V? is the platform type String! of PlatformBox<String!> of PassingString, either String, or String?, for V of String
+
+interface TypedSinkOfNullableBoxAndOther<V> : TypedSink<PlatformBox<V?>>, TypedOther<V>
+
+fun <P> P.sinkOfStringBoxAndStringOther() where P : TypedSink<JavaPlatformBoxes.PassingString>, P : TypedOther<String> {}
+
+// T & Any satisfies its bounds as the nullable type also on a type parameter receiver of that sole bound,
+// and next to a type parameter bounded only by T, which nothing refers to, telling nothing more of T
+
+interface TypedNullableListsBox<V> : TypedSelfBox<List<V?>>
+
+fun <P : TypedSelfBox<T & Any>, T : List<T>?> P.selfBoxReceiverOfNotNull() {}
+
+fun <T : List<T>?, U : T> TypedSelfBox<T & Any>.selfBoxOfNotNullAndBounded() {}
+
+// but not of W which another bound refers to, like X : MutableList<W>, pinning it to Int, no supertype of String?
+
+interface TypedPinnedBoundMixed<W, V : W, X : MutableList<W>> : TypedNotNullMixed<V>, TypedOther<X>
+
+fun <P> P.mixedOfNullableStringAndOtherOfIntList() where P : TypedMixed<String, String?>, P : TypedOther<MutableList<Int>> {}
+
+// V? against a platform type, like String! of PlatformBox<String!>, tells nothing where the types a type parameter
+// is inferred from are compared, like T of PlatformMixed<T, T>, nor next to a bound which is another type parameter, like V : K
+
+interface TypedMixedOfNullableBoxes<V> : JavaPlatformBoxes.MixedOfBoxes<V?>, TypedOther<V>
+
+fun <P, T> P.mixedOfSameAndIntOther() where P : PlatformMixed<T, T>, P : TypedOther<Int> {}
+
+interface TypedSinkOfNullableKeyBoxAndOther<K, V : K> : TypedSink<PlatformBox<K?>>, TypedOther<V>
+
+// nor of W bounding V which another bound refers to, like X : V, of X of Int, no subtype of V of String?
+
+interface TypedBoundingFreelyBoundedMixed<W, V : W, X : V> : TypedNotNullMixed<V>, TypedOther<X>
+
+fun <P> P.mixedOfNullableStringAndIntOther() where P : TypedMixed<String, String?>, P : TypedOther<Int> {}
+
+// nor is the type parameter of an outer class, like O of O : Number, told against a platform type
+
+class TypedOuter<O : Number> {
+
+    abstract inner class Inner<V> : TypedSink<PlatformBox<O?>>, TypedOther<V>
+
+}
+
+fun TypedSink<JavaPlatformBoxes.PassingString>.sinkOfStringBox() {}
+
+// nor is X : K, of K of String, an Int, next to V of the unconstrained W
+
+interface TypedFreelyBoundedMixedAndBoundedOther<W, V : W, K, X : K> : TypedNotNullMixed<V>, TypedSelfBox<K>, TypedOther<X>
+
+fun <P> P.mixedOfNullableStringAndStringBoxAndIntOther() where P : TypedMixed<String, String?>, P : TypedSelfBox<String>, P : TypedOther<Int> {}
+
+fun <P> P.mixedOfNullableStringAndStringBoxAndStringOther() where P : TypedMixed<String, String?>, P : TypedSelfBox<String>, P : TypedOther<String> {}
+
+// nor the type parameter of an outer class, like O of O : Number, a String, next to V of the unconstrained W
+
+class TypedBoundedOuter<O : Number> {
+
+    abstract inner class Inner<W, V : W> : TypedNotNullMixed<V>, TypedOther<O>
+
+}
+
+fun <P> P.mixedOfNullableStringAndStringOther() where P : TypedMixed<String, String?>, P : TypedOther<String> {}
+
+// a bound which is another type parameter is checked against the types both take, like X : V, of V of String, no Int,
+// also through other type parameters, like C : B of B : A, which V of the unconstrained A is a subtype of as well,
+// like the bound of a type parameter of an outer class
+
+interface TypedBoxAndBoundedOther<V, X : V> : TypedSelfBox<V>, TypedOther<X>
+
+fun <P> P.stringBoxAndIntOther() where P : TypedSelfBox<String>, P : TypedOther<Int> {}
+
+fun <P> P.stringBoxAndStringOther() where P : TypedSelfBox<String>, P : TypedOther<String> {}
+
+interface TypedChainBoundedBoxAndOther<A, B : A, C : B> : TypedSelfBox<A>, TypedOther<C>
+
+interface TypedChainBoundedMixed<A, B : A, C : B> : TypedNotNullMixed<C>
+
+class TypedBoundedOuterOfBox<O : Number> {
+
+    abstract inner class Inner<V> : TypedSelfBox<V>, TypedOther<O>
+
+}
