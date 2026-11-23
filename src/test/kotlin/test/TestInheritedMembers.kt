@@ -1788,3 +1788,59 @@ abstract class OutNullableArrayStringArrayNullableJavaVarargJoin :
 
 abstract class NullableJavaVarargOutNullableArrayJoin :
     com.xemantic.kotlin.introspection.test.other.JavaNullableTypedVarargAcceptorInterface<String?>, TypedAllAcceptor<Array<out String?>>
+
+// A Java vararg of elements annotated not null next to a hidden member taking an array of nullable elements, of its JVM signature (#337)
+interface HiddenNullableArrayAcceptor {
+    @Deprecated("Hidden", level = DeprecationLevel.HIDDEN)
+    fun acceptAll(a: Array<String?>) {}
+}
+
+abstract class NotNullJavaVarargHiddenNullableArrayJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaNotNullStringVarargAcceptInterface, HiddenNullableArrayAcceptor
+
+// A Kotlin vararg, a hidden member taking an array of nullable elements, and a Java vararg of elements annotated not null (#337)
+abstract class StringVarargHiddenNullableArrayNotNullJavaVarargJoin :
+    StringVarargAcceptor, HiddenNullableArrayAcceptor, com.xemantic.kotlin.introspection.test.other.JavaNotNullTypedVarargAcceptorInterface<String>
+
+// A Java array, a Java member given an array of nullable elements, and a Kotlin member taking an array, merged through the first one (#337)
+abstract class JavaArrayNullableArrayStringArrayJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaStringArrayAcceptor(),
+    com.xemantic.kotlin.introspection.test.other.JavaTypedAllAcceptorInterface<Array<String?>>, StringArrayAcceptor
+
+// A Java vararg of elements annotated not null, a hidden member taking an array of nullable elements, and a Java vararg merged with both (#337)
+abstract class NotNullJavaVarargHiddenNullableArrayJavaVarargJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaNotNullStringVarargAcceptInterface, HiddenNullableArrayAcceptor,
+    com.xemantic.kotlin.introspection.test.other.JavaStringVarargAcceptor()
+
+// A Java array of nullable elements merged with a Kotlin member taking a projected one, next to arrays of elements which are not nullable (#337)
+interface OutNullableStringArrayAcceptor {
+    fun acceptAll(values: Array<out String?>)
+}
+
+interface HiddenStringVarargAcceptor {
+    @Deprecated("Hidden", level = DeprecationLevel.HIDDEN)
+    fun acceptAll(vararg values: String) {}
+}
+
+abstract class JavaNullableElementArrayStringArrayOutNullableArrayHiddenJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaNullableElementArrayAcceptor(), TypedAllAcceptor<Array<String>>,
+    OutNullableStringArrayAcceptor, HiddenStringVarargAcceptor
+
+// A Java interface member given a projected array declared before a Java vararg of a Java class merged with it, and after it (#337)
+abstract class OutNullableArrayJavaTypedVarargJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaTypedAllAcceptorInterface<Array<out String?>>,
+    com.xemantic.kotlin.introspection.test.other.JavaTypedVarargAcceptor<String?>()
+
+abstract class JavaTypedVarargOutNullableArrayJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaTypedVarargAcceptor<String?>(),
+    com.xemantic.kotlin.introspection.test.other.JavaTypedAllAcceptorInterface<Array<out String?>>
+
+// A Java interface member given an array of nullable elements, then a Java array merged with a Java vararg of elements annotated not null (#337)
+abstract class OutNullableArrayJavaArrayNotNullJavaVarargJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaTypedAllAcceptorInterface<Array<out String?>>,
+    com.xemantic.kotlin.introspection.test.other.JavaStringArrayAcceptInterface,
+    com.xemantic.kotlin.introspection.test.other.JavaNotNullTypedVarargAcceptor<String?>()
+
+// A Java array merged with a Kotlin generic member given a projected array (#337)
+abstract class JavaArrayOutArrayTypedAllJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaStringArrayAcceptor(), TypedAllAcceptor<Array<out String>>

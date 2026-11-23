@@ -7664,6 +7664,109 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve Java vararg of elements annotated not null apart from hidden member taking array of nullable elements`() {
+        // of the same JVM signature, String[], but of elements of another nullability: kotlinc keeps them apart,
+        // so that acceptAll(a = arrayOf<String?>(null)) is rejected, the Java method naming no parameter
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NotNullJavaVarargHiddenNullableArrayJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NotNullJavaVarargHiddenNullableArrayJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNotNullStringVarargAcceptInterface
+            fun acceptAll(vararg arg0: String)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java method taking array named by Kotlin generic member given projected array merged with it`() {
+        // the String[] of Java, an Array<(out) String!>!, implements the acceptAll(a: T) given Array<out String>,
+        // so that a concrete subclass compiles, and acceptAll(a = arrayOf("")) as well as acceptAll(null)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaArrayOutArrayTypedAllJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaArrayOutArrayTypedAllJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaStringArrayAcceptor
+            open fun acceptAll(a: Array<String>?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java vararg of type parameter annotated not null merged with Kotlin vararg next to hidden member kept apart from it`() {
+        // the hidden acceptAll(a: Array<String?>) is merged with neither, of elements of another nullability, so that the @NotNull T... given String
+        // is merged with the acceptAll(vararg values: String) by the variants of its array: one abstract member, acceptAll(null) is rejected
+        resolver.resolve("com.xemantic.kotlin.introspection.test.StringVarargHiddenNullableArrayNotNullJavaVarargJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.StringVarargHiddenNullableArrayNotNullJavaVarargJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.StringVarargAcceptor
+            fun acceptAll(vararg values: String)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java vararg of elements annotated not null named by no hidden member merged with it through Java class`() {
+        // the String... of the Java class is merged with both the @NotNull String... and the hidden acceptAll(a: Array<String?>),
+        // which the compiler keeps apart from the former, naming it not: acceptAll(a = arrayOf("")) is rejected
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NotNullJavaVarargHiddenNullableArrayJavaVarargJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NotNullJavaVarargHiddenNullableArrayJavaVarargJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNotNullStringVarargAcceptInterface
+            open fun acceptAll(vararg arg0: String)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member taking types of Java array merged with it next to member kept apart by nullability of elements`() {
+        // the @Nullable String[] of the Java class, an Array<(out) String?>!, implements acceptAll(values: Array<out String?>),
+        // and is kept apart from the acceptAll(a: T) given Array<String>, which stays abstract: acceptAll(null) compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaNullableElementArrayStringArrayOutNullableArrayHiddenJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaNullableElementArrayStringArrayOutNullableArrayHiddenJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.TypedAllAcceptor
+            fun acceptAll(a: Array<String>)
+            // inherited from com.xemantic.kotlin.introspection.test.OutNullableStringArrayAcceptor
+            open fun acceptAll(values: Array<String?>?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java vararg taking array of Java interface member declared before it merged with it`() {
+        // the T... of the Java class given String? implements the acceptAll(T) of the Java interface given Array<out String?>,
+        // declared first, whose form the compiler calls: acceptAll(arrayOf<String?>(null)) and acceptAll(null) compile, acceptAll("") does not
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OutNullableArrayJavaTypedVarargJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OutNullableArrayJavaTypedVarargJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypedVarargAcceptor
+            open fun acceptAll(arg0: Array<out String?>?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java vararg merged with Java array declared before it after member kept apart from them`() {
+        // the String[] of the second Java interface is merged with the @NotNull T... of the Java class, and the compiler calls
+        // the vararg, as the acceptAll(T) of the first Java interface given Array<out String?>, kept apart, is declared before them:
+        // acceptAll("") compiles, a concrete subclass has to implement the acceptAll(T)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OutNullableArrayJavaArrayNotNullJavaVarargJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OutNullableArrayJavaArrayNotNullJavaVarargJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypedAllAcceptorInterface
+            fun acceptAll(arg0: Array<out String?>?)
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNotNullTypedVarargAcceptor
+            open fun acceptAll(vararg arg0: String)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java vararg declared before Java interface member taking array merged with it`() {
+        // the compiler calls the vararg, declared first: acceptAll("", null) compiles, acceptAll(arrayOf<String?>(null)) does not
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaTypedVarargOutNullableArrayJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaTypedVarargOutNullableArrayJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypedVarargAcceptor
+            open fun acceptAll(vararg arg0: String?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member merged with Kotlin member through Java class named by it`() {
+        // the String[] of the Java class, of platform elements, is merged with both the acceptAll(T) given Array<String?>
+        // and the acceptAll(values: Array<String>), which names the one member: acceptAll(values = arrayOf("")) compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaArrayNullableArrayStringArrayJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaArrayNullableArrayStringArrayJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypedAllAcceptorInterface
+            open fun acceptAll(values: Array<String?>?)
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve Java member given array of nullable elements apart from Java vararg of elements annotated not null merged with Kotlin vararg`() {
         // the @NotNull String... of the Java interface is merged with the open acceptAll(vararg values: String), which implements it,
         // but not with the acceptAll(T) given Array<String?>, of elements of another nullability, which a concrete subclass

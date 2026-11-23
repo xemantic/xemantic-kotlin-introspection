@@ -3059,12 +3059,14 @@ internal class DefaultKotlinIntrospector(
          * it overrides, or is merged with, which the compiler lets a call name, unlike the ones of a Java method,
          * like the `t` of `put(t: T)` of a Kotlin class for the `put(Integer)` of a Java subclass, so that `put(t = 1)` compiles,
          * see [inheritedCandidates], unless they differ in number, also of a vararg one,
-         * like the `a` of `vararg a: String` for a `@NotNull String...`, so that `acceptAll(a = arrayOf(""))` compiles.
+         * like the `a` of `vararg a: String` for a `@NotNull String...`, so that `acceptAll(a = arrayOf(""))` compiles,
+         * but not next to a hidden member merged with another one by the variants of its array, see [isProjectedRivalry].
          */
         fun takeNames(names: List<String>) {
             val function = effectiveMember as? Member.Function ?: return
             val parameters = function.function.valueParameters
-            if (parameters.size != names.size) return
+            // but next to a hidden member merged with another one by the variants of its array, see isProjectedRivalry
+            if (parameters.size != names.size || !isProjectedRivalry && parameters.any { it.varargElementType != null }) return
             val named = function.function.withValueParameterTypes { it }
             named.valueParameters.forEachIndexed { index, parameter -> parameter.name = names[index] }
             javaTypedMember = Member.Function(named, function.declaration)
@@ -3274,9 +3276,19 @@ internal class DefaultKotlinIntrospector(
 
         /**
          * Whether the [member] is merged also by the variants of its arrays and projected collections, see [isMergedWith],
-         * but next to a hidden member, which the compiler may group with some of the members first, see [inheritedCandidates].
+         * and kept apart from the ones of elements of another nullability, see [isElementNullabilityClash],
+         * but next to a hidden member merged so with another one, which the compiler may group with some of the members first,
+         * see [inheritedCandidates], like the hidden `acceptAll(vararg a: String)` with a Java `String...`.
          */
         var isProjectedRivalry: Boolean = true
+
+        /**
+         * Whether the [member] is of the signature of the one of the [other] candidate by the variants of its arrays
+         * and projected collections, see [isMergedWith], whatever [isProjectedRivalry], unless kept apart by nullability.
+         */
+        fun isProjectedRivalOf(other: InheritedCandidate): Boolean =
+            className != other.className && (member is Member.Property) == (other.member is Member.Property) && isJavaRivalry(other) &&
+                other.projectedRivalrySignatures.matches(projectedRivalrySignatures) && !isNullabilityClash(other, isProjecting = true)
 
         /**
          * Whether the type arguments within the value parameters of the [member] agree in nullability with the ones of the [other]
@@ -3331,19 +3343,24 @@ internal class DefaultKotlinIntrospector(
         // type argument, like the T of accept(T) of a Java JavaAcceptor<T> for `X : JavaAcceptor<String?>()`, a String?, no platform type,
         // where the one of the other member is not nullable, nor a platform type, like the String of accept(s: String),
         // which the compiler keeps apart, see isMergedWith, so that the Java method never implements the Kotlin member
-        private fun isNullabilityClash(other: InheritedCandidate): Boolean =
+        private fun isNullabilityClash(other: InheritedCandidate, isProjecting: Boolean = isProjectedRivalry): Boolean =
             nullableGivenPositions.any { other.isNotNullAt(it) } || other.nullableGivenPositions.any { isNotNullAt(it) } ||
-                isElementNullabilityClash(other)
+                (isProjecting && isElementNullabilityClash(other))
+
+        /**
+         * Whether the [member] is kept apart from the one of the [other] candidate by the nullability of the elements
+         * of the arrays they take, see [isElementNullabilityClash], unless next to a hidden member, see [isProjectedRivalry].
+         */
+        fun isKeptApartByElementsFrom(other: InheritedCandidate): Boolean = isProjectedRivalry && isElementNullabilityClash(other)
 
         // or whether a value parameter of one of the members takes an array of elements which are not nullable,
         // where the other one takes an array of nullable elements, neither of them platform types, see elementNullability,
         // like the @NotNull String... of a Java interface, and the acceptAll(T) of another one given Array<String?>,
-        // which the compiler keeps apart, unless of the same JVM signature: comparing the rivalry signatures regardless
+        // which the compiler keeps apart, also of the same JVM signature, like the vararg values: T of VarargAcceptor<String>
+        // and the T... of a Java interface given String?, both taking an Object[]: comparing the rivalry signatures regardless
         // of nullability, the Java vararg would be merged with both the member given Array<String?>
         // and a Kotlin vararg acceptAll(vararg values: String), which the compiler keeps apart, so that the group swallows one of them
         private fun isElementNullabilityClash(other: InheritedCandidate): Boolean {
-            val signature = jvmSignature ?: return false
-            if (signature == other.jvmSignature) return false
             val otherElements = other.elementNullability
             return elementNullability.withIndex().any { (index, isNullable) ->
                 val isOtherNullable = otherElements.getOrNull(index)
@@ -3928,7 +3945,11 @@ internal class DefaultKotlinIntrospector(
             }
             if (signature == null || isOverriddenOnJvm) candidate.nullableGivenPositions = emptySet()
         }
-        if (walked.any { it.isHidden }) walked.forEach { it.isProjectedRivalry = false }
+        // as is the merging by the variants of the arrays and projected collections, next to a hidden member merged so with another one,
+        // see InheritedCandidate.isProjectedRivalry, but not a hidden one kept apart from the members by the nullability of the elements
+        if (walked.any { hidden -> hidden.isHidden && walked.any { it !== hidden && !it.isHidden && it.isProjectedRivalOf(hidden) } }) {
+            walked.forEach { it.isProjectedRivalry = false }
+        }
         // the members of a JDK class reached only through a Java class of the user code lose the enhancement of their return types,
         // like the get() of java.util.function.Supplier for a subclass of a Java class implementing it without declaring it again,
         // unless reached also directly, or through the JDK, or a Kotlin class not overriding them, whatever the order of the supertypes,
@@ -4825,13 +4846,32 @@ internal class DefaultKotlinIntrospector(
                 }
                 // but the types of a method merged only by the variants of its arrays, or projected collections, or taken
                 // as a vararg, or not, unlike the member, next to a member kept apart from them, which the compiler may group otherwise,
-                // like the go(String[]) of a Java class between a `vararg a: T` given String? and a `vararg a: String`
-                if ((!picked.isPlainRival(candidate) || !picked.isVarargLike(candidate)) && survivors.any { groups[it] !== groups[candidate] }) {
+                // like the go(String[]) of a Java class between a `vararg a: T` given String? and a `vararg a: String`,
+                // but a member kept apart from the method by the nullability of the elements, which the compiler never groups with it,
+                // like the acceptAll(a: T) given Array<String> next to a @Nullable String[]
+                if ((!picked.isPlainRival(candidate) || !picked.isVarargLike(candidate)) &&
+                    survivors.any { groups[it] !== groups[candidate] && !picked.isKeptApartByElementsFrom(it) }
+                ) {
                     return@forEach
                 }
                 val overriding = javaOverrides.overridingBySignature(picked.jvmMethod) ?: return@forEach
                 val isUnrelated = walked.none { it !== picked && it.key in overriding && picked.name in supertypeNamesOf(it.name) }
                 if (isUnrelated) candidate.takeTypesOf(picked)
+            }
+            // the method of a Java class merged with the one of a Java interface contributed before it, one of them a vararg,
+            // takes its types, as the compiler calls the form of the first one, like the acceptAll(T) of a Java interface
+            // given Array<out String?>, so that acceptAll(arrayOf<String?>(null)) compiles, and acceptAll("") does not,
+            // while the T... of the Java class given String?, implementing it, is listed for the modality,
+            // when the first one is contributed first of all the members, not after a member kept apart from them,
+            // like an acceptAll(T) of another Java interface given Array<out String?> next to a String[] and a @NotNull T...
+            listed.forEach { candidate ->
+                val picked = groups[candidate] ?: return@forEach
+                if (picked !== candidate && picked === ordered.firstOrNull() &&
+                    isJavaClassMember(candidate) && picked.declarations is JavaClass && !isJavaClassMember(picked) &&
+                    !picked.isVarargLike(candidate) && picked.compareReturnType(candidate, supertypeNamesOf) == 0
+                ) {
+                    candidate.takeTypesOf(picked)
+                }
             }
             // the method of a Java class merged with a listed Kotlin member, or implementing a member merged with it,
             // which the listed one stands for, see InheritedCandidate.isShadowedBy
@@ -4980,15 +5020,22 @@ internal class DefaultKotlinIntrospector(
             forEach { java ->
                 val parameters = (java.effectiveMember as? Member.Function)?.function?.valueParameters
                 if (java.declarations !is JavaClass || parameters.isNullOrEmpty()) return@forEach
+                // also through the method of a Java class merged with both, of platform types, like the String[] of Java
+                // with an acceptAll(T) of a Java interface given Array<String?> and an acceptAll(values: Array<String>),
+                // but a hidden one, which the compiler keeps apart from the members it is merged with only so
+                val mergedJava = walked.filter { it !== java && it.declarations is JavaClass && java.isMergedWith(it) }
                 val kotlinMembers = walked.filter { kotlin ->
                     kotlin !== java && kotlin.declarations !is JavaClass && kotlin.declarations !is BuiltinClass &&
-                        kotlin.member is Member.Function && (java.overrides(kotlin) || java.isMergedWith(kotlin))
+                        kotlin.member is Member.Function &&
+                        (java.overrides(kotlin) || java.isMergedWith(kotlin) || !kotlin.isHidden && mergedJava.any { it.isMergedWith(kotlin) })
                 }
-                // but a vararg one, whose array is a platform type, merged also of elements of another nullability, see takeNames
-                val isNoOverride = parameters.any { it.varargElementType == null && it.type.isNullable } && kotlinMembers.any { kotlin ->
-                    kotlin.classTypeParameterPositions.isNotEmpty() &&
-                        (reaches(setOf(kotlin.name)).firstOrNull()?.isPlatform != true || isJoinedByKotlinClassBelow(kotlin))
-                }
+                // but an array, also of a vararg, a platform type, like the String[] of Java an Array<(out) String!>!,
+                // which the compiler merges with the Array<out String> a Kotlin class gives, see takeNames
+                val isNoOverride = parameters.any { it.type.isNullable && (it.type.classifier as? KmClassifier.Class)?.name != ARRAY_CLASS_NAME } &&
+                    kotlinMembers.any { kotlin ->
+                        kotlin.classTypeParameterPositions.isNotEmpty() &&
+                            (reaches(setOf(kotlin.name)).firstOrNull()?.isPlatform != true || isJoinedByKotlinClassBelow(kotlin))
+                    }
                 val names = kotlinMembers.mapTo(LinkedHashSet()) { kotlin ->
                     (kotlin.member as Member.Function).function.valueParameters.map { it.name }
                 }
