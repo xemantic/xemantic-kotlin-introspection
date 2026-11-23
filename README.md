@@ -604,15 +604,9 @@ com.example.AnnotationTestClass
     which is the JVM method of none of its members, like the one of a `@JvmOverloads` or a `@JvmStatic` function,
     next to which the member is not marked,
     when the class refers to relocated classes, or might, like when a Java member of the same name takes a class of a library,
-    unless only the relocation calls for it, and that JVM method is told not to be the one of the member,
-    which is then marked, as in the class which is not relocated:
-    by the relocated Kotlin classes it takes, by their own metadata,
-    by the JVM method of another member, the only one of its name and simple type names, taking the same class,
-    like the one of the `@JvmOverloads` function itself, also when the class is a Java one, or is not found,
-    or by being a static method of the name, and the simple type names, of a function of the companion object,
-    like the one of its `@JvmStatic` function, while any other static method is taken for the JVM method of a member,
-    which an optimizer might have made static;
-    with Java classes, or classes which are not found, which nothing tells, the member stays not marked there.
+    unless only the relocation calls for it, and the relocated Kotlin classes that JVM method takes tell, by their own metadata,
+    that it is not the JVM method of the member, which is then marked, as in the class which is not relocated;
+    with Java classes, or classes which are not found, telling no names, the member stays not marked there.
 * The whole classpath visible to the given class loader is scanned on creation, which takes a while,
   so the instance should be created once and reused.
   The scan can be disabled with `KotlinIntrospector(scanEntireClasspath = false)`,
