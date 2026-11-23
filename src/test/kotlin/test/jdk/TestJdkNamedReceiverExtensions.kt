@@ -41,3 +41,25 @@ fun java.util.Map<String, Int>.intJdkValues() {}
 fun java.lang.Comparable<Nothing>.comparableToNothing() {}
 
 fun java.lang.Comparable<in String>.comparableToString() {}
+
+// and so is one named in a type argument, like java.util.List<out String>, whose projection is no redundant one,
+// kept by its supertypes, like MutableCollection<out String>
+
+interface JdkBox<T>
+
+interface JdkProjectedListBox : JdkBox<java.util.List<out String>>
+
+fun JdkBox<out MutableCollection<String>>.mutableJdkStrings() {}
+
+fun JdkBox<out MutableCollection<out String>>.mutableOutJdkStrings() {}
+
+fun JdkBox<out Collection<String>>.readOnlyJdkStrings() {}
+
+// but for out Nothing, which kotlinc matches against a type parameter, like T of MutableCollection<T>, as it does out V,
+// which can be out Nothing
+
+interface JdkProjectedNothingListBox : JdkBox<java.util.List<out Nothing>>
+
+interface JdkProjectedElementListBox<V> : JdkBox<java.util.List<out V>>
+
+fun <T> JdkBox<out MutableCollection<T>>.mutableJdkElements() {}

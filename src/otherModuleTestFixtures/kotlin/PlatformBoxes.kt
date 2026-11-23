@@ -30,3 +30,11 @@ interface PlatformWrap<T>
 interface PlatformNotNullBox<T> : PlatformBox<T & Any>
 
 interface PlatformNullableBox<T> : PlatformBox<T?>
+
+// a contravariant one, which a Java interface gives a platform type, like PlatformSink<String!>
+
+interface PlatformSink<in T>
+
+// of a covariant, and a contravariant, type parameter, which a Java interface gives the boxes of platform types
+
+interface PlatformMixed<out A, in B>

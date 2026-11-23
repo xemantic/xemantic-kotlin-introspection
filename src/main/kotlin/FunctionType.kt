@@ -410,7 +410,7 @@ internal class FunctionTypeClass private constructor(val kind: FunctionTypeKind,
  */
 internal const val KFUNCTION_CLASS_NAME = "kotlin.reflect.KFunction"
 
-private const val KCALLABLE_CLASS_NAME = "kotlin.reflect.KCallable"
+internal const val KCALLABLE_CLASS_NAME = "kotlin.reflect.KCallable"
 
 private const val KANNOTATED_ELEMENT_CLASS_NAME = "kotlin.reflect.KAnnotatedElement"
 
