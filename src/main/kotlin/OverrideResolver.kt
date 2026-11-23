@@ -265,7 +265,7 @@ internal class OverrideResolver(
      * @param typeParameterBounds the bounds of each type parameter of a function, or `null` if not told,
      *   like of a Java method of a class which cannot be loaded, see [boundsMatch].
      * @param boundNullabilities the nullability of each of the [typeParameterBounds] of a Java method, which an override
-     *   has to declare, see [javaBoundNullabilities], or `null` of a platform type, declared either way,
+     *   has to declare, see [javaBounds], or `null` of a platform type, declared either way,
      *   told apart from the type, which stays the one of Java, like a collection type both mutable and read-only.
      * @param platformBounds the [typeParameterBounds] of a Java method which are type variables of its class, platform types
      *   of the type arguments given for them, by the indices of the type parameter and of its bound: declared of either nullability,
@@ -1181,18 +1181,22 @@ internal class OverrideResolver(
      * erased to `Comparable`, and the one of `<T extends CharSequence & Comparable<T>> void two(T)`, erased to `CharSequence`,
      * also as the elements of arrays, like of `T[]`, or `T...`, and `Array<T>`, or `vararg xs: T`,
      * and of the same nullability, when the Java method tells it, see [javaTypeVariableParameterNullability],
-     * like the `T` of a class marked by `@NullMarked`, which `x: T?` does not override, unlike a platform type,
+     * like the `T` of a class, or of a method, marked by `@NullMarked`, which `x: T?` does not override,
+     * nor `xs: Array<T?>`, or `xs: Array<T>?`, its `T[]`, unlike a platform type,
      * or `null` if either is no such type, matched by its erasure then, see [erasuresMatch].
      */
-    private fun functionTypeParametersMatch(overridden: MemberType, overriding: MemberType, isElement: Boolean = false): Boolean? = when {
-        overridden is TypeParameterType && overriding is TypeParameterType && overridden.isOfFunction && overriding.isOfFunction ->
-            overridden.key == overriding.key &&
-                (isElement || overridden.nullable == null || overriding.nullable == null || overridden.nullable == overriding.nullable)
-        overridden is ClassType && overriding is ClassType && overridden.name == "kotlin/Array" && overriding.name == "kotlin/Array" ->
-            overridden.arguments.singleOrNull()?.type?.let { element ->
-                overriding.arguments.singleOrNull()?.type?.let { functionTypeParametersMatch(element, it, isElement = true) }
-            }
-        else -> null
+    private fun functionTypeParametersMatch(overridden: MemberType, overriding: MemberType): Boolean? {
+        fun isOfNullability(nullable: Boolean?, overridingNullable: Boolean?) =
+            nullable == null || overridingNullable == null || nullable == overridingNullable
+        return when {
+            overridden is TypeParameterType && overriding is TypeParameterType && overridden.isOfFunction && overriding.isOfFunction ->
+                overridden.key == overriding.key && isOfNullability(overridden.nullable, overriding.nullable)
+            overridden is ClassType && overriding is ClassType && overridden.name == "kotlin/Array" && overriding.name == "kotlin/Array" ->
+                overridden.arguments.singleOrNull()?.type?.let { element ->
+                    overriding.arguments.singleOrNull()?.type?.let { functionTypeParametersMatch(element, it) }
+                }?.let { it && isOfNullability(overridden.nullable, overriding.nullable) }
+            else -> null
+        }
     }
 
     /**
@@ -3112,16 +3116,16 @@ internal class OverrideResolver(
      * The generic types are resolved lazily, so this might throw when they refer to a class missing from the classpath.
      */
     private fun javaOverridable(javaClass: Class<*>, method: Method, substitution: JavaSubstitution): Overridable {
-        val boundNullabilities = javaBoundNullabilities(method)
+        val bounds = javaBounds(method)
         fun JavaType.isClassTypeVariable() = this is TypeVariable<*> && genericDeclaration is Class<*>
-        fun isTold(index: Int, boundIndex: Int) = boundNullabilities.getOrNull(index)?.getOrNull(boundIndex) != null
+        fun annotated(index: Int, boundIndex: Int) = bounds.annotated.getOrNull(index)?.getOrNull(boundIndex)
         return Overridable(
             receiver = null,
-            // a type variable of the method of the nullability it tells, see functionTypeParametersMatch
+            // a type variable of the method, or an array of it, of the nullability it tells, see functionTypeParametersMatch
             parameters = method.genericParameterTypes.mapIndexed { position, parameterType ->
                 val type = javaType(parameterType, substitution, method)
-                if (type is TypeParameterType && type.isOfFunction) {
-                    type.copy(nullable = javaTypeVariableParameterNullability(method, position))
+                if (type.isOfFunctionTypeParameter()) {
+                    type.withNullability(javaTypeVariableParameterNullability(method, position))
                 } else {
                     type
                 }
@@ -3130,21 +3134,79 @@ internal class OverrideResolver(
             isJava = true,
             isPlatform = javaClass.isPlatformClass,
             javaKey = javaMemberKey(javaClass.name, method.name, AsmType.getMethodDescriptor(method)),
-            // platform types, also the type variables, unless the method tells the nullability of the bound
-            // but a type variable of the class, of the type argument given for it, see platformBounds
+            // platform types, also the type variables nested in them, unless the class is marked,
+            // but a type variable of the class, of the type argument given for it, see platformBounds, or as annotated,
+            // and the types nested in them as annotated
             typeParameterBounds = method.typeParameters.mapIndexed { index, typeVariable ->
                 typeVariable.bounds.mapIndexed { boundIndex, bound ->
-                    javaType(bound, substitution, method, isPlatform = !isTold(index, boundIndex) && !bound.isClassTypeVariable())
+                    val isAnnotatedNullable = annotated(index, boundIndex)
+                    val type = if (bound.isClassTypeVariable()) {
+                        javaType(bound, substitution, method).let { given ->
+                            if (isAnnotatedNullable == null) given else given.withTopNullability(isAnnotatedNullable)
+                        }
+                    } else {
+                        javaType(bound, substitution, method, isPlatform = !bounds.isMarked)
+                    }
+                    bounds.nested.getOrNull(index)?.getOrNull(boundIndex).orEmpty().entries.fold(type) { nested, (path, isNullable) ->
+                        nested.withNullabilityAt(path, isNullable)
+                    }
                 }
             },
-            // of its own nullability, when the method tells the bound
-            boundNullabilities = boundNullabilities.mapIndexed { index, nullabilities ->
-                nullabilities.mapIndexed { boundIndex, isNullable ->
-                    isNullable.takeUnless { method.typeParameters[index].bounds[boundIndex].isClassTypeVariable() }
+            // which an override declares so, when the method tells them, by an annotation, or by the mark of its class
+            boundNullabilities = method.typeParameters.mapIndexed { index, typeVariable ->
+                typeVariable.bounds.mapIndexed { boundIndex, bound ->
+                    if (bound.isClassTypeVariable()) null else annotated(index, boundIndex) ?: false.takeIf { bounds.isMarked }
                 }
             },
             platformBounds = method.typeParameters.flatMapIndexedTo(HashSet()) { index, typeVariable ->
-                typeVariable.bounds.indices.filter { !isTold(index, it) && typeVariable.bounds[it].isClassTypeVariable() }.map { index to it }
+                typeVariable.bounds.indices.filter {
+                    typeVariable.bounds[it].isClassTypeVariable() && annotated(index, it) == null && !bounds.isMarked
+                }.map { index to it }
+            }
+        )
+    }
+
+    // whether this is a type parameter of a function, or an array of it, also of arrays
+    private fun MemberType.isOfFunctionTypeParameter(): Boolean = when (this) {
+        is TypeParameterType -> isOfFunction
+        is ClassType -> name == "kotlin/Array" && arguments.singleOrNull()?.type?.isOfFunctionTypeParameter() == true
+        UnknownType -> false
+    }
+
+    // this type parameter of a function, or the array of it, and its elements, of the nullability, null of a platform type
+    private fun MemberType.withNullability(isNullable: Boolean?): MemberType = when (this) {
+        is TypeParameterType -> copy(nullable = isNullable)
+        is ClassType -> copy(nullable = isNullable, arguments = arguments.map { TypeArgument(it.variance, it.type.withNullability(isNullable)) })
+        UnknownType -> this
+    }
+
+    private fun MemberType.withTopNullability(isNullable: Boolean): MemberType = when (this) {
+        is TypeParameterType -> copy(nullable = isNullable)
+        is ClassType -> copy(nullable = isNullable)
+        UnknownType -> this
+    }
+
+    /**
+     * This type with the type nested in it at the type [path] of the class file, like `0;` of a type argument,
+     * or `[` of an array element, of the nullability its annotation tells, see [JavaBounds.nested].
+     */
+    private fun MemberType.withNullabilityAt(path: String, isNullable: Boolean): MemberType {
+        if (path.isEmpty()) return withTopNullability(isNullable)
+        if (this !is ClassType) return this
+        val index: Int
+        val rest: String
+        if (path.startsWith("[")) {
+            index = 0
+            rest = path.substring(1)
+        } else {
+            val end = path.indexOf(';')
+            index = path.substring(0, end.coerceAtLeast(0)).toIntOrNull() ?: return this
+            rest = path.substring(end + 1)
+        }
+        if (index !in arguments.indices) return this
+        return copy(
+            arguments = arguments.mapIndexed { position, argument ->
+                if (position == index) TypeArgument(argument.variance, argument.type.withNullabilityAt(rest, isNullable)) else argument
             }
         )
     }

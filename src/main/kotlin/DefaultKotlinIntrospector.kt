@@ -458,6 +458,9 @@ internal class DefaultKotlinIntrospector(
         // a star projection of a contravariant type parameter, see STAR
         private val STAR_OF_CONTRAVARIANT = KmVariance.IN to classType(NOTHING_CLASS_NAME)
 
+        // the type of a wildcard bounded by Object, compared as `out Any`, see isSameAccessorType, never modified
+        private val OBJECT_WILDCARD_TYPE = classType(ANY_CLASS_NAME)
+
         /**
          * The first of the ids standing for the type parameters of a class inheriting the members of its supertypes,
          * see [inheritingTypeParameterId].
@@ -2752,7 +2755,8 @@ internal class DefaultKotlinIntrospector(
      * but not when the class has a property of the name, declared, or inherited, like `key` of `java.util.Map.Entry` of `getKey()`,
      * also of a Java field, which Kotlin reads instead, unless it is less visible than the getter, like a private one.
      * The setter is the first function named like it, see [syntheticPropertySetterName], declared, or inherited, of any origin,
-     * which is part of the API, so that a protected one of an open class makes it a `var` only its subclasses can assign,
+     * in the order kotlinc looks them up in, see [settersInDeclarationOrder], also one which cannot be called, like a private one,
+     * which leaves the property a `val`, while a protected one of an open class makes it a `var` only its subclasses can assign,
      * of a single value parameter, which is no vararg, and of no type parameters, returning anything, like a fluent `setName(String)`,
      * taking the type the getter returns, see [isSameAccessorType], like `Boolean` of both `boolean` and `java.lang.Boolean`,
      * but no other type, like a supertype, or the type of another nullability, like the `String` of a `setNick(@NonNull String)`
@@ -2815,7 +2819,8 @@ internal class DefaultKotlinIntrospector(
             }
             // the first one in the order of declaration, of the class declaring them, before the ones of its supertypes,
             // also a method of a Java class which is not part of the API, like a private one, which cannot be called
-            val setter = settersInDeclarationOrder(setters, setterName, declarations).firstOrNull { it.sets() }
+            val setter = settersInDeclarationOrder(setters, setterName, declarations, getterDeclarations, getterCandidate)
+                .firstOrNull { it.sets() }
             SyntheticProperty(name, function.visibility, setter?.takeUnless { it.isUncallable })
         }
     }
@@ -2826,34 +2831,74 @@ internal class DefaultKotlinIntrospector(
      * the methods of a Java class in the order of their declarations, see [javaMethodOrder], rather than the one of their descriptors,
      * like `setFirst(Integer)` before a `setFirst(int)` declared after it, together with its methods which are not part of the API,
      * like a private `setHidden(Integer)`, an [SyntheticSetter.isUncallable] one, as kotlinc takes the first one of the type
-     * of the getter, also when it cannot be called, reporting `cannot access` for the assignment.
+     * of the getter, also when it cannot be called, reporting `cannot access` for the assignment,
+     * also the ones of the class of the [getterDeclarations], inherited as the [getterCandidate], declaring none of the API,
+     * like a private `setHidden(Integer)` next to `Integer getHidden()`, before the `setHidden(int)` of its superclass.
      */
     private fun settersInDeclarationOrder(
         setters: List<SyntheticSetter>,
         setterName: String,
-        declarations: ClassDeclarations
+        declarations: ClassDeclarations,
+        getterDeclarations: ClassDeclarations,
+        getterCandidate: InheritedCandidate?
     ): List<SyntheticSetter> {
         if (setters.none { (it.candidate?.declarations ?: declarations) is JavaClass }) return setters
-        val ordered = ArrayList<SyntheticSetter>(setters.size)
-        var index = 0
-        while (index < setters.size) {
-            val setterDeclarations = setters[index].candidate?.declarations ?: declarations
-            val group = setters.drop(index).takeWhile { (it.candidate?.declarations ?: declarations) === setterDeclarations }
-            index += group.size
-            val javaClass = setterDeclarations as? JavaClass
-            val order = javaClass?.let { javaMethodOrder(it.clazz) }.orEmpty()
-            if (javaClass == null || order.isEmpty()) {
-                ordered += group
-                continue
+        fun isUncallable(function: KmFunction) =
+            function.name == setterName && function.visibility != Visibility.PUBLIC && function.visibility != Visibility.PROTECTED
+        // the ones of each class declaring some, in the order of their declarations, with its ones which are not part of the API
+        fun grouped(setters: List<SyntheticSetter>): List<List<SyntheticSetter>> {
+            val groups = ArrayList<MutableList<SyntheticSetter>>()
+            setters.forEach { setter ->
+                val setterDeclarations = setter.candidate?.declarations ?: declarations
+                groups.firstOrNull { (it.first().candidate?.declarations ?: declarations) === setterDeclarations }?.add(setter)
+                    ?: groups.add(mutableListOf(setter))
             }
-            fun KmFunction.order() = javaClass.jvmMethodOf(this)?.signature?.toString()?.let { order[it] } ?: Int.MAX_VALUE
-            val listed = group.mapTo(HashSet()) { it.member.declaration }
-            val uncallable = javaClass.kmClass.functions
-                .filter { it.name == setterName && it !in listed && it.visibility != Visibility.PUBLIC && it.visibility != Visibility.PROTECTED }
-                .map { SyntheticSetter(Member.Function(it), group.first().candidate, isUncallable = true) }
-            ordered += (group + uncallable).sortedBy { it.member.declaration.order() }
+            return groups.map { group ->
+                val javaClass = (group.first().candidate?.declarations ?: declarations) as? JavaClass
+                val order = javaClass?.let { javaMethodOrder(it.clazz) }.orEmpty()
+                if (javaClass == null || order.isEmpty()) return@map group
+                fun KmFunction.order() = javaClass.jvmMethodOf(this)?.signature?.toString()?.let { order[it] } ?: Int.MAX_VALUE
+                val listed = group.mapTo(HashSet()) { it.member.declaration }
+                val uncallable = javaClass.kmClass.functions
+                    .filter { it !in listed && isUncallable(it) }
+                    .map { SyntheticSetter(Member.Function(it), group.first().candidate, isUncallable = true) }
+                (group + uncallable).sortedBy { it.member.declaration.order() }
+            }
         }
-        return ordered
+        val declaredOrder = grouped(setters).flatten()
+        // also the ones of the class of the getter, when it declares none of the API, before the ones of its supertypes
+        val getterClassSetters = if (getterDeclarations !is JavaClass ||
+            setters.any { (it.candidate?.declarations ?: declarations) === getterDeclarations }
+        ) emptyList() else {
+            getterDeclarations.kmClass.functions.filter(::isUncallable)
+                .map { SyntheticSetter(Member.Function(it), getterCandidate, isUncallable = true) }
+        }
+        val byClass = HashMap<Class<*>, List<SyntheticSetter>>()
+        grouped(setters + getterClassSetters).forEach { group ->
+            val clazz = (group.first().candidate?.declarations ?: declarations).clazz
+            if (clazz == null || byClass.put(clazz, group) != null) return declaredOrder
+        }
+        // as kotlinc looks them up in the scope of a class, see FirTypeIntersectionScopeContext of tag v2.4.21:
+        // the ones it declares, followed by the ones of its supertypes, as the scope of a single supertype orders them,
+        // or of several, the most visible ones first, as kotlinc extracts the most visible member first,
+        // like the public `setX(Integer)` of an interface before the protected `setX(int)` of the superclass,
+        // also when the interface is farther from the class, while the private `setHidden(Integer)` of a class
+        // comes before the public `setHidden(int)` of its superclass
+        fun SyntheticSetter.visibilityRank() = when (member.declaration.visibility) {
+            Visibility.PUBLIC -> 0
+            Visibility.PROTECTED -> 1
+            Visibility.INTERNAL -> 2
+            else -> 3
+        }
+        val scopes = HashMap<Class<*>, List<SyntheticSetter>>()
+        fun scope(clazz: Class<*>): List<SyntheticSetter> = scopes[clazz] ?: run {
+            val supertypes = listOfNotNull(clazz.superclass) + clazz.interfaces
+            val inherited = supertypes.map(::scope)
+            val merged = inherited.singleOrNull() ?: inherited.flatten().sortedBy { it.visibilityRank() }
+            (byClass[clazz].orEmpty() + merged).distinct()
+        }.also { scopes[clazz] = it }
+        val ordered = declarations.clazz?.let { root -> reflectedValue(default = null) { scope(root) } } ?: return declaredOrder
+        return if (byClass.values.all { group -> group.all { it in ordered } }) ordered else declaredOrder
     }
 
     /**
@@ -2861,9 +2906,16 @@ internal class DefaultKotlinIntrospector(
      * of a Java method, or a JVM-only member of a built-in type, when [isJava], a collection type of which is both the mutable one
      * and the read-only one, like `(Mutable)List<String!>!`, and an array type both invariant and covariant, like `Array<(out) String!>!`,
      * telling whether the nullability of the type, and of the ones nested in it, by their type paths, see [javaNullabilityTold],
-     * [isNullabilityTold], unlike of a platform type, which is of either nullability.
+     * [isNullabilityTold], unlike of a platform type, which is of either nullability,
+     * and the type paths of the [objectWildcards], the star projections which are wildcards bounded by `Object` in Java,
+     * see [javaObjectWildcardPaths], like the `List<? extends Object>` of `(Mutable)List<out Any>` of a class marked by `@NullMarked`.
      */
-    private class AccessorType(val type: KmType, val isJava: Boolean, val isNullabilityTold: (path: String) -> Boolean) {
+    private class AccessorType(
+        val type: KmType,
+        val isJava: Boolean,
+        val objectWildcards: Set<String> = emptySet(),
+        val isNullabilityTold: (path: String) -> Boolean
+    ) {
 
         companion object {
 
@@ -2891,13 +2943,26 @@ internal class DefaultKotlinIntrospector(
                     } ?: { false }
                     // a type variable of the class, not annotated, told only by its mark, is of the type argument given,
                     // a platform type when a Java class gives it so, like the String! of the T of a marked Box<T extends @Nullable Object>
+                    // also where nested in a type argument, or in an array, by its type path
                     val declared = if (parameter == null) function.returnType else function.valueParameters.getOrNull(parameter)?.type
-                    val typeVariable = (declared?.classifier as? KmClassifier.TypeParameter)?.id
-                        ?.takeIf { id -> !declared.isNullable && !declared.isDefinitelyNonNull && function.typeParameters.none { it.id == id } }
-                    val isGivenPlatformType = typeVariable != null && inheriting != null && isGivenPlatformTypeArgument(
-                        inheriting, declarations.clazz, declarations.kmClass.typeParameters.indexOfFirst { it.id == typeVariable }
-                    )
-                    AccessorType(type, isJava = true) { path -> isTold(path) && !(isGivenPlatformType && path.isEmpty()) }
+                    val platformPaths = HashSet<String>()
+                    fun collect(type: KmType, path: String) {
+                        val typeVariable = (type.classifier as? KmClassifier.TypeParameter)?.id
+                            ?.takeIf { id -> !type.isNullable && !type.isDefinitelyNonNull && function.typeParameters.none { it.id == id } }
+                        if (typeVariable != null && inheriting != null && isGivenPlatformTypeArgument(
+                                inheriting, declarations.clazz, declarations.kmClass.typeParameters.indexOfFirst { it.id == typeVariable }
+                            )
+                        ) {
+                            platformPaths += path
+                        }
+                        val isArray = (type.classifier as? KmClassifier.Class)?.name == ARRAY_CLASS_NAME
+                        type.arguments.forEachIndexed { index, argument ->
+                            argument.type?.let { collect(it, if (isArray) "$path[" else "$path$index;") }
+                        }
+                    }
+                    declared?.let { collect(it, "") }
+                    val objectWildcards = declarations.javaMethodOf(function)?.let { javaObjectWildcardPaths(it, parameter) }.orEmpty()
+                    AccessorType(type, isJava = true, objectWildcards) { path -> isTold(path) && path !in platformPaths }
                 }
                 is BuiltinClass if function in declarations.jvmOnlyFunctions -> AccessorType(type, isJava = true) { false }
                 else -> {
@@ -2942,13 +3007,21 @@ internal class DefaultKotlinIntrospector(
             val isArray = className == ARRAY_CLASS_NAME
             val covariant = if (isEitherJava) COVARIANT_COLLECTION_ARGUMENTS[collectionName].orEmpty() else emptySet()
             val areArgumentsSame = getterType.arguments.indices.all { index ->
-                val getterArgument = getterType.arguments[index]
-                val setterArgument = setterType.arguments[index]
+                val argumentPath = if (isArray) "$path[" else "$path$index;"
+                // a wildcard bounded by Object as the `out Any` it stands for, when its accessor tells it not nullable,
+                // as `out Any!` is the star projection otherwise
+                fun KmTypeProjection.of(accessor: AccessorType) =
+                    if (type == null && argumentPath in accessor.objectWildcards && accessor.isNullabilityTold(argumentPath)) {
+                        KmTypeProjection(KmVariance.OUT, OBJECT_WILDCARD_TYPE)
+                    } else {
+                        this
+                    }
+                val getterArgument = getterType.arguments[index].of(getter)
+                val setterArgument = setterType.arguments[index].of(setter)
                 val getterArgumentType = getterArgument.type
                 val setterArgumentType = setterArgument.type
                 val isCovariant = index in covariant || (isArray && isEitherJava)
                 fun KmVariance?.isOutOrNone() = this == KmVariance.OUT || this == KmVariance.INVARIANT
-                val argumentPath = if (isArray) "$path[" else "$path$index;"
                 // a star projection is the `Any?` projected out, so an `Any` which tells that it is not nullable is another type
                 fun KmType.isAnyOfStar(accessor: AccessorType) = (classifier as? KmClassifier.Class)?.name == ANY_CLASS_NAME &&
                     (isNullable || !accessor.isNullabilityTold(argumentPath))
@@ -2970,6 +3043,10 @@ internal class DefaultKotlinIntrospector(
         }
         return same(getter.type, setter.type, path = "")
     }
+
+    // the type paths nested in the type at the path, relative to it
+    private fun Set<String>.nestedIn(path: String): Set<String> =
+        if (isEmpty()) this else mapNotNullTo(HashSet()) { if (it.startsWith(path)) it.removePrefix(path) else null }
 
     /**
      * Whether a value of the type the [getter] returns, which overrides a getter returning a supertype,
@@ -3002,8 +3079,12 @@ internal class DefaultKotlinIntrospector(
                     (index in covariant || setterArgument.variance == KmVariance.OUT) && getterArgument.variance != KmVariance.IN ->
                         assignable(getterArgumentType, setterArgumentType, argumentPath)
                     else -> getterArgument.variance == setterArgument.variance && isSameAccessorType(
-                        AccessorType(getterArgumentType, getter.isJava) { getter.isNullabilityTold(argumentPath + it) },
-                        AccessorType(setterArgumentType, setter.isJava) { setter.isNullabilityTold(argumentPath + it) }
+                        AccessorType(getterArgumentType, getter.isJava, getter.objectWildcards.nestedIn(argumentPath)) {
+                            getter.isNullabilityTold(argumentPath + it)
+                        },
+                        AccessorType(setterArgumentType, setter.isJava, setter.objectWildcards.nestedIn(argumentPath)) {
+                            setter.isNullabilityTold(argumentPath + it)
+                        }
                     )
                 }
             }
@@ -3634,7 +3715,18 @@ internal class DefaultKotlinIntrospector(
             other.className != className && (other.member is Member.Property) == (member is Member.Property) &&
                 (other.overridden.any { it in overridden } ||
                     (other.signature == signature || isJavaRivalry(other) && other.rivalrySignatures.matches(rivalrySignatures)) &&
-                    isMergedOnJvm(other))
+                    isMergedOnJvm(other) && !isOverloadOf(other) && !other.isOverloadOf(this))
+
+        // whether the member is a generic function of a Kotlin class which its type parameters tell an overload
+        // of the method of the [java] candidate, see OverrideResolver.typeParametersTellOverride, though of its JVM signature,
+        // like the `fun <T> sort(x: T) where T : Comparable<T>, T : Any` of a superclass the `<T extends Comparable<T>> void sort(T)`
+        private fun isOverloadOf(java: InheritedCandidate): Boolean {
+            val function = (member as? Member.Function)?.declaration ?: return false
+            val key = java.jvmMethod?.key ?: return false
+            val owner = declarations.overrideOwner ?: return false
+            return declarations !is JavaClass && java.declarations is JavaClass && function.typeParameters.isNotEmpty() &&
+                overrideResolver.typeParametersTellOverride(owner, function, key) == false
+        }
 
         // whether one of the members is a member of a Java class, see isMergedWith, or a Kotlin member taking the platform types
         // a Java class gives, see takesPlatformTypes, standing for the method of the Java class implementing it,

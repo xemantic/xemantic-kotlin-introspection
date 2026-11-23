@@ -1585,6 +1585,24 @@ open class SyntheticPropertyKotlinSetters : com.xemantic.kotlin.introspection.te
 abstract class SyntheticPropertyMarkedBoxOfString :
     com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyMarkedBoxOfString()
 
+// A Kotlin class passing its type parameter to the type variable of a Java class marked by @NullMarked,
+// given a platform type by a Java class not marked in turn
+abstract class KotlinSyntheticPropertyMarkedBox<U> : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyMarkedBox<U>()
+
+abstract class SyntheticPropertyKotlinBoxOfString :
+    com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyKotlinBoxOfString()
+
+// The public setter of an interface, taken before the protected one of the superclass
+abstract class SyntheticPropertyFaceFirst : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyFaceFirst()
+
+// The public setter of a farther interface, taken before the protected one of the nearer superclass
+abstract class SyntheticPropertyFarFaceFirst : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyFarFaceFirst()
+
+// The private setter of the Java class declaring the getter, taken before the public one of its superclass
+class SyntheticPropertyHiddenSetterMid : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyHiddenSetterMid()
+
+abstract class NullMarkedObjectWildcards : com.xemantic.kotlin.introspection.test.other.JavaNullMarkedObjectWildcards()
+
 // A final class, which cannot call the protected setPr(String) of its Java superclass
 class SyntheticPropertyFinal : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyBase()
 

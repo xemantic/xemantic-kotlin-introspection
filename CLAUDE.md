@@ -184,9 +184,9 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 - The Gradle test build rejects `abstract class X : J(), JDb` (`J implements GenericPut<Integer>`, `JDb` a default `put(Integer)`)
   with `must override 'put' because it inherits multiple interface methods`, while kotlinc compiles it against the compiled Java classes, so it is no fixture.
 
-- The setter of a synthetic property is modeled after `FirSyntheticPropertiesScope.setterTypeIsConsistentWithGetterType` (tag `v2.4.21`), see `syntheticProperty`:
-  equal types, not assignable ones, so a laxer setter leaves a `val` too, and the first one matching in the order of declaration is taken.
-  Probe it by an assignment — `'val' cannot be reassigned` tells a setter not taken, `cannot access` one taken, but not visible.
+- Probe the setter of a synthetic property by an assignment, from outside the class, and from a subclass:
+  `'val' cannot be reassigned` tells a setter not taken, `cannot access` one taken, but not visible —
+  and which of two setters of the type is taken only their visibility tells, see `settersInDeclarationOrder`.
 
 - When probing whether a generic function overrides, compile it both with the `override` modifier and without:
   one rejected with the modifier (`overrides nothing`) might be rejected without it too, as an `accidental override` of the same JVM signature,

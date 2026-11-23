@@ -36,7 +36,9 @@ import com.xemantic.kotlin.introspection.test.other.JavaRawComparable
 import com.xemantic.kotlin.introspection.test.other.JavaRawInnerMid
 import com.xemantic.kotlin.introspection.test.other.JavaRawKotlinMid
 import com.xemantic.kotlin.introspection.test.other.JavaSortBase
+import com.xemantic.kotlin.introspection.test.other.JavaAnnotatedBoundsBase
 import com.xemantic.kotlin.introspection.test.other.JavaGenericBoundsBase
+import com.xemantic.kotlin.introspection.test.other.JavaMethodNullMarkedBoundsBase
 import com.xemantic.kotlin.introspection.test.other.JavaNullMarkedTwoBoundsBase
 import com.xemantic.kotlin.introspection.test.other.JavaTwoBoundsBase
 import com.xemantic.kotlin.introspection.test.other.JavaVoidBase
@@ -463,6 +465,31 @@ class ClassBoundedSorter<X : CharSequence> : JavaSortBase() {
 // A function of one more bound, like Any, is an overload too, though erased to the same JVM type
 class AnyBoundedSorter : JavaSortBase() {
     fun <T> sort(x: T) where T : Comparable<T>, T : Any {}
+}
+
+// The overload of one more bound, and the Java method, inherited both by a subclass, which can override either
+open class OpenAnyBoundedSorter : JavaSortBase() {
+    fun <T> sort(x: T) where T : Comparable<T>, T : Any {}
+}
+
+class AnyBoundedSorterSubclass : OpenAnyBoundedSorter()
+
+// An annotation of a bound of a Java method tells the bound itself: the type variable the method takes,
+// and the ones nested in the bound, are still declared of either nullability
+class AnnotatedBoundOverride : JavaAnnotatedBoundsBase<String?>() {
+    override fun <T : CharSequence> notNull(x: T?) {}
+    override fun <T : Comparable<T?>> nested(x: T) {}
+    override fun <T : String?> nullable(x: T) {}
+    override fun <T : List<String>> listed(x: T) {}
+}
+
+// A method marked by @NullMarked takes its type variable as given, also in an array of a marked class
+class MethodNullMarkedNullableParameterOverload : JavaMethodNullMarkedBoundsBase() {
+    fun <T> two(x: T?) where T : Comparable<T>, T : CharSequence {}
+}
+
+class NullMarkedNullableArrayOverload : JavaNullMarkedTwoBoundsBase() {
+    fun <T> arr(xs: Array<T?>) where T : Comparable<T>, T : CharSequence {}
 }
 
 // An override declares the bounds of the type variable of the Java method in any order, erased to the first one

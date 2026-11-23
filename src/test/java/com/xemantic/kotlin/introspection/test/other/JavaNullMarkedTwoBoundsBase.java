@@ -31,4 +31,7 @@ public class JavaNullMarkedTwoBoundsBase {
     public <T extends Comparable<T>> void sort(T x) {
     }
 
+    public <T extends CharSequence & Comparable<T>> void arr(T[] xs) {
+    }
+
 }

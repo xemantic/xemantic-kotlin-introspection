@@ -44,6 +44,10 @@ public abstract class JavaSyntheticPropertyMarkedBox<T extends @Nullable Object>
 
     public abstract void setLax(@Nullable T lax);
 
+    public abstract List<T> getItems();
+
+    public abstract void setItems(List<@Nullable T> items);
+
     public abstract List<?> getStars();
 
     // a List<*> is no List<Any>
