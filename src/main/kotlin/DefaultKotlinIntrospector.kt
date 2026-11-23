@@ -3058,11 +3058,9 @@ internal class DefaultKotlinIntrospector(
             typed.valueParameters.forEachIndexed { index, parameter ->
                 parameter.varargElementType = pickedParameters[index].varargElementType?.substituted(own)
             }
-            if (isTakingReturnType) {
-                typed.returnType = pickedFunction.returnType.substituted(own)
-                takenReturnType = typed.returnType
-                isTakenReturnTypePlatform = isReturningPlatformType
-            }
+            // the return type taken before, of another member, is no more
+            takenReturnType = if (isTakingReturnType) pickedFunction.returnType.substituted(own).also { typed.returnType = it } else null
+            isTakenReturnTypePlatform = isTakingReturnType && isReturningPlatformType
             javaTypedMember = Member.Function(typed, function.declaration)
         }
 
@@ -3413,9 +3411,19 @@ internal class DefaultKotlinIntrospector(
         // type argument, like the T of accept(T) of a Java JavaAcceptor<T> for `X : JavaAcceptor<String?>()`, a String?, no platform type,
         // where the one of the other member is not nullable, nor a platform type, like the String of accept(s: String),
         // which the compiler keeps apart, see isMergedWith, so that the Java method never implements the Kotlin member
+        // but the members of the classes a Kotlin class merges them with, see mergedThroughClasses
         private fun isNullabilityClash(other: InheritedCandidate, isProjecting: Boolean = isProjectedRivalry): Boolean =
-            nullableArgumentPositions.any { other.isNotNullAt(it) } || other.nullableArgumentPositions.any { isNotNullAt(it) } ||
+            (other.name !in mergedThroughClasses && nullableArgumentPositions.any { other.isNotNullAt(it) }) ||
+                (name !in other.mergedThroughClasses && other.nullableArgumentPositions.any { isNotNullAt(it) }) ||
                 (isProjecting && isElementNullabilityClash(other))
+
+        /**
+         * The classes whose members the [member], given a nullable type argument, see [nullableArgumentPositions],
+         * is merged with by a Kotlin class every path to it runs through, which inherits them as one member,
+         * so that they are not kept apart by the nullability, see [isNullabilityClash], unlike the members of other classes,
+         * see [inheritedCandidates].
+         */
+        var mergedThroughClasses: Set<String> = emptySet()
 
         /**
          * Whether the [member] is kept apart from the one of the [other] candidate by a nullable type argument,
@@ -4117,11 +4125,14 @@ internal class DefaultKotlinIntrospector(
             walk(root)
             order
         }
-        // nor is the member of a Java class given a nullable type argument kept apart when every path to it runs
-        // through a Kotlin class, other than the inheriting one, which merges it with them, its single member inherited as one, like the apply of Function<String?, String?> of
-        // `Join : JavaStringApplier(), Function<String?, String?>, StringApplier`, merged with the apply(x: String) of StringApplier
-        // by the apply(String) of the Java class, of platform types, contributed first, see groupedAroundFirst,
-        // for `X : StringApplier, Join()`, unlike `Join : StringApplier, JavaStringApplier(), Function<String?, String?>`
+        // nor is the member of a Java class given a nullable type argument kept apart from the members a Kotlin class,
+        // other than the inheriting one, merges it with, when every path to it runs through that class, its single member
+        // inherited as one, like the apply of Function<String?, String?> of `Join : JavaStringApplier(), Function<String?, String?>, StringApplier`,
+        // merged with the apply(x: String) of StringApplier by the apply(String) of the Java class, of platform types,
+        // contributed first, see groupedAroundFirst, for `X : StringApplier, Join()`,
+        // unlike `Join : StringApplier, JavaStringApplier(), Function<String?, String?>`, or the members of the other supertypes of X,
+        // told once for all the candidates, as the ones merged are not kept apart while told, see InheritedCandidate.mergedThroughClasses
+        val mergedThrough = IdentityHashMap<InheritedCandidate, Set<String>>()
         walked.filter { it.nullableArgumentPositions.isNotEmpty() && it.member is Member.Function }.forEach { candidate ->
             fun mergesBelow(name: String): Boolean {
                 val order = contributionOrderOf(name)
@@ -4140,19 +4151,28 @@ internal class DefaultKotlinIntrospector(
                         }
                 }
             }
-            // false while walked, not to follow a supertype cycle of malformed class files
-            val throughMerging = HashMap<String, Boolean>()
-            fun isMergedThrough(name: String): Boolean = throughMerging[name] ?: run {
-                throughMerging[name] = false
-                val isMerged = name != candidate.name && (
-                    (name != kmClass.name && name !in javaClasses && mergesBelow(name)) ||
-                        directSupertypes[name].orEmpty().filter { it == candidate.name || candidate.name in contributionOrderOf(it) }
-                            .let { reaching -> reaching.isNotEmpty() && reaching.all(::isMergedThrough) }
-                    )
-                isMerged.also { throughMerging[name] = it }
+            // the Kotlin classes merging it, through which every path to it runs, or null when some path does not,
+            // also on a supertype cycle of malformed class files, which leaves it apart
+            val walking = HashSet<String>()
+            val merging = HashMap<String, List<String>?>()
+            fun mergingClasses(name: String): List<String>? {
+                if (name in merging) return merging[name]
+                if (name == candidate.name || !walking.add(name)) return null
+                val classes = if (name != kmClass.name && name !in javaClasses && mergesBelow(name)) listOf(name) else {
+                    val reaching = directSupertypes[name].orEmpty().filter { it == candidate.name || candidate.name in contributionOrderOf(it) }
+                    val reached = reaching.map(::mergingClasses)
+                    if (reached.isEmpty() || null in reached) null else reached.flatMap { it.orEmpty() }
+                }
+                walking -= name
+                merging[name] = classes
+                return classes
             }
-            if (isMergedThrough(kmClass.name)) candidate.nullableArgumentPositions = emptySet()
+            // the members of the classes each of them reaches, as the members of the other ones are no part of the merged member,
+            // like the apply(x: String) of a Kotlin interface of a body named next to the join
+            mergingClasses(kmClass.name)?.map { contributionOrderOf(it).keys }?.reduce { a, b -> a intersect b }
+                ?.let { mergedThrough[candidate] = it }
         }
+        mergedThrough.forEach { (candidate, classes) -> candidate.mergedThroughClasses = classes }
         walked.forEach { candidate -> candidate.isPlainCollectionRival = walked.any { it !== candidate && candidate.isPlainCollectionRivalOf(it) } }
         // as is the merging by the variants of the arrays and projected collections, next to a hidden member merged so with another one,
         // see InheritedCandidate.isProjectedRivalry, but not a hidden one kept apart from the members by the nullability of the elements
@@ -4922,9 +4942,9 @@ internal class DefaultKotlinIntrospector(
             candidate.declarations is BuiltinClass && candidate.jvmMethod != null && isListable(candidate) &&
                 javaMethodSignatures[candidate.jvmMethod.signature]?.onEach { it.isJvmOnlyOverride = true } != null
         }
-        // and so is the toArray of a Java collection class of the user code, overriding the one of java.util.Collection,
-        // which Kotlin hides of the collection types, so that the override resolver does not tell it, unless a JDK class
-        // declares it again, unlike toArray(IntFunction), a default method, or one overriding toArray(T[]) by its erasure
+        // and so is the toArray of a Java collection class of the user code overriding a method of java.util.Collection,
+        // like toArray(T[]), also by its erasure, toArray(Object[]), or the default toArray(IntFunction),
+        // which Kotlin hides of the collection types, so that the override resolver does not tell it
         if (memberName == "toArray") {
             candidates.forEach { candidate ->
                 val javaClass = candidate.declarations as? JavaClass ?: return@forEach

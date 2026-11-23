@@ -1821,6 +1821,15 @@ abstract class InheritedJavaStringApplierHalfNullableFunctionApplierJoin :
 abstract class InheritedStringApplierJavaStringApplierNullableFunctionApplierJoin :
     StringApplier, JavaStringApplierNullableFunctionApplierJoin()
 
+interface DefaultStringApplier {
+    fun apply(x: String): String = x
+}
+
+// but the join merges only the members of its own supertypes: the one of another Kotlin interface stays apart
+// from the apply(String?) of Function<String?, String>
+abstract class InheritedDefaultStringApplierJavaStringApplierHalfNullableFunctionApplierJoin :
+    DefaultStringApplier, InheritedJavaStringApplierHalfNullableFunctionApplierJoin()
+
 // the apply(String?) of Function<String?, String?> stays apart, as the Java class is declared after the Kotlin interface
 abstract class StringApplierJavaStringApplierNullableFunctionJoin :
     StringApplier, com.xemantic.kotlin.introspection.test.other.JavaStringApplier(), java.util.function.Function<String?, String?>

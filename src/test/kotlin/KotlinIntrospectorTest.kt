@@ -9027,6 +9027,21 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve member of JDK interface given nullable type merged by Kotlin join apart from member of body of Kotlin interface named again`() {
+        // apply(null) compiles, returning String, as the Kotlin interface is no supertype of the join, which merges only its own members,
+        // and apply(x = null) compiles too, as the member of Function takes the name of the one of StringApplier, merged by the join
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedDefaultStringApplierJavaStringApplierHalfNullableFunctionApplierJoin.apply"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedDefaultStringApplierJavaStringApplierHalfNullableFunctionApplierJoin.apply [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.DefaultStringApplier
+            open fun apply(x: String): String
+            // inherited from java.util.function.Function
+            fun apply(x: String?): String
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve member of JDK interface given nullable type apart from Kotlin member when Kotlin join declares method of Java class after it`() {
         // the join keeps the apply of Function<String?, String?> apart, as the Kotlin interface is declared before the Java class,
         // so that apply(null) compiles, returning String?, and a concrete subclass has to implement it, also below

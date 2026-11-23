@@ -203,14 +203,13 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   `X : JImpl<String>(), Function<String, String>, K` (`K` an `apply(x: String?)`) has one `apply`, as the `String!` of `JImpl` is merged with both,
   while `X : Function<String, String>, K, JImpl<String>()` has two, as K2 enhances the JDK method to take `String` —
   and a Kotlin class joining some of them below contributes every member it keeps apart, each by the one it picks,
+  a merged member as one only next to the members of its own supertypes — another Kotlin member of the same signature named below the join parts it again —
   while a Java class joining them from different supertypes merges them all.
-  `inheritedCandidates` merges the candidates of all the supertypes flatly, one per class, which tells neither:
-  modelling it (grouping by the joining classes, types of JDK interfaces merged by their nullability) was tried in #339
-  and given back, as each rule regressed neighbouring shapes — a class reached through several supertypes has one candidate only.
+  `inheritedCandidates` groups the candidates of all the supertypes at once, one per class, telling the joins below only in narrow cases
+  (`contributionOrder`, `mergedThroughClasses`): broader rules (grouping by the joining classes, types of JDK interfaces merged by their nullability)
+  regressed neighbouring shapes in #339.
   A sweep of joins needs every order of the supertypes, the joins named through Kotlin and Java classes next to other supertypes,
   Kotlin classes one to three levels below the joins, and members with bodies: each of these regressed on its own.
-
-- A class file of a Kotlin collection class may declare a `toArray` no metadata declares, see `overridingBelow`.
 
 - When probing kotlinc, `val r: Marker = x::apply` names the type of one overload, with no ambiguity, when the class has two,
   the message of an empty concrete subclass tells one abstract member from several (`member:` / `members:`), but not which —
