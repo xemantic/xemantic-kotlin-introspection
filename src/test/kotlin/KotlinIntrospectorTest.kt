@@ -2766,6 +2766,97 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should hint infix operator extension plus on supertype of companion object as called only infix next to operator member not infix`() {
+        // both InfixOperatorNextToOperatorHolder + 1 and .plus(1) call the member, only InfixOperatorNextToOperatorHolder plus 1 calls the extension
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InfixOperatorNextToOperatorHolder.plus"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InfixOperatorNextToOperatorHolder.plus [page 1/1]
+            companion object : InfixOperatorCompanionSupertype {
+                operator fun plus(other: Int): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            /* called as InfixOperatorNextToOperatorHolder plus … */ infix operator fun InfixOperatorCompanionSupertype.plus(other: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should hint infix operator extension get on supertype of companion object as called only infix next to operator member not infix`() {
+        // both InfixOperatorNextToOperatorHolder[1] and .get(1) call the member, only InfixOperatorNextToOperatorHolder get 1 calls the extension
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InfixOperatorNextToOperatorHolder.get"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InfixOperatorNextToOperatorHolder.get [page 1/1]
+            companion object : InfixOperatorCompanionSupertype {
+                operator fun get(index: Int): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            /* called as InfixOperatorNextToOperatorHolder get … */ infix operator fun InfixOperatorCompanionSupertype.get(index: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should hint infix operator extension invoke on supertype of companion object as called only infix next to operator member not infix`() {
+        // both InfixOperatorNextToOperatorHolder(1) and .invoke(1) call the member, only InfixOperatorNextToOperatorHolder invoke 1 calls the extension
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InfixOperatorNextToOperatorHolder.invoke"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InfixOperatorNextToOperatorHolder.invoke [page 1/1]
+            companion object : InfixOperatorCompanionSupertype {
+                operator fun invoke(other: Int): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            /* called as InfixOperatorNextToOperatorHolder invoke … */ infix operator fun InfixOperatorCompanionSupertype.invoke(other: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should hint infix operator extension on supertype of companion object as called only infix next to inherited operator member not infix`() {
+        // both InfixOperatorNextToInheritedOperatorHolder + 1 and .plus(1) call the inherited member, only the infix call the extension
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InfixOperatorNextToInheritedOperatorHolder.plus"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InfixOperatorNextToInheritedOperatorHolder.plus [page 1/1]
+            companion object : InfixOperatorBase, InfixOperatorCompanionSupertype {
+                // inherited from com.xemantic.kotlin.introspection.test.InfixOperatorBase
+                operator fun plus(other: Int): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            /* called as InfixOperatorNextToInheritedOperatorHolder plus … */ infix operator fun InfixOperatorCompanionSupertype.plus(other: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should hint infix operator extension on supertype of companion object as called as operator next to infix member which is no operator`() {
+        // both InfixOperatorNextToInfixHolder plus 1 and .plus(1) call the member, only InfixOperatorNextToInfixHolder + 1 calls the extension
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InfixOperatorNextToInfixHolder.plus"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InfixOperatorNextToInfixHolder.plus [page 1/1]
+            companion object : InfixOperatorCompanionSupertype {
+                infix fun plus(other: Int): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            /* called as InfixOperatorNextToInfixHolder + … */ infix operator fun InfixOperatorCompanionSupertype.plus(other: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should hint infix operator extension on supertype of companion object as called as operator next to member neither infix nor operator`() {
+        // InfixOperatorNextToNeitherHolder.plus(1) calls the member, both InfixOperatorNextToNeitherHolder + 1 and plus 1 call the extension
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InfixOperatorNextToNeitherHolder.plus"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InfixOperatorNextToNeitherHolder.plus [page 1/1]
+            companion object : InfixOperatorCompanionSupertype {
+                fun plus(other: Int): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            /* called as InfixOperatorNextToNeitherHolder + … */ infix operator fun InfixOperatorCompanionSupertype.plus(other: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
     fun `should not list extension of companion object shadowed by its member`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.ShadowingCompanionHolder"

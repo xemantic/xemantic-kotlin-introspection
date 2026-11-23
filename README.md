@@ -113,6 +113,7 @@ com.example.AnnotationTestClass
   as a member of the companion object which is not infix is called for `Foo.merge(…)`,
   and `/* called as Foo + … */`, `Foo[…]`, `… in Foo`, `-Foo`, or `Foo(…)`, of an operator called only so,
   as a member which is no operator is called for `Foo.plus(…)`,
+  an infix operator by the form which reaches it, like `/* called as Foo plus … */` next to a member which is an operator, but not infix,
   while an operator of no such form, like `inc`, or `invoke` next to a constructor which might take the arguments, is told by its name,
   unless the class extends the supertype too, so that they are also called on its instance, like `foo.parse()`,
   where no member of the class, like `fun parse()`, is called instead,

@@ -2089,9 +2089,9 @@ internal class DefaultKotlinIntrospector(
         // which is not infix, or no operator, is called instead of it by its name, like for Foo.ext(1), or Foo.plus(1):
         // a function, or a property invoked instead, see withoutShadowedByMembers
         val companionSupertypes by lazy(LazyThreadSafetyMode.NONE) { apiCompanion?.let { supertypesOf(it.kmClass) } }
-        fun isNeverCalledByName(function: KmFunction): Boolean =
-            (function.isInfix || function.isOperator) && apiCompanion != null && companionName != null &&
-                publicMembersNamed(apiCompanion.kmClass, apiCompanion.foundClass, function.name, apiCompanion.apiClass).any { member ->
+        fun membersCalledByName(function: KmFunction): List<Member> =
+            if (!(function.isInfix || function.isOperator) || apiCompanion == null || companionName == null) emptyList() else {
+                publicMembersNamed(apiCompanion.kmClass, apiCompanion.foundClass, function.name, apiCompanion.apiClass).filter { member ->
                     when (member) {
                         is Member.Function ->
                             member.function.shadowsAsMember(function, companionName, { companionSupertypes }, isCalledOnlyByName = true)
@@ -2103,6 +2103,7 @@ internal class DefaultKotlinIntrospector(
                             )
                     }
                 }
+            }
         val extensions = extensionSignatures(
             (listedExtensions.functions + hidingExtensions).distinct().filter { it.function !in companionFunctionDeclarations } +
                 companionFunctions,
@@ -2121,10 +2122,17 @@ internal class DefaultKotlinIntrospector(
                         !extension.isAlsoCalledOnInstance && !extension.property.receiverParameterType.isOnCompanion()
                 }
                 if (!isOnlyOnClassName) "" else when (extension) {
-                    is IndexedExtension -> formatCalledOnClassName(
-                        kmClass, extension.function.name, extension.function.valueParameters,
-                        function = extension.function.takeIf(::isNeverCalledByName)
-                    )
+                    is IndexedExtension -> {
+                        // only a member function which is an operator, or infix, is called also so, instead of the extension
+                        val function = extension.function
+                        val members = membersCalledByName(function).map { (it as? Member.Function)?.function }
+                        formatCalledOnClassName(
+                            kmClass, function.name, function.valueParameters,
+                            function = function.takeIf { members.isNotEmpty() },
+                            isCalledAsOperator = members.none { it?.isOperator == true },
+                            isCalledAsInfix = members.none { it?.isInfix == true }
+                        )
+                    }
                     is IndexedExtensionProperty -> formatCalledOnClassName(kmClass, extension.property.name, valueParameters = null)
                 }
             }
@@ -10294,18 +10302,26 @@ internal class DefaultKotlinIntrospector(
      * like `/* called as Foo.ext() */`, `/* called as Foo.ext(…) */` of a function taking the [valueParameters],
      * or `/* called as Foo.prop */` of a property, without them,
      * while an infix [function], or an operator, called only so, see [operatorCallForm], is told like `/* called as Foo ext … */`,
-     * or `/* called as Foo + … */`, an operator of no such form by its name.
+     * or `/* called as Foo + … */`, an operator of no such form by its name,
+     * and an infix operator by the form which reaches it: as an operator, when [isCalledAsOperator], or else infix, when [isCalledAsInfix],
+     * like `/* called as Foo plus … */` next to a member which is an operator, but not infix, called for both `Foo + 1` and `Foo.plus(1)`.
+     *
+     * @param function the function, if a member is called instead of it by its name, like for `Foo.ext(1)`, or `null`.
+     * @param isCalledAsOperator whether the [function], if an operator, is called as one, like `Foo + 1`, no member being called so instead.
+     * @param isCalledAsInfix whether the [function], if infix, is called so, like `Foo ext 1`, no member being called so instead.
      */
     private fun formatCalledOnClassName(
         kmClass: KmClass,
         name: String,
         valueParameters: List<KmValueParameter>?,
-        function: KmFunction? = null
+        function: KmFunction? = null,
+        isCalledAsOperator: Boolean = true,
+        isCalledAsInfix: Boolean = true
     ): String {
         val className = escapeQualifiedName(kmClass.name.substringAfterLast('/'))
         if (function != null) {
-            val form = (if (function.isOperator) operatorCallForm(kmClass, className, function) else null)
-                ?: (if (function.isInfix) "$className ${escapeIdentifier(name)} …" else null)
+            val form = (if (function.isOperator && isCalledAsOperator) operatorCallForm(kmClass, className, function) else null)
+                ?: (if (function.isInfix && isCalledAsInfix) "$className ${escapeIdentifier(name)} …" else null)
             if (form != null) return "/* called as $form */ "
         }
         val arguments = when {

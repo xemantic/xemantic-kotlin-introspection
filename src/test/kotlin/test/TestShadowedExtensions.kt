@@ -821,3 +821,43 @@ operator fun OperatorCompanionSupertype.invoke(other: Int): Int = 1
 operator fun OperatorCompanionSupertype.rangeTo(other: Int): Int = 1
 
 operator fun OperatorCompanionSupertype.inc(): OperatorCompanionSupertype = this
+
+// infix operator extensions on the supertype of a companion object, next to its members of their names:
+// next to an operator which is not infix, also an inherited one, only InfixOperatorNextToOperatorHolder plus 1 calls the extension,
+// as both InfixOperatorNextToOperatorHolder + 1 and InfixOperatorNextToOperatorHolder.plus(1) call the member,
+// while next to an infix one which is no operator, or to one which is neither, InfixOperatorNextToInfixHolder + 1 calls it
+interface InfixOperatorCompanionSupertype
+
+open class InfixOperatorBase {
+    operator fun plus(other: Int): Int = 0
+}
+
+class InfixOperatorNextToOperatorHolder {
+    companion object : InfixOperatorCompanionSupertype {
+        operator fun plus(other: Int): Int = 0
+        operator fun get(index: Int): Int = 0
+        operator fun invoke(other: Int): Int = 0
+    }
+}
+
+class InfixOperatorNextToInheritedOperatorHolder {
+    companion object : InfixOperatorBase(), InfixOperatorCompanionSupertype
+}
+
+class InfixOperatorNextToInfixHolder {
+    companion object : InfixOperatorCompanionSupertype {
+        infix fun plus(other: Int): Int = 0
+    }
+}
+
+class InfixOperatorNextToNeitherHolder {
+    companion object : InfixOperatorCompanionSupertype {
+        fun plus(other: Int): Int = 0
+    }
+}
+
+infix operator fun InfixOperatorCompanionSupertype.plus(other: Int): Int = 1
+
+infix operator fun InfixOperatorCompanionSupertype.get(index: Int): Int = 1
+
+infix operator fun InfixOperatorCompanionSupertype.invoke(other: Int): Int = 1
