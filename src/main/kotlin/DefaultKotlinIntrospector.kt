@@ -3398,7 +3398,8 @@ internal class DefaultKotlinIntrospector(
          * The positions of the value parameters of the [member], of a Java class, declared of a type parameter of its class,
          * whose type arguments a Kotlin class gives, as no platform types, like the `T` of `acceptAll(T)` of a Java
          * `JavaAcceptor<T>` for `X : JavaAcceptor<Array<String>>`, an array of elements which are not nullable,
-         * see elementNullability.
+         * also through a Java class passing on its type parameter, or a Java class giving an array of annotated elements,
+         * like `JavaAcceptor<@NotNull String[]>`, unlike a `String[]` of platform elements, see elementNullability.
          */
         var kotlinGivenPositions: Set<Int> = emptySet()
 
@@ -3947,10 +3948,14 @@ internal class DefaultKotlinIntrospector(
         val visited = hashSetOf(kmClass.name, ANY_CLASS_NAME)
         val pending = ArrayDeque(kmClass.supertypes.map { it.substituted(inheriting) })
         val candidates = mutableListOf<InheritedCandidate>()
-        // whether the type arguments of each supertype walked are given by a Kotlin class, the first one referring to it,
-        // not by a Java class, giving platform types, see InheritedCandidate.kotlinGivenPositions
-        val isGivenByKotlin = HashMap<String, Boolean>()
-        kmClass.supertypes.classNames().forEach { isGivenByKotlin.putIfAbsent(it, declarations !is JavaClass) }
+        // whether each type argument of each supertype walked, by its index, is told by the first class referring to it:
+        // given by a Kotlin class, or an array a Java class gives of annotated elements, not of platform ones,
+        // also through a Java class passing on its own type parameter, like the T of `interface JavaMid<T> extends JavaAcceptor<T>`,
+        // see InheritedCandidate.kotlinGivenPositions
+        val givenByKotlin = HashMap<String, List<Boolean>>()
+        kmClass.supertypes.forEach { supertype ->
+            (supertype.classifier as? KmClassifier.Class)?.name?.let { givenByKotlin.putIfAbsent(it, supertype.arguments.map { declarations !is JavaClass }) }
+        }
         // the names of the direct supertypes of each class walked, in the order of declaration, see contribution below
         val directSupertypes = hashMapOf(kmClass.name to kmClass.supertypes.classNames())
         // the class of each supertype walked, and its direct supertypes as declared, in the order of the directSupertypes,
@@ -4027,7 +4032,7 @@ internal class DefaultKotlinIntrospector(
                 val javaSupertypes = rawJavaSupertypes(foundName, supertype) { it.unlocated(declarations) }
                 javaClasses += name
                 directSupertypes[name] = javaSupertypes.classNames()
-                javaSupertypes.classNames().forEach { isGivenByKotlin.putIfAbsent(it, false) }
+                javaSupertypes.classNames().forEach { givenByKotlin.putIfAbsent(it, emptyList()) }
                 pending += javaSupertypes
                 return
             }
@@ -4042,7 +4047,21 @@ internal class DefaultKotlinIntrospector(
             declaredSupertypes[name] = superKmClass to superSupertypes
             superDeclarations.clazz?.let { walkedClasses[name] = it }
             if (superDeclarations !is JavaClass) superSupertypes.classNames().forEach { referrers.putIfAbsent(it, superDeclarations) }
-            superSupertypes.classNames().forEach { isGivenByKotlin.putIfAbsent(it, superDeclarations !is JavaClass) }
+            superSupertypes.forEach { superSupertype ->
+                val superName = (superSupertype.classifier as? KmClassifier.Class)?.name ?: return@forEach
+                givenByKotlin.putIfAbsent(superName, superSupertype.arguments.mapIndexed { index, argument ->
+                    val passed = (argument.type?.classifier as? KmClassifier.TypeParameter)?.id
+                        ?.let { id -> superKmClass.typeParameters.indexOfFirst { it.id == id } }?.takeIf { it >= 0 }
+                    when {
+                        passed != null -> givenByKotlin[name]?.getOrNull(passed) == true
+                        superDeclarations !is JavaClass -> true
+                        // or the elements of an array a Java class gives annotated, like JavaAcceptor<@NotNull String[]>
+                        else -> superDeclarations.clazz?.let { clazz ->
+                            annotatesGivenArrayElements(clazz, superName.replace('/', '.'), index)
+                        } == true
+                    }
+                })
+            }
             if (superKmClass.kind != ClassKind.INTERFACE) classNames += name
             pending += superSupertypes.map { it.substituted(substitution) }
             // the supertypes of a class reached through a raw supertype are raw too, like the raw ones of a Java class,
@@ -4152,10 +4171,12 @@ internal class DefaultKotlinIntrospector(
                     }
                 ).also { candidate ->
                     if (unlocated !== located) unlocatedCandidates += candidate
-                    if (superDeclarations is JavaClass && declared is Member.Function && isGivenByKotlin[name] == true && !isReachedRaw) {
+                    if (superDeclarations is JavaClass && declared is Member.Function && !isReachedRaw) {
+                        val given = givenByKotlin[name].orEmpty()
                         candidate.kotlinGivenPositions = declared.declaration.valueParameters.indices.filterTo(HashSet()) { index ->
-                            (declared.declaration.valueParameters[index].type.classifier as? KmClassifier.TypeParameter)
-                                ?.let { it.id in substitution } == true
+                            (declared.declaration.valueParameters[index].type.classifier as? KmClassifier.TypeParameter)?.let { parameter ->
+                                parameter.id in substitution && given.getOrNull(superKmClass.typeParameters.indexOfFirst { it.id == parameter.id }) == true
+                            } == true
                         }
                     }
                 }

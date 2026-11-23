@@ -529,6 +529,19 @@ internal fun givesPlatformTypeArguments(type: Class<*>, supertype: Class<*>, ind
  * the class [supertype], annotated nullable, like the `@Nullable Integer` of `Base<@Nullable Integer>`, no platform type,
  * see [givesPlatformTypeArguments], yet accepting `null` like one, unlike the one annotated not null.
  */
+/**
+ * Whether the Java class [type] annotates the nullability of the elements of the array it gives as the type argument at the [index]
+ * of its direct supertype named [supertypeName], by its JVM name, like `JavaAcceptor<@NotNull String[]>`, unlike a `String[]`,
+ * of platform elements, see [JavaClassNullability.supertypeArguments].
+ */
+internal fun annotatesGivenArrayElements(type: Class<*>, supertypeName: String, index: Int): Boolean = reflectedValue(default = false) {
+    if (type.isKotlinClass || type.isJdkClass) return@reflectedValue false
+    val supertypeIndex = if (type.superclass?.name == supertypeName) -1 else {
+        type.interfaces.indexOfFirst { it.name == supertypeName }.takeIf { it >= 0 } ?: return@reflectedValue false
+    }
+    javaNullabilities.get(type).supertypeArguments[supertypeIndex]?.containsKey("$index;[") == true
+}
+
 internal fun givesNullableTypeArgument(type: Class<*>, supertype: Class<*>, index: Int): Boolean = reflectedValue(default = false) {
     // not the ones of the superclass, at -1, for a class which is no direct supertype
     val supertypeIndex = if (type.superclass == supertype) -1 else type.interfaces.indexOf(supertype).takeIf { it >= 0 }

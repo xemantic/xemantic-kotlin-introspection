@@ -2252,3 +2252,18 @@ abstract class InheritedJavaNotNullVarargOutNullableTypedAllJavaArrayJoinSubclas
 abstract class NotNullArrayNotNullTypedVarargOpenOutNullableArrayJoin :
     com.xemantic.kotlin.introspection.test.other.JavaNotNullArrayAcceptInterface,
     com.xemantic.kotlin.introspection.test.other.JavaNotNullTypedVarargAcceptorInterface<String>, OpenOutNullableStringArrayAcceptor()
+
+// The same, given the array through a Java interface passing its type parameter on, or by one annotating its elements (#368)
+abstract class MidNotNullArrayTypedAllNullableJavaVarargJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaTypedAllAcceptorMidInterface<Array<String>?>,
+    com.xemantic.kotlin.introspection.test.other.JavaNullableTypedVarargAcceptor<String>()
+
+abstract class InheritedJavaMidNotNullArrayTypedAllNullableVarargJoinSubclass :
+    com.xemantic.kotlin.introspection.test.other.JavaMidNotNullArrayTypedAllNullableVarargJoinSubclass()
+
+abstract class AnnotatedNotNullArrayTypedAllNullableJavaVarargJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaNotNullElementArrayTypedAllAcceptorInterface,
+    com.xemantic.kotlin.introspection.test.other.JavaNullableTypedVarargAcceptor<String>()
+
+abstract class InheritedJavaAnnotatedNotNullArrayTypedAllNullableVarargJoinSubclass :
+    com.xemantic.kotlin.introspection.test.other.JavaAnnotatedNotNullArrayTypedAllNullableVarargJoinSubclass()

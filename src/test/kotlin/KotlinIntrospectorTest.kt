@@ -8010,6 +8010,30 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve Java vararg in its form below Java subclass next to Java member given array through Java interface`() {
+        // the Array<String>? given through the T a Java interface passes on, of elements which are not nullable, keeps the
+        // acceptAll(T) apart from the @Nullable T... given String, like given directly: acceptAll("", null) compiles —
+        // a guard of the form, while the abstract acceptAll(T) is not listed, as for the class joining them
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaMidNotNullArrayTypedAllNullableVarargJoinSubclass.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaMidNotNullArrayTypedAllNullableVarargJoinSubclass.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNullableTypedVarargAcceptor
+            open fun acceptAll(vararg arg0: String?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java vararg in its form below Java subclass next to Java member given array of elements annotated not null`() {
+        // the @NotNull String[] a Java interface gives keeps the acceptAll(T) apart from the @Nullable T... given String,
+        // unlike a String[] of platform elements: acceptAll("", null) compiles —
+        // a guard of the form, while the abstract acceptAll(T) is not listed, as for the class joining them
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaAnnotatedNotNullArrayTypedAllNullableVarargJoinSubclass.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaAnnotatedNotNullArrayTypedAllNullableVarargJoinSubclass.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNullableTypedVarargAcceptor
+            open fun acceptAll(vararg arg0: String?)
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve Java member given array kept apart from Java arrays and vararg merged with Java array below Java subclass`() {
         // the @NotNull String... declared first groups the arrays with the String[] of the Java class, implementing them,
         // apart from the acceptAll(T) given Array<out String?>, which a concrete subclass has to implement, like for the class
