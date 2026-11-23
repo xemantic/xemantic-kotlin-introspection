@@ -46,4 +46,8 @@ public abstract class JavaMethodNullMarked<N> {
     @org.jspecify.annotations.NullMarked
     public <U> void two(U value, String name) {}
 
+    // the type variable of a recursive bound is nullable too, though only for a type argument declared by Java
+    @org.jspecify.annotations.NullMarked
+    public <U extends Comparable<U>> void sorted(java.util.List<U> values, U... more) {}
+
 }

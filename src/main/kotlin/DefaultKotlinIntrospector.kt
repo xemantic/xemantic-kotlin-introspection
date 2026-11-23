@@ -2819,7 +2819,7 @@ internal class DefaultKotlinIntrospector(
             }
             // the first one in the order of declaration, of the class declaring them, before the ones of its supertypes,
             // also a method of a Java class which is not part of the API, like a private one, which cannot be called
-            val setter = settersInDeclarationOrder(setters, setterName, declarations, getterDeclarations, getterCandidate)
+            val setter = settersInDeclarationOrder(setters, setterName, declarations, getterDeclarations, getterCandidate, members.scope)
                 .firstOrNull { it.sets() }
             SyntheticProperty(name, function.visibility, setter?.takeUnless { it.isUncallable })
         }
@@ -2833,18 +2833,20 @@ internal class DefaultKotlinIntrospector(
      * like a private `setHidden(Integer)`, an [SyntheticSetter.isUncallable] one, as kotlinc takes the first one of the type
      * of the getter, also when it cannot be called, reporting `cannot access` for the assignment,
      * also the ones of the class of the [getterDeclarations], inherited as the [getterCandidate], declaring none of the API,
-     * like a private `setHidden(Integer)` next to `Integer getHidden()`, before the `setHidden(int)` of its superclass.
+     * like a private `setHidden(Integer)` next to `Integer getHidden()`, before the `setHidden(int)` of its superclass,
+     * also a Kotlin one, and a protected one, which is not part of the API of the [scope] of a final class,
+     * like a `protected void setX(Integer)` declared before a `public void setX(int)`.
      */
     private fun settersInDeclarationOrder(
         setters: List<SyntheticSetter>,
         setterName: String,
         declarations: ClassDeclarations,
         getterDeclarations: ClassDeclarations,
-        getterCandidate: InheritedCandidate?
+        getterCandidate: InheritedCandidate?,
+        scope: ApiClass
     ): List<SyntheticSetter> {
-        if (setters.none { (it.candidate?.declarations ?: declarations) is JavaClass }) return setters
-        fun isUncallable(function: KmFunction) =
-            function.name == setterName && function.visibility != Visibility.PUBLIC && function.visibility != Visibility.PROTECTED
+        if (getterDeclarations !is JavaClass && setters.none { (it.candidate?.declarations ?: declarations) is JavaClass }) return setters
+        fun isUncallable(function: KmFunction) = function.name == setterName && !scope.isApi(function.visibility)
         // the ones of each class declaring some, in the order of their declarations, with its ones which are not part of the API
         fun grouped(setters: List<SyntheticSetter>): List<List<SyntheticSetter>> {
             val groups = ArrayList<MutableList<SyntheticSetter>>()

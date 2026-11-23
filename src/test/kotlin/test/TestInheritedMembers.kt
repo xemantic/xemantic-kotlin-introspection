@@ -1634,6 +1634,18 @@ abstract class SyntheticPropertyFarFaceFirst : com.xemantic.kotlin.introspection
 // The private setter of the Java class declaring the getter, taken before the public one of its superclass
 class SyntheticPropertyHiddenSetterMid : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyHiddenSetterMid()
 
+// The private setter of the Java class declaring the getter, taken before the public one of its Kotlin superclass
+open class KotlinSyntheticPropertyPrimitiveSetter {
+    open fun setHidden(hidden: Int) {}
+}
+
+class SyntheticPropertyHiddenOverKotlinSetter : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyHiddenOverKotlinSetter()
+
+// The protected setter declared first, taken before the public one, which a final class cannot call, unlike an open one
+class SyntheticPropertyFinalProtectedSetterFirst : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyProtectedSetterFirst()
+
+open class SyntheticPropertyOpenProtectedSetterFirst : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyProtectedSetterFirst()
+
 abstract class NullMarkedObjectWildcards : com.xemantic.kotlin.introspection.test.other.JavaNullMarkedObjectWildcards()
 
 // A final class, which cannot call the protected setPr(String) of its Java superclass

@@ -227,6 +227,7 @@ com.example.AnnotationTestClass
   where the mark tells the other types exactly, and nullable is what the compiler takes, like `take<String>(listOf(null))`,
   unlike as any other type argument, like of `Comparator<T>`, or as the element of an array, taking both `T` and `T?`, which no rendering tells.
   One referred to by its own bound, like by a `Comparable` of itself, stays nullable, like `fun <T : Comparable<T>?> sort(arg0: T?)`,
+  also nested in a method marked by `@NullMarked`, like `arg0: List<T?>`, or `vararg arg0: T?`, of `<T extends Comparable<T>>`,
   though `sort<String>(null)` does not compile, as `null` is accepted for a type argument declared by Java, like `sort<BigDecimal>(null)`,
   the convention for any type parameter in a contravariant position of its bound,
   like of `Comparable<? super T>`, or of a function type taking it,
@@ -243,7 +244,7 @@ com.example.AnnotationTestClass
   the ones of a class before the ones of its supertypes, and the ones of several supertypes the most visible first,
   like the public `setX(Integer)` of an interface before the protected `setX(int)` of the superclass,
   also a private one, which cannot be called, and leaves the property a `val`,
-  like a `private void setHidden(Integer)` next to `Integer getHidden()`, before the `setHidden(int)` of its superclass,
+  like a `private void setHidden(Integer)` next to `Integer getHidden()`, before the `setHidden(int)` of its superclass, also a Kotlin one,
   a platform type being the type of either nullability, like the `String!` of `setName(String)` for a `@NonNull String getName()`,
   and a `? extends Object` of a class marked by `@NullMarked` the `out Any` it stands for, unlike the `out Any?` of a `?`,
   like the `List<? extends Object>` of a getter set by `setF(List<Object>)`,
@@ -252,7 +253,7 @@ com.example.AnnotationTestClass
   unless the getter overrides one returning a supertype, which the setter sets,
   like `setWide(Object)` of a `String getWide()` overriding `Object getWide()`.
   A protected setter of a public getter, which only a subclass can call, is told, like `// also property: var pr (protected set)`,
-  unless the class is final, which leaves it a `val`.
+  unless the class is final, which leaves it a `val`, also when a public setter is declared after the protected one.
   The property is named like kotlinc names it, like `url` of `getURL()`, or `isActive` of `isActive()`, but none of `get` followed by a digit,
   for a method of a Java class, a JVM-only member of a built-in type, like `getStackTrace()` of `kotlin.Throwable`,
   or a Kotlin function overriding one of them, unlike any other Kotlin function,
@@ -660,6 +661,7 @@ com.example.AnnotationTestClass
   unless the Java method tells it, by an annotation, or by `@NullMarked`, which tells the type parameter it takes too,
   unlike an annotation of the bound, which tells neither it, nor the types nested in the bound, but annotated themselves,
   like `override fun <T : CharSequence> notNull(x: T?)` of `<T extends @NonNull CharSequence> void notNull(T)`,
+  an annotated collection still of either mutability, like `List<List<String>>` of `List<@NonNull List<String>>`,
   so that neither `where T : Comparable<T>?, T : CharSequence?`, nor `two(x: T?)`, overrides the `two(T)` of a marked class,
   while one of another bound is an overload, listed next to the inherited one, also by the subclasses inheriting both,
   like `fun <T : CharSequence> sort(x: T)` next to `fun <T : Comparable<T>> sort(x: T)`,

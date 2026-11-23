@@ -475,12 +475,14 @@ open class OpenAnyBoundedSorter : JavaSortBase() {
 class AnyBoundedSorterSubclass : OpenAnyBoundedSorter()
 
 // An annotation of a bound of a Java method tells the bound itself: the type variable the method takes,
-// and the ones nested in the bound, are still declared of either nullability
+// and the ones nested in the bound, are still declared of either nullability, an annotated collection of either mutability
 class AnnotatedBoundOverride : JavaAnnotatedBoundsBase<String?>() {
     override fun <T : CharSequence> notNull(x: T?) {}
     override fun <T : Comparable<T?>> nested(x: T) {}
     override fun <T : String?> nullable(x: T) {}
     override fun <T : List<String>> listed(x: T) {}
+    override fun <T : List<List<String>>> listedList(x: T) {}
+    override fun <T : Map<String, List<String?>>> mapped(x: T) {}
 }
 
 // A method marked by @NullMarked takes its type variable as given, also in an array of a marked class

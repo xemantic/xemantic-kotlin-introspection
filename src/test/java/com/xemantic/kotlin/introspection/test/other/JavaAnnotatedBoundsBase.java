@@ -22,10 +22,12 @@ import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * A generic Java class of generic methods whose type variables are of annotated bounds: the annotation tells the bound itself,
- * neither the type variable a method takes, nor the ones nested in the bound, which stay platform types.
+ * neither the type variable a method takes, nor the ones nested in the bound, which stay platform types,
+ * and an annotated collection nested in the bound is still of either mutability.
  */
 public class JavaAnnotatedBoundsBase<E> {
 
@@ -39,6 +41,12 @@ public class JavaAnnotatedBoundsBase<E> {
     }
 
     public <T extends List<@NonNull E>> void listed(T x) {
+    }
+
+    public <T extends List<@NonNull List<String>>> void listedList(T x) {
+    }
+
+    public <T extends Map<String, @NonNull List<@Nullable String>>> void mapped(T x) {
     }
 
 }

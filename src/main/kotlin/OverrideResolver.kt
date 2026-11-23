@@ -150,6 +150,8 @@ internal class OverrideResolver(
      * @param unlocatedName the name the Kotlin metadata would refer to this type by, see [Relocation.unlocated],
      *   if it might be relocated, like a Java type argument of a relocated Java supertype, named by its JVM name,
      *   matched by either name, as a type of a package starting like the relocation prefix might not be relocated.
+     * @param isJavaAnnotated whether this is a type coming from Java of the nullability its annotation tells,
+     *   like the nested `List` of a bound `List<@NonNull List<String>>`, still of either mutability and variance, see [typesMatch].
      */
     private data class ClassType(
         val name: String,
@@ -158,7 +160,8 @@ internal class OverrideResolver(
         val outer: ClassType? = null,
         val isJavaPrimitive: Boolean = false,
         val isRaw: Boolean = false,
-        val unlocatedName: String? = null
+        val unlocatedName: String? = null,
+        val isJavaAnnotated: Boolean = false
     ) : MemberType {
         val isFlexible: Boolean get() = nullable == null
     }
@@ -2193,13 +2196,15 @@ internal class OverrideResolver(
     private fun typesMatch(a: MemberType, b: MemberType, relocation: Relocation?, onlyKnownTypes: Boolean): Boolean = when {
         a == UnknownType || b == UnknownType -> !onlyKnownTypes
         a is ClassType && b is ClassType -> {
-            val flexible = a.isFlexible || b.isFlexible
+            val isFlexibleNullability = a.isFlexible || b.isFlexible
+            // a type coming from Java is of either mutability and variance, also annotated
+            val flexible = isFlexibleNullability || a.isJavaAnnotated || b.isJavaAnnotated
             fun name(name: String) = if (flexible) normalizedName(name) else name
             fun namesMatch(a: String?, b: String?) = a != null && b != null && name(a) == name(b)
             val namesMatch = namesMatch(a.name, b.name) || namesMatch(a.unlocatedName, b.name) ||
                 namesMatch(a.name, b.unlocatedName)
             namesMatch &&
-                (flexible || a.nullable == b.nullable) &&
+                (isFlexibleNullability || a.nullable == b.nullable) &&
                 a.arguments.size == b.arguments.size &&
                 a.arguments.zip(b.arguments).withIndex().all { (index, arguments) ->
                     val (x, y) = arguments
@@ -3180,9 +3185,10 @@ internal class OverrideResolver(
         UnknownType -> this
     }
 
+    // this type of the nullability an annotation tells, a platform type still of either mutability, see ClassType.isJavaAnnotated
     private fun MemberType.withTopNullability(isNullable: Boolean): MemberType = when (this) {
         is TypeParameterType -> copy(nullable = isNullable)
-        is ClassType -> copy(nullable = isNullable)
+        is ClassType -> copy(nullable = isNullable, isJavaAnnotated = isJavaAnnotated || isFlexible)
         UnknownType -> this
     }
 
