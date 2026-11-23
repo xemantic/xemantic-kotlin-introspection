@@ -1413,7 +1413,7 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve operator extension of supertype of companion object next to member not operator`() {
-        // UnshadowingCompanionHolder + 1 calls the extension
+        // UnshadowingCompanionHolder + 1 calls the extension, while UnshadowingCompanionHolder.plus(1) calls the member
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.UnshadowingCompanionHolder.plus"
         ) sameAsKotlin """
@@ -1422,7 +1422,7 @@ class KotlinIntrospectorTest {
                 fun plus(other: Int): Int
             }
             // from com.xemantic.kotlin.introspection.test
-            /* called as UnshadowingCompanionHolder.plus(…) */ operator fun UnshadowedSupertype.plus(other: Int): Int
+            /* called as UnshadowingCompanionHolder + … */ operator fun UnshadowedSupertype.plus(other: Int): Int
         """.trimIndent()
     }
 
@@ -2039,13 +2039,15 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve object without extension properties shadowed by synthetic properties of Java getters`() {
-        // SyntheticShadowingObject.title reads the getter, and so does SyntheticShadowingObject.nullableTitle, as its name is never null
+        // SyntheticShadowingObject.title reads the getter, and so does SyntheticShadowingObject.nullableTitle,
+        // while a nullable value of the object, like nullableObject.nullableTitle, reads the extension
         resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticShadowingObject") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.SyntheticShadowingObject [page 1/1]
             object SyntheticShadowingObject : com.xemantic.kotlin.introspection.test.other.JavaSyntheticShadowingBase, SyntheticShadowedSupertype
             // from com.xemantic.kotlin.introspection.test
             val SyntheticShadowedSupertype.active: Boolean
             val SyntheticShadowedSupertype.kotlinTitle: String
+            val SyntheticShadowedSupertype?.nullableTitle: String
             val SyntheticShadowedSupertype.protectedTitle: String
             val SyntheticShadowedSupertype.staticTitle: String
         """.trimIndent()
@@ -2085,19 +2087,22 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should resolve object without extensions on nullable supertype shadowed by more specific ones`() {
-        // SpecificObject.nullableRank and SpecificObject.nullableDescribe() call the ones on SpecificReceiver
+    fun `should resolve object with extensions on nullable supertype next to more specific ones`() {
+        // SpecificObject.nullableRank and SpecificObject.nullableDescribe() call the ones on SpecificReceiver,
+        // while a nullable value of the object, like nullableObject.nullableRank, calls the ones on GeneralReceiver?
         resolver.resolve("com.xemantic.kotlin.introspection.test.SpecificObject") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.SpecificObject [page 1/1]
             object SpecificObject : SpecificReceiver
             // from com.xemantic.kotlin.introspection.test
             val SpecificReceiver.boundedRank: Int
             val SpecificReceiver.nullableRank: Int
+            val GeneralReceiver?.nullableRank: Int
             val SpecificReceiver.rank: Int
             fun SpecificReceiver.describe(): Int
             fun SpecificReceiver.describeNamed(y: Int): Int
             fun GeneralReceiver.describeNamed(x: Int): Int
             fun SpecificReceiver.nullableDescribe(): Int
+            fun GeneralReceiver?.nullableDescribe(): Int
         """.trimIndent()
     }
 
@@ -2143,6 +2148,711 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.test.InfixCompanionHolder.bothWays [page 1/1]
             // from com.xemantic.kotlin.introspection.test
             /* called as InfixCompanionHolder.bothWays(…) */ infix fun InfixCompanionSupertype.bothWays(other: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve getter inherited by companion object from Java class by synthetic property name on class name`() {
+        // SyntheticShadowingCompanionHolder.title reads the getter of the Java supertype of the companion object, not the extension property
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticShadowingCompanionHolder.title") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SyntheticShadowingCompanionHolder.title [page 1/1]
+            companion object : com.xemantic.kotlin.introspection.test.other.JavaSyntheticShadowingBase, SyntheticShadowedSupertype {
+                // inherited from com.xemantic.kotlin.introspection.test.other.JavaSyntheticShadowingBase
+                // also property: val title
+                fun getTitle(): String
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve getter and setter inherited by companion object from Java class by synthetic property name on class name`() {
+        // SyntheticShadowingCompanionHolder.name reads, and assigns, through the accessors of the Java supertype of the companion object
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticShadowingCompanionHolder.name") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SyntheticShadowingCompanionHolder.name [page 1/1]
+            companion object : com.xemantic.kotlin.introspection.test.other.JavaSyntheticShadowingBase, SyntheticShadowedSupertype {
+                // inherited from com.xemantic.kotlin.introspection.test.other.JavaSyntheticShadowingBase
+                // also property: var name
+                fun getName(): String
+                fun setName(arg0: String?)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve function inherited by companion object on class name`() {
+        // InheritingCompanionHolder.inherited() calls the function which the companion object inherits
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritingCompanionHolder.inherited") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritingCompanionHolder.inherited [page 1/1]
+            companion object : InheritingCompanionBase {
+                // inherited from com.xemantic.kotlin.introspection.test.InheritingCompanionBase
+                fun inherited(): Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve property inherited by companion object on class name`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritingCompanionHolder.inheritedProperty") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritingCompanionHolder.inheritedProperty [page 1/1]
+            companion object : InheritingCompanionBase {
+                // inherited from com.xemantic.kotlin.introspection.test.InheritingCompanionBase
+                val inheritedProperty: Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve function inherited by companion object next to declared overload and extension on its supertype`() {
+        // InheritingCompanionHolder.overloaded(), overloaded(1) and overloaded("") call the declared one, the inherited one, and the extension
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritingCompanionHolder.overloaded") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritingCompanionHolder.overloaded [page 1/1]
+            companion object : InheritingCompanionBase {
+                fun overloaded(): Int
+                // inherited from com.xemantic.kotlin.introspection.test.InheritingCompanionBase
+                fun overloaded(x: Int): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            /* called as InheritingCompanionHolder.overloaded(…) */ fun InheritingCompanionBase.overloaded(x: String): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extensions shadowed by members accepting Nothing`() {
+        // each call with an argument of the type of the hidden extension, like nothingShadowing.sink(sinkOfString), calls the member,
+        // as Nothing is a subtype of every type, but not the nullable one of a type which is not nullable, nor as an invariant type argument
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NothingShadowing", pageSize = 20) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NothingShadowing [page 1/1]
+            class NothingShadowing : NothingShadowedSupertype {
+                fun sink(x: NothingSink<Nothing>): Int
+                fun comparable(x: Comparable<Nothing>): Int
+                fun comparableOfTypeParameter(x: Comparable<Nothing>): Int
+                fun nested(x: Comparable<List<Nothing>>): Int
+                fun returningNothing(x: (String) -> Unit): Int
+                fun pair(x: Pair<CharSequence, Comparable<Nothing>>): Int
+                fun listOfNothing(x: List<String>): Int
+                fun nothing(x: String): Int
+                fun nullableNothing(x: String?): Int
+                fun sinkOfNullableNothing(x: NothingSink<Nothing?>): Int
+                fun invariantNothing(x: ProjectedBox<Nothing>): Int
+                fun onlyNull(x: String): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun NothingShadowedSupertype.invariantNothing(x: ProjectedBox<String>): Int
+            fun NothingShadowedSupertype.onlyNull(x: Nothing?): Int
+            fun NothingShadowedSupertype.sinkOfNullableNothing(x: NothingSink<String>): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extensions shadowed by members accepting bounds of star projections`() {
+        // boundedStarShadowing.source(sourceOfAnything) calls the member, as a BoundedSource<*> is a BoundedSource<Any>,
+        // while narrowerSource(sourceOfAnything) calls the extension
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoundedStarShadowing") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedStarShadowing [page 1/1]
+            class BoundedStarShadowing : BoundedStarShadowedSupertype {
+                fun source(x: BoundedSource<Any>): Int
+                fun box(x: BoundedBox<out CharSequence>): Int
+                fun inProjectedBox(x: BoundedBox<out CharSequence>): Int
+                fun narrowerSource(x: BoundedSource<CharSequence>): Int
+                fun narrowerBox(x: BoundedBox<out String>): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun BoundedStarShadowedSupertype.narrowerBox(x: BoundedBox<*>): Int
+            fun BoundedStarShadowedSupertype.narrowerSource(x: BoundedSource<*>): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extensions shadowed by members taking supertypes of function types`() {
+        // functionSupertypeShadowing.function { "" }, or .reference(::describe), call the members,
+        // while .suspendConversion(fun(): String = "") calls the extension, as an anonymous function is not converted to a suspend one,
+        // and .unitFunction(::toString), or .receiverFunction(String::trim), as the reference is coerced to return Unit,
+        // while it is no Function<Unit>, unlike a Function<Any?> of .anyFunction(::toString)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.FunctionSupertypeShadowing", pageSize = 20) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.FunctionSupertypeShadowing [page 1/1]
+            class FunctionSupertypeShadowing : FunctionSupertypeShadowedSupertype {
+                fun function(x: Function<CharSequence>): Int
+                fun starFunction(x: Function<*>): Int
+                fun receiverFunction(x: Function<Unit>): Int
+                fun reference(x: (String) -> CharSequence): Int
+                fun receiverReference(x: String.() -> Unit): Int
+                fun callable(x: KCallable<Unit>): Int
+                fun narrowerFunction(x: Function<String>): Int
+                fun otherReference(x: (Int) -> Unit): Int
+                fun suspendConversion(x: suspend () -> CharSequence): Int
+                fun unitFunction(x: Function<Unit>): Int
+                fun anyFunction(x: Function<Any?>): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun FunctionSupertypeShadowedSupertype.narrowerFunction(x: () -> CharSequence): Int
+            fun FunctionSupertypeShadowedSupertype.otherReference(x: KFunction1<String, Unit>): Int
+            fun FunctionSupertypeShadowedSupertype.receiverFunction(x: String.() -> Unit): Int
+            fun FunctionSupertypeShadowedSupertype.suspendConversion(x: () -> String): Int
+            fun FunctionSupertypeShadowedSupertype.unitFunction(x: () -> Unit): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extensions of type parameters bounded by each other shadowed by members accepting their bounds`() {
+        // boundedTypeParameterShadowing.boundedByOther(listOf("")) calls the member, while .narrower(listOfCharSequences) calls the extension
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoundedTypeParameterShadowing") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoundedTypeParameterShadowing [page 1/1]
+            class BoundedTypeParameterShadowing : BoundedTypeParameterShadowedSupertype {
+                fun boundedByOther(x: Collection<CharSequence>): Int
+                fun boundedByTypeOfOther(x: Collection<Collection<CharSequence>>): Int
+                fun pairBoundedByTypeOfOther(x: Pair<Collection<CharSequence>, Collection<CharSequence>>): Int
+                fun wholeBoundedByOther(x: CharSequence): Int
+                fun narrower(x: Collection<String>): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun <T : CharSequence, U : T> BoundedTypeParameterShadowedSupertype.narrower(x: List<U>): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extensions shadowed by members inferring their type parameters from type arguments`() {
+        // memberTypeParameterShadowing.covariant(listOf("")), or .bounded(""), call the members, inferring U as String,
+        // while each call with an argument of the type of a listed extension, like .boundViolated(listOf(1)), calls the extension,
+        // and so do .boundedSam { }, and .boundedFunction(::toString), converted to the types of the extensions, but not to U
+        resolver.resolve("com.xemantic.kotlin.introspection.test.MemberTypeParameterShadowing", pageSize = 30) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.MemberTypeParameterShadowing [page 1/1]
+            class MemberTypeParameterShadowing : MemberTypeParameterShadowedSupertype {
+                fun <U> covariant(x: Collection<U>): Int
+                fun <U : CharSequence> boundedCovariant(x: Collection<U>): Int
+                fun <U : CharSequence> bounded(x: U): Int
+                fun <U> inProjected(x: ProjectedBox<in U>): Int
+                fun <U> functionParameter(x: (U) -> Unit): Int
+                fun <U> invariant(x: ProjectedBox<U>): Int
+                fun <U> captured(x: ProjectedBox<U>): Int
+                fun <U : CharSequence> boundedContravariant(x: Comparable<U>): Int
+                fun <U> nullable(x: Collection<U?>): Int
+                fun <U : CharSequence> boundViolated(x: Collection<U>): Int
+                fun <U : Any> notNullBoundViolated(x: Collection<U>): Int
+                fun <U> nestedCaptured(x: Collection<ProjectedBox<U>>): Int
+                fun <U> twice(x: (U) -> U): Int
+                fun <U, V : U> boundedByOther(x: Map<U, V>): Int
+                fun <U : CharSequence> nothingInCommon(x: ProjectedBox<in U>): Int
+                fun <U> receiverFunction(x: U.() -> Unit): Int
+                fun <U : java.lang.Runnable> boundedSam(x: U): Int
+                fun <U : () -> Unit> boundedFunction(x: U): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun MemberTypeParameterShadowedSupertype.boundViolated(x: List<Int>): Int
+            fun MemberTypeParameterShadowedSupertype.boundedByOther(x: java.util.HashMap<String, Int>): Int
+            fun MemberTypeParameterShadowedSupertype.boundedFunction(x: () -> Unit): Int
+            fun MemberTypeParameterShadowedSupertype.boundedSam(x: java.lang.Runnable): Int
+            fun MemberTypeParameterShadowedSupertype.nestedCaptured(x: List<ProjectedBox<*>>): Int
+            fun MemberTypeParameterShadowedSupertype.notNullBoundViolated(x: List<String?>): Int
+            fun MemberTypeParameterShadowedSupertype.nothingInCommon(x: ProjectedBox<Int>): Int
+            fun MemberTypeParameterShadowedSupertype.receiverFunction(x: (String) -> Unit): Int
+            fun MemberTypeParameterShadowedSupertype.twice(x: (String) -> Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve generic class without extensions shadowed by members taking its type parameter told by their receivers`() {
+        // classTypeParameterShadowing.typeParameterReceiver(listOf("")) calls the member, whose T is the one of the receiver of the extension,
+        // while .outProjectedReceiver(listOfAnything) calls the extension, inferring its T as a supertype of the one of the class,
+        // and so do .inProjectedFunction { it.length }, and .typeParameter { s -> } on a ClassTypeParameterShadowing<String.() -> Unit>,
+        // as a lambda is typed against the type of the extension, but not against the T of the class,
+        // which .boundedTypeParameter { } never is, T being a CharSequence
+        resolver.resolve("com.xemantic.kotlin.introspection.test.ClassTypeParameterShadowing", pageSize = 30) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ClassTypeParameterShadowing [page 1/1]
+            class ClassTypeParameterShadowing<T> {
+                fun inProjectedReceiver(x: Collection<T>): Int
+                fun typeParameterReceiver(x: Collection<T>): Int
+                fun boundedTypeParameterReceiver(x: Collection<T>): Int
+                fun boundedByTypeParameterReceiver(x: Collection<T>): Int
+                fun contravariant(x: Comparable<T>): Int
+                fun contravariantAny(x: Comparable<T>): Int
+                fun invariant(x: ProjectedBox<T>): Int
+                fun nested(x: T): Int
+                fun outProjectedReceiver(x: Collection<T>): Int
+                fun contravariantInProjectedReceiver(x: Comparable<T>): Int
+                fun nullableTypeParameter(x: T): Int
+                fun starProjectedReceiver(x: Collection<T>): Int
+                fun inProjectedFunction(x: T): Int
+                fun typeParameter(x: T): Int
+                fun boundedTypeParameter(x: T): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun ClassTypeParameterShadowing<in String>.contravariantInProjectedReceiver(x: Comparable<CharSequence>): Int
+            fun ClassTypeParameterShadowing<in (String) -> Unit>.inProjectedFunction(x: (String) -> Unit): Int
+            fun <T> ClassTypeParameterShadowing<T>.nullableTypeParameter(x: T?): Int
+            fun <T> ClassTypeParameterShadowing<out T>.outProjectedReceiver(x: List<T>): Int
+            fun ClassTypeParameterShadowing<*>.starProjectedReceiver(x: List<String>): Int
+            fun <T> ClassTypeParameterShadowing<T>.typeParameter(x: T): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class of two type parameters without extensions shadowed by members taking them told by their receivers`() {
+        // twoClassTypeParametersShadowing.map(mapOf("" to 1)) calls the member, while .swapped(mapOf(1 to "")) calls the extension
+        resolver.resolve("com.xemantic.kotlin.introspection.test.TwoClassTypeParametersShadowing") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.TwoClassTypeParametersShadowing [page 1/1]
+            class TwoClassTypeParametersShadowing<T, U> {
+                fun map(x: Map<T, U>): Int
+                fun sameTypeParameter(x: Map<T, U>): Int
+                fun swapped(x: Map<T, U>): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun <A, B> TwoClassTypeParametersShadowing<B, A>.swapped(x: Map<A, B>): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve final class without extensions on type parameter bounded by it shadowed by its members`() {
+        // pinnedReceiverShadowing.pinned { } calls the member, as T can only be the class,
+        // while .nullableBound(boxOfNullable) calls the extension, inferring T as the nullable class
+        resolver.resolve("com.xemantic.kotlin.introspection.test.PinnedReceiverShadowing") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PinnedReceiverShadowing [page 1/1]
+            class PinnedReceiverShadowing {
+                fun pinned(x: PinnedReceiverShadowing.() -> Unit): Int
+                fun box(x: ProjectedBox<PinnedReceiverShadowing>): Int
+                fun nullableBound(x: ProjectedBox<PinnedReceiverShadowing>): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun <T : PinnedReceiverShadowing?> T.nullableBound(x: ProjectedBox<T>): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve open class with extension on type parameter bounded by it next to its member`() {
+        // openReceiverSubclass.openBox(boxOfSubclass) calls the extension, inferring T as the subclass
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OpenReceiverUnshadowing") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OpenReceiverUnshadowing [page 1/1]
+            open class OpenReceiverUnshadowing {
+                fun openBox(x: ProjectedBox<OpenReceiverUnshadowing>): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun <T : OpenReceiverUnshadowing> T.openBox(x: ProjectedBox<T>): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extensions shadowed by members taking its covariant type parameter in contravariant position`() {
+        // covariantShadowing.contravariant(comparableToCharSequence) calls the member, also on a CovariantShadowing<Nothing>,
+        // on which .covariant(listOf("")) calls the extension
+        resolver.resolve("com.xemantic.kotlin.introspection.test.CovariantShadowing") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.CovariantShadowing [page 1/1]
+            class CovariantShadowing<out T> {
+                fun contravariant(x: Comparable<T>): Int
+                fun functionParameter(x: (T) -> Unit): Int
+                fun covariant(x: Collection<T>): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun CovariantShadowing<String>.covariant(x: List<String>): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extension next to member taking its contravariant type parameter in contravariant position`() {
+        // contravariantUnshadowingOfAny.contravariant(comparableToString) calls the extension, as the member takes a Comparable<Any>,
+        // while .covariant("") calls the member
+        resolver.resolve("com.xemantic.kotlin.introspection.test.ContravariantUnshadowing") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ContravariantUnshadowing [page 1/1]
+            class ContravariantUnshadowing<in T> {
+                fun contravariant(x: Comparable<T>): Int
+                fun covariant(x: T): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun ContravariantUnshadowing<String>.contravariant(x: Comparable<String>): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extensions next to members taking inner class of another outer type`() {
+        // innerShadowing.otherOuter(innerOfOuterOfString) calls the extension, as a ShadowingOuter<String>.Inner
+        // is no ShadowingOuter<CharSequence>.Inner, unlike a ShadowingOuter<out CharSequence>.Inner
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InnerShadowing") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InnerShadowing [page 1/1]
+            class InnerShadowing : InnerShadowedSupertype {
+                fun sameOuter(x: ShadowingOuter<String>.Inner): Int
+                fun projectedOuter(x: ShadowingOuter<out CharSequence>.Inner): Int
+                fun otherOuter(x: ShadowingOuter<CharSequence>.Inner): Int
+                fun listOfOtherOuter(x: List<ShadowingOuter<CharSequence>.Inner>): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun InnerShadowedSupertype.listOfOtherOuter(x: List<ShadowingOuter<String>.Inner>): Int
+            fun InnerShadowedSupertype.otherOuter(x: ShadowingOuter<String>.Inner): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extension next to more specific one taking inner class of another outer type`() {
+        // innerSpecificReceiver.inner(innerOfOuterOfString) calls the one on InnerGeneralReceiver
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InnerSpecificReceiver") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InnerSpecificReceiver [page 1/1]
+            class InnerSpecificReceiver : InnerGeneralReceiver
+            // from com.xemantic.kotlin.introspection.test
+            fun InnerSpecificReceiver.inner(x: ShadowingOuter<CharSequence>.Inner): Int
+            fun InnerGeneralReceiver.inner(x: ShadowingOuter<String>.Inner): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extensions shadowed by its properties and Java getters of invoked types`() {
+        // javaInvokeShapesShadowing.varargTask(), .genericTask(), .got(), .run(), .kotlinSubTask(x = 1) and .genericKotlinTask(1)
+        // invoke the properties, while .gotOf(x = 1) calls the extension, as Kotlin passes no named argument to a Java method,
+        // and so does .otherGenericKotlinTask(1), whose invoke takes a String
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaInvokeShapesShadowing") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaInvokeShapesShadowing [page 1/1]
+            class JavaInvokeShapesShadowing : com.xemantic.kotlin.introspection.test.other.JavaInvokedGetterBase, JavaInvokeShapesShadowedSupertype {
+                val varargTask: com.xemantic.kotlin.introspection.test.other.JavaInvokedVarargTask
+                val genericTask: com.xemantic.kotlin.introspection.test.other.JavaInvokedGenericTask<String>
+                val kotlinSubTask: com.xemantic.kotlin.introspection.test.other.JavaInvokedKotlinSubTask
+                val genericKotlinTask: KotlinInvokedGenericTask<Int>
+                val otherGenericKotlinTask: KotlinInvokedGenericTask<String>
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun JavaInvokeShapesShadowedSupertype.gotOf(x: Int): Int
+            fun JavaInvokeShapesShadowedSupertype.otherGenericKotlinTask(x: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extensions shadowed by members taking more parameters which are optional`() {
+        // optionalParametersShadowing.defaulted(), .variadic() and .trailingDefault(x = 1) call the members,
+        // while .required(), .variadicNamed(x = 1), .trailingLambda { } and .trailingAny { } call the extensions
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OptionalParametersShadowing", pageSize = 20) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OptionalParametersShadowing [page 1/1]
+            class OptionalParametersShadowing : OptionalParametersShadowedSupertype {
+                fun defaulted(x: Int = …): Int
+                fun variadic(vararg x: Int): Int
+                fun trailingDefault(x: Int, more: Int = …): Int
+                fun required(x: Int, more: Int = …): Int
+                fun variadicNamed(vararg x: Int): Int
+                fun trailingLambda(x: () -> Unit, more: Int = …): Int
+                fun trailingAny(x: Any, more: Int = …): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun OptionalParametersShadowedSupertype.required(): Int
+            fun OptionalParametersShadowedSupertype.trailingAny(x: Any): Int
+            fun OptionalParametersShadowedSupertype.trailingLambda(x: () -> Unit): Int
+            fun OptionalParametersShadowedSupertype.variadicNamed(x: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extensions on nullable supertype shadowed by more specific ones on nullable receiver`() {
+        // nullableSpecificShadowing.bothNullable reads the one on NullableSpecificReceiver?, also on a nullable value,
+        // on which .onlyGeneralNullable, .boundedGeneralNullable and .same read the ones on the nullable receivers
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NullableSpecificShadowing", pageSize = 20) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NullableSpecificShadowing [page 1/1]
+            class NullableSpecificShadowing : NullableSpecificReceiver
+            // from com.xemantic.kotlin.introspection.test
+            val NullableSpecificReceiver?.bothNullable: Int
+            val NullableSpecificReceiver.boundedGeneralNullable: Int
+            val <T : NullableGeneralReceiver?> T.boundedGeneralNullable: Int
+            val NullableSpecificReceiver?.boundedNullable: Int
+            val NullableGeneralReceiver?.member: Int
+            val NullableSpecificReceiver.onlyGeneralNullable: Int
+            val NullableGeneralReceiver?.onlyGeneralNullable: Int
+            val NullableSpecificReceiver.same: Int
+            val NullableSpecificReceiver?.same: Int
+            fun NullableSpecificReceiver?.describeNullable(x: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve object with extensions on nullable receivers read on its nullable value`() {
+        // a nullable value of the object, like nullableObject.onlyGeneralNullable, or nullableObject.member, reads the extensions on the nullable
+        // receivers, which NullableSpecificObject.onlyGeneralNullable, and NullableSpecificObject.member, do not
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NullableSpecificObject", pageSize = 20) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NullableSpecificObject [page 1/1]
+            object NullableSpecificObject : NullableSpecificReceiver {
+                val member: Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            val NullableSpecificReceiver?.bothNullable: Int
+            val NullableSpecificReceiver.boundedGeneralNullable: Int
+            val <T : NullableGeneralReceiver?> T.boundedGeneralNullable: Int
+            val NullableSpecificReceiver?.boundedNullable: Int
+            val NullableGeneralReceiver?.member: Int
+            val NullableSpecificReceiver.onlyGeneralNullable: Int
+            val NullableGeneralReceiver?.onlyGeneralNullable: Int
+            val NullableSpecificReceiver.same: Int
+            val NullableSpecificReceiver?.same: Int
+            fun NullableSpecificReceiver?.describeNullable(x: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve extension on nullable receiver of same class as more specific one on class name`() {
+        // NullableSpecificCompanionHolder.same reads the one on NullableSpecificReceiver, as the name of a class is never null
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NullableSpecificCompanionHolder.same") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NullableSpecificCompanionHolder.same [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            /* called as NullableSpecificCompanionHolder.same */ val NullableSpecificReceiver.same: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve extension on type parameter of nullable bound shadowed by more specific one on class name`() {
+        // NullableSpecificCompanionHolder.boundedGeneralNullable reads the one on NullableSpecificReceiver
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NullableSpecificCompanionHolder.boundedGeneralNullable") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NullableSpecificCompanionHolder.boundedGeneralNullable [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            /* called as NullableSpecificCompanionHolder.boundedGeneralNullable */ val NullableSpecificReceiver.boundedGeneralNullable: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should hint infix extension on supertype of companion object as called only infix next to property invoked by operator`() {
+        // InfixMembersCompanionHolder.invoked(1), and .invoked(other = 1), invoke the property, only InfixMembersCompanionHolder invoked 1 calls the extension
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InfixMembersCompanionHolder.invoked") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InfixMembersCompanionHolder.invoked [page 1/1]
+            companion object : InfixCompanionSupertype {
+                val invoked: InfixInvokedTask
+            }
+            // from com.xemantic.kotlin.introspection.test
+            /* called as InfixMembersCompanionHolder invoked … */ infix fun InfixCompanionSupertype.invoked(other: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should hint infix extension on supertype of companion object as called only infix next to member taking one more optional parameter`() {
+        // InfixMembersCompanionHolder.optional(1), and .optional(other = 1), call the member, only InfixMembersCompanionHolder optional 1 calls the extension
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InfixMembersCompanionHolder.optional") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InfixMembersCompanionHolder.optional [page 1/1]
+            companion object : InfixCompanionSupertype {
+                fun optional(other: Int, more: Int = …): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            /* called as InfixMembersCompanionHolder optional … */ infix fun InfixCompanionSupertype.optional(other: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should hint infix extension on supertype of companion object as called on class name next to member taking vararg`() {
+        // InfixMembersCompanionHolder.variadic(other = 1) calls the extension too, as a vararg takes no single named argument
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InfixMembersCompanionHolder.variadic") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InfixMembersCompanionHolder.variadic [page 1/1]
+            companion object : InfixCompanionSupertype {
+                fun variadic(vararg other: Int): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            /* called as InfixMembersCompanionHolder.variadic(…) */ infix fun InfixCompanionSupertype.variadic(other: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should hint infix extension on supertype of companion object as called on class name next to property of function type`() {
+        // InfixMembersCompanionHolder.functionTyped(other = 1) calls the extension too, as a function type takes no named argument
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InfixMembersCompanionHolder.functionTyped") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InfixMembersCompanionHolder.functionTyped [page 1/1]
+            companion object : InfixCompanionSupertype {
+                val functionTyped: (Int) -> Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            /* called as InfixMembersCompanionHolder.functionTyped(…) */ infix fun InfixCompanionSupertype.functionTyped(other: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should hint operator extension plus on supertype of companion object as called only as operator next to member which is no operator`() {
+        // OperatorCompanionHolder.plus(1) calls the member, only the operator form calls the extension
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OperatorCompanionHolder.plus") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OperatorCompanionHolder.plus [page 1/1]
+            companion object : OperatorCompanionSupertype {
+                fun plus(other: Int): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            /* called as OperatorCompanionHolder + … */ operator fun OperatorCompanionSupertype.plus(other: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should hint operator extension get on supertype of companion object as called only as operator next to member which is no operator`() {
+        // OperatorCompanionHolder.get(1) calls the member, only the operator form calls the extension
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OperatorCompanionHolder.get") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OperatorCompanionHolder.get [page 1/1]
+            companion object : OperatorCompanionSupertype {
+                fun get(index: Int): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            /* called as OperatorCompanionHolder[…] */ operator fun OperatorCompanionSupertype.get(index: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should hint operator extension contains on supertype of companion object as called only as operator next to member which is no operator`() {
+        // OperatorCompanionHolder.contains(1) calls the member, only the operator form calls the extension
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OperatorCompanionHolder.contains") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OperatorCompanionHolder.contains [page 1/1]
+            companion object : OperatorCompanionSupertype {
+                fun contains(other: Int): Boolean
+            }
+            // from com.xemantic.kotlin.introspection.test
+            /* called as … in OperatorCompanionHolder */ operator fun OperatorCompanionSupertype.contains(other: Int): Boolean
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should hint operator extension unaryMinus on supertype of companion object as called only as operator next to member which is no operator`() {
+        // OperatorCompanionHolder.unaryMinus() calls the member, only the operator form calls the extension
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OperatorCompanionHolder.unaryMinus") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OperatorCompanionHolder.unaryMinus [page 1/1]
+            companion object : OperatorCompanionSupertype {
+                fun unaryMinus(): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            /* called as -OperatorCompanionHolder */ operator fun OperatorCompanionSupertype.unaryMinus(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should hint operator extension invoke on supertype of companion object as called only as operator next to member which is no operator`() {
+        // OperatorCompanionHolder.invoke(1) calls the member, only the operator form calls the extension
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OperatorCompanionHolder.invoke") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OperatorCompanionHolder.invoke [page 1/1]
+            companion object : OperatorCompanionSupertype {
+                fun invoke(other: Int): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            /* called as OperatorCompanionHolder(…) */ operator fun OperatorCompanionSupertype.invoke(other: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should hint operator extension rangeTo on supertype of companion object as called only as operator next to member which is no operator`() {
+        // OperatorCompanionHolder.rangeTo(1) calls the member, only the operator form calls the extension
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OperatorCompanionHolder.rangeTo") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OperatorCompanionHolder.rangeTo [page 1/1]
+            companion object : OperatorCompanionSupertype {
+                fun rangeTo(other: Int): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            /* called as OperatorCompanionHolder..… */ operator fun OperatorCompanionSupertype.rangeTo(other: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should hint operator extension on supertype of companion object as called on class name without member of its name`() {
+        // both OperatorCompanionHolder - 1 and OperatorCompanionHolder.minus(1) call the extension
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OperatorCompanionHolder.minus") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OperatorCompanionHolder.minus [page 1/1]
+            // from com.xemantic.kotlin.introspection.test
+            /* called as OperatorCompanionHolder.minus(…) */ operator fun OperatorCompanionSupertype.minus(other: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should hint operator extension inc on supertype of companion object by its name, as it has no operator form on class name`() {
+        // the name of a class cannot be assigned, so OperatorCompanionHolder++ does not compile, and OperatorCompanionHolder.inc() calls the member:
+        // no call reaches the extension, yet it is listed, hinted by its name, like the other operators of no form on the name of a class
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OperatorCompanionHolder.inc") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OperatorCompanionHolder.inc [page 1/1]
+            companion object : OperatorCompanionSupertype {
+                fun inc(): OperatorCompanionSupertype
+            }
+            // from com.xemantic.kotlin.introspection.test
+            /* called as OperatorCompanionHolder.inc() */ operator fun OperatorCompanionSupertype.inc(): OperatorCompanionSupertype
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should hint operator extension invoke on supertype of companion object by its name next to constructor taking as many arguments`() {
+        // OperatorConstructedCompanionHolder(1) calls the constructor, and OperatorConstructedCompanionHolder.invoke(1) the member:
+        // no call reaches the extension, yet it is listed, hinted by its name, as the constructors are told only by the count of their parameters
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OperatorConstructedCompanionHolder.invoke") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OperatorConstructedCompanionHolder.invoke [page 1/1]
+            companion object : OperatorCompanionSupertype {
+                fun invoke(other: Int): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            /* called as OperatorConstructedCompanionHolder.invoke(…) */ operator fun OperatorCompanionSupertype.invoke(other: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should hint infix operator extension plus on supertype of companion object as called only infix next to operator member not infix`() {
+        // both InfixOperatorNextToOperatorHolder + 1 and .plus(1) call the member, only InfixOperatorNextToOperatorHolder plus 1 calls the extension
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InfixOperatorNextToOperatorHolder.plus"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InfixOperatorNextToOperatorHolder.plus [page 1/1]
+            companion object : InfixOperatorCompanionSupertype {
+                operator fun plus(other: Int): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            /* called as InfixOperatorNextToOperatorHolder plus … */ infix operator fun InfixOperatorCompanionSupertype.plus(other: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should hint infix operator extension get on supertype of companion object as called only infix next to operator member not infix`() {
+        // both InfixOperatorNextToOperatorHolder[1] and .get(1) call the member, only InfixOperatorNextToOperatorHolder get 1 calls the extension
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InfixOperatorNextToOperatorHolder.get"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InfixOperatorNextToOperatorHolder.get [page 1/1]
+            companion object : InfixOperatorCompanionSupertype {
+                operator fun get(index: Int): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            /* called as InfixOperatorNextToOperatorHolder get … */ infix operator fun InfixOperatorCompanionSupertype.get(index: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should hint infix operator extension invoke on supertype of companion object as called only infix next to operator member not infix`() {
+        // both InfixOperatorNextToOperatorHolder(1) and .invoke(1) call the member, only InfixOperatorNextToOperatorHolder invoke 1 calls the extension
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InfixOperatorNextToOperatorHolder.invoke"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InfixOperatorNextToOperatorHolder.invoke [page 1/1]
+            companion object : InfixOperatorCompanionSupertype {
+                operator fun invoke(other: Int): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            /* called as InfixOperatorNextToOperatorHolder invoke … */ infix operator fun InfixOperatorCompanionSupertype.invoke(other: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should hint infix operator extension on supertype of companion object as called only infix next to inherited operator member not infix`() {
+        // both InfixOperatorNextToInheritedOperatorHolder + 1 and .plus(1) call the inherited member, only the infix call the extension
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InfixOperatorNextToInheritedOperatorHolder.plus"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InfixOperatorNextToInheritedOperatorHolder.plus [page 1/1]
+            companion object : InfixOperatorBase, InfixOperatorCompanionSupertype {
+                // inherited from com.xemantic.kotlin.introspection.test.InfixOperatorBase
+                operator fun plus(other: Int): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            /* called as InfixOperatorNextToInheritedOperatorHolder plus … */ infix operator fun InfixOperatorCompanionSupertype.plus(other: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should hint infix operator extension on supertype of companion object as called as operator next to infix member which is no operator`() {
+        // both InfixOperatorNextToInfixHolder plus 1 and .plus(1) call the member, only InfixOperatorNextToInfixHolder + 1 calls the extension
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InfixOperatorNextToInfixHolder.plus"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InfixOperatorNextToInfixHolder.plus [page 1/1]
+            companion object : InfixOperatorCompanionSupertype {
+                infix fun plus(other: Int): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            /* called as InfixOperatorNextToInfixHolder + … */ infix operator fun InfixOperatorCompanionSupertype.plus(other: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should hint infix operator extension on supertype of companion object as called as operator next to member neither infix nor operator`() {
+        // InfixOperatorNextToNeitherHolder.plus(1) calls the member, both InfixOperatorNextToNeitherHolder + 1 and plus 1 call the extension
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InfixOperatorNextToNeitherHolder.plus"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InfixOperatorNextToNeitherHolder.plus [page 1/1]
+            companion object : InfixOperatorCompanionSupertype {
+                fun plus(other: Int): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            /* called as InfixOperatorNextToNeitherHolder + … */ infix operator fun InfixOperatorCompanionSupertype.plus(other: Int): Int
         """.trimIndent()
     }
 
@@ -6173,7 +6883,7 @@ class KotlinIntrospectorTest {
         resolver.resolve("com.xemantic.kotlin.introspection.test.GenericJavaPutImplementation.put") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.GenericJavaPutImplementation.put [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.other.JavaGenericPutImplementation
-            override fun put(arg0: Int?): String
+            override fun put(t: Int?): String
         """.trimIndent()
     }
 
@@ -6184,7 +6894,7 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.test.GenericAndPrimitiveJavaPutImplementation.put [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.other.JavaGenericAndPrimitivePutImplementation
             open fun put(arg0: Int): String
-            override fun put(arg0: Int?): String
+            override fun put(t: Int?): String
         """.trimIndent()
     }
 
@@ -6300,6 +7010,191 @@ class KotlinIntrospectorTest {
             open fun put(arg0: Int?): String
             // inherited from com.xemantic.kotlin.introspection.test.GenericPut
             open fun put(t: Int): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking boxed type merged with Kotlin generic one given boxed type by Java interface once`() {
+        // both take Int!, one member for kotlinc, so that an empty concrete subclass compiles, and so does put(null)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaIntegerPutInterfaceJoin.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaIntegerPutInterfaceJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.GenericPut
+            open fun put(t: Int?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking boxed type annotated not null merged with Kotlin generic one given boxed type by Java interface once`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NotNullBoxedJavaIntegerPutInterfaceJoin.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NotNullBoxedJavaIntegerPutInterfaceJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.GenericPut
+            open fun put(t: Int?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking boxed type implementing Kotlin generic one given boxed type by Java interface declared before Kotlin one giving primitive type`() {
+        // put(Integer) overrides the put(t: T) given Integer by the Java interface, declared first, and takes the Int given by IntPut,
+        // so that an empty concrete subclass compiles, while put(null) does not
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaIntegerAndIntPutImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaIntegerAndIntPutImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.GenericPut
+            open fun put(t: Int): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking primitive type next to Kotlin generic one given boxed type annotated not null by Java interface`() {
+        // put(int) does not implement the put(t: T) of GenericPut<@NotNull Integer>, taking Int, so that put(null) does not compile,
+        // while a concrete subclass has to implement it
+        resolver.resolve("com.xemantic.kotlin.introspection.test.PrimitiveJavaNotNullIntegerPutImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PrimitiveJavaNotNullIntegerPutImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaPrimitiveNotNullIntegerPut
+            open fun put(arg0: Int): String
+            // inherited from com.xemantic.kotlin.introspection.test.GenericPut
+            fun put(t: Int): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking boxed type merged with Kotlin generic one given boxed type annotated not null by Java interface once`() {
+        // one member for kotlinc, taking Int, so that an empty concrete subclass compiles, while put(null) does not
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaNotNullIntegerPutInterfaceJoin.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaNotNullIntegerPutInterfaceJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.GenericPut
+            open fun put(t: Int): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking boxed type next to member of MutableList given primitive type by Kotlin superclass`() {
+        // set(int, Integer) does not override the set(index: Int, element: E) given Int by IntMutableList, so it takes Int!,
+        // and set(0, null) compiles, while a concrete subclass has to implement set(index: Int, element: Int)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaIntMutableListImpl.set") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaIntMutableListImpl.set [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedIntMutableList
+            open operator fun set(arg0: Int, arg1: Int?): Int
+            // inherited from kotlin.collections.AbstractMutableList
+            abstract override operator fun set(index: Int, element: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java members taking boxed type next to members of MutableList given primitive type by Kotlin superclass`() {
+        // add(Integer) stays apart from the add(element: Int) which java.util.AbstractList implements
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaIntMutableListImpl.add") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaIntMutableListImpl.add [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedIntMutableList
+            open fun add(arg0: Int?): Boolean
+            open fun add(arg0: Int, arg1: Int?)
+            // inherited from kotlin.collections.AbstractMutableList
+            abstract override fun add(index: Int, element: Int)
+            // inherited from kotlin.collections.MutableList
+            open override fun add(element: Int): Boolean
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking primitive type implementing Kotlin generic one given primitive type by Kotlin interface`() {
+        // put(int) implements the put(t: T) given Int by IntPut, so that an empty concrete subclass compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.PrimitiveJavaIntPutImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PrimitiveJavaIntPutImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.GenericPut
+            open fun put(t: Int): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking boxed type next to Kotlin generic one given primitive type by Kotlin interface and other type by Java`() {
+        // put(Integer, String) does not implement the put(k: K, v: V) given Int by MidPut2, though the String is given by the Java class,
+        // so that a concrete subclass has to implement it, while the abstract member is not listed as kotlinc has it yet,
+        // put(k: Int, v: String!), rejecting put(null, ""): the Int given by MidPut2 is still taken for a platform type,
+        // like the String given by the Java class
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaMidPut2Impl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaMidPut2Impl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedMidPut2
+            open fun put(arg0: Int?, arg1: String?): String
+            // inherited from com.xemantic.kotlin.introspection.test.Put2
+            fun put(k: Int?, v: String?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking boxed type as taking platform type next to Kotlin generic one given primitive type by Kotlin interface declared before the generic one given boxed type`() {
+        // the first path to GenericPut, depth-first, is through IntPut, giving Int, which put(Integer) does not implement,
+        // so that put(null) compiles, while the abstract put(t: Int) a concrete subclass has to implement is not listed yet,
+        // as the override resolver still takes the method for an override by the Integer the class gives itself
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaIntAndIntegerPutImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaIntAndIntegerPutImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedIntAndIntegerPut
+            override fun put(arg0: Int?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking boxed type implementing Kotlin generic one given boxed type through Java superclass before Kotlin interface giving primitive type`() {
+        // the first path to GenericPut, depth-first, is through the superclass, giving Integer, so that put(Integer) implements put(t: T),
+        // taking the Int given by IntPut: an empty concrete subclass compiles, while put(null) does not
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaIntPutOverIntegerBaseImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaIntPutOverIntegerBaseImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedIntPutOverIntegerBase
+            open fun put(t: Int): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking boxed type annotated nullable next to Kotlin generic one given boxed type annotated not null by Java interface`() {
+        // Int? and Int do not agree, so the members stay apart: put(null) compiles, while a concrete subclass has to implement put(t: Int)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NullableBoxedJavaNotNullIntegerPutInterfaceJoin.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NullableBoxedJavaNotNullIntegerPutInterfaceJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNullableBoxedPut
+            open fun put(arg0: Int?): String
+            // inherited from com.xemantic.kotlin.introspection.test.GenericPut
+            fun put(t: Int): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking boxed type overriding member of JDK collection given primitive type by Kotlin superclass once`() {
+        // set(int, Integer) overrides the set(int, E) of java.util.ArrayList, taking the Int given by IntArrayList, so that set(0, null) does not compile
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaIntArrayListImpl.set") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaIntArrayListImpl.set [page 1/1]
+            // inherited from kotlin.collections.MutableList
+            open operator fun set(index: Int, element: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java members taking boxed type overriding members of JDK collection given primitive type by Kotlin superclass once`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaIntArrayListImpl.add") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaIntArrayListImpl.add [page 1/1]
+            // inherited from kotlin.collections.MutableList
+            open override fun add(element: Int): Boolean
+            open fun add(index: Int, element: Int)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking boxed type next to Kotlin generic one given primitive type by Kotlin interface named before Java superclass by Kotlin class`() {
+        // the first path to GenericPut is through IntPut, which the Kotlin class names before its Java superclass, giving Int,
+        // which put(Integer) does not implement, so that put(null) compiles, while a concrete subclass has to implement put(t: Int)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaPutOverIntPutBeforeIntegerBaseImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaPutOverIntPutBeforeIntegerBaseImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOverIntPutBeforeIntegerBase
+            open fun put(arg0: Int?): String
+            // inherited from com.xemantic.kotlin.introspection.test.GenericPut
+            fun put(t: Int): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking boxed type implementing Kotlin generic one given boxed type by Java superclass named before Kotlin interface by Kotlin class`() {
+        // the first path to GenericPut is through the Java superclass, giving Integer, so that put(Integer) implements put(t: T),
+        // and put(null) compiles, named by the member it implements, as put(t = null) compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaPutOverIntegerBaseBeforeIntPutImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaPutOverIntegerBaseBeforeIntPutImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOverIntegerBaseBeforeIntPut
+            open fun put(t: Int?): String
         """.trimIndent()
     }
 
@@ -19337,6 +20232,272 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve abstract member of internal generic class next to Java member taking primitive type`() {
+        // put(int) does not implement the put(t: T) of InternalGenericPut<Integer>, taking Int!, so that put(null) compiles,
+        // while a concrete subclass has to implement it
+        resolver.resolve("com.xemantic.kotlin.introspection.test.PrimitiveJavaInternalIntegerPutImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PrimitiveJavaInternalIntegerPutImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaPrimitiveInternalIntegerPut
+            open fun put(arg0: Int): Int
+            abstract fun put(t: Int?): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve abstract member of internal generic class merged with default Java member taking boxed type once`() {
+        // the default put(Integer) of the Java interface does not implement the abstract put(t: T) of the internal class,
+        // which wins over it, like the one of a public class: one abstract member for kotlinc, naming its argument t
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaInternalIntegerPutWithDefaultBoxedImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaInternalIntegerPutWithDefaultBoxedImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaInternalIntegerPutWithDefaultBoxed
+            abstract fun put(t: Int?): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve abstract member of internal generic class merged with abstract Java member of interface once`() {
+        // one abstract member for kotlinc, which a single override implements, naming its argument t
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaInternalStringPutWithAbstractImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaInternalStringPutWithAbstractImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaInternalStringPutWithAbstract
+            abstract fun put(t: String?): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve open member of internal generic class implementing abstract Java member of interface taking boxed type`() {
+        // the put(t: T) of InternalOpenPut<Integer> implements the put(Integer) of the Java interface, one member for kotlinc,
+        // the one of the class, so that a concrete subclass compiles, and put(t = 1) names its argument
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaInternalOpenIntegerPutWithAbstractBoxedImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaInternalOpenIntegerPutWithAbstractBoxedImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaInternalOpenIntegerPutWithAbstractBoxed
+            open fun put(t: Int?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking boxed type overriding member of internal generic class given boxed type annotated nullable`() {
+        // the @Nullable Integer the Java class gives is no platform type, but Int?, so that put(null) compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaPutOverInternalNullableIntegerImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaPutOverInternalNullableIntegerImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOverInternalNullableInteger
+            override fun put(t: Int?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin generic member given boxed type annotated nullable by Java superclass declared before Java interface giving boxed type`() {
+        // the first path to GenericPut gives Int?, not Int, so that put(null) compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaNullableIntegerPutBaseBeforeIntegerPutJoin.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaNullableIntegerPutBaseBeforeIntegerPutJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.GenericPut
+            fun put(t: Int?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve abstract member of internal generic class declared before Kotlin generic one given boxed type annotated not null as taking platform type`() {
+        // the put(t: T) of the internal class, given Integer, is declared first, and wins over the one of GenericPut<@NotNull Integer>:
+        // one abstract member taking Int!, so that put(t = null) compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaInternalIntegerPutWithNotNullGenericPutImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaInternalIntegerPutWithNotNullGenericPutImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaInternalIntegerPutWithNotNullGenericPut
+            abstract fun put(t: Int?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve open member of internal generic class declared before Kotlin generic one given String annotated not null as taking platform type`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaInternalOpenStringPutWithNotNullGenericPutImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaInternalOpenStringPutWithNotNullGenericPutImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaInternalOpenStringPutWithNotNullGenericPut
+            open fun put(t: String?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve abstract member of internal generic class joined with Kotlin generic one given boxed type annotated not null as taking platform type`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaInternalIntegerPutBaseNotNullIntegerJoin.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaInternalIntegerPutBaseNotNullIntegerJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaInternalIntegerPutBase
+            abstract fun put(t: Int?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member overriding member of internal generic class joined with Kotlin generic one given boxed type annotated not null as taking platform type`() {
+        // put(Integer), declared first, takes Int!, named by the Kotlin members: put(t = null) compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaPutOverInternalIntegerNotNullIntegerJoin.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaPutOverInternalIntegerNotNullIntegerJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOverInternalInteger
+            override fun put(t: Int?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member overriding member of internal generic class next to Kotlin generic ones given boxed type annotated nullable and boxed type once`() {
+        // one member for kotlinc, named by the Kotlin members: an empty concrete subclass and put(t = null) compile
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaPutOverInternalIntegerNullableAndDefaultPutImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaPutOverInternalIntegerNullableAndDefaultPutImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOverInternalInteger
+            override fun put(t: Int?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member of class merged with Java one of interface and Kotlin generic one given by Java interface once`() {
+        // three members merged, of which one is listed, named by the Kotlin member: accept(t = null) compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaStringAcceptorInterfaceGenericAcceptorJoin.accept") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaStringAcceptorInterfaceGenericAcceptorJoin.accept [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaStringAcceptor
+            open fun accept(t: String?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking boxed type below Kotlin class joining Kotlin generic one given boxed and primitive type with Java one taking primitive type`() {
+        // put(Integer) implements the put(t: T) of the path declared first, given Integer by Java, taking Int!, and named by it,
+        // so that put(t = null) compiles, not the put(Int) which put(int) is called in place of, left to a concrete subclass
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaPutBelowIntegerPutBaseIntPutPrimitiveJoinImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaPutBelowIntegerPutBaseIntPutPrimitiveJoinImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedPutBelowIntegerPutBaseIntPutPrimitiveJoin
+            open fun put(t: Int?): String
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaPrimitivePutInterface
+            fun put(arg0: Int): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin generic member returning less specific type given boxed type by Java next to one given nullable type implemented by Java member`() {
+        // the put(t: T) of GenericCharSequencePut<Integer> stays abstract, as a concrete subclass has to implement it
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NotNullBoxedJavaPutNullableIntPutCharSequencePutJoin.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NotNullBoxedJavaPutNullableIntPutCharSequencePutJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.GenericPut
+            open fun put(t: Int?): String
+            // inherited from com.xemantic.kotlin.introspection.test.GenericCharSequencePut
+            fun put(t: Int?): CharSequence
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking primitive type below Kotlin class joining member of internal generic class with one given primitive type once`() {
+        // put(int) implements the one member of the Kotlin class, taking Int, so that an empty concrete subclass compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.PrimitiveJavaPutBelowInternalCharSequencePutIntDefaultPutJoinImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.PrimitiveJavaPutBelowInternalCharSequencePutIntDefaultPutJoinImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.GenericDefaultPut
+            open fun put(t: Int): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member of interface merged with member of internal generic class returning less specific type as named by it`() {
+        // the method of the Java interface, returning String, is listed, named by the Kotlin member: put(t = 1) compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaInternalIntegerCharSequencePutWithAbstractBoxedImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaInternalIntegerCharSequencePutWithAbstractBoxedImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedPutInterface
+            fun put(t: Int?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking boxed type below Kotlin class joining member given primitive type with one given boxed type annotated not null`() {
+        // the Kotlin class has one member taking Int, which put(Integer) does not override, so that put(null) compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaPutBelowIntDefaultPutNotNullIntegerJoinImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaPutBelowIntDefaultPutNotNullIntegerJoinImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedPutBelowIntDefaultPutNotNullIntegerJoin
+            override fun put(arg0: Int?): String
+            // inherited from com.xemantic.kotlin.introspection.test.GenericDefaultPut
+            open fun put(t: Int): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking boxed type next to Kotlin generic one given boxed type by Java interface and primitive type by the class itself`() {
+        // put(Integer) does not implement the put(t: T) the class gives Int itself, which a concrete subclass has to implement,
+        // while kotlinc has it as put(t: Int), listed as taking the platform type of the path declared first yet
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaPutIntegerPutInterfaceIntPutJoin.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaPutIntegerPutInterfaceIntPutJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedPut
+            open fun put(arg0: Int?): String
+            // inherited from com.xemantic.kotlin.introspection.test.GenericPut
+            fun put(t: Int?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of generic class merged with Kotlin generic one given boxed type annotated nullable and default Java member once`() {
+        // Int! and Int? agree: one open member, so that an empty concrete subclass compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaOpenIntegerPutWithNullableGenericPutAndDefaultImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaOpenIntegerPutWithNullableGenericPutAndDefaultImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.OpenGenericPut
+            open fun put(t: Int?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking boxed type implementing Kotlin generic one given boxed type annotated not null and nullable as taking platform type`() {
+        // the type arguments disagree, so that put(Integer) takes Int!, and put(t = null) compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaPutOfNotNullAndNullableIntegerPutImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaPutOfNotNullAndNullableIntegerPutImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOfNotNullAndNullableIntegerPut
+            override fun put(t: Int?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve open member of internal generic class next to abstract Java member of interface taking primitive type`() {
+        // the put(t: T) of InternalOpenPut<Integer>, taking Int!, does not implement the put(int) of the Java interface,
+        // which a concrete subclass has to implement
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaInternalOpenIntegerPutWithAbstractPrimitiveImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaInternalOpenIntegerPutWithAbstractPrimitiveImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaInternalOpenIntegerPutWithAbstractPrimitive
+            open fun put(t: Int?): String
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaPrimitivePutInterface
+            fun put(arg0: Int): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve abstract member of internal generic class merged with default Java member taking String once`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaInternalStringPutWithDefaultImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaInternalStringPutWithDefaultImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaInternalStringPutWithDefault
+            abstract fun put(t: String?): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve abstract member of internal generic class next to default Java member taking primitive type`() {
+        // the default put(int) of the Java interface is a member of its own, of a body
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaInternalIntegerPutWithDefaultPrimitiveImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaInternalIntegerPutWithDefaultPrimitiveImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaInternalIntegerPutWithDefaultPrimitive
+            abstract fun put(t: Int?): Int
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaDefaultPrimitivePut
+            open fun put(arg0: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve abstract member of internal generic interface implemented by default Java member taking boxed type as open`() {
+        // of the members of the interfaces the one of a body implements the abstract one, named by the Kotlin member
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaInternalIntegerPutFaceWithDefaultBoxed.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaInternalIntegerPutFaceWithDefaultBoxed.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaInternalIntegerPutFace
+            open fun put(t: Int?): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of internal generic interface implementing abstract Java member of interface taking boxed type as open`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaInternalOpenIntegerPutFaceWithAbstractBoxed.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaInternalOpenIntegerPutFaceWithAbstractBoxed.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaInternalOpenIntegerPutFace
+            open fun put(t: Int?): String
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve member of interface merged with abstract member of internal class left unimplemented by Java class once`() {
         // the abstract member of the interface stands for the one of HiddenMergedInternalAbstract, merged with it
         resolver.resolve(
@@ -19731,7 +20892,7 @@ class KotlinIntrospectorTest {
         resolver.resolve("com.xemantic.kotlin.introspection.test.PrimitiveAndBoxedJavaHiddenPut.put") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.PrimitiveAndBoxedJavaHiddenPut.put [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.other.JavaPrimitiveAndBoxedHiddenPut
-            override fun put(arg0: Int): String
+            override fun put(key: Int): String
             open fun put(arg0: Int?): String
         """.trimIndent()
     }
