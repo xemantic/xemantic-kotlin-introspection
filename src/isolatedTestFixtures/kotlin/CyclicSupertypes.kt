@@ -29,3 +29,13 @@ interface CyclicSecond {
 }
 
 abstract class CyclicLeaf : CyclicFirst
+
+interface CyclicOverloadBase {
+    fun f(x: Int)
+}
+
+interface CyclicOverloadMid : CyclicOverloadBase {
+    fun f(x: String)
+}
+
+abstract class CyclicOverloadLeaf : CyclicOverloadMid

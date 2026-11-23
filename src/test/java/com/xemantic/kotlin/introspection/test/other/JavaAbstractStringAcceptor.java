@@ -19,13 +19,10 @@
 package com.xemantic.kotlin.introspection.test.other;
 
 /**
- * Takes a {@code String}, the platform type {@code String!} in Kotlin, like {@code java.util.function.Predicate<String>},
- * which it does not implement.
+ * Declares an abstract {@code accept(String)}, which no body of an interface implements for a Kotlin subclass.
  */
-public class JavaStringTester {
+public abstract class JavaAbstractStringAcceptor {
 
-    public boolean test(String value) {
-        return true;
-    }
+    public abstract void accept(String value);
 
 }

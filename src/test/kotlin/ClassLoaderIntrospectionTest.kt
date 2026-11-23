@@ -3121,6 +3121,28 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should resolve overloads inherited through cyclic supertypes`() {
+        // given
+        fun type(name: String) = KmType().apply { classifier = KmClassifier.Class("com/xemantic/kotlin/introspection/isolated/$name") }
+        val root = isolatedTestFixturesCopy("cyclicOverloads") { fileName, bytes ->
+            if (fileName == "CyclicOverloadBase.class") withSupertypesInMetadata(bytes, type("CyclicOverloadMid")) else bytes
+        }
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.CyclicOverloadLeaf.f")
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.CyclicOverloadLeaf.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.isolated.CyclicOverloadMid
+            fun f(x: String)
+            // inherited from com.xemantic.kotlin.introspection.isolated.CyclicOverloadBase
+            fun f(x: Int)
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve entries of enum class whose metadata does not tell them`() {
         // given
         // like an enum class compiled before Kotlin 1.9, for which kotlinc still resolves LegacyEntriesEnum.entries

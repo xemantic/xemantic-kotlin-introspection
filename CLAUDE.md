@@ -168,11 +168,14 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 
 - kotlinc merges the members the direct supertypes contribute around the first one, so their order tells the listing:
   `X : JImpl<String>(), Function<String, String>, K` (`K` an `apply(x: String?)`) has one `apply`, as the `String!` of `JImpl` is merged with both,
-  while `X : Function<String, String>, K, JImpl<String>()` has two, as K2 enhances the JDK method to take `String`, see `isGivenUnlike` —
-  and a Kotlin class joining some of them below contributes every member it keeps apart, each by the one it picks, see `groupedByJoins`,
-  while a Java class joining them merges them all.
+  while `X : Function<String, String>, K, JImpl<String>()` has two, as K2 enhances the JDK method to take `String` —
+  and a Kotlin class joining some of them below contributes every member it keeps apart, each by the one it picks,
+  while a Java class joining them from different supertypes merges them all.
+  `inheritedCandidates` merges the candidates of all the supertypes flatly, one per class, which tells neither:
+  modelling it (grouping by the joining classes, types of JDK interfaces merged by their nullability) was tried in #339
+  and given back, as each rule regressed neighbouring shapes — a class reached through several supertypes has one candidate only.
   A sweep of joins needs every order of the supertypes, the joins named through Kotlin and Java classes next to other supertypes,
-  and empty Kotlin subclasses of the joins: each of these regressed on its own (#339).
+  Kotlin classes one to three levels below the joins, and members with bodies: each of these regressed on its own.
 
 - A class file of a Kotlin collection class may declare a `toArray` no metadata declares, see `overridingBelow`.
 
