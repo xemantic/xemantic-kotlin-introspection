@@ -199,10 +199,13 @@ com.example.AnnotationTestClass
   A member of a Kotlin supertype which is not part of the API, like an internal class, public on the JVM,
   which a Java class extending it does not override, is inherited from that Java class,
   or from the nearest public subclass of it, when the Java class is package-private,
+  or the nearest public interface extending it, when a package-private Java interface extends an internal one,
   as `abstract`, when a concrete subclass has to implement it,
   like `abstract fun put(k: Int?): Int` next to the `open fun put(arg0: Int): Int` the Java class declares, a JVM method of its own,
   or else `open`, or final, like `fun h(): Int`,
   and so through a Kotlin class exposing such a supertype, which only a suppressed `EXPOSED_SUPER_CLASS` error allows.
+  The method of a Java class merged with the member of an internal interface keeps its own modality,
+  as the class wins: final, or abstract, also next to a member of a body.
   The types of a Java method are nullable, or not, as the compiler reads its nullability annotations,
   like `@NotNull` of JetBrains, or `@Nullable`, and `@NullMarked`, of JSpecify,
   also the ones of the methods it overrides,

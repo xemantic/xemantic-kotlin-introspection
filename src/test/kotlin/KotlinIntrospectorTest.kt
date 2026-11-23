@@ -20236,6 +20236,45 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve final method of Java superclass merged with member of a body of internal interface as final`() {
+        // the class wins, so that kotlinc rejects an override of f() in a subclass, though the f() of InternalDefaultFG is open
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaFinalFAbstractGImplementingInternalDefaultsSub.f") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaFinalFAbstractGImplementingInternalDefaultsSub.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaFinalFAbstractG
+            fun f(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve abstract method of Java superclass merged with member of a body of internal interface as abstract`() {
+        // the class wins, so that a concrete subclass has to implement g(), though InternalDefaultFG gives it a body
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaFinalFAbstractGImplementingInternalDefaultsSub.g") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaFinalFAbstractGImplementingInternalDefaultsSub.g [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaFinalFAbstractG
+            abstract fun g(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve abstract member of internal interface reached through package-private Java interface as inherited from public one`() {
+        // kotlinc rejects naming JavaPackagePrivateFaceExtendingInternal: it is package-private
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaPublicFaceBelowPackagePrivateSub.a3") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaPublicFaceBelowPackagePrivateSub.a3 [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaPublicFaceBelowPackagePrivate
+            fun a3(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of a body of internal interface reached through package-private Java interface as inherited from public one`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaPublicFaceBelowPackagePrivateSub.d3") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaPublicFaceBelowPackagePrivateSub.d3 [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaPublicFaceBelowPackagePrivate
+            open fun d3(): Int
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve member implemented by Java class overridden as final by internal subclass as final`() {
         // the final override of the internal class wins over the implementation of java.util.concurrent.atomic.AtomicInteger above it
         resolver.resolve(
