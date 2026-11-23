@@ -154,16 +154,14 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   the listing does not follow it for a `@NullMarked` class yet.
 
 - A Java method overriding a Kotlin member, or merged with one, takes its parameter names for kotlinc, so `put(t = 1)` compiles,
-  while a named-argument probe of a member merged only of Java methods fails —
-  the listing still names a Java override `arg0`, so a row lost in a merge may take the only Kotlin name with it, see `withInheritedThroughApi`.
+  while a named-argument probe of a member merged only of Java methods fails, see `namedByKotlinMembers` —
+  a merge dropping the only Kotlin row for an `arg0` one is a regression a sweep must probe by a named call.
 
-- A class reaching a generic Kotlin supertype both through Java, giving `Integer`, and through Kotlin, giving `Int`,
-  like `abstract class Y : Cb(), JG, GP<Int>`, keeps a member of each for K2: neither the `put(Integer)`, nor a `put(int)`, of `Cb` implements both,
-  and an override taking `Int?` leaves one abstract — see `isGivenByKotlinToo`.
+- The `inheritedCandidates` rules deciding which merged member is listed are not transitive: a rule overriding the rank order
+  let three members beat each other in a circle, and `resolve` returned `null` — keep the guard of `listed`, and sweep three-way joins.
 
-- Type arguments annotated `@NotNull` and `@Nullable` along two paths to the same supertype disagree, a platform type then,
-  and a Kotlin class joining a member given `Int` with one given `@NotNull Integer` has one member a Java `put(Integer)` below does not override —
-  see `nullableGivenPositions`, `overriddenKotlinMethods`.
+- A Java `put(Integer)` overriding a member given `@NotNull Integer` along one path and `@Nullable Integer` along another takes a platform type,
+  while the member itself, not overridden, takes the type of its first path, see `isJavaTypeArgument`, `givenPositions`.
 
 - The Gradle test build rejects `abstract class X : J(), JDb` (`J implements GenericPut<Integer>`, `JDb` a default `put(Integer)`)
   with `must override 'put' because it inherits multiple interface methods`, while kotlinc compiles it against the compiled Java classes, so it is no fixture.

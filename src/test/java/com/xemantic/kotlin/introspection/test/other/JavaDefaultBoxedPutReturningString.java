@@ -21,7 +21,7 @@ package com.xemantic.kotlin.introspection.test.other;
 /**
  * Declares a default {@code put(Integer)}, returning {@code String}.
  */
-public interface JavaDefaultBoxedStringPut {
+public interface JavaDefaultBoxedPutReturningString {
 
     default String put(Integer t) {
         return "";

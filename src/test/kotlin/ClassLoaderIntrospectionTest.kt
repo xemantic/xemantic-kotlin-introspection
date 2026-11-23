@@ -439,11 +439,11 @@ class ClassLoaderIntrospectionTest {
         // then
         // the Java method, taking the Kotlin class by its relocated JVM name, is told as the override of the member
         // of the Kotlin interface, taking it by the name its metadata tells, though listed in its place, with its own types,
-        // which the overridden member does not enhance, as kotlin-reflect cannot describe the relocated Java class
+        // which the overridden member does not enhance, as kotlin-reflect cannot describe the relocated Java class, but names
         signature sameAsKotlin """
             // com.xemantic.kotlin.introspection.isolated.RelocatedOverridingJavaBaseImpl.kf [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.isolated.RelocatedOverridingJavaBase
-            override fun kf(arg0: RelocatedEvent?)
+            override fun kf(event: RelocatedEvent?)
         """.trimIndent()
     }
 

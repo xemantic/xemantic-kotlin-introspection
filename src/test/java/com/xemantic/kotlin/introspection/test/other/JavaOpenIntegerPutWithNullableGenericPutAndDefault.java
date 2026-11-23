@@ -25,5 +25,5 @@ import org.jetbrains.annotations.Nullable;
  * Gives {@code Integer} for the type parameter of {@code OpenGenericPut<T>}, and {@code @Nullable Integer} for the one
  * of {@code GenericPut<T>}, next to a default {@code put(Integer)}: one open member for kotlinc.
  */
-public abstract class JavaOpenIntegerPutWithNullableGenericPutAndDefault extends com.xemantic.kotlin.introspection.test.OpenGenericPut<Integer> implements GenericPut<@Nullable Integer>, JavaDefaultBoxedStringPut {
+public abstract class JavaOpenIntegerPutWithNullableGenericPutAndDefault extends com.xemantic.kotlin.introspection.test.OpenGenericPut<Integer> implements GenericPut<@Nullable Integer>, JavaDefaultBoxedPutReturningString {
 }

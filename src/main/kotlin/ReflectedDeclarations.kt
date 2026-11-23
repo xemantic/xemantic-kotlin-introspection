@@ -884,7 +884,12 @@ private fun isJavaTypeArgument(javaClass: Class<*>, typeClass: Class<*>, index: 
     val first = givers.firstOrNull() as? TypeArgumentGiver.Java ?: return false
     // one annotated nullable along any path makes it accept null, also next to one annotated not null, which disagree
     val acceptsNull = first.isPlatform || givers.any { it is TypeArgumentGiver.Java && it.isNullable }
-    return acceptsNull && givers.none { giver -> giver is TypeArgumentGiver.Kotlin && giver.argument?.isNullable == false }
+    // but one given by a Kotlin class joined with the first path by a Kotlin class above the Java one,
+    // whose member takes the type arguments of its first path, like the Integer of a Java superclass of
+    // `abstract class Y : JavaBase(), GenericPut<Int>` for the put(Integer) of a Java subclass of it, so that put(null) compiles
+    return acceptsNull && givers.none { giver ->
+        giver is TypeArgumentGiver.Kotlin && giver.argument?.isNullable == false && (first.join == null || giver.join != first.join)
+    }
 }
 
 /**
@@ -905,10 +910,14 @@ private sealed interface TypeArgumentGiver {
 
     // a Java class, giving a platform type, or a raw Java supertype, or one annotated nullable, accepting null alike,
     // see givesNullableTypeArgument, or giving it as read, not nullable, see givesPlatformTypeArguments
-    class Java(val isPlatform: Boolean, val isNullable: Boolean = false) : TypeArgumentGiver
+    class Java(val isPlatform: Boolean, val isNullable: Boolean = false, override val join: Class<*>? = null) : TypeArgumentGiver
 
     // a Kotlin class naming the type class as its direct supertype, giving the argument, if told, see kotlinTypeArguments
-    class Kotlin(val argument: KotlinTypeArgument?) : TypeArgumentGiver
+    class Kotlin(val argument: KotlinTypeArgument?, override val join: Class<*>? = null) : TypeArgumentGiver
+
+    // the first Kotlin class of the path to the giver, above the Java class asking, which has one member of the ones
+    // of all its paths, of the type arguments of the first one, see isJavaTypeArgument, or null of a path of Java classes
+    val join: Class<*>?
 
 }
 
@@ -973,8 +982,9 @@ private fun typeArgumentGivers(
     resolved[typeClass to index] = emptyList()
     val givers = ArrayList<TypeArgumentGiver>()
     val visited = HashSet<Class<*>>()
-    fun walk(type: Class<*>) {
+    fun walk(type: Class<*>, above: Class<*>?) {
         if (!visited.add(type)) return
+        val join = above ?: type.takeIf { it != javaClass && it.isKotlinClass }
         val superclassPosition = kotlinSuperclassPositions.get(type)
         fun <T> ordered(superclass: T?, interfaces: List<T>): List<T> =
             if (superclass == null) interfaces else interfaces.take(superclassPosition) + superclass + interfaces.drop(superclassPosition)
@@ -983,21 +993,21 @@ private fun typeArgumentGivers(
         supertypes.forEach { supertype ->
             val supertypeClass = (supertype as? ParameterizedType)?.rawType as? Class<*> ?: supertype as? Class<*> ?: return@forEach
             when {
-                supertypeClass != typeClass -> walk(supertypeClass)
-                supertype !is ParameterizedType -> givers += TypeArgumentGiver.Java(isPlatform = true)
+                supertypeClass != typeClass -> walk(supertypeClass, join)
+                supertype !is ParameterizedType -> givers += TypeArgumentGiver.Java(isPlatform = true, join = join)
                 !type.isKotlinClass -> givesNullableTypeArgument(type, typeClass, index).let { isNullable ->
-                    givers += TypeArgumentGiver.Java(isNullable || givesPlatformTypeArguments(type, typeClass, index), isNullable)
+                    givers += TypeArgumentGiver.Java(isNullable || givesPlatformTypeArguments(type, typeClass, index), isNullable, join)
                 }
                 else -> when (val argument = supertype.actualTypeArguments.getOrNull(index)) {
                     is TypeVariable<*> -> (argument.genericDeclaration as? Class<*>)?.let { argumentClass ->
                         givers += typeArgumentGivers(javaClass, argumentClass, argumentClass.typeParameters.indexOf(argument), resolved)
                     }
-                    else -> givers += TypeArgumentGiver.Kotlin(kotlinTypeArguments.get(type)[typeClass.name]?.get(index))
+                    else -> givers += TypeArgumentGiver.Kotlin(kotlinTypeArguments.get(type)[typeClass.name]?.get(index), join)
                 }
             }
         }
     }
-    walk(javaClass)
+    walk(javaClass, above = null)
     resolved[typeClass to index] = givers
     return givers
 }
