@@ -6704,7 +6704,9 @@ internal class DefaultKotlinIntrospector(
         fun KmType.isPlatform() = platformTypes.getOrPut(this) { hasPlatformArguments }
         // and the platform markers of each type compared, see coversType, by its instance, read from its annotations once
         val markers = IdentityHashMap<KmType, Int>()
-        fun KmType.covers(other: KmType) = coversType(other) { type -> markers.getOrPut(type) { type.platformMarkers } }
+        fun KmType.covers(other: KmType) = coversType(other) { type ->
+            markers.getOrPut(type) { type.platformMarkers and PLATFORM_TYPE_MARKERS }
+        }
         fun visit(name: String, metadataName: String, type: KmType?) {
             if (type != null && types != null) {
                 val known = types[name].orEmpty()
@@ -6842,7 +6844,9 @@ internal class DefaultKotlinIntrospector(
         val projections = when {
             header.typeParameters.isEmpty() -> NO_PROJECTIONS
             type == null -> return emptyMap()
-            else -> projectionsOf(header, type) ?: return emptyMap()
+            // of invariant type parameters, like any Java class, also a JDK class which kotlin-reflect describes as a built-in type,
+            // like java.util.List<out String>, whose projection is kept by its supertypes, see declaredVariances
+            else -> projectionsOf(header, type, isInvariant = true) ?: return emptyMap()
         }
         // a JDK class which kotlin-reflect describes as a built-in type, like java.util.List as List, named as a supertype,
         // like abstract class X : java.util.List<String>, has the supertypes of its JVM class, like java.util.SequencedCollection<E>,
@@ -7572,6 +7576,7 @@ internal class DefaultKotlinIntrospector(
         var isUntold = false
         val classTypeParameterTypes = ArrayList<ClassTypeParameterPosition>()
         var isMatchedBeyondInference = false
+        val equations = ArrayList<Pair<KmType, KmType>>()
     }
 
     /**
@@ -7724,6 +7729,10 @@ internal class DefaultKotlinIntrospector(
         // with the variances of their positions, and its uses there, see isClassTypeParameterTyped
         private val classTypeParameterTypes get() = matched.classTypeParameterTypes
 
+        // the types of the extension, and of the supertypes of the class, matched in invariant positions,
+        // either of them a type parameter, which kotlinc takes as the same type, see isUnifiable
+        private val equations get() = matched.equations
+
         /**
          * Whether each type parameter the receiver refers to, the [referred] ones, also through the bounds of the ones it refers to,
          * like `E` of `T : List<E>`, is inferred from the matched types, see [infer],
@@ -7814,8 +7823,11 @@ internal class DefaultKotlinIntrospector(
          * Any other bound referring to a type parameter of the class, or to itself only in other positions, like `List<V>`,
          * also of a type parameter bounding it, like of `W`, is not checked in contravariant, and covariant, positions alone,
          * as the type it takes is not told then.
+         * Matched against the types referring to type parameters of the extension, in invariant positions,
+         * it takes one type in all of them too, unified with the ones of the extension, see [isUnifiable].
          */
         private fun isClassTypeParameterTyped(): Boolean {
+            if (!isUnifiable()) return false
             val told = classTypeParameterTypes.filter { it.isTold }
             if (told.isEmpty()) return true
             // whether each type parameter of the class is matched only against types referring to no type parameter,
@@ -7879,6 +7891,252 @@ internal class DefaultKotlinIntrospector(
                     }
                 }
             }
+        }
+
+        /**
+         * Whether the types matched in invariant positions, the [equations], can be the same types,
+         * the type parameters of the extension, and of the class, which stands for any type, see [matches],
+         * taking one type each, like no `T` of `fun <T> Box<T, W<T>>.f()` for `interface Same<V> : Box<V, V>`,
+         * where `V` is both `T` and `W<T>`, see [Unifier], of the same nullability, and satisfying their bounds,
+         * as far as their classes tell, see [Unifier.isBoundedConsistently].
+         */
+        private fun isUnifiable(): Boolean {
+            if (equations.isEmpty()) return true
+            val unifier = Unifier()
+            return equations.all { (expected, actual) -> unifier.unify(expected, isExtension = true, actual, isOtherExtension = false) } &&
+                unifier.isNullabilityConsistent() && unifier.isBoundedConsistently()
+        }
+
+        /**
+         * The unification of the types of the extension, and of the supertypes of the class, which kotlinc takes as the same types,
+         * see [isUnifiable], telling only of a contradiction which is certain, any other one leniently unified:
+         * a type parameter, of the extension, or of the class, taking a type which refers to itself, like `T` of `W<T>`,
+         * which no type is, or two types of different classes, like `W<T>`, and `List<T>`, but for a platform type,
+         * or a class of Java, like `java.util.List`, which may be a built-in type, and a mutable collection the read-only one,
+         * or a nullable type the same as a not nullable one, like `T?`, and `T` of `T : Any`.
+         * Their type arguments are unified as well, but for projections, and the nullability apart from the classes,
+         * as `V` of `T?` is `T` either nullable, or not.
+         * A type parameter of the extension standing for the class, like `P` of `P.f()`, see [receiverTypeParameterId],
+         * or one of the class standing for itself, see [ClassSupertypes.isSelfTypeParameter], is not unified.
+         */
+        private inner class Unifier {
+
+            // the types the type parameters are, by their keys, see variableKey, with whether these are types of the extension
+            private val bindings = HashMap<Long, Pair<KmType, Boolean>>()
+
+            // the nullability of the types, a union of the type parameters of the same nullability, by their keys,
+            // and the UNIFIED_NULLABLE, and UNIFIED_NOT_NULLABLE, ones
+            private val nullabilityParents = HashMap<Long, Long>()
+
+            // the key of a type parameter unified, or null when this type is no type parameter unified
+            private fun KmType.variableKey(isExtension: Boolean): Long? {
+                val id = (classifier as? KmClassifier.TypeParameter)?.id ?: return null
+                val isVariable = if (isExtension) {
+                    id in typeParameters && id != receiverTypeParameterId
+                } else {
+                    id in classTypeParametersInScope && !supertypes.isSelfTypeParameter(this)
+                }
+                return if (isVariable) (if (isExtension) 1L shl 32 else 0L) or (id.toLong() and 0xffffffffL) else null
+            }
+
+            // whether this is a type parameter which is not unified, or a type alias, telling nothing,
+            // or a raw type of Java, any type between its erasure and its star projection, see matchesRaw,
+            // or an erased type argument of a raw Kotlin supertype, see isJavaErasure
+            private fun KmType.isOpaque(isExtension: Boolean) =
+                classifier is KmClassifier.TypeAlias || (classifier is KmClassifier.TypeParameter && variableKey(isExtension) == null) ||
+                    platformMarkers and (JAVA_RAW or JAVA_ERASURE or JAVA_INEXACT_ERASURE) != 0
+
+            // the type this one is, following the type parameters unified
+            private fun resolved(type: KmType, isExtension: Boolean): Pair<KmType, Boolean> {
+                var current = type to isExtension
+                while (true) {
+                    val key = current.first.variableKey(current.second) ?: return current
+                    current = bindings[key] ?: return current
+                }
+            }
+
+            fun unify(type: KmType, isExtension: Boolean, other: KmType, isOtherExtension: Boolean): Boolean {
+                unifyNullability(type, isExtension, other, isOtherExtension)
+                val (resolved, isResolvedExtension) = resolved(type, isExtension)
+                val (otherResolved, isOtherResolvedExtension) = resolved(other, isOtherExtension)
+                if (resolved.isOpaque(isResolvedExtension) || otherResolved.isOpaque(isOtherResolvedExtension)) return true
+                val key = resolved.variableKey(isResolvedExtension)
+                val otherKey = otherResolved.variableKey(isOtherResolvedExtension)
+                return when {
+                    key != null && key == otherKey -> true
+                    key != null -> !occurs(key, otherResolved, isOtherResolvedExtension).also {
+                        bindings[key] = otherResolved to isOtherResolvedExtension
+                    }
+                    otherKey != null -> !occurs(otherKey, resolved, isResolvedExtension).also {
+                        bindings[otherKey] = resolved to isResolvedExtension
+                    }
+                    else -> unifyClasses(resolved, isResolvedExtension, otherResolved, isOtherResolvedExtension)
+                }
+            }
+
+            // whether the types of classes can be the same, see Unifier
+            private fun unifyClasses(type: KmType, isExtension: Boolean, other: KmType, isOtherExtension: Boolean): Boolean {
+                val name = (type.classifier as KmClassifier.Class).name.let { READ_ONLY_COLLECTION_TYPES[it] ?: it }
+                val otherName = (other.classifier as KmClassifier.Class).name.let { READ_ONLY_COLLECTION_TYPES[it] ?: it }
+                if (name != otherName) {
+                    return type.flexibleTypeUpperBound != null || other.flexibleTypeUpperBound != null ||
+                        name.startsWith("java/") || otherName.startsWith("java/")
+                }
+                if (type.arguments.size != other.arguments.size) return true
+                return type.arguments.indices.all { index ->
+                    val argument = type.arguments[index]
+                    val otherArgument = other.arguments[index]
+                    val argumentType = argument.type
+                    val otherArgumentType = otherArgument.type
+                    argumentType == null || otherArgumentType == null || argument.variance != otherArgument.variance ||
+                        unify(argumentType, isExtension, otherArgumentType, isOtherExtension)
+                }
+            }
+
+            // whether the type parameter of the given key occurs in the type, like T in W<T>
+            private fun occurs(key: Long, type: KmType, isExtension: Boolean): Boolean {
+                val (resolved, isResolvedExtension) = resolved(type, isExtension)
+                if (resolved.variableKey(isResolvedExtension) == key) return true
+                return resolved.classifier is KmClassifier.Class && !resolved.isOpaque(isResolvedExtension) &&
+                    resolved.arguments.any { argument -> argument.type?.let { occurs(key, it, isResolvedExtension) } == true }
+            }
+
+            // the key of the nullability of the type, or null when not told, like of a platform type
+            private fun KmType.nullabilityKey(isExtension: Boolean): Long? {
+                if (flexibleTypeUpperBound != null || platformMarkers and (JAVA_RAW or JAVA_ERASURE or JAVA_INEXACT_ERASURE) != 0) return null
+                return when (classifier) {
+                    is KmClassifier.Class -> if (isNullable) UNIFIED_NULLABLE else UNIFIED_NOT_NULLABLE
+                    is KmClassifier.TypeAlias -> null
+                    is KmClassifier.TypeParameter -> {
+                        val key = variableKey(isExtension)
+                        when {
+                            isNullable -> UNIFIED_NULLABLE
+                            key == null -> null
+                            isDefinitelyNonNull -> UNIFIED_NOT_NULLABLE
+                            else -> key.also {
+                                // not nullable when bounded by a class which is not
+                                if (nullabilityParents.putIfAbsent(key, key) == null && isBoundedByNotNullableClass(isExtension)) {
+                                    union(key, UNIFIED_NOT_NULLABLE)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // whether this type parameter has a bound of a class which is not nullable, like T : Any, or V : Comparable<V>
+            private fun KmType.isBoundedByNotNullableClass(isExtension: Boolean): Boolean {
+                val id = (classifier as KmClassifier.TypeParameter).id
+                val typeParameter = if (isExtension) typeParameters[id] else classTypeParametersInScope[id]
+                return typeParameter?.upperBounds.orEmpty().any { it.classifier is KmClassifier.Class && !it.isNullable }
+            }
+
+            private fun unifyNullability(type: KmType, isExtension: Boolean, other: KmType, isOtherExtension: Boolean) {
+                val key = type.nullabilityKey(isExtension) ?: return
+                val otherKey = other.nullabilityKey(isOtherExtension) ?: return
+                union(key, otherKey)
+            }
+
+            private fun find(key: Long): Long {
+                var current = key
+                while (true) {
+                    val parent = nullabilityParents[current] ?: return current
+                    if (parent == current) return current
+                    current = parent
+                }
+            }
+
+            private fun union(key: Long, other: Long) {
+                val root = find(key)
+                val otherRoot = find(other)
+                if (root != otherRoot) nullabilityParents[root] = otherRoot
+            }
+
+            // whether no type is both nullable, and not nullable
+            fun isNullabilityConsistent(): Boolean = find(UNIFIED_NULLABLE) != find(UNIFIED_NOT_NULLABLE)
+
+            /**
+             * Whether the types the type parameters are, see [unify], can satisfy their bounds, and what they are inferred from,
+             * see [constrainedBy], as far as their classes tell: each class of a subtype, like `String` of a covariant position,
+             * or of the type itself, like `W<String>`, a subclass of each class of a supertype, like `Enum` of `V : Enum<V>`,
+             * also through the type parameters bounding them, like `T` of `U : T`, but for `Nothing`, a subtype of any type,
+             * and the nullable types the nullable subtypes of a type parameter, like `String?` of `T` in a covariant position,
+             * also of the type parameters bounding it, and not nullable the subtypes of a not nullable one, like of `T : Any`.
+             * The classes of platform types, which may be the mutable collections, and of Java, which may be built-in types,
+             * tell nothing.
+             */
+            fun isBoundedConsistently(): Boolean {
+                val variables = typeParameters.values.filter { it.id != receiverTypeParameterId }.map { it to true } +
+                    classTypeParametersInScope.values.map { it to false }
+                        .filter { (typeParameter, _) -> !supertypes.isSelfTypeParameter(typeParameterType(typeParameter.id)) }
+                // the type parameters bounding each other, like U, and T, of U : T, by the types they are
+                val bounding = ArrayList<Triple<KmType, Boolean, KmType>>()
+                val lower = HashMap<Any, MutableSet<String>>()
+                val upper = HashMap<Any, MutableSet<String>>()
+                fun KmType.root(isExtension: Boolean): Any = resolved(this, isExtension).let { (type, isTypeExtension) ->
+                    type.variableKey(isTypeExtension) ?: IdentityKey(type)
+                }
+                fun KmType.toldClassName(): String? = (classifier as? KmClassifier.Class)?.name
+                    ?.takeIf { flexibleTypeUpperBound == null && !it.startsWith("java/") }
+                variables.forEach { (typeParameter, isExtension) ->
+                    val type = typeParameterType(typeParameter.id)
+                    val root = type.root(isExtension)
+                    resolved(type, isExtension).first.toldClassName()?.let { name ->
+                        lower.getOrPut(root) { HashSet() } += name
+                        upper.getOrPut(root) { HashSet() } += name
+                    }
+                    typeParameter.upperBounds.forEach { bound ->
+                        when {
+                            bound.variableKey(isExtension) != null -> bounding += Triple(type, isExtension, bound)
+                            bound.classifier is KmClassifier.Class -> bound.toldClassName()?.let { upper.getOrPut(root) { HashSet() } += it }
+                        }
+                    }
+                }
+                constrainedBy.forEach { (id, type, variance) ->
+                    val variable = typeParameterType(id).takeIf { it.variableKey(isExtension = true) != null } ?: return@forEach
+                    val root = variable.root(isExtension = true)
+                    type.toldClassName()?.let { name ->
+                        if (variance != KmVariance.IN) lower.getOrPut(root) { HashSet() } += name
+                        if (variance != KmVariance.OUT) upper.getOrPut(root) { HashSet() } += name
+                    }
+                    if (type.flexibleTypeUpperBound == null) {
+                        val key = variable.nullabilityKey(isExtension = true)
+                        if (key != null && variance != KmVariance.IN && type.isNullable) union(key, UNIFIED_NULLABLE)
+                        if (key != null && variance != KmVariance.OUT && !type.isNullable) union(key, UNIFIED_NOT_NULLABLE)
+                    }
+                }
+                // the subtypes of a type parameter are subtypes of the ones bounding it, and the supertypes the other way round
+                do {
+                    var isChanged = false
+                    bounding.forEach { (type, isExtension, bound) ->
+                        val root = type.root(isExtension)
+                        val boundRoot = bound.root(isExtension)
+                        lower[root]?.let { if (lower.getOrPut(boundRoot) { HashSet() }.addAll(it)) isChanged = true }
+                        upper[boundRoot]?.let { if (upper.getOrPut(root) { HashSet() }.addAll(it)) isChanged = true }
+                        val key = type.nullabilityKey(isExtension)
+                        val boundKey = bound.nullabilityKey(isExtension)
+                        if (key != null && boundKey != null && !bound.isNullable && !bound.isDefinitelyNonNull) {
+                            val nullable = find(UNIFIED_NULLABLE)
+                            val notNullable = find(UNIFIED_NOT_NULLABLE)
+                            if (find(key) == nullable && find(boundKey) != nullable) {
+                                union(boundKey, UNIFIED_NULLABLE)
+                                isChanged = true
+                            }
+                            if (find(boundKey) == notNullable && find(key) != notNullable) {
+                                union(key, UNIFIED_NOT_NULLABLE)
+                                isChanged = true
+                            }
+                        }
+                    }
+                } while (isChanged)
+                return isNullabilityConsistent() && lower.all { (root, names) ->
+                    val supertypeNames = upper[root].orEmpty()
+                    names.all { name ->
+                        name == NOTHING_CLASS_NAME || supertypeNames.all { supertypes.isSubclass(name, it) }
+                    }
+                }
+            }
+
         }
 
         // whether the subtype is a subtype of the supertype, as far as told, see isClassTypeParameterTyped
@@ -8584,6 +8842,13 @@ internal class DefaultKotlinIntrospector(
 
         // whether the expected type matches the actual one, see matches, matched anew
         private fun matchesOnce(expected: KmType, actual: KmType, variance: KmVariance, isStrict: Boolean): Boolean {
+            // the same type, of a type parameter of the extension, or of the class, unified later, see isUnifiable,
+            // not of a bound being checked, whose types of the class take the place of the type parameters of the extension
+            if (variance == KmVariance.INVARIANT && typesMatched == null && boundsChecked.isEmpty() &&
+                (expected.classifier is KmClassifier.TypeParameter || actual.classifier is KmClassifier.TypeParameter)
+            ) {
+                equations += expected to actual
+            }
             val actualClassifier = actual.classifier as? KmClassifier.Class
                 // a type parameter bounded by the class itself, like `E` of `Enum<E : Enum<E>>`, stands for the class
                 ?: KmClassifier.Class(supertypes.kmClass.name).takeIf { supertypes.isSelfTypeParameter(actual) }
@@ -8751,7 +9016,8 @@ internal class DefaultKotlinIntrospector(
             val isUntold: Boolean = this@ReceiverMatcher.isUntold,
             val classTypeParameterTypeCount: Int = classTypeParameterTypes.size,
             val constrainedByCount: Int = constrainedBy.size,
-            val isMatchedBeyondInference: Boolean = this@ReceiverMatcher.isMatchedBeyondInference
+            val isMatchedBeyondInference: Boolean = this@ReceiverMatcher.isMatchedBeyondInference,
+            val equationCount: Int = equations.size
         ) {
 
             // goes back to this point, forgetting what is inferred since, and whether what is not told was matched since
@@ -8762,6 +9028,7 @@ internal class DefaultKotlinIntrospector(
                     classTypeParameterTypes.removeAt(classTypeParameterTypes.lastIndex)
                 }
                 while (constrainedBy.size > constrainedByCount) constrainedBy.removeAt(constrainedBy.lastIndex)
+                while (equations.size > equationCount) equations.removeAt(equations.lastIndex)
                 this@ReceiverMatcher.isMatchedBeyondInference = isMatchedBeyondInference
             }
 
@@ -12066,10 +12333,10 @@ internal class DefaultKotlinIntrospector(
             } catch (_: Exception) {
                 return
             }
+            // nothing is told about the nested classes of a class with unreadable metadata, also when reading it fails otherwise
             val metadata = try {
-                classFile.metadata?.let { KotlinClassMetadata.readLenient(it) }
+                classFile.metadata?.let { parseKotlinMetadata(it) ?: return }
             } catch (_: Exception) {
-                // nothing is told about the nested classes of a class with unreadable metadata
                 return
             }
             nestedClassFiles.add(reader.className, classFile, (metadata as? KotlinClassMetadata.Class)?.kmClass)
@@ -13329,15 +13596,20 @@ private const val MAX_INFERENCE_STEPS = 2000
 private val NO_PROJECTIONS = TypeProjections(emptyMap())
 
 /**
- * The type arguments of the [type] of the [kmClass], see [TypeProjections],
+ * The type arguments of the [type] of the [kmClass], see [TypeProjections], a projection repeating the variance
+ * of its type parameter no projection, unless they are taken as invariant, when [isInvariant], like of a Java class,
+ * but for `out Nothing`, which kotlinc matches against a type parameter of an extension, like `T` of `MutableCollection<T>`,
+ * and a projection of a type referring to a type parameter, like `out V`, which can be `Nothing`,
  * or `null` if they do not match, like of a raw Java type.
  */
-private fun projectionsOf(kmClass: KmClass, type: KmType): TypeProjections? {
+private fun projectionsOf(kmClass: KmClass, type: KmType, isInvariant: Boolean = false): TypeProjections? {
     if (kmClass.typeParameters.size != type.arguments.size) return null
     return TypeProjections(
         kmClass.typeParameters.zip(type.arguments).associate { (typeParameter, argument) ->
             val argumentType = argument.type
-            val isRedundant = argument.variance != KmVariance.INVARIANT && argument.variance == typeParameter.variance
+            val isRedundant = argument.variance != KmVariance.INVARIANT && argument.variance == typeParameter.variance &&
+                (!isInvariant || argumentType == null || !argumentType.refersOnlyTo { false } ||
+                    (argumentType.classifier as? KmClassifier.Class)?.name == "kotlin/Nothing")
             typeParameter.id to if (argumentType != null && isRedundant) {
                 KmTypeProjection(KmVariance.INVARIANT, argumentType)
             } else {
@@ -13672,7 +13944,9 @@ private fun KmType.coversClass(other: KmType, markers: Int, otherMarkers: Int): 
 
 /**
  * The markers of a platform type of Java this type is, as bits, [JAVA_COLLECTION], [JAVA_ARRAY] and [JAVA_RAW],
- * see [isJavaCollection], [isJavaArray] and [isJavaRaw], told by reading its annotations once.
+ * see [isJavaCollection], [isJavaArray] and [isJavaRaw], and of an erased type argument of a raw Kotlin supertype,
+ * [JAVA_ERASURE], and [JAVA_INEXACT_ERASURE], see [isJavaErasure], and [JAVA_INEXACT_ERASURE_MARKER],
+ * told by reading its annotations once.
  */
 private val KmType.platformMarkers: Int
     get() = annotations.fold(0) { markers, annotation ->
@@ -13680,6 +13954,8 @@ private val KmType.platformMarkers: Int
             JAVA_COLLECTION_MARKER -> JAVA_COLLECTION
             JAVA_ARRAY_MARKER -> JAVA_ARRAY
             JAVA_RAW_MARKER -> JAVA_RAW
+            JAVA_ERASURE_MARKER -> JAVA_ERASURE
+            JAVA_INEXACT_ERASURE_MARKER -> JAVA_INEXACT_ERASURE
             else -> 0
         }
     }
@@ -13689,6 +13965,13 @@ private const val JAVA_COLLECTION = 1
 private const val JAVA_ARRAY = 2
 
 private const val JAVA_RAW = 4
+
+private const val JAVA_ERASURE = 8
+
+private const val JAVA_INEXACT_ERASURE = 16
+
+// the markers of the platform types themselves, see platformMarkers
+private const val PLATFORM_TYPE_MARKERS = JAVA_COLLECTION or JAVA_ARRAY or JAVA_RAW
 
 /**
  * Whether this type has the same structure as the [other] one, as told by [structureKey], without building the keys,
@@ -13713,7 +13996,8 @@ private fun KmType.hasSameStructure(other: KmType): Boolean {
 /**
  * The structure of this type, as a key, like `kotlin/Comparable<INVARIANT java/lang/Integer!>`,
  * telling the classifiers, the type arguments with their projections, whether suspend, the nullability, also definitely
- * not nullable, and the flexibility, but not the annotations of a function type, which do not tell its supertypes.
+ * not nullable, the flexibility, and the platform markers, see [platformMarkers],
+ * but not the annotations of a function type, which do not tell its supertypes.
  */
 private fun KmType.structureKey(): String = StringBuilder().also { appendStructure(it) }.toString()
 
@@ -13738,9 +14022,12 @@ private fun KmType.appendStructure(key: StringBuilder) {
     if (isNullable) key.append('?')
     if (isDefinitelyNonNull) key.append('&')
     if (flexibleTypeUpperBound != null) key.append('!')
-    if (isJavaCollection) key.append('~')
-    if (isJavaArray) key.append('#')
-    if (isJavaRaw) key.append('%')
+    val markers = platformMarkers
+    if (markers and JAVA_COLLECTION != 0) key.append('~')
+    if (markers and JAVA_ARRAY != 0) key.append('#')
+    if (markers and JAVA_RAW != 0) key.append('%')
+    if (markers and JAVA_ERASURE != 0) key.append('$')
+    if (markers and JAVA_INEXACT_ERASURE != 0) key.append('`')
 }
 
 /**
@@ -13940,6 +14227,16 @@ private const val MAX_WITNESS_TYPES = 8
 
 // the most combinations of the types given for the type parameters of a class, see WITNESS_TYPES
 private const val MAX_WITNESSES = 64
+
+// a type compared by its identity, see ReceiverMatcher.Unifier.isBoundedConsistently
+private class IdentityKey(val type: KmType) {
+    override fun equals(other: Any?) = other is IdentityKey && other.type === type
+    override fun hashCode() = System.identityHashCode(type)
+}
+
+// the keys of the nullable, and of the not nullable, types unified, see ReceiverMatcher.Unifier
+private const val UNIFIED_NULLABLE = -1L
+private const val UNIFIED_NOT_NULLABLE = -2L
 
 // the id of a position of a type parameter of a class which is not told, within a type a type parameter of the extension
 // is inferred from, like List<V>, see ClassTypeParameterPosition.isTold

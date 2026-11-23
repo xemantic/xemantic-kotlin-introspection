@@ -11386,6 +11386,39 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve interface of projected JDK list named directly with extensions on supertypes of projected element`() {
+        // the out of java.util.List<out String>, of the invariant E of Java, is kept by MutableCollection<out String>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.jdk.JdkProjectedListBox"
+        ) should {
+            have(lines().any { ".mutableOutJdkStrings()" in it })
+            have(lines().any { ".readOnlyJdkStrings()" in it })
+            have(lines().none { ".mutableJdkStrings()" in it })
+            have(lines().none { ".mutableJdkElements()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of JDK list of out Nothing named directly with extension on supertype of type parameter`() {
+        // kotlinc infers the T of MutableCollection<T> from MutableCollection<out Nothing>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.jdk.JdkProjectedNothingListBox"
+        ) should {
+            have(lines().any { ".mutableJdkElements()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of JDK list of out type parameter named directly with extension on supertype of type parameter`() {
+        // V of Nothing makes it a JdkBox<java.util.List<out Nothing>>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.jdk.JdkProjectedElementListBox"
+        ) should {
+            have(lines().any { ".mutableJdkElements()" in it })
+        }
+    }
+
+    @Test
     fun `should resolve class with repeated type parameter in JDK map supertype without extension of other key and value types`() {
         // the V of HashMap<V, V> is the key String of Map<String, CollectionOrder> only when the value is not a CollectionOrder
         resolver.resolve(
@@ -11565,6 +11598,83 @@ class KotlinIntrospectorTest {
             pageSize = 10000
         ) should {
             have(lines().any { ".witnessComparableElements()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of pair of same type parameter without extensions taking type parameter and type referring to it`() {
+        // V is both T, and UnifiedWrap<T>, or List<T>, which no T is, nor is any T : Any also T?, while V of String? is T? of T
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.unify.UnifiedSame",
+            pageSize = 10000
+        ) should {
+            have(lines().any { ".unifiedSame()" in it })
+            have(lines().any { ".unifiedNullable()" in it })
+            have(lines().none { ".unifiedWrapped()" in it })
+            have(lines().none { ".unifiedWrapping()" in it })
+            have(lines().none { ".unifiedListed()" in it })
+            have(lines().none { ".unifiedWrappedListed()" in it })
+            have(lines().none { ".unifiedNotNullable()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of pair of same type parameter with extensions on type parameter bounded by class of other type`() {
+        // T of UnifiedWrap<String> is no Comparable, T of String is a CharSequence
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.unify.UnifiedSame",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".unifiedComparableWrapped()" in it })
+            have(lines().any { ".unifiedCharSequences()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of pair of type parameter and type referring to it with extension of same shape`() {
+        // V of Any? is T, and UnifiedWrap<Any?> is U : T
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.unify.UnifiedWrappedPair",
+            pageSize = 10000
+        ) should {
+            have(lines().any { ".unifiedWrapped()" in it })
+            have(lines().none { ".unifiedSame()" in it })
+            have(lines().any { ".unifiedBoundedPair()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of map of enum keys without extensions on map of values of key type`() {
+        // V : Enum<V> is no supertype of String
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.unify.UnifiedEnumKeys",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".unifiedSameKeysAndValues()" in it })
+            have(lines().none { ".unifiedBoundedValues()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of pair of enum type parameter and type referring to it without extension of bounded type parameters`() {
+        // V : Enum<V> is no supertype of UnifiedWrap<V>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.unify.UnifiedEnumWrappedPair",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".unifiedBoundedPair()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of pair of nullable and same type parameter without extension on comparable supertype`() {
+        // V? is U : T, which makes T nullable, and no Comparable<T>, while T, and U, of String? make it callable
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.unify.UnifiedNullablePair",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".unifiedBoundedComparable()" in it })
+            have(lines().any { ".unifiedBounded()" in it })
         }
     }
 
