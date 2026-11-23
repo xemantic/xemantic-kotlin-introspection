@@ -160,8 +160,9 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   the matching has to change together with it.
 
 - An optimizer, like ProGuard (`method/marking/static`), makes the JVM method of a member static, keeping its descriptor and the metadata,
-  so a static method of a class is not necessarily a JVM-only one, like of a `@JvmStatic` function —
-  and a class file relocated twice keeps the metadata name of the first relocation, like `o/ext/Event` found as `s/p/ext/Event`,
+  so a static method of a class is not necessarily a JVM-only one, like of a `@JvmStatic` function (#355).
+
+- A class file relocated twice keeps the metadata name of the first relocation, like `o/ext/Event` found as `s/p/ext/Event`,
   while the classes compiled against it refer to it as `p/ext/Event`, so the name a Kotlin class tells is not always the one its users know (#355).
 
 - With the parameter classes missing, a class relocated alone into a subpackage of its relocated package (`p/lib/Event` to `s/lib/ev/Event`)

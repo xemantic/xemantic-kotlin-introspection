@@ -1538,10 +1538,10 @@ internal class OverrideResolver(
 
         val isStatic: Boolean get() = access and Opcodes.ACC_STATIC != 0
 
-        // a synthetic method, like other${'$'}default of a default argument, or a private static one, like tr${'$'}lambda${'$'}0
-        // of the body of a lambda, which the compiler does not mark synthetic, is the one of no function another class calls,
-        // like of no @JvmStatic function of the companion object
-        val isCompilerHelper: Boolean get() = isSynthetic || (isStatic && access and Opcodes.ACC_PRIVATE != 0)
+        // a synthetic method, like other${'$'}default of a default argument, or a private static one named with a ${'$'},
+        // like tr${'$'}lambda${'$'}0 of the body of a lambda, or tr${'$'}loc of a local function, which the compiler does not mark synthetic,
+        // is the one of no member, nor of a @JvmStatic function of the companion object, unlike a private one of a plain name
+        val isCompilerHelper: Boolean get() = isSynthetic || (isStatic && access and Opcodes.ACC_PRIVATE != 0 && '$' in name)
     }
 
     /**
@@ -2209,10 +2209,7 @@ internal class OverrideResolver(
      * see [CollectedOverridables.supertypeDependencies].
      * The direct supertypes the class file refers to by their metadata names are excluded from the relocation,
      * so that they are not looked up by a guessed relocated name first, like the one of the prefix of the [owner].
-     * A class which the JVM methods name by the name of a class of a subpackage of the package a direct supertype tells
-     * its package relocated to is told relocated alone, apart from its package, like `p/lib/Event` to `p/app/shaded/p/lib/ev/Event`,
-     * only when no class is found by the name its package would give it, no other class is named so,
-     * and every JVM method naming it is the one of a signature of the metadata then, see below.
+     * A class might be told relocated alone into a subpackage of its relocated package, see `apartCandidates`.
      *
      * @param reader reads the class file of the [owner] once, for both scans, and for its JVM methods.
      */
