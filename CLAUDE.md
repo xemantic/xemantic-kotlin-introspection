@@ -199,10 +199,6 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 - An empty concrete subclass of a class joining a hidden member may fail with `inherited platform declarations clash`, not `does not implement`,
   though the joining class itself compiles — such a probe tells nothing of the abstract members, probe them by calls.
 
-- A rule keeping a Java method apart from a Kotlin member of the same JVM signature, like a `List<T>` given `Number?` from a `List<Number>`,
-  has no effect: the Java method is no listable candidate then (`isListable`), the Kotlin member stands for it —
-  so an element clash of arrays or collections changes a listing only between different JVM signatures, or next to a hidden member.
-
 ## Anti-patterns to avoid
 
 - Do not add content to this file that is already discoverable by reading the source or build scripts — that inflates context without adding signal, reducing AI agent task success rates (see [arxiv 2602.11988](https://arxiv.org/abs/2602.11988)).
