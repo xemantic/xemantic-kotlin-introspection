@@ -407,7 +407,7 @@ internal class FunctionTypeClass private constructor(val kind: FunctionTypeKind,
  */
 internal const val KFUNCTION_CLASS_NAME = "kotlin.reflect.KFunction"
 
-private const val KCALLABLE_CLASS_NAME = "kotlin.reflect.KCallable"
+internal const val KCALLABLE_CLASS_NAME = "kotlin.reflect.KCallable"
 
 private const val KANNOTATED_ELEMENT_CLASS_NAME = "kotlin.reflect.KAnnotatedElement"
 
@@ -427,6 +427,21 @@ private fun <T> decodeParameters(
         valueParameters = parameters.drop(valueParametersStart),
         returnType = returnType
     )
+}
+
+/**
+ * Whether this type and the [other] one are function types of the same shape, see [decodeFunctionType]:
+ * of as many parameters which a lambda does not name, the context parameters and the receiver,
+ * like `String.() -> Unit` and `Int.() -> Unit`, or `context(String) (Int) -> Unit` and `String.(Int) -> Unit`,
+ * unlike `String.() -> Unit` and `(String) -> Unit`, which take the same values, but not the same lambdas:
+ * only the latter one a lambda naming its parameter, like `{ s -> }`.
+ * Any types which are no function types are of the same shape.
+ */
+internal fun KmType.isFunctionTypeShapedLike(other: KmType): Boolean {
+    fun KmType.unnamedParameterCount() = annotations.contextParameterCount?.let { count ->
+        count + if (annotations.any { it.className == "kotlin/ExtensionFunctionType" }) 1 else 0
+    }
+    return unnamedParameterCount() == other.unnamedParameterCount()
 }
 
 /**

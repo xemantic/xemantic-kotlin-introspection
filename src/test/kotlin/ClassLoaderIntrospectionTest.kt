@@ -439,11 +439,11 @@ class ClassLoaderIntrospectionTest {
         // then
         // the Java method, taking the Kotlin class by its relocated JVM name, is told as the override of the member
         // of the Kotlin interface, taking it by the name its metadata tells, though listed in its place, with its own types,
-        // which the overridden member does not enhance, as kotlin-reflect cannot describe the relocated Java class
+        // which the overridden member does not enhance, as kotlin-reflect cannot describe the relocated Java class, but names
         signature sameAsKotlin """
             // com.xemantic.kotlin.introspection.isolated.RelocatedOverridingJavaBaseImpl.kf [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.isolated.RelocatedOverridingJavaBase
-            override fun kf(arg0: RelocatedEvent?)
+            override fun kf(event: RelocatedEvent?)
         """.trimIndent()
     }
 
@@ -713,6 +713,103 @@ class ClassLoaderIntrospectionTest {
             // inherited from com.xemantic.kotlin.introspection.isolated.sub.RelocatedSubBase
             fun kb(value: String)
         """.trimIndent()
+    }
+
+    @Test
+    fun `should name relocated Java class taken by member of Java supertype of indirect supertype next to supertype relocated elsewhere`() {
+        // given
+        // like by shading two libraries, the Kotlin interface to shaded/, as the class file of the class implementing it tells,
+        // and the Java class of the subpackage, with the Java class its method takes, to other/, as only the class file of the superclass tells
+        val isolated = "com/xemantic/kotlin/introspection/isolated"
+        val relocated = mapOf(
+            "$isolated/RelocatedDefaultInterface" to "shaded/$isolated/RelocatedDefaultInterface",
+            "$isolated/sub/RelocatedArgJavaBase" to "other/$isolated/sub/RelocatedArgJavaBase",
+            "$isolated/sub/RelocatedSubJavaArg" to "other/$isolated/sub/RelocatedSubJavaArg"
+        )
+        val root = isolatedTestFixturesCopy(
+            "relocatedTwoLibraries", "RelocatedDefaultInterface.class", "RelocatedArgJavaBase.class", "RelocatedSubJavaArg.class"
+        ) { fileName, bytes ->
+            if (fileName.endsWith(".class")) withRelocatedNames(bytes, relocated::get) else bytes
+        }
+        relocated.forEach { (name, relocatedName) ->
+            val original = isolatedTestFixtures.map { it.resolve("$name.class") }.single { it.exists() }
+            val target = root.resolve("$relocatedName.class")
+            target.parent.createDirectories()
+            target.writeBytes(withRelocatedNames(original.readBytes(), relocated::get))
+        }
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.RelocatedTwoLibrariesImpl.ja")
+
+        // then
+        // the relocation the Kotlin superclass tells, by the name it refers to the Java class by, is not left out
+        // for the one the class itself tells, so that the Java class, telling no name itself, is named as the metadata would
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.RelocatedTwoLibrariesImpl.ja [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.isolated.sub.RelocatedArgJavaBase
+            fun ja(arg0: com.xemantic.kotlin.introspection.isolated.sub.RelocatedSubJavaArg?)
+        """.trimIndent()
+    }
+
+    /**
+     * The signature of the `on` of the `RelocatedListenerImpl`, implementing the Java interface `RelocatedListener`,
+     * with only the Kotlin class `RelocatedEvent` relocated, like by shading, which the method of the interface takes,
+     * so that neither class file tells a relocated supertype, and the JVM method of the override removed from the class only,
+     * like by a shrinker, the method of the interface kept, the class file of the class [transformed][transform] further.
+     */
+    private fun shrunkOverrideOfRelocatedEventSignature(name: String, transform: (ByteArray) -> ByteArray = { it }): String? {
+        val isolated = "com/xemantic/kotlin/introspection/isolated"
+        val dependents = listOf("RelocatedListener.class", "RelocatedListenerImpl.class")
+        val root = isolatedTestFixturesCopy(name, "RelocatedEvent.class", *dependents.toTypedArray())
+        relocatedCopy(root, "RelocatedEvent.class", dependents = dependents)
+        val impl = root.resolve("$isolated/RelocatedListenerImpl.class")
+        impl.writeBytes(
+            transform(withoutMethods(impl.readBytes()) { methodName, descriptor ->
+                methodName == "on" && descriptor == "(Lshaded/$isolated/RelocatedEvent;)V"
+            })
+        )
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+        return introspector.resolve("com.xemantic.kotlin.introspection.isolated.RelocatedListenerImpl.on")
+    }
+
+    // the Java method, taking the Kotlin class by its relocated JVM name, is not listed as inherited next to its override
+    private val shrunkOverrideOfRelocatedEventSignature = /* language=kotlin */ """
+        // com.xemantic.kotlin.introspection.isolated.RelocatedListenerImpl.on [page 1/1]
+        override fun on(event: RelocatedEvent)
+        fun on(event: RelocatedOther)
+    """.trimIndent()
+
+    @Test
+    fun `should not list Java method taking relocated Kotlin class as inherited next to its shrunk override`() {
+        // when
+        val signature = shrunkOverrideOfRelocatedEventSignature("shrunkOverrideOfRelocatedEvent")
+
+        // then
+        signature sameAsKotlin shrunkOverrideOfRelocatedEventSignature
+    }
+
+    @Test
+    fun `should not list Java method taking relocated Kotlin class as inherited next to its shrunk override and JVM method of no member`() {
+        // when
+        // a JVM-only method of the shape of the override, like the one of a @JvmStatic function of the companion object,
+        // taking the class of the same simple name of the subpackage
+        val signature = shrunkOverrideOfRelocatedEventSignature("shrunkOverrideOfRelocatedEventNextToStatic") { bytes ->
+            val writer = ClassWriter(0)
+            ClassReader(bytes).accept(writer, 0)
+            writer.visitMethod(
+                Opcodes.ACC_PUBLIC or Opcodes.ACC_STATIC, "on", "(Lcom/xemantic/kotlin/introspection/isolated/sub/RelocatedEvent;)V", null, null
+            ).apply {
+                visitCode()
+                visitInsn(Opcodes.RETURN)
+                visitMaxs(0, 1)
+                visitEnd()
+            }
+            writer.toByteArray()
+        }
+
+        // then
+        signature sameAsKotlin shrunkOverrideOfRelocatedEventSignature
     }
 
     /**
@@ -3505,12 +3602,16 @@ class ClassLoaderIntrospectionTest {
      *
      * @param methodTables whether the constant pools, the supertypes and the method tables of the class files can still be read,
      *   like of a class file only too new to be parsed.
+     * @param absentClassFiles the other class files missing from the classpath.
      */
     private fun introspectorWithUnreadableClassFiles(
         vararg unreadableClasses: String,
-        methodTables: Boolean = true
+        methodTables: Boolean = true,
+        absentClassFiles: List<String> = emptyList()
     ): KotlinIntrospector {
-        val root = isolatedTestFixturesCopy("unreadable" + (if (methodTables) "" else "-constant-pools"), "Absent.class")
+        val root = isolatedTestFixturesCopy(
+            "unreadable" + (if (methodTables) "" else "-constant-pools"), "Absent.class", *absentClassFiles.toTypedArray()
+        )
         val unreadableResources = unreadableClasses.map { it.replace('.', '/') + ".class" }.toSet()
         val classLoader = object : URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader) {
             override fun getResourceAsStream(name: String): InputStream? {
@@ -3524,14 +3625,49 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
-    fun `should mark overrides of internal members of friend module by class whose class file cannot be parsed`() {
+    fun `should name nested class whose outer class is missing from the classpath by its class file too new to be parsed`() {
         // given
-        val unreadableResource = "com/xemantic/kotlin/introspection/friendmodule/FriendModuleSubclass.class"
-        // the class is still loaded by the parent class loader, only its class file is served unparsable
+        // like a class of a library compiled for a JVM newer than ASM knows, which the JVM running it still loads
+        val introspector = introspectorWithUnreadableClassFiles(
+            "com.xemantic.kotlin.introspection.isolated.DollarHolder\$Dollar\$Nested",
+            absentClassFiles = listOf("DollarHolder.class")
+        )
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.AbsentJavaSubclass.take"
+        )
+
+        // then
+        // the InnerClasses attribute tells the nested class Dollar$Nested of DollarHolder, not Nested of DollarHolder.Dollar
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.AbsentJavaSubclass.take [page 1/1]
+            override fun take(nested: DollarHolder.`Dollar${'$'}Nested`)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve types of Java class marked by NullMarked whose class file is too new to be parsed`() {
+        // given
+        // like a class of a library compiled for a JVM newer than ASM knows, which the JVM running it still loads
+        val unreadableClass = "com.xemantic.kotlin.introspection.test.other.JavaNullMarkedBase"
+        val definedClasses = setOf(unreadableClass, "com.xemantic.kotlin.introspection.test.InheritedJavaNullMarked")
+        // defining the classes itself, as the nullability annotations are read through the class loader of the class
         val classLoader = object : ClassLoader(javaClass.classLoader) {
+            override fun loadClass(name: String, resolve: Boolean): Class<*> =
+                if (name in definedClasses) {
+                    synchronized(getClassLoadingLock(name)) {
+                        findLoadedClass(name) ?: parent.getResourceAsStream(name.replace('.', '/') + ".class")!!
+                            .use { it.readBytes() }
+                            .let { defineClass(name, it, 0, it.size) }
+                    }
+                } else {
+                    super.loadClass(name, resolve)
+                }
+
             override fun getResourceAsStream(name: String): InputStream? {
                 val stream = super.getResourceAsStream(name)
-                return if (stream != null && name == unreadableResource) {
+                return if (stream != null && name == unreadableClass.replace('.', '/') + ".class") {
                     tooNew(stream.use { it.readBytes() }).inputStream()
                 } else stream
             }
@@ -3539,15 +3675,53 @@ class ClassLoaderIntrospectionTest {
         val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
 
         // when
-        val signature = introspector.resolve("com.xemantic.kotlin.introspection.friendmodule.FriendModuleSubclass")
+        val label = introspector.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaNullMarked.label")
+        val find = introspector.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaNullMarked.find")
 
         // then
-        signature sameAsKotlin """
-            // com.xemantic.kotlin.introspection.friendmodule.FriendModuleSubclass [page 1/1]
-            class FriendModuleSubclass : com.xemantic.kotlin.introspection.othermodule.InternalBase {
-                override val state: Int
-            }
+        // the annotations of JSpecify are read from the class file all the same
+        label sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaNullMarked.label [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNullMarkedBase
+            abstract fun label(arg0: String): String
         """.trimIndent()
+        find sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaNullMarked.find [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNullMarkedBase
+            abstract fun find(arg0: String?): String?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark overrides of internal members of friend module by class whose class file is too new to be parsed, or cannot be read at all`() {
+        // given
+        val unreadableResource = "com/xemantic/kotlin/introspection/friendmodule/FriendModuleSubclass.class"
+        // the class is still loaded by the parent class loader, only its class file is served too new to be parsed,
+        // its constant pool, supertypes and methods readable all the same, or not
+        val introspectors = listOf(true, false).map { constantPool ->
+            val classLoader = object : ClassLoader(javaClass.classLoader) {
+                override fun getResourceAsStream(name: String): InputStream? {
+                    val stream = super.getResourceAsStream(name)
+                    return if (stream != null && name == unreadableResource) {
+                        tooNew(stream.use { it.readBytes() }, constantPool).inputStream()
+                    } else stream
+                }
+            }
+            KotlinIntrospector(classLoader, scanEntireClasspath = false)
+        }
+
+        // when
+        val signatures = introspectors.map { it.resolve("com.xemantic.kotlin.introspection.friendmodule.FriendModuleSubclass") }
+
+        // then
+        signatures.forEach { signature ->
+            signature sameAsKotlin """
+                // com.xemantic.kotlin.introspection.friendmodule.FriendModuleSubclass [page 1/1]
+                class FriendModuleSubclass : com.xemantic.kotlin.introspection.othermodule.InternalBase {
+                    override val state: Int
+                }
+            """.trimIndent()
+        }
     }
 
     @Test
@@ -4210,31 +4384,37 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
-    fun `should mark overrides of class whose class file cannot be parsed`() {
+    fun `should mark overrides of class whose class file is too new to be parsed, or cannot be read at all`() {
         // given
-        val introspector = introspectorWithUnreadableClassFiles(
-            "com.xemantic.kotlin.introspection.isolated.AbsentJavaSubclass"
-        )
+        // the constant pool, the supertypes and the methods of the class file readable all the same, or not
+        val introspectors = listOf(true, false).map { methodTables ->
+            introspectorWithUnreadableClassFiles(
+                "com.xemantic.kotlin.introspection.isolated.AbsentJavaSubclass",
+                methodTables = methodTables
+            )
+        }
 
         // when
-        val signature = introspector.resolve(
-            "com.xemantic.kotlin.introspection.isolated.AbsentJavaSubclass"
-        )
+        val signatures = introspectors.map {
+            it.resolve("com.xemantic.kotlin.introspection.isolated.AbsentJavaSubclass")
+        }
 
         // then
-        signature sameAsKotlin """
-            // com.xemantic.kotlin.introspection.isolated.AbsentJavaSubclass [page 1/1]
-            class AbsentJavaSubclass : AbsentJavaBase<String> {
-                override fun process(item: String)
-                fun process(item: Int)
-                override fun run()
-                fun run(times: Int)
-                fun prim(x: Int?)
-                override fun <S : String> bounded(x: S)
-                fun <S : Number> bounded(x: S)
-                override fun take(nested: DollarHolder.`Dollar${'$'}Nested`)
-            }
-        """.trimIndent()
+        signatures.forEach { signature ->
+            signature sameAsKotlin """
+                // com.xemantic.kotlin.introspection.isolated.AbsentJavaSubclass [page 1/1]
+                class AbsentJavaSubclass : AbsentJavaBase<String> {
+                    override fun process(item: String)
+                    fun process(item: Int)
+                    override fun run()
+                    fun run(times: Int)
+                    fun prim(x: Int?)
+                    override fun <S : String> bounded(x: S)
+                    fun <S : Number> bounded(x: S)
+                    override fun take(nested: DollarHolder.`Dollar${'$'}Nested`)
+                }
+            """.trimIndent()
+        }
     }
 
     @Test

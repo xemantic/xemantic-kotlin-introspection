@@ -147,6 +147,42 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   see `givenTypeVariableNames`.
 
 - Kotlin never passes named arguments to a Java method, even one compiled with `-parameters`, so a Java method taking parameters never shadows an extension — see `isShadowingJavaMethod`.
+  A Java method overriding a Kotlin function takes them though, by the names of the Kotlin one, like `k.over(x = 1)`,
+  which is not modelled: the extension next to it stays listed.
+
+- kotlinc does not convert an anonymous function to a suspend function type:
+  `k.f(fun(): String = "")` calls the extension taking `() -> String` next to a member taking `suspend () -> CharSequence`,
+  which a lambda, a callable reference, and a value of the function type call —
+  so probe a parameter of a function type with an anonymous function too, see `acceptsTypeArguments`.
+
+- A lambda, or a function reference, is typed against the type of the parameter of each candidate, so a member accepting every value
+  of the type of an extension's parameter may still not take them, and kotlinc calls the extension — see `isConvertedTo`, `functionSupertypeOf`.
+  Probe a parameter of a function type, or of a functional interface, also with lambdas with and without explicit parameters,
+  anonymous functions, with and without a receiver, references to functions of another return type, with a default parameter,
+  and suspend ones, and a generic class also on projected and function-typed receivers.
+
+- A member / extension pair is told as never reaching the extension only as far as its probes go:
+  `fun f(x: Comparable<String>)` next to `fun <T : CharSequence> S.f(x: Comparable<T>)` calls the member for a `Comparable<String>`
+  and a `Comparable<CharSequence>`, but the extension for a `Comparable<StringBuilder>` —
+  probe a type parameter of the extension with an unrelated type satisfying its bounds, and a generic receiver also with `Nothing`.
+
+- K2 judges the override of a Java method by the first path to a generic Kotlin supertype, not by the nearest one, see `typeArgumentGivers`.
+
+- A Java `put(int)` never implements a Kotlin `put(t: T)` given `Integer` by a Java class, whatever its nullability, see `javaGivenPositions` —
+  the listing does not follow it for a `@NullMarked` class yet.
+
+- A Java method overriding a Kotlin member, or merged with one, takes its parameter names for kotlinc, so `put(t = 1)` compiles,
+  while a named-argument probe of a member merged only of Java methods fails, see `namedByKotlinMembers` —
+  a merge dropping the only Kotlin row for an `arg0` one is a regression a sweep must probe by a named call.
+
+- The `inheritedCandidates` rules deciding which merged member is listed are not transitive: a rule overriding the rank order
+  let three members beat each other in a circle, and `resolve` returned `null` — keep the guard of `listed`, and sweep three-way joins.
+
+- A Java `put(Integer)` overriding a member given `@NotNull Integer` along one path and `@Nullable Integer` along another takes a platform type,
+  while the member itself, not overridden, takes the type of its first path, see `isJavaTypeArgument`, `givenPositions`.
+
+- The Gradle test build rejects `abstract class X : J(), JDb` (`J implements GenericPut<Integer>`, `JDb` a default `put(Integer)`)
+  with `must override 'put' because it inherits multiple interface methods`, while kotlinc compiles it against the compiled Java classes, so it is no fixture.
 
 - `reflectedValue` swallows what a conversion of a reflected member throws, dropping the whole member silently,
   like every Java method overriding a Kotlin member taking a mutable collection was, see `reflectedClassName` —
