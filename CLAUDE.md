@@ -166,6 +166,20 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 - The Gradle test build rejects `abstract class X : J(), JDb` (`J implements GenericPut<Integer>`, `JDb` a default `put(Integer)`)
   with `must override 'put' because it inherits multiple interface methods`, while kotlinc compiles it against the compiled Java classes, so it is no fixture.
 
+- kotlinc merges the members the direct supertypes contribute around the first one, so their order tells the listing:
+  `X : JImpl<String>(), Function<String, String>, K` (`K` an `apply(x: String?)`) has one `apply`, as the `String!` of `JImpl` is merged with both,
+  while `X : Function<String, String>, K, JImpl<String>()` has two, as K2 enhances the JDK method to take `String`, see `isNotNullUnlike` —
+  and a Kotlin class joining some of them below contributes only the one it picks, see `groupedByDirectSupertypes`.
+  A sweep of joins needs every order of the supertypes, and the joins named through a Kotlin class too.
+
+- kotlinc generates a `toArray(T[])` in a Kotlin subclass of a Java collection class overriding it by its erasure, `toArray(Object[])`,
+  a method of the class file which no metadata declares, and which overrides nothing for the compiler, see `overridingBelow`.
+
+- When probing kotlinc, `val r: Marker = x::apply` names the type of one overload, with no ambiguity, when the class has two,
+  the message of an empty concrete subclass tells one abstract member from several (`member:` / `members:`), but not which,
+  and an `override fun <T> toArray(g: IntFunction<Array<T>>)` compiles also on a class where `x.toArray(g)` does not resolve,
+  as Kotlin hides the member of `java.util.Collection` only from calls.
+
 ## Anti-patterns to avoid
 
 - Do not add content to this file that is already discoverable by reading the source or build scripts — that inflates context without adding signal, reducing AI agent task success rates (see [arxiv 2602.11988](https://arxiv.org/abs/2602.11988)).

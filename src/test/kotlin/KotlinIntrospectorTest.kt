@@ -6669,6 +6669,30 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve Kotlin member taking platform type of Java member merged with it declared first by superclass of Java superclass implementing unrelated interface`() {
+        // java.lang.Runnable contributes no accept, so that the Java superclass joins nothing still
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaStringJavaAcceptorJoinRunnableSubclass.accept"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaStringJavaAcceptorJoinRunnableSubclass.accept [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.StringAcceptor
+            open fun accept(s: String?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member taking platform type of Java member merged with it declared first by superinterface of Java interface extending unrelated interface`() {
+        // java.io.Serializable contributes no accept, so that the Java interface joins nothing, inheriting the member the Kotlin join picks
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaStringAcceptorInterfaceJoinSerializable.accept"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaStringAcceptorInterfaceJoinSerializable.accept [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.StringAcceptor
+            fun accept(s: String?)
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve Kotlin member as declared when declared before Java member merged with it`() {
         resolver.resolve("com.xemantic.kotlin.introspection.test.StringAcceptorJavaJoin.accept") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.StringAcceptorJavaJoin.accept [page 1/1]
@@ -7427,6 +7451,174 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve implementation of Java class as member of its interface declared again by Java interface of nullable type argument`() {
+        // the second path to Function passes a Java interface too, given String?, so that its apply returns String?, no platform type,
+        // which K2 picks
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaFunctionImplementationNullableJavaInterfaceJoin.apply"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaFunctionImplementationNullableJavaInterfaceJoin.apply [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaSameTypeFunctionImplementation
+            override fun apply(arg0: String?): String?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve implementation of Java class as member of its interface declared again by Java interface giving one type argument itself`() {
+        // the Java interface gives String, a platform type, and passes the Int? given to it
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaFunctionImplementationHalfNullableJavaInterfaceJoin.apply"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaFunctionImplementationHalfNullableJavaInterfaceJoin.apply [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaFunctionImplementation2
+            override fun apply(arg0: String?): Int?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve implementation of Java class as member of its interface declared again next to Kotlin member of less specific return type`() {
+        // the apply of Function<String, String> returns String, more specific than the String? of the Kotlin member, and the String!
+        // of the Java class, so that apply(null) does not compile, while apply(x = "") does, named by the Kotlin member
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaFunctionImplementationDiamondWithNullableMember.apply"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaFunctionImplementationDiamondWithNullableMember.apply [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaSameTypeFunctionImplementation
+            override fun apply(x: String): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve implementation of Java class as member of its interface declared again next to generic Kotlin member of less specific return type`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaFunctionImplementationDiamondWithNullableGenericMember.apply"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaFunctionImplementationDiamondWithNullableGenericMember.apply [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.TypeApplier
+            open fun apply(x: String): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve implementation of Java class returning flexible collection type as member of its interface declared again of mutable one`() {
+        // the (Mutable)List<String!>! of the Java class is as specific as MutableList<String>, so that K2 picks the apply
+        // of the Function declared again, and neither apply(null), nor apply(listOf()), compiles
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaListFunctionImplementationMutableDiamond.apply"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaListFunctionImplementationMutableDiamond.apply [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaListFunctionImplementation
+            override fun apply(arg0: MutableList<String>): MutableList<String>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve implementation of Java class as member of its interface declared again of most specific return type`() {
+        // of the String? through the Java interface, and the String of Function<String, String>, declared last, K2 picks the latter
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaFunctionImplementationNullableJavaInterfaceDiamond.apply"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaFunctionImplementationNullableJavaInterfaceDiamond.apply [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaSameTypeFunctionImplementation
+            override fun apply(arg0: String): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of JDK interface given types by Kotlin apart from Kotlin member taking nullable type`() {
+        // K2 enhances the apply of java.util.function.Function, taking String, not String!, of Function<String, String>,
+        // so that a concrete subclass implements both, and apply(null) compiles
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaFunctionNullableMemberJoin.apply"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaFunctionNullableMemberJoin.apply [page 1/1]
+            // inherited from java.util.function.Function
+            fun apply(arg0: String): String
+            // inherited from com.xemantic.kotlin.introspection.test.NullableStringApplier
+            fun apply(x: String?): String?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of JDK interface reached first through Java interface as merged with Kotlin member taking nullable type`() {
+        // the apply contributed first takes String!, merged with both the others, of which K2 picks the one returning String
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaFunctionDiamondWithNullableMember.apply"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaFunctionDiamondWithNullableMember.apply [page 1/1]
+            // inherited from java.util.function.Function
+            fun apply(x: String): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve implementation of Java class as member of its interface declared before it apart from Kotlin member taking nullable type`() {
+        // the apply of Function<String, String>, contributed first, taking String, is merged with the one of the Java class only,
+        // unlike when the Java class is declared first, whose apply, taking String!, is merged with both
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaFunctionFirstImplementationDiamondWithNullableMember.apply"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaFunctionFirstImplementationDiamondWithNullableMember.apply [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.NullableStringApplier
+            fun apply(x: String?): String?
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaSameTypeFunctionImplementation
+            override fun apply(arg0: String): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member picked by Kotlin class joining it with method of Java class apart from Kotlin member taking nullable type`() {
+        // the superclass contributes the apply(x: T) it picks, returning String, which the Java class implements,
+        // not merged with the apply(x: String?), which stays abstract
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaFunctionImplementationApplierJoinWithNullableMember.apply"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaFunctionImplementationApplierJoinWithNullableMember.apply [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.NullableStringApplier
+            fun apply(x: String?): String?
+            // inherited from com.xemantic.kotlin.introspection.test.TypeApplier
+            open fun apply(x: String): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member merged with method of Java class declared first and Kotlin member taking nullable type once`() {
+        // the apply of the Java class, taking String!, is merged with both the Kotlin members, when all are direct supertypes
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaFunctionImplementationApplierNullableMemberJoin.apply"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaFunctionImplementationApplierNullableMemberJoin.apply [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.TypeApplier
+            open fun apply(x: String): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve members of Kotlin interface merged by Java interface extending it and supertype of it again once`() {
+        // a Java interface joining them merges the apply(x: String?) and the apply of Function<String, String>,
+        // which the Kotlin interface it extends keeps apart
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaNullableStringApplierFunctionJoinAgain.apply"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaNullableStringApplierFunctionJoinAgain.apply [page 1/1]
+            // inherited from java.util.function.Function
+            fun apply(x: String): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member standing for method of Java class declared first before member of JDK interface`() {
+        // test(null) compiles, as K2 picks the test(String) of the Java class, which the Kotlin member overrides on the JVM
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaStringTesterPredicateNullableMemberJoin.test"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaStringTesterPredicateNullableMemberJoin.test [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.NullableStringTester
+            open fun test(s: String?): Boolean
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve implementation of Java class returning no platform type declared before its interface as taking platform type`() {
         // the accept of the Java class returns Unit, so that K2 picks it, of the first direct supertype, and accept(null) compiles
         resolver.resolve(
@@ -7493,6 +7685,86 @@ class KotlinIntrospectorTest {
             // inherited from com.xemantic.kotlin.introspection.test.other.JavaToArrayLinkedHashSetSubclass
             override fun toArray(): Array<Any>
             override fun <T> toArray(arg0: Array<T>?): Array<T>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java override of collection method hidden by Kotlin by its erasure of Java class whose members cannot be described`() {
+        // the toArray(T[]) the compiler generates in the Kotlin class does not override it for the compiler: toArray(null) compiles
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaRawToArrayLinkedHashSetSubclass.toArray"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaRawToArrayLinkedHashSetSubclass.toArray [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaRawToArrayLinkedHashSetSubclass
+            override fun toArray(arg0: Array<Any>?): Array<Any>
+            // inherited from java.util.HashSet
+            override fun toArray(): Array<Any>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java override of collection method hidden by Kotlin by its erasure of Java subclass of JDK class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaRawToArrayArrayListSubclass.toArray"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaRawToArrayArrayListSubclass.toArray [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaRawToArrayArrayListSubclass
+            override fun toArray(arg0: Array<Any>?): Array<Any>
+            // inherited from java.util.ArrayList
+            override fun toArray(): Array<Any>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java override of default collection method hidden by Kotlin as override`() {
+        // no JDK class declares toArray(IntFunction) again, unlike the other two, yet it overrides the one of java.util.Collection
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaGeneratedToArrayLinkedHashSetSubclass.toArray"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaGeneratedToArrayLinkedHashSetSubclass.toArray [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaGeneratedToArrayLinkedHashSetSubclass
+            override fun <T> toArray(arg0: java.util.function.IntFunction<Array<T>>?): Array<T>
+            // inherited from java.util.HashSet
+            override fun toArray(): Array<Any>
+            override fun <T> toArray(arg0: Array<T>?): Array<T>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve collection method hidden by Kotlin of class naming Java list as supertype`() {
+        // the toArray of java.util.List, seen as a Java interface, but toArray(IntFunction), which java.util.Collection declares,
+        // seen as the built-in type through it: x.toArray(IntFunction { … }) does not compile
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaListSubclass.toArray"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaListSubclass.toArray [page 1/1]
+            // inherited from java.util.List
+            fun toArray(): Array<Any>
+            fun <T> toArray(arg0: Array<T>?): Array<T>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve collection method hidden by Kotlin of class naming Java list of nullable elements as supertype`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.nullable.NullableJdkList.toArray"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.nullable.NullableJdkList.toArray [page 1/1]
+            // inherited from java.util.List
+            fun toArray(): Array<Any>
+            fun <T> toArray(arg0: Array<T>?): Array<T>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve collection method hidden by Kotlin of class naming Java list of class of package as supertype`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.CollectionOrderJdkList.toArray"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.CollectionOrderJdkList.toArray [page 1/1]
+            // inherited from java.util.List
+            fun toArray(): Array<Any>
+            fun <T> toArray(arg0: Array<T>?): Array<T>
         """.trimIndent()
     }
 
