@@ -1351,6 +1351,39 @@ abstract class JavaPlainFImplementingInternalFaceSub : com.xemantic.kotlin.intro
 
 class JavaPlainFImplementingInternalFaceConcrete : JavaPlainFImplementingInternalFaceSub()
 
+// while the methods of a Java superclass win over the members of a body of an internal interface the Java class implements,
+// so that a subclass of JavaFinalFAbstractGImplementingInternalDefaultsSub cannot override f(), and has to implement g()
+internal interface InternalDefaultFG {
+    fun f(): Int = 2
+    fun g(): Int = 2
+}
+
+abstract class JavaFinalFAbstractGImplementingInternalDefaultsSub :
+    com.xemantic.kotlin.introspection.test.other.JavaFinalFAbstractGImplementingInternalDefaults()
+
+// and so when the internal interface overrides the members of a public one, which is listed in its place
+interface PublicFG {
+    fun f(): Int
+    fun g(): Int
+}
+
+internal interface InternalOverridingDefaultFG : PublicFG {
+    override fun f(): Int = 2
+    override fun g(): Int = 2
+}
+
+abstract class JavaFinalFAbstractGImplementingInternalOverridingDefaultsSub :
+    com.xemantic.kotlin.introspection.test.other.JavaFinalFAbstractGImplementingInternalOverridingDefaults()
+
+// the members of an internal interface reached through a package-private Java interface, inherited from the public one
+// extending it, which the user code can name, like the members reached through a package-private Java class
+internal interface InternalFaceBelowPackagePrivateJava {
+    fun a3(): Int
+    fun d3(): Int = 1
+}
+
+abstract class JavaPublicFaceBelowPackagePrivateSub : com.xemantic.kotlin.introspection.test.other.JavaPublicFaceBelowPackagePrivate
+
 // A Kotlin class extending java.util.AbstractList and implementing MutableList, whose members K2 merges,
 // picking the Java method of AbstractList, first, when not returning a platform type
 abstract class InheritedJavaListDiamond : java.util.AbstractList<String>(), MutableList<String>
