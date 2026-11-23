@@ -2257,9 +2257,11 @@ internal class DefaultKotlinIntrospector(
     }
 
     /**
-     * The setter of a [SyntheticProperty], a [member] the class declares, or inherits, as the [candidate].
+     * The setter of a [SyntheticProperty], a [member] the class declares, or inherits, as the [candidate],
+     * or a method of the Java class of the [candidate] which is not part of the API, when [isUncallable],
+     * see [settersInDeclarationOrder].
      */
-    private class SyntheticSetter(val member: Member.Function, val candidate: InheritedCandidate?)
+    private class SyntheticSetter(val member: Member.Function, val candidate: InheritedCandidate?, val isUncallable: Boolean = false)
 
     /**
      * The getters, and the setter, of the synthetic property named [propertyName] which Kotlin also reads a getter
@@ -2581,13 +2583,21 @@ internal class DefaultKotlinIntrospector(
      * of the type parameters of the class, the [classTypeParameters] of this member, and the [otherClassTypeParameters],
      * by their ids, never the bound of a class, whatever its own bounds, like the `X` of `fun <T : X> sort(x: T)`
      * of a `Sorter<X : Comparable<X>>`, and matching any only when not told so.
+     * Next to the method of a Java class of the [otherJvmMethod], which this member of the [owner] might override,
+     * it is told by the rules of an override, see [OverrideResolver.typeParametersTellOverride],
+     * of the nullability of the bounds too, and of an `Any` one, when they tell.
      */
     private fun Member.isBoundedLike(
         other: Member,
         classTypeParameters: Map<Int, String>,
-        otherClassTypeParameters: Map<Int, String>
+        otherClassTypeParameters: Map<Int, String>,
+        owner: OverrideResolver.Owner?,
+        otherJvmMethod: JvmMethod?
     ): Boolean {
         if (this !is Member.Function || other !is Member.Function) return true
+        if (owner != null && otherJvmMethod != null) {
+            overrideResolver.typeParametersTellOverride(owner, declaration, otherJvmMethod.key)?.let { return it }
+        }
         val typeParameters = function.typeParameters
         val otherTypeParameters = other.function.typeParameters
         if (typeParameters.size != otherTypeParameters.size) return false
@@ -2703,10 +2713,13 @@ internal class DefaultKotlinIntrospector(
                 declaration = member.declaration
             )
             is Member.Function -> listOfNotNull(
-                syntheticProperty(
-                    member, declarations, inheritedCandidate,
-                    classMembers ?: ClassMembers(inheriting?.first ?: kmClass, inheriting?.second ?: declarations, scope)
-                )?.let { "// also property: ${it.hint}" },
+                // the members of the class walked only for a function named, and shaped, like a getter
+                member.function.takeIf { it.isAccessorShaped(parameterCount = 0) && syntheticPropertyName(it.name) != null }?.let {
+                    syntheticProperty(
+                        member, declarations, inheritedCandidate,
+                        classMembers ?: ClassMembers(inheriting?.first ?: kmClass, inheriting?.second ?: declarations, scope)
+                    )
+                }?.let { "// also property: ${it.hint}" },
                 formatFunction(
                     member.function, inInterface = isInterface, owner = owner, contextPackage = contextPackage,
                     classTypeParameters = typeParameters,
@@ -2724,7 +2737,8 @@ internal class DefaultKotlinIntrospector(
      * The synthetic property which Kotlin also reads the [getter] of the [getterDeclarations] as, on the class of the [members],
      * a `var` when the class has a setter of it, like `var name` of `getName()` of `java.lang.Thread`,
      * hinted above the getter, see [formatMember], or `null` if there is none, as verified with kotlinc 2.4.21.
-     * It is not listed as a member of its own, as it would repeat every getter.
+     * It is not listed as a member of its own, as Kotlin does not let it be referenced, like `Thread::name`,
+     * and it would repeat every getter.
      * Kotlin reads so a function named like a getter, see [syntheticPropertyName], taking no parameters, nor type parameters,
      * and returning a value, when one of its topmost declarations, the ones overriding nothing, is a Java one, see [isJavaRootMethod]:
      * a method of a Java class, or a JVM-only one of a built-in type, see [BuiltinClass.jvmOnlyFunctions],
@@ -2780,25 +2794,64 @@ internal class DefaultKotlinIntrospector(
             fun KmType.asInherited(isDeclared: Boolean) = if (isDeclared) substituted(members.inheritingTypes) else this
             val getterType = AccessorType.of(
                 function.returnType.asInherited(isDeclared = getterDeclarations === declarations),
-                getter.declaration, getterDeclarations, getterCandidate, parameter = null
+                getter.declaration, getterDeclarations, getterCandidate, parameter = null, declarations.clazz
             )
             val setterName = syntheticPropertySetterName(function.name)
-            val setters = members.declared(setterName).asSequence().filterIsInstance<Member.Function>().map { SyntheticSetter(it, null) } +
-                members.inherited(setterName).asSequence().mapNotNull { candidate ->
+            val setters = members.declared(setterName).filterIsInstance<Member.Function>().map { SyntheticSetter(it, null) } +
+                members.inherited(setterName).mapNotNull { candidate ->
                     (candidate.effectiveMember as? Member.Function)?.let { SyntheticSetter(it, candidate) }
                 }
-            val setter = setters.firstOrNull { setter ->
-                val setterFunction = setter.member.function
-                if (!setterFunction.isAccessorShaped(parameterCount = 1)) return@firstOrNull false
+            fun SyntheticSetter.sets(): Boolean {
+                val setterFunction = member.function
+                if (!setterFunction.isAccessorShaped(parameterCount = 1)) return false
                 val setterType = AccessorType.of(
-                    setterFunction.valueParameters.single().type.asInherited(isDeclared = setter.candidate == null),
-                    setter.member.declaration, setter.candidate?.declarations ?: declarations, setter.candidate, parameter = 0
+                    setterFunction.valueParameters.single().type.asInherited(isDeclared = candidate == null),
+                    member.declaration, candidate?.declarations ?: declarations, candidate, parameter = 0, declarations.clazz
                 )
-                isSameAccessorType(getterType, setterType) ||
-                    (isAssignableAccessorType(getterType, setterType) && setsOverriddenGetter(getter, getterDeclarations, setter, members))
+                return isSameAccessorType(getterType, setterType) ||
+                    (isAssignableAccessorType(getterType, setterType) && setsOverriddenGetter(getter, getterDeclarations, this, members))
             }
-            SyntheticProperty(name, function.visibility, setter)
+            // the first one in the order of declaration, of the class declaring them, before the ones of its supertypes,
+            // also a method of a Java class which is not part of the API, like a private one, which cannot be called
+            val setter = settersInDeclarationOrder(setters, setterName, declarations).firstOrNull { it.sets() }
+            SyntheticProperty(name, function.visibility, setter?.takeUnless { it.isUncallable })
         }
+    }
+
+    /**
+     * The [setters] named [setterName], the candidates of the setter of a synthetic property, see [syntheticProperty],
+     * the ones the class of the [declarations] declares, followed by the ones it inherits, in the order kotlinc looks them up in:
+     * the methods of a Java class in the order of their declarations, see [javaMethodOrder], rather than the one of their descriptors,
+     * like `setFirst(Integer)` before a `setFirst(int)` declared after it, together with its methods which are not part of the API,
+     * like a private `setHidden(Integer)`, an [SyntheticSetter.isUncallable] one, as kotlinc takes the first one of the type
+     * of the getter, also when it cannot be called, reporting `cannot access` for the assignment.
+     */
+    private fun settersInDeclarationOrder(
+        setters: List<SyntheticSetter>,
+        setterName: String,
+        declarations: ClassDeclarations
+    ): List<SyntheticSetter> {
+        if (setters.none { (it.candidate?.declarations ?: declarations) is JavaClass }) return setters
+        val ordered = ArrayList<SyntheticSetter>(setters.size)
+        var index = 0
+        while (index < setters.size) {
+            val setterDeclarations = setters[index].candidate?.declarations ?: declarations
+            val group = setters.drop(index).takeWhile { (it.candidate?.declarations ?: declarations) === setterDeclarations }
+            index += group.size
+            val javaClass = setterDeclarations as? JavaClass
+            val order = javaClass?.let { javaMethodOrder(it.clazz) }.orEmpty()
+            if (javaClass == null || order.isEmpty()) {
+                ordered += group
+                continue
+            }
+            fun KmFunction.order() = javaClass.jvmMethodOf(this)?.signature?.toString()?.let { order[it] } ?: Int.MAX_VALUE
+            val listed = group.mapTo(HashSet()) { it.member.declaration }
+            val uncallable = javaClass.kmClass.functions
+                .filter { it.name == setterName && it !in listed && it.visibility != Visibility.PUBLIC && it.visibility != Visibility.PROTECTED }
+                .map { SyntheticSetter(Member.Function(it), group.first().candidate, isUncallable = true) }
+            ordered += (group + uncallable).sortedBy { it.member.declaration.order() }
+        }
+        return ordered
     }
 
     /**
@@ -2814,7 +2867,9 @@ internal class DefaultKotlinIntrospector(
 
             /**
              * The [type] of the value [parameter] at the position, or the return type, when `null`, of the [function]
-             * of the [declarations]: the types of a Java method are told as its annotations tell, see [javaNullabilityTold],
+             * of the [declarations], as inherited by the [inheriting] class, if loaded:
+             * the types of a Java method are told as its annotations tell, see [javaNullabilityTold],
+             * but a type variable of its class given a platform type, see [isGivenPlatformTypeArgument],
              * the ones of a JVM-only member of a built-in type never, and the ones of a Kotlin member always,
              * but of the [candidate] inherited returning a platform type, see [InheritedCandidate.returnsPlatformType],
              * or taking one, like the one a Java class gives for a type parameter of its class, or the one of the method
@@ -2825,14 +2880,23 @@ internal class DefaultKotlinIntrospector(
                 function: KmFunction,
                 declarations: ClassDeclarations,
                 candidate: InheritedCandidate?,
-                parameter: Int?
+                parameter: Int?,
+                inheriting: Class<*>?
             ): AccessorType = when (declarations) {
-                is JavaClass -> AccessorType(
-                    type, isJava = true,
-                    declarations.javaMethodOf(function)?.let { method ->
+                is JavaClass -> {
+                    val isTold = declarations.javaMethodOf(function)?.let { method ->
                         reflectedValue(default = null) { javaNullabilityTold(method, parameter) }
                     } ?: { false }
-                )
+                    // a type variable of the class, not annotated, told only by its mark, is of the type argument given,
+                    // a platform type when a Java class gives it so, like the String! of the T of a marked Box<T extends @Nullable Object>
+                    val declared = if (parameter == null) function.returnType else function.valueParameters.getOrNull(parameter)?.type
+                    val typeVariable = (declared?.classifier as? KmClassifier.TypeParameter)?.id
+                        ?.takeIf { id -> !declared.isNullable && !declared.isDefinitelyNonNull && function.typeParameters.none { it.id == id } }
+                    val isGivenPlatformType = typeVariable != null && inheriting != null && isGivenPlatformTypeArgument(
+                        inheriting, declarations.clazz, declarations.kmClass.typeParameters.indexOfFirst { it.id == typeVariable }
+                    )
+                    AccessorType(type, isJava = true) { path -> isTold(path) && !(isGivenPlatformType && path.isEmpty()) }
+                }
                 is BuiltinClass if function in declarations.jvmOnlyFunctions -> AccessorType(type, isJava = true) { false }
                 else -> {
                     // taking null where its declaration does not, see InheritedCandidate.effectiveMember
@@ -2856,7 +2920,8 @@ internal class DefaultKotlinIntrospector(
      * A Java collection type is both the mutable one, and the read-only one, so that it is the same as either,
      * and the same whether it projects a covariant type parameter of the read-only one out, or not,
      * see [COVARIANT_COLLECTION_ARGUMENTS], like `(Mutable)List<out String!>!` and `(Mutable)List<String!>!`,
-     * also a star projection there as `Any`, unlike `(Mutable)Map<out String!, String!>!` and `(Mutable)Map<String!, String!>!`,
+     * also a star projection there as the platform type `Any!`, or as `Any?`, unlike as an `Any` told not nullable,
+     * like by `@NullMarked`, and unlike `(Mutable)Map<out String!, String!>!` and `(Mutable)Map<String!, String!>!`,
      * and so is a Java array type, like `Array<(out) String!>!`.
      */
     private fun isSameAccessorType(getter: AccessorType, setter: AccessorType): Boolean {
@@ -2881,12 +2946,16 @@ internal class DefaultKotlinIntrospector(
                 val setterArgumentType = setterArgument.type
                 val isCovariant = index in covariant || (isArray && isEitherJava)
                 fun KmVariance?.isOutOrNone() = this == KmVariance.OUT || this == KmVariance.INVARIANT
+                val argumentPath = if (isArray) "$path[" else "$path$index;"
+                // a star projection is the `Any?` projected out, so an `Any` which tells that it is not nullable is another type
+                fun KmType.isAnyOfStar(accessor: AccessorType) = (classifier as? KmClassifier.Class)?.name == ANY_CLASS_NAME &&
+                    (isNullable || !accessor.isNullabilityTold(argumentPath))
                 when {
                     getterArgumentType == null || setterArgumentType == null -> getterArgumentType == setterArgumentType ||
-                        (isCovariant && ((getterArgumentType ?: setterArgumentType)?.classifier as? KmClassifier.Class)?.name == ANY_CLASS_NAME)
+                        (isCovariant && (getterArgumentType?.isAnyOfStar(getter) ?: setterArgumentType?.isAnyOfStar(setter)) == true)
                     getterArgument.variance != setterArgument.variance &&
                         !(isCovariant && getterArgument.variance.isOutOrNone() && setterArgument.variance.isOutOrNone()) -> false
-                    else -> same(getterArgumentType, setterArgumentType, if (isArray) "$path[" else "$path$index;")
+                    else -> same(getterArgumentType, setterArgumentType, argumentPath)
                 }
             }
             if (!areArgumentsSame) return false
@@ -4283,8 +4352,25 @@ internal class DefaultKotlinIntrospector(
             val method = lazy(LazyThreadSafetyMode.NONE) {
                 (candidate.member as? Member.Function)?.let { javaClass.javaMethodOf(it.declaration) }
             }
-            // the method overriding it in a JVM class below, see overridingBelow, and the unlisted candidate declaring it, if any
-            val overriding = lazy(LazyThreadSafetyMode.NONE) { method.value?.let { overridingBelow(it, declarations.clazz) } }
+            // the method overriding it in a JVM class below, see overridingBelow, and the unlisted candidate declaring it, if any,
+            // but a generic function of the inheriting class which its type parameters tell an overload of the method,
+            // see OverrideResolver.typeParametersTellOverride, though of its JVM signature, overriding it only on the JVM,
+            // like `fun <T> sort(x: T) where T : Comparable<T>, T : Any` the `<T extends Comparable<T>> void sort(T)`
+            val overriding = lazy(LazyThreadSafetyMode.NONE) {
+                method.value?.let { overridingBelow(it, declarations.clazz) }?.takeUnless { below ->
+                    val owner = declarations.overrideOwner
+                    val key = candidate.jvmMethod?.key
+                    owner != null && key != null && method.value?.typeParameters?.isNotEmpty() == true &&
+                        reflectedValue(default = false) {
+                            below.declaringClass == declarations.clazz &&
+                                JvmMethodSignature(below.name, AsmType.getMethodDescriptor(below)).let { signature ->
+                                    kmClass.functions.any {
+                                        it.signature == signature && overrideResolver.typeParametersTellOverride(owner, it, key) == false
+                                    }
+                                }
+                        }
+                }
+            }
             val isJavaInterface = javaClass.kmClass.kind == ClassKind.INTERFACE
             val redeclared = if (isJavaInterface || implementing.isEmpty()) emptyList() else kotlinCandidates.filter { redeclaring ->
                 redeclaring.kmClass.kind == ClassKind.INTERFACE && redeclaring !in implementing &&
@@ -4477,7 +4563,16 @@ internal class DefaultKotlinIntrospector(
             // the members of a Java class resolved directly, by the primitive types of their JVM methods, see JavaClass.overriddenMembers
             val jvmDescriptor = (member as? Member.Function)?.let { (declarations as? JavaClass)?.jvmDescriptorOf(it.declaration) }
             if (member is Member.Function && hasJavaCandidates) {
-                javaOverrides.collect(owner, member.declaration, jvmDescriptor)
+                // but by its JVM signature the methods its type parameters tell it an overload of, also erased to the same types,
+                // like `fun <T> sort(x: T) where T : Comparable<T>, T : Any` of `<T extends Comparable<T>> void sort(T)`
+                val overloaded = if (owner == null || member.declaration.typeParameters.isEmpty()) emptySet() else {
+                    candidates.mapNotNullTo(HashSet()) { candidate ->
+                        candidate.jvmMethod?.key?.takeIf {
+                            overrideResolver.typeParametersTellOverride(owner, member.declaration, it) == false
+                        }
+                    }
+                }
+                javaOverrides.collect(owner, member.declaration, jvmDescriptor, overloaded = overloaded)
             }
             val keys = member.overridden(overrideResolver, owner, jvmDescriptor)
             overridden += keys
@@ -4516,7 +4611,7 @@ internal class DefaultKotlinIntrospector(
                     null -> candidate.signature !in untoldOverrideSignatures
                     else -> !javaOverrides.overrides(candidate.jvmMethod, candidate.overridden) &&
                         declaredSignatures[candidate.signature].orEmpty().none {
-                            it.isBoundedLike(candidate.member, inheritingTypeParameters.names, inheritingNames)
+                            it.isBoundedLike(candidate.member, inheritingTypeParameters.names, inheritingNames, owner, candidate.jvmMethod)
                         }
                 }
         // the JVM-only members overridden by the Java candidates on the JVM, see javaMethodSignatures,
@@ -5024,13 +5119,26 @@ internal class DefaultKotlinIntrospector(
         // the keys of the overriding functions by their JVM signatures, null when not told, like of a declared function
         val signatures = HashMap<JvmMethodSignature, MutableSet<String?>>()
 
+        // the keys of the methods which the functions of a JVM signature do not override, though of the same one, by the signature
+        private val overloaded = HashMap<JvmMethodSignature, MutableList<Set<String>>>()
+
         /**
          * Collect the JVM methods which the [function] of the [owner] overrides, by its JVM signature too,
-         * the [function] of the [key], if told, see [overrides].
+         * the [function] of the [key], if told, see [overrides], but the ones of the keys it is [overloaded] next to,
+         * as its type parameters tell, see [OverrideResolver.typeParametersTellOverride].
          */
-        fun collect(owner: OverrideResolver.Owner?, function: KmFunction, jvmDescriptor: String? = null, key: String? = null) {
+        fun collect(
+            owner: OverrideResolver.Owner?,
+            function: KmFunction,
+            jvmDescriptor: String? = null,
+            key: String? = null,
+            overloaded: Set<String> = emptySet()
+        ) {
             owner?.let { members += overrideResolver.overriddenJavaMembers(it, function, jvmDescriptor) }
-            function.signature?.let { signatures.getOrPut(it) { HashSet() } += key }
+            function.signature?.let { signature ->
+                signatures.getOrPut(signature) { HashSet() } += key
+                this.overloaded.getOrPut(signature) { ArrayList() } += overloaded
+            }
         }
 
         /**
@@ -5039,7 +5147,11 @@ internal class DefaultKotlinIntrospector(
          * the `put(Object)` of a Java class implementing it, see [InheritedCandidate.overrides].
          */
         fun overrides(method: JvmMethod, overridden: Set<String> = emptySet()): Boolean =
-            method.key in members || signatures[method.signature]?.any { it == null || it !in overridden } == true
+            method.key in members || (
+                signatures[method.signature]?.any { it == null || it !in overridden } == true &&
+                    // unless every function of the JVM signature is an overload of the method
+                    this.overloaded[method.signature]?.all { method.key in it } != true
+                )
 
         /**
          * The keys of the functions overriding the [method] only by their JVM signatures, as it is none of the [members],
@@ -5469,9 +5581,12 @@ internal class DefaultKotlinIntrospector(
                 if (companionClassName == null) unshadowedOnInstance else {
                     val apiCompanion by lazy(LazyThreadSafetyMode.NONE) { apiCompanionOf(kmClass, declarations, apiClass) }
                     val companionSupertypes = { apiCompanion?.let { supertypesOf(it.kmClass) } }
+                    val companionMembers by lazy(LazyThreadSafetyMode.NONE) {
+                        apiCompanion?.let { ClassMembers(it.kmClass, it.foundClass, it.apiClass) }
+                    }
                     unshadowedOnInstance.withoutShadowedByMembers(
                         companionClassName, { receiver, _ -> isOnCompanion(receiver) }, companionSupertypes,
-                        { name -> apiCompanion?.let { publicSyntheticPropertyType(ClassMembers(it.kmClass, it.foundClass, it.apiClass), name) } }
+                        { name -> companionMembers?.let { publicSyntheticPropertyType(it, name) } }
                     ) { name ->
                         apiCompanion?.let { publicMembersNamed(it.kmClass, it.foundClass, name, it.apiClass) }.orEmpty()
                     }

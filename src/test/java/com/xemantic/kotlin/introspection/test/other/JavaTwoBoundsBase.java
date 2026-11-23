@@ -30,4 +30,10 @@ public class JavaTwoBoundsBase {
     public <T extends Object & Comparable<T>> void obj(T x) {
     }
 
+    public <T extends CharSequence & Comparable<T>> void arr(T[] xs) {
+    }
+
+    public <T extends CharSequence & Comparable<T>> void va(T... xs) {
+    }
+
 }

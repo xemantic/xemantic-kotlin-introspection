@@ -1327,6 +1327,11 @@ open class SyntheticPropertyKotlinSetters : com.xemantic.kotlin.introspection.te
     override fun setBar(bar: String?): com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertySetters = this
 }
 
+// The accessors of the type variable of a Java class marked by @NullMarked, given by a Java class not marked,
+// and its accessors of a star projection, and of Object
+abstract class SyntheticPropertyMarkedBoxOfString :
+    com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyMarkedBoxOfString()
+
 // A final class, which cannot call the protected setPr(String) of its Java superclass
 class SyntheticPropertyFinal : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyBase()
 

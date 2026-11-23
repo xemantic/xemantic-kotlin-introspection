@@ -231,10 +231,12 @@ com.example.AnnotationTestClass
   An `Object` bound next to another one, like of `<T extends Object & Comparable<? super T>>`, is left out, like `T : Comparable<in T>?`.
   A method named with `$`, like `get$x()`, is rendered in backticks, like `` fun `get$x`(): String ``.
   The synthetic property which Kotlin reads a Java getter as is not listed as a member of its own,
-  as it would repeat every getter,
+  as Kotlin does not let it be referenced, like `Thread::name`, and it would repeat every getter,
   but hinted on the line above the getter, like `// also property: var name` above `fun getName(): String` of `java.lang.Thread`,
   a `var` when there is a setter taking the type the getter returns, like `setName(String)`,
   of a single parameter, which is no vararg, like of `setName(String...)`, whatever it returns, like a fluent setter,
+  the first such one in the order of declaration, like kotlinc takes it, also when it cannot be called, like a private one,
+  which leaves the property a `val`,
   a platform type being the type of either nullability, like the `String!` of `setName(String)` for a `@NonNull String getName()`,
   while a setter stricter, or laxer, than the getter leaves it a `val`,
   like `setNick(@NonNull String)` of a `@Nullable String getNick()`, for which kotlinc reports `'val' cannot be reassigned`,
@@ -629,11 +631,15 @@ com.example.AnnotationTestClass
   told by the Kotlin signatures, as the compiler does.
   A generic function overrides one whose type parameters are of the same bounds, in any order,
   like `fun <T> two(x: T) where T : Comparable<T>, T : CharSequence` the `<T extends CharSequence & Comparable<T>> void two(T)`
-  of a Java superclass, though they are erased to other JVM types,
+  of a Java superclass, though they are erased to other JVM types, also when taking an array, or a vararg, of the type parameter,
+  a bound of a Java method being a platform type, declared of either nullability, also where it is nested,
+  like `T : CharSequence?` of the `T extends E` of a `Base<CharSequence>`,
+  unless the Java method tells it, by an annotation, or by `@NullMarked`, like the type parameter it takes then,
+  so that neither `where T : Comparable<T>?, T : CharSequence?`, nor `two(x: T?)`, overrides the `two(T)` of a marked class,
   while one of another bound is an overload, listed next to the inherited one,
   like `fun <T : CharSequence> sort(x: T)` next to `fun <T : Comparable<T>> sort(x: T)`,
   also one bounded by a type parameter of its class, like `fun <T : X> sort(x: T)`, whatever the bound of `X`,
-  or of one more bound, like `where T : Comparable<T>, T : Any`.
+  or of one more bound, like `where T : Comparable<T>, T : Any`, also when both are erased to the same JVM signature.
   An internal member of a supertype can be overridden only in its own module, or in a friend module,
   like the test module of the main one,
   which the metadata does not tell, as unrelated modules might share a module name,

@@ -36,6 +36,8 @@ import com.xemantic.kotlin.introspection.test.other.JavaRawComparable
 import com.xemantic.kotlin.introspection.test.other.JavaRawInnerMid
 import com.xemantic.kotlin.introspection.test.other.JavaRawKotlinMid
 import com.xemantic.kotlin.introspection.test.other.JavaSortBase
+import com.xemantic.kotlin.introspection.test.other.JavaGenericBoundsBase
+import com.xemantic.kotlin.introspection.test.other.JavaNullMarkedTwoBoundsBase
 import com.xemantic.kotlin.introspection.test.other.JavaTwoBoundsBase
 import com.xemantic.kotlin.introspection.test.other.JavaVoidBase
 import com.xemantic.kotlin.introspection.test.other.PackagePrivateBase
@@ -467,6 +469,38 @@ class AnyBoundedSorter : JavaSortBase() {
 class ReorderedBoundsOverride : JavaTwoBoundsBase() {
     override fun <T> two(x: T) where T : Comparable<T>, T : CharSequence {}
     override fun <T> obj(x: T) where T : Comparable<T>, T : Any {}
+    override fun <T> arr(xs: Array<T>) where T : Comparable<T>, T : CharSequence {}
+    override fun <T> va(vararg xs: T) where T : Comparable<T>, T : CharSequence {}
+}
+
+// An override declares a bound which is a platform type of Java of either nullability, like the type argument
+// given for the type variable of the Java superclass bounding the one of its method, also as a type argument of the bound
+class NullableBoundOverride : JavaGenericBoundsBase<CharSequence>() {
+    override fun <T : CharSequence?> bounded(x: T) {}
+    override fun <T : Comparable<CharSequence?>> compared(x: T) {}
+    override fun <T : MutableList<out CharSequence?>?> listed(x: T) {}
+}
+
+class TypeParameterNullableBoundOverride<Y> : JavaGenericBoundsBase<Y>() {
+    override fun <T : Y?> bounded(x: T) {}
+}
+
+// The functions next to the methods of a Java superclass marked by @NullMarked, whose types are not nullable:
+// overloads when taking the type parameter as nullable, or declaring its bounds nullable, or one more bound, and an override otherwise
+class NullMarkedNullableParameterOverload : JavaNullMarkedTwoBoundsBase() {
+    fun <T> two(x: T?) where T : Comparable<T>, T : CharSequence {}
+}
+
+class NullMarkedNullableBoundsOverload : JavaNullMarkedTwoBoundsBase() {
+    fun <T> two(x: T) where T : Comparable<T>?, T : CharSequence? {}
+}
+
+class NullMarkedAnyBoundedSorter : JavaNullMarkedTwoBoundsBase() {
+    fun <T> sort(x: T) where T : Comparable<T>, T : Any {}
+}
+
+class NullMarkedReorderedBoundsOverride : JavaNullMarkedTwoBoundsBase() {
+    override fun <T> two(x: T) where T : Comparable<T>, T : CharSequence {}
 }
 
 // The functions of a Kotlin superclass are overridden by the bounds of their type parameters as well

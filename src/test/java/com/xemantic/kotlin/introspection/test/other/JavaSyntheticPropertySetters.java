@@ -92,6 +92,25 @@ public class JavaSyntheticPropertySetters {
 
     public void setWide(Object wide) {}
 
+    public List<?> getStars() { return null; }
+
+    // a List<*> is the List<Any!> of a platform type
+    public void setStars(List<Object> stars) {}
+
+    public Integer getFirst() { return 0; }
+
+    // the first setter of the type of the getter, in the order of declaration, is the one taken
+    public void setFirst(Integer first) {}
+
+    protected void setFirst(int first) {}
+
+    public Integer getHidden() { return 0; }
+
+    // also one which cannot be called, so that the public one declared after it is not taken
+    private void setHidden(Integer hidden) {}
+
+    public void setHidden(int hidden) {}
+
     public Object getNarrow() { return ""; }
 
     // not of the type of getNarrow(), but of the one of an override returning String

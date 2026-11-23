@@ -5648,7 +5648,104 @@ class KotlinIntrospectorTest {
             class ReorderedBoundsOverride : com.xemantic.kotlin.introspection.test.other.JavaTwoBoundsBase {
                 override fun <T> two(x: T) where T : Comparable<T>, T : CharSequence
                 override fun <T> obj(x: T) where T : Comparable<T>, T : Any
+                override fun <T> arr(xs: Array<T>) where T : Comparable<T>, T : CharSequence
+                override fun <T> va(vararg xs: T) where T : Comparable<T>, T : CharSequence
             }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve override of Java method taking array of type variable of bounds in another order`() {
+        // kotlinc requires the override modifier, as for the type variable itself
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ReorderedBoundsOverride.arr"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ReorderedBoundsOverride.arr [page 1/1]
+            override fun <T> arr(xs: Array<T>) where T : Comparable<T>, T : CharSequence
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve override of Java method taking vararg of type variable of bounds in another order`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.ReorderedBoundsOverride.va"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ReorderedBoundsOverride.va [page 1/1]
+            override fun <T> va(vararg xs: T) where T : Comparable<T>, T : CharSequence
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark functions declaring platform bounds of Java methods nullable as overrides`() {
+        // kotlinc requires the override modifier: the E of T extends E, given CharSequence, is the platform type CharSequence!,
+        // also as a type argument of the bound
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.NullableBoundOverride"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NullableBoundOverride [page 1/1]
+            class NullableBoundOverride : com.xemantic.kotlin.introspection.test.other.JavaGenericBoundsBase<CharSequence> {
+                override fun <T : CharSequence?> bounded(x: T)
+                override fun <T : Comparable<CharSequence?>> compared(x: T)
+                override fun <T : MutableList<out CharSequence?>?> listed(x: T)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve override declaring platform bound of Java method nullable without inherited method`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.NullableBoundOverride.bounded"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NullableBoundOverride.bounded [page 1/1]
+            override fun <T : CharSequence?> bounded(x: T)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve override declaring bound of nullable type parameter given to Java superclass`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.TypeParameterNullableBoundOverride.bounded"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.TypeParameterNullableBoundOverride.bounded [page 1/1]
+            override fun <T : Y?> bounded(x: T)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not mark function taking nullable type parameter as override of Java method of marked class`() {
+        // kotlinc rejects the override modifier: the T of two(T) of a class marked by @NullMarked is taken as given
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NullMarkedNullableParameterOverload.two") should {
+            have("fun <T> two(x: T?) where T : Comparable<T>, T : CharSequence" in lines())
+            have(lines().any { it.startsWith("// inherited from ") })
+        }
+    }
+
+    @Test
+    fun `should not mark function of nullable bounds as override of Java method of marked class`() {
+        // kotlinc rejects the override modifier: the bounds of a class marked by @NullMarked are not nullable
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NullMarkedNullableBoundsOverload.two") should {
+            have("fun <T> two(x: T) where T : Comparable<T>?, T : CharSequence?" in lines())
+            have(lines().any { it.startsWith("// inherited from ") })
+        }
+    }
+
+    @Test
+    fun `should resolve Java method of marked class next to declared overload of one more bound`() {
+        // of the same signature as rendered, yet no override, so that the inherited sort is listed too
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NullMarkedAnyBoundedSorter.sort") should {
+            have("fun <T> sort(x: T) where T : Comparable<T>, T : Any" in lines())
+            have(lines().any { it.startsWith("// inherited from ") })
+        }
+    }
+
+    @Test
+    fun `should mark function of bounds in another order as override of Java method of marked class`() {
+        // a guard: resolved so before the rules of #341 as well
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.NullMarkedReorderedBoundsOverride.two"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NullMarkedReorderedBoundsOverride.two [page 1/1]
+            override fun <T> two(x: T) where T : Comparable<T>, T : CharSequence
         """.trimIndent()
     }
 
@@ -9232,6 +9329,7 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve type variable of annotated bound of Java method marked by NullMarked nested in type argument as given`() {
+        // a guard: resolved so before the rules of #341 as well
         // kotlinc rejects given<String>(listOf(null))
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.InheritedJavaMethodNullMarked.given"
@@ -9244,6 +9342,7 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve type variable of Java method marked by NullMarked inherited through marked subclass as nullable`() {
+        // a guard: resolved so before the rules of #341 as well
         // the mark of the subclass tells nothing of the method it inherits: kotlinc accepts two<String>(null, "")
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.InheritedJavaMethodNullMarkedSub.two"
@@ -10156,6 +10255,7 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should hint synthetic property as val when only vararg method is named like setter`() {
+        // a guard: resolved so before the rules of #341 as well
         // kotlinc rejects setters.va = "" with: 'val' cannot be reassigned
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.SyntheticPropertySetters.va"
@@ -10209,6 +10309,7 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should hint synthetic property as var when setter takes platform type of getter annotated not null`() {
+        // a guard: resolved so before the rules of #341 as well
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.SyntheticPropertySetters.strict"
         ) sameAsKotlin """
@@ -10222,6 +10323,7 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should hint synthetic property as var when setter takes boxed type of primitive getter`() {
+        // a guard: resolved so before the rules of #341 as well
         resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertySetters.boxed") should {
             have("// also property: var boxed" in lines())
             have("open fun setBoxed(arg0: Int?)" in lines())
@@ -10256,6 +10358,7 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should hint synthetic property as val when setter takes Java map of getter of key wildcard`() {
+        // a guard: resolved so before the rules of #341 as well
         // Map is not covariant in its keys
         resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertySetters.keys") should {
             have("// also property: val keys" in lines())
@@ -10265,6 +10368,7 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should hint synthetic property as val when setter takes subtype of getter`() {
+        // a guard: resolved so before the rules of #341 as well
         resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertySetters.narrow") should {
             have("// also property: val narrow" in lines())
             have(lines().none { " setNarrow(" in it })
@@ -10288,6 +10392,7 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should hint synthetic property as var when setter takes type of covariant getter`() {
+        // a guard: resolved so before the rules of #341 as well
         // setNarrow(String) takes the String of the getNarrow() overriding the one returning Object
         resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertyCovariant.narrow") should {
             have("// also property: var narrow" in lines())
@@ -10297,6 +10402,7 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should hint synthetic property as var when Kotlin getter returns type of stricter setter`() {
+        // a guard: resolved so before the rules of #341 as well
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.SyntheticPropertyKotlinSetters.nick"
         ) sameAsKotlin """
@@ -10349,6 +10455,7 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve synthetic property name to getter only when final class inherits protected setter`() {
+        // a guard: resolved so before the rules of #341 as well
         // which nothing can call
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.SyntheticPropertyFinal.pr"
@@ -10358,6 +10465,87 @@ class KotlinIntrospectorTest {
             // also property: val pr
             fun getPr(): String
         """.trimIndent()
+    }
+
+    @Test
+    fun `should hint synthetic property as var of type variable of marked class given by Java class not marked`() {
+        // kotlinc assigns box.value = "", and box.value = null, of the String! which both accessors are of
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.SyntheticPropertyMarkedBoxOfString.value"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SyntheticPropertyMarkedBoxOfString.value [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyMarkedBox
+            // also property: var value
+            abstract fun getValue(): String
+            abstract fun setValue(arg0: String?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should hint synthetic property as var of annotated getter and setter of type variable given by Java class not marked`() {
+        // the String! of setStrict(T) is the String of @NonNull T getStrict()
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertyMarkedBoxOfString.strict") should {
+            have("// also property: var strict" in lines())
+            have("abstract fun setStrict(arg0: String?)" in lines())
+        }
+    }
+
+    @Test
+    fun `should hint synthetic property as var of getter of type variable given by Java class not marked and annotated setter`() {
+        // the String! of T getLax() is the String? of setLax(@Nullable T)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertyMarkedBoxOfString.lax") should {
+            have("// also property: var lax" in lines())
+            have("abstract fun setLax(arg0: String?)" in lines())
+        }
+    }
+
+    @Test
+    fun `should hint synthetic property as val when setter of marked class takes Object for star projection of getter`() {
+        // kotlinc rejects box.stars = …, as the List<*> of getStars() is no List<Any>
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertyMarkedBoxOfString.stars") should {
+            have("// also property: val stars" in lines())
+            have(lines().none { " setStars(" in it })
+        }
+    }
+
+    @Test
+    fun `should hint synthetic property as val when setter of marked class takes star projection for Object of getter`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertyMarkedBoxOfString.objects") should {
+            have("// also property: val objects" in lines())
+            have(lines().none { " setObjects(" in it })
+        }
+    }
+
+    @Test
+    fun `should hint synthetic property as var when setter takes platform Object for star projection of getter`() {
+        // a guard, passing before the change: the List<*> of getStars() is the (Mutable)List<Any!>! of setStars(List<Object>)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertySetters.stars") should {
+            have("// also property: var stars" in lines())
+            have("open fun setStars(arg0: List<Any>?)" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve synthetic property name to first setter declared of the type of the getter`() {
+        // kotlinc assigns setters.first = 1 anywhere, by the public setFirst(Integer), declared before the protected setFirst(int)
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.SyntheticPropertySetters.first"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SyntheticPropertySetters.first [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertySetters
+            // also property: var first
+            open fun getFirst(): Int
+            open fun setFirst(arg0: Int?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should hint synthetic property as val when private setter is declared before public one`() {
+        // kotlinc takes the private setHidden(Integer), declared first, and rejects setters.hidden = 1: cannot access
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertySetters.hidden") should {
+            have("// also property: val hidden" in lines())
+            have(lines().none { " setHidden(" in it })
+        }
     }
 
     @Test

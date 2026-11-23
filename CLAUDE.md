@@ -147,15 +147,6 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   see `givenTypeVariableNames`.
 
 - Kotlin never passes named arguments to a Java method, even one compiled with `-parameters`, so a Java method taking parameters never shadows an extension — see `isShadowingJavaMethod`.
-
-- The setter of a synthetic property is modeled after `FirSyntheticPropertiesScope.setterTypeIsConsistentWithGetterType` (tag `v2.4.21`), see `syntheticProperty`:
-  equal types, not assignable ones, so a laxer setter leaves a `val` too.
-  Probe it by an assignment — `'val' cannot be reassigned` tells a setter not taken, `cannot access` one taken, but not visible —
-  not by a reference: kotlinc 2.4.21 compiles `Thread::name` as a `KMutableProperty1`.
-
-- When probing whether a generic function overrides, compile it both with the `override` modifier and without:
-  one rejected with the modifier (`overrides nothing`) might be rejected without it too, as an `accidental override` of the same JVM signature,
-  while an overload of the same JVM signature might compile, like `where T : Comparable<T>, T : Any` next to `<T : Comparable<T>>`, see `boundsMatch`.
   A Java method overriding a Kotlin function takes them though, by the names of the Kotlin one, like `k.over(x = 1)`,
   which is not modelled: the extension next to it stays listed.
 
@@ -174,6 +165,18 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   `fun f(x: Comparable<String>)` next to `fun <T : CharSequence> S.f(x: Comparable<T>)` calls the member for a `Comparable<String>`
   and a `Comparable<CharSequence>`, but the extension for a `Comparable<StringBuilder>` —
   probe a type parameter of the extension with an unrelated type satisfying its bounds, and a generic receiver also with `Nothing`.
+
+- The setter of a synthetic property is modeled after `FirSyntheticPropertiesScope.setterTypeIsConsistentWithGetterType` (tag `v2.4.21`), see `syntheticProperty`:
+  equal types, not assignable ones, so a laxer setter leaves a `val` too, and the first one matching in the order of declaration is taken.
+  Probe it by an assignment — `'val' cannot be reassigned` tells a setter not taken, `cannot access` one taken, but not visible.
+
+- When probing whether a generic function overrides, compile it both with the `override` modifier and without:
+  one rejected with the modifier (`overrides nothing`) might be rejected without it too, as an `accidental override` of the same JVM signature,
+  while an overload of the same JVM signature might compile, like `where T : Comparable<T>, T : Any` next to `<T : Comparable<T>>`, see `boundsMatch`.
+
+- Read every error of a probe, not only the first one, and not only the type a mistyped `val x: Marker = …` names:
+  `val r: Marker = Thread::name` reports the type `KMutableProperty1<Thread, String!>`, and, on the reference itself,
+  `the feature "references to synthetic java properties" is unsupported`.
 
 ## Anti-patterns to avoid
 
