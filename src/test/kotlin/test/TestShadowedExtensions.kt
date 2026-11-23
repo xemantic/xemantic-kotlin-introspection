@@ -373,7 +373,8 @@ fun BoundedStarShadowedSupertype.narrowerBox(x: BoundedBox<*>): Int = 1
 // and unlike a Function<Unit> next to a function type returning Unit, which a reference to a function returning
 // anything is coerced to, so that functionSupertypeShadowing.unitFunction(::toString) calls the extension,
 // also next to a function type returning Any, which a reference to a function returning a nullable value is not,
-// so that functionSupertypeShadowing.anyReturning(::nullable) calls the extension
+// so that functionSupertypeShadowing.anyReturning(::nullable) calls the extension, and anyBoundReturning(::nullable) too,
+// unlike typeParameterReturning(::nullable), inferring R as String?
 interface FunctionSupertypeShadowedSupertype
 
 class FunctionSupertypeShadowing : FunctionSupertypeShadowedSupertype {
@@ -390,6 +391,8 @@ class FunctionSupertypeShadowing : FunctionSupertypeShadowedSupertype {
     fun anyFunction(x: Function<Any?>): Int = 0
     fun anyReturning(x: () -> Any): Int = 0
     fun nullableAnyReturning(x: () -> Any?): Int = 0
+    fun <R> typeParameterReturning(x: () -> R): Int = 0
+    fun <R : Any> anyBoundReturning(x: () -> R): Int = 0
 }
 
 fun FunctionSupertypeShadowedSupertype.function(x: () -> String): Int = 1
@@ -417,6 +420,10 @@ fun FunctionSupertypeShadowedSupertype.anyFunction(x: () -> Unit): Int = 1
 fun FunctionSupertypeShadowedSupertype.anyReturning(x: () -> Unit): Int = 1
 
 fun FunctionSupertypeShadowedSupertype.nullableAnyReturning(x: () -> Unit): Int = 1
+
+fun FunctionSupertypeShadowedSupertype.typeParameterReturning(x: () -> Unit): Int = 1
+
+fun FunctionSupertypeShadowedSupertype.anyBoundReturning(x: () -> Unit): Int = 1
 
 // members accepting a type parameter of the extension bounded by another one, like its bounds, called instead of the extensions,
 // like boundedTypeParameterShadowing.boundedByOther(listOf("")), unlike one accepting less
@@ -631,7 +638,8 @@ fun ContravariantUnshadowing<String>.covariant(x: String): Int = 1
 // of the receiver, like contravariantShadowingOfAny.nullable(null), contravariantShadowingOfAny.sam { },
 // as a member taking Any takes a lambda too, or contravariantShadowingOfAny.nestedSink(sinkOfSinkOfString),
 // unlike next to a functional interface with a supertype, like contravariantShadowingOfMarker.markedSam { },
-// or a function type, like contravariantShadowingOfFunctionOfUnit.function(::returnsString)
+// or a function type, like contravariantShadowingOfFunctionOfUnit.function(::returnsString),
+// or a generic functional interface taking its type parameter, like contravariantShadowingOfStarGenericSam.genericSam { s: String -> }
 interface ContravariantShadowingMarker
 
 fun interface ContravariantShadowingSam {
@@ -642,6 +650,10 @@ fun interface ContravariantShadowingMarkedSam : ContravariantShadowingMarker {
     fun run()
 }
 
+fun interface ContravariantShadowingGenericSam<T> {
+    fun run(t: T)
+}
+
 class ContravariantShadowing<in T> {
     fun nullable(x: T): Int = 0
     fun sam(x: T): Int = 0
@@ -649,6 +661,7 @@ class ContravariantShadowing<in T> {
     fun nestedSink(x: NothingSink<NothingSink<T>>): Int = 0
     fun markedSam(x: T): Int = 0
     fun function(x: T): Int = 0
+    fun genericSam(x: T): Int = 0
 }
 
 fun ContravariantShadowing<String?>.nullable(x: String?): Int = 1
@@ -662,6 +675,8 @@ fun ContravariantShadowing<String>.nestedSink(x: NothingSink<NothingSink<String>
 fun ContravariantShadowing<ContravariantShadowingMarkedSam>.markedSam(x: ContravariantShadowingMarkedSam): Int = 1
 
 fun ContravariantShadowing<() -> Unit>.function(x: () -> Unit): Int = 1
+
+fun ContravariantShadowing<ContravariantShadowingGenericSam<String>>.genericSam(x: ContravariantShadowingGenericSam<String>): Int = 1
 
 // a member taking an inner class of a generic outer class, called instead of the extension only when its outer type
 // accepts the one of the extension, like innerShadowing.sameOuter(inner), unlike innerShadowing.otherOuter(inner)
@@ -875,9 +890,16 @@ class OperatorSameNameConstructedCompanionHolder(val other: Int) {
     }
 }
 
-// and ones whose constructor OperatorPrivatelyConstructedCompanionHolder(1), or OperatorOtherwiseConstructedCompanionHolder(1),
+// and ones whose constructor OperatorPrivatelyConstructedCompanionHolder(1), OperatorHiddenConstructedCompanionHolder(1),
+// or OperatorOtherwiseConstructedCompanionHolder(1),
 // cannot call, so they call the extension
 class OperatorPrivatelyConstructedCompanionHolder private constructor(val other: Int) {
+    companion object : OperatorCompanionSupertype {
+        fun invoke(other: Int): Int = 0
+    }
+}
+
+class OperatorHiddenConstructedCompanionHolder @Deprecated("Use invoke", level = DeprecationLevel.HIDDEN) constructor(val other: Int) {
     companion object : OperatorCompanionSupertype {
         fun invoke(other: Int): Int = 0
     }

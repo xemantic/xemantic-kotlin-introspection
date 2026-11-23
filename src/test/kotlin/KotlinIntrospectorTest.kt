@@ -2268,8 +2268,9 @@ class KotlinIntrospectorTest {
         // while .suspendConversion(fun(): String = "") calls the extension, as an anonymous function is not converted to a suspend one,
         // and .unitFunction(::toString), or .receiverFunction(String::trim), as the reference is coerced to return Unit,
         // while it is no Function<Unit>, unlike a Function<Any?> of .anyFunction(::toString), and .anyReturning(::nullable),
-        // of a function returning String?, which is no () -> Any, unlike a () -> Any? of .nullableAnyReturning(::nullable)
-        resolver.resolve("com.xemantic.kotlin.introspection.test.FunctionSupertypeShadowing", pageSize = 20) sameAsKotlin """
+        // of a function returning String?, which is no () -> Any, unlike a () -> Any? of .nullableAnyReturning(::nullable),
+        // and a () -> R of .typeParameterReturning(::nullable), inferring R as String?, unlike the R : Any of .anyBoundReturning(::nullable)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.FunctionSupertypeShadowing", pageSize = 30) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.FunctionSupertypeShadowing [page 1/1]
             class FunctionSupertypeShadowing : FunctionSupertypeShadowedSupertype {
                 fun function(x: Function<CharSequence>): Int
@@ -2285,8 +2286,11 @@ class KotlinIntrospectorTest {
                 fun anyFunction(x: Function<Any?>): Int
                 fun anyReturning(x: () -> Any): Int
                 fun nullableAnyReturning(x: () -> Any?): Int
+                fun <R> typeParameterReturning(x: () -> R): Int
+                fun <R : Any> anyBoundReturning(x: () -> R): Int
             }
             // from com.xemantic.kotlin.introspection.test
+            fun FunctionSupertypeShadowedSupertype.anyBoundReturning(x: () -> Unit): Int
             fun FunctionSupertypeShadowedSupertype.anyReturning(x: () -> Unit): Int
             fun FunctionSupertypeShadowedSupertype.narrowerFunction(x: () -> CharSequence): Int
             fun FunctionSupertypeShadowedSupertype.otherReference(x: KFunction1<String, Unit>): Int
@@ -2472,7 +2476,8 @@ class KotlinIntrospectorTest {
         // contravariantShadowingOfAny.nullable(null), .sam { }, .runnable { }, or .nestedSink(sinkOfSinkOfString) call the members,
         // as every supertype of the type argument takes the argument, a lambda too, when the functional interface extends Any only,
         // while contravariantShadowingOfMarker.markedSam { }, and contravariantShadowingOfFunctionOfUnit.function(::returnsString)
-        // call the extensions
+        // call the extensions, and so does contravariantShadowingOfStarGenericSam.genericSam { s: String -> },
+        // as a ContravariantShadowingGenericSam<*> takes no lambda
         resolver.resolve("com.xemantic.kotlin.introspection.test.ContravariantShadowing") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.ContravariantShadowing [page 1/1]
             class ContravariantShadowing<in T> {
@@ -2482,9 +2487,11 @@ class KotlinIntrospectorTest {
                 fun nestedSink(x: NothingSink<NothingSink<T>>): Int
                 fun markedSam(x: T): Int
                 fun function(x: T): Int
+                fun genericSam(x: T): Int
             }
             // from com.xemantic.kotlin.introspection.test
             fun ContravariantShadowing<() -> Unit>.function(x: () -> Unit): Int
+            fun ContravariantShadowing<ContravariantShadowingGenericSam<String>>.genericSam(x: ContravariantShadowingGenericSam<String>): Int
             fun ContravariantShadowing<ContravariantShadowingMarkedSam>.markedSam(x: ContravariantShadowingMarkedSam): Int
         """.trimIndent()
     }
@@ -2830,6 +2837,19 @@ class KotlinIntrospectorTest {
             }
             // from com.xemantic.kotlin.introspection.test
             /* called as OperatorPrivatelyConstructedCompanionHolder(…) */ operator fun OperatorCompanionSupertype.invoke(other: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should hint operator extension invoke on supertype of companion object as operator next to constructor deprecated as hidden`() {
+        // OperatorHiddenConstructedCompanionHolder(1) cannot call the constructor deprecated as hidden, it calls the extension
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OperatorHiddenConstructedCompanionHolder.invoke") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OperatorHiddenConstructedCompanionHolder.invoke [page 1/1]
+            companion object : OperatorCompanionSupertype {
+                fun invoke(other: Int): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            /* called as OperatorHiddenConstructedCompanionHolder(…) */ operator fun OperatorCompanionSupertype.invoke(other: Int): Int
         """.trimIndent()
     }
 

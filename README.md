@@ -112,7 +112,7 @@ com.example.AnnotationTestClass
   or `/* called as Foo merge … */` of an infix one called only so,
   as a member of the companion object which is not infix is called for `Foo.merge(…)`,
   and `/* called as Foo + … */`, `Foo[…]`, `… in Foo`, `-Foo`, or `Foo(…)`, of an operator called only so,
-  as a member which is no operator is called for `Foo.plus(…)`, also the invoked synthetic property of a Java getter, like `getPlus()`,
+  as a member which is no operator is called for `Foo.plus(…)`, also the synthetic property of a Java getter returning a Kotlin type with an `operator fun invoke` taking the arguments, like `getPlus()`,
   an infix operator by the form which reaches it, like `/* called as Foo plus … */` next to a member which is an operator, but not infix,
   while an operator called by a statement, like `iterator`, is told by its name,
   and an operator of no such form, like `inc`, or `invoke` next to a public constructor taking its every call, like `class Foo(x: Int)`,
