@@ -1528,8 +1528,9 @@ fun <T : Comparable<T>> InferredReceiverSink<(T) -> T>.sinkComparableFunction() 
 
 class InferredReceiverStringListSink : InferredReceiverSink<List<String>>
 
-// a function type next to a type parameter the receiver does not refer to, like W, is matched leniently, like before #319,
-// as kotlinc accepts x.f<_, _, String>() through empty intersections, like ((String) -> Unit) & String, see #319
+// a function type next to a type parameter the receiver does not refer to, but a bound, like W of T : List<W>,
+// or one whose bound refers to an inferred one, like W of W : U, is inferred, see #343, also where kotlinc accepts
+// x.f<_, _, String>(), or x.f<_, _, Nothing>(), through empty intersections, like ((String) -> Unit) & String
 fun <T : List<W>, U : T, W> InferredReceiverBiSink<T, U>.biSinkListOfExplicit() {}
 
 fun <T : Comparable<W>, W> InferredReceiverBiSink<T, T>.biSinkComparableToExplicit() {}
@@ -1565,9 +1566,9 @@ class InferredFunctionSupplierSource : InferredFunctionSource<() -> String>
 
 class InferredFunctionTransformSource : InferredFunctionSource<(String) -> String>
 
-// but a function type is still matched leniently where kotlinc cannot infer a type parameter, like U of T : List<U>,
-// to be given explicitly, as x.sinkOfList<_, Nothing>() compiles, and where the inference is not modelled exactly,
-// like for S inferred as (() -> () -> String) & (() -> CharSequence), an intersection of generic types
+// and so is a type parameter the receiver refers to through a bound, like U of T : List<U>, see #343,
+// which kotlinc cannot infer, though x.sinkOfList<_, Nothing>() compiles,
+// while S is inferred as (() -> () -> String) & (() -> CharSequence), an intersection of generic types
 fun <T : List<U>, U> InferredFunctionSink<T>.sinkOfList() {}
 
 fun <S : T, T : () -> U, U : CharSequence> InferredFunctionSink<S>.sinkUnderSupplier() {}
@@ -1670,8 +1671,8 @@ fun GivenFunctionSink<GivenFunctionSuspendTask>.sinkOfSuspendTask() {}
 class GivenFunctionSuspendTaskSource : GivenFunctionSource<GivenFunctionSuspendTask>
 
 // a type parameter given explicitly, like W, next to a bound of a suspend function type, see #343,
-// and one whose bound refers to an inferred one, like W of W : B, given as Nothing, also without a function type:
-// x.biSinkOfListUnderGiven<_, _, Nothing>() compiles, though x.biSinkOfListUnderGiven() does not
+// but not one whose bound refers to an inferred one, like W of W : B, inferred as well, also next to a function type:
+// x.biSinkOfListUnderGiven() does not compile, though x.biSinkOfListUnderGiven<_, _, Nothing>() does
 interface GivenBiSink<in A, in B>
 
 fun <T : suspend () -> U, U : CharSequence, W> GivenBiSink<T, U>.biSinkOfSuspendSupplierGiven() {}
@@ -1715,3 +1716,16 @@ interface GivenUnderBiSink<in A, in B>
 fun <A : List<B>, B : A, W : A> GivenUnderBiSink<B, A>.biSinkOfListUnderBound() {}
 
 class GivenUnderAnyBiSink : GivenUnderBiSink<Any, Any>
+
+// a class of a function type supertype, where a reified type parameter whose bound refers to an inferred one,
+// like W of W : B, is inferred as well, see #343: x.reifiedSinkOfFunctionUnder() does not compile, B inferred as Any,
+// no Comparable<Any>, though x.reifiedSinkOfFunctionUnder<_, _, String>() does
+interface GivenReifiedBiSink<in A, in B>
+
+interface GivenReifiedTask : () -> String
+
+inline fun <A : Function<B>, B : Comparable<B>, reified W : B> GivenReifiedBiSink<A, B>.reifiedSinkOfFunctionUnder() {}
+
+inline fun <A : Function<B>, B : Comparable<B>, reified W : Comparable<B>> GivenReifiedBiSink<A, B>.reifiedSinkOfFunctionUnderComparable() {}
+
+class GivenReifiedTaskAnyBiSink : GivenReifiedBiSink<GivenReifiedTask, Any>

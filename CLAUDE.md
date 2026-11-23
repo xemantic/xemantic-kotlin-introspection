@@ -130,10 +130,12 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   as an error also next to an empty intersection, unlike when all of them are inferred, see `CallInference`.
 
 - When judging a sweep by calls with explicit type arguments,
-  give explicitly only a type parameter nothing tells, neither the receiver, nor a bound of one it refers to, like `W`, or `W` of `W : U`.
+  give explicitly only a type parameter related to nothing at all — neither the receiver nor a bound refers to it, nor does its own bound refer to another one — like `W` of `fun <T : Comparable<T>, W> Sink<T>.ext()`.
+  One whose bound refers to an inferred one, like `W` of `W : U`, is inferred too (decided in #343), so such an extension is listed only when `x.ext()` compiles —
+  next to a function type as well; the one exception is the platform-type shape of the next entry (#334), not yet reconciled.
   One the receiver refers to through a bound, like `E` of `T : List<E>`, is to be inferred, or the extension is not listed (`consumeElements`),
   though kotlinc reports the same `cannot infer type for type parameter 'E'. Specify it explicitly.`
-  One it infers, given as `Nothing`, like in `x.ext<Nothing, _>()` of `<A : Comparable<A>, B : A> Sink<B>.ext()`,
+  `Nothing` does not count as a type argument making an extension callable (#366): one given as `Nothing`, like in `x.ext<Nothing, _>()` of `<A : Comparable<A>, B : A> Sink<B>.ext()`,
   compiles on nearly any contravariant receiver, and would judge every such row as callable.
 
 - A plain `x.ext()` rejected by kotlinc does not tell that the extension cannot be called:
