@@ -628,6 +628,8 @@ interface MidPut<T> : GenericPut<T>
 
 abstract class BoxedJavaIntPutImpl : com.xemantic.kotlin.introspection.test.other.JavaBoxedIntPut()
 
+abstract class PrimitiveJavaIntPutImpl : com.xemantic.kotlin.introspection.test.other.JavaPrimitiveIntPut()
+
 abstract class EmptyJavaStringPutImpl : com.xemantic.kotlin.introspection.test.other.JavaEmptyStringPut()
 
 abstract class PrimitiveJavaIntegerPutImpl : com.xemantic.kotlin.introspection.test.other.JavaPrimitiveIntegerPut()
@@ -646,6 +648,50 @@ abstract class PrimitiveAndBoxedJavaIntPutImpl : com.xemantic.kotlin.introspecti
 abstract class PrimitiveJavaIntPutOverBoxedImpl : com.xemantic.kotlin.introspection.test.other.JavaPrimitiveIntPutOverBoxed()
 
 abstract class BoxedJavaIntPutOverPrimitiveImpl : com.xemantic.kotlin.introspection.test.other.JavaBoxedIntPutOverPrimitive()
+
+// the put(Integer) of JavaBoxedPut is merged with the put(t: T) of GenericPut, given Integer by the Java interface, both taking Int!
+abstract class BoxedJavaIntegerPutInterfaceJoin : com.xemantic.kotlin.introspection.test.other.JavaBoxedPut(), com.xemantic.kotlin.introspection.test.other.JavaIntegerPutInterface
+
+abstract class NotNullBoxedJavaIntegerPutInterfaceJoin : com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPut(), com.xemantic.kotlin.introspection.test.other.JavaIntegerPutInterface
+
+abstract class BoxedJavaIntegerAndIntPutImpl : com.xemantic.kotlin.introspection.test.other.JavaBoxedIntegerAndIntPut()
+
+abstract class PrimitiveJavaNotNullIntegerPutImpl : com.xemantic.kotlin.introspection.test.other.JavaPrimitiveNotNullIntegerPut()
+
+// the put(Integer) of JavaBoxedPut is merged with the put(t: T) of GenericPut, given Integer annotated not null, taking Int
+abstract class BoxedJavaNotNullIntegerPutInterfaceJoin : com.xemantic.kotlin.introspection.test.other.JavaBoxedPut(), com.xemantic.kotlin.introspection.test.other.JavaNotNullIntegerPutInterface
+
+interface Put2<K, V> {
+    fun put(k: K, v: V): String
+}
+
+interface MidPut2<T> : Put2<Int, T>
+
+abstract class BoxedJavaMidPut2Impl : com.xemantic.kotlin.introspection.test.other.JavaBoxedMidPut2()
+
+abstract class BoxedJavaIntAndIntegerPutImpl : com.xemantic.kotlin.introspection.test.other.JavaBoxedIntAndIntegerPut()
+
+abstract class BoxedJavaIntPutOverIntegerBaseImpl : com.xemantic.kotlin.introspection.test.other.JavaBoxedIntPutOverIntegerBase()
+
+// the put(@Nullable Integer) of the Java class takes Int?, the put(t: T) of GenericPut, given Integer annotated not null, takes Int
+abstract class NullableBoxedJavaNotNullIntegerPutInterfaceJoin : com.xemantic.kotlin.introspection.test.other.JavaNullableBoxedPut(), com.xemantic.kotlin.introspection.test.other.JavaNotNullIntegerPutInterface
+
+// K2 walks the supertypes of a Kotlin class in the order it names them, the interface before the superclass here
+abstract class IntPutBeforeJavaIntegerPutBase : IntPut, com.xemantic.kotlin.introspection.test.other.JavaIntegerPutBase()
+
+abstract class JavaIntegerPutBaseBeforeIntPut : com.xemantic.kotlin.introspection.test.other.JavaIntegerPutBase(), IntPut
+
+abstract class BoxedJavaPutOverIntPutBeforeIntegerBaseImpl : com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOverIntPutBeforeIntegerBase()
+
+abstract class BoxedJavaPutOverIntegerBaseBeforeIntPutImpl : com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOverIntegerBaseBeforeIntPut()
+
+abstract class IntArrayList : ArrayList<Int>()
+
+abstract class BoxedJavaIntArrayListImpl : com.xemantic.kotlin.introspection.test.other.JavaBoxedIntArrayList()
+
+abstract class IntMutableList : AbstractMutableList<Int>()
+
+abstract class BoxedJavaIntMutableListImpl : com.xemantic.kotlin.introspection.test.other.JavaBoxedIntMutableList()
 
 abstract class GenericPutImplementation<T> : GenericPut<T> {
     override fun put(t: T): String = ""
@@ -1037,9 +1083,216 @@ internal abstract class InternalGenericPut<T> {
     abstract fun put(t: T): Int
 }
 
+abstract class JavaInternalIntegerPutWithDefaultBoxedImpl : com.xemantic.kotlin.introspection.test.other.JavaInternalIntegerPutWithDefaultBoxed()
+
+abstract class JavaInternalStringPutWithAbstractImpl : com.xemantic.kotlin.introspection.test.other.JavaInternalStringPutWithAbstract()
+
+abstract class PrimitiveJavaInternalIntegerPutImpl : com.xemantic.kotlin.introspection.test.other.JavaPrimitiveInternalIntegerPut()
+
 abstract class JavaNotImplementingInternalGenericPutSub : com.xemantic.kotlin.introspection.test.other.JavaNotImplementingInternalGenericPut()
 
 fun JavaNotImplementingInternalGenericPutSub.putNull(): Int = put(null)
+
+// or its member of a body, implementing the abstract method of a Java interface merged with it, taking a boxed type,
+// so that a concrete subclass compiles, checked by the build, like put(null), and the argument named by the Kotlin member
+internal abstract class InternalOpenPut<T> {
+    open fun put(t: T): String = ""
+}
+
+abstract class JavaInternalOpenIntegerPutWithAbstractBoxedImpl : com.xemantic.kotlin.introspection.test.other.JavaInternalOpenIntegerPutWithAbstractBoxed()
+
+class JavaInternalOpenIntegerPutWithAbstractBoxedConcrete : JavaInternalOpenIntegerPutWithAbstractBoxedImpl()
+
+fun JavaInternalOpenIntegerPutWithAbstractBoxedImpl.putNull(): String = put(null)
+
+fun JavaInternalOpenIntegerPutWithAbstractBoxedImpl.putNamed(): String = put(t = 1)
+
+// and a type argument the Java class gives annotated nullable is taken as given, so that put(null) compiles,
+// by the method of the Java class overriding the member, and next to another path giving a platform type, declared after it
+abstract class BoxedJavaPutOverInternalNullableIntegerImpl : com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOverInternalNullableInteger()
+
+fun BoxedJavaPutOverInternalNullableIntegerImpl.putNull(): String = put(null)
+
+abstract class JavaNullableIntegerPutBaseBeforeIntegerPutJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaNullableIntegerPutBase(), com.xemantic.kotlin.introspection.test.other.JavaIntegerPutInterface
+
+fun JavaNullableIntegerPutBaseBeforeIntegerPutJoin.putNull(): String = put(null)
+
+// the member of the internal class, declared first, wins also over the one of a Kotlin interface merged with it,
+// given a type argument annotated not null: one member taking the platform type, so that put(null) compiles
+internal abstract class InternalAbstractPut<T> {
+    abstract fun put(t: T): String
+}
+
+abstract class JavaInternalIntegerPutWithNotNullGenericPutImpl : com.xemantic.kotlin.introspection.test.other.JavaInternalIntegerPutWithNotNullGenericPut()
+
+fun JavaInternalIntegerPutWithNotNullGenericPutImpl.putNull(): String = put(t = null)
+
+abstract class JavaInternalOpenStringPutWithNotNullGenericPutImpl : com.xemantic.kotlin.introspection.test.other.JavaInternalOpenStringPutWithNotNullGenericPut()
+
+class JavaInternalOpenStringPutWithNotNullGenericPutConcrete : JavaInternalOpenStringPutWithNotNullGenericPutImpl()
+
+fun JavaInternalOpenStringPutWithNotNullGenericPutImpl.putNull(): String = put(t = null)
+
+abstract class JavaInternalIntegerPutBaseNotNullIntegerJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaInternalIntegerPutBase(), com.xemantic.kotlin.introspection.test.other.JavaNotNullIntegerPutInterface
+
+fun JavaInternalIntegerPutBaseNotNullIntegerJoin.putNull(): String = put(t = null)
+
+// the put(Integer) of a Java class overriding the member of the internal class, declared first, takes Int!,
+// also joined with the member given @NotNull Integer, which names the argument
+abstract class BoxedJavaPutOverInternalIntegerNotNullIntegerJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOverInternalInteger(), com.xemantic.kotlin.introspection.test.other.JavaNotNullIntegerPutInterface
+
+class BoxedJavaPutOverInternalIntegerNotNullIntegerJoinConcrete : BoxedJavaPutOverInternalIntegerNotNullIntegerJoin()
+
+fun BoxedJavaPutOverInternalIntegerNotNullIntegerJoin.putNull(): String = put(t = null)
+
+// and so next to members given @Nullable Integer, and Integer, by the Java class inheriting the method: one member, named by Kotlin
+abstract class BoxedJavaPutOverInternalIntegerNullableAndDefaultPutImpl : com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOverInternalIntegerNullableAndDefaultPut()
+
+class BoxedJavaPutOverInternalIntegerNullableAndDefaultPutConcrete : BoxedJavaPutOverInternalIntegerNullableAndDefaultPutImpl()
+
+fun BoxedJavaPutOverInternalIntegerNullableAndDefaultPutImpl.putNull(): String = put(t = null)
+
+// the method of a Java class merged with the one of a Java interface, and the member of a Kotlin interface given String by Java:
+// one member, named by Kotlin
+abstract class JavaStringAcceptorInterfaceGenericAcceptorJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaStringAcceptor(),
+    com.xemantic.kotlin.introspection.test.other.JavaStringAcceptorInterface,
+    com.xemantic.kotlin.introspection.test.other.JavaStringGenericAcceptorInterface
+
+fun JavaStringAcceptorInterfaceGenericAcceptorJoin.acceptNull() = accept(t = null)
+
+// the put(Integer) of a Java class below a Kotlin class joining a Java-given path, the Int it gives itself, and a put(int),
+// implements the member of the path declared first, taking Int!, and named by it, so that put(t = null) compiles
+abstract class IntegerPutBaseIntPutPrimitiveJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaIntegerPutBase(), GenericPut<Int>, com.xemantic.kotlin.introspection.test.other.JavaPrimitivePutInterface
+
+abstract class BoxedJavaPutBelowIntegerPutBaseIntPutPrimitiveJoinImpl : com.xemantic.kotlin.introspection.test.other.JavaBoxedPutBelowIntegerPutBaseIntPutPrimitiveJoin()
+
+fun BoxedJavaPutBelowIntegerPutBaseIntPutPrimitiveJoinImpl.putNull(): String = put(t = null)
+
+// a put(@NotNull Integer) does not implement the member given Int?, nor the one returning CharSequence, given Integer by Java,
+// which a concrete subclass has to implement
+interface GenericCharSequencePut<T> {
+    fun put(t: T): CharSequence
+}
+
+abstract class NotNullBoxedJavaPutNullableIntPutCharSequencePutJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPut(), GenericPut<Int?>, com.xemantic.kotlin.introspection.test.other.JavaIntegerCharSequencePutInterface
+
+// the put(int) of a Java class below a Kotlin class joining the abstract member of an internal class, returning CharSequence,
+// with a member given Int, implements both, so that an empty concrete subclass compiles
+internal abstract class InternalAbstractCharSequencePut<T> {
+    abstract fun put(t: T): CharSequence
+}
+
+abstract class InternalCharSequencePutIntDefaultPutJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaInternalIntegerCharSequencePutBase(), GenericDefaultPut<Int>
+
+abstract class PrimitiveJavaPutBelowInternalCharSequencePutIntDefaultPutJoinImpl :
+    com.xemantic.kotlin.introspection.test.other.JavaPrimitivePutBelowInternalCharSequencePutIntDefaultPutJoin()
+
+class PrimitiveJavaPutBelowInternalCharSequencePutIntDefaultPutJoinConcrete : PrimitiveJavaPutBelowInternalCharSequencePutIntDefaultPutJoinImpl()
+
+// the method of a Java interface listed in place of the member of an internal class of a less specific return type
+// takes the names of its parameters
+abstract class JavaInternalIntegerCharSequencePutWithAbstractBoxedImpl :
+    com.xemantic.kotlin.introspection.test.other.JavaInternalIntegerCharSequencePutWithAbstractBoxed()
+
+fun JavaInternalIntegerCharSequencePutWithAbstractBoxedImpl.putNamed(): String = put(t = 1)
+
+// a Kotlin class joining a member given Int by Kotlin with the one given @NotNull Integer by Java has one member taking Int,
+// which the put(Integer) of a Java subclass does not override, a member of its own, so that put(null) compiles
+interface GenericDefaultPut<T> {
+    fun put(t: T): String = ""
+}
+
+abstract class IntDefaultPutNotNullIntegerJoin : GenericDefaultPut<Int>, com.xemantic.kotlin.introspection.test.other.JavaNotNullIntegerPutInterface
+
+abstract class BoxedJavaPutBelowIntDefaultPutNotNullIntegerJoinImpl : com.xemantic.kotlin.introspection.test.other.JavaBoxedPutBelowIntDefaultPutNotNullIntegerJoin()
+
+class BoxedJavaPutBelowIntDefaultPutNotNullIntegerJoinConcrete : BoxedJavaPutBelowIntDefaultPutNotNullIntegerJoinImpl()
+
+fun BoxedJavaPutBelowIntDefaultPutNotNullIntegerJoinImpl.putNull(): String = put(null)
+
+// the put(Integer) of a Java class does not implement the member given Int by the Kotlin class itself,
+// though a Java interface declared before gives Integer
+abstract class BoxedJavaPutIntegerPutInterfaceIntPutJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaBoxedPut(), com.xemantic.kotlin.introspection.test.other.JavaIntegerPutInterface, GenericPut<Int>
+
+class BoxedJavaPutIntegerPutInterfaceIntPutJoinConcrete : BoxedJavaPutIntegerPutInterfaceIntPutJoin() {
+    override fun put(t: Int): String = ""
+}
+
+// a member given a type argument annotated nullable is one with the member of a class taking the platform type
+abstract class OpenGenericPut<T> {
+    open fun put(t: T): String = ""
+}
+
+abstract class JavaOpenIntegerPutWithNullableGenericPutAndDefaultImpl : com.xemantic.kotlin.introspection.test.other.JavaOpenIntegerPutWithNullableGenericPutAndDefault()
+
+class JavaOpenIntegerPutWithNullableGenericPutAndDefaultConcrete : JavaOpenIntegerPutWithNullableGenericPutAndDefaultImpl()
+
+// type arguments annotated not null and nullable disagree, a platform type then
+abstract class BoxedJavaPutOfNotNullAndNullableIntegerPutImpl : com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOfNotNullAndNullableIntegerPut()
+
+fun BoxedJavaPutOfNotNullAndNullableIntegerPutImpl.putNull(): String = put(t = null)
+
+// while the abstract method of a Java interface taking the primitive type is a member of its own, left to a concrete subclass
+abstract class JavaInternalOpenIntegerPutWithAbstractPrimitiveImpl : com.xemantic.kotlin.introspection.test.other.JavaInternalOpenIntegerPutWithAbstractPrimitive()
+
+class JavaInternalOpenIntegerPutWithAbstractPrimitiveConcrete : JavaInternalOpenIntegerPutWithAbstractPrimitiveImpl() {
+    override fun put(key: Int): String = ""
+}
+
+// and so the abstract member of the internal class merged with the method of a Java interface, also a default one,
+// which does not implement it, the argument named by the Kotlin member
+fun JavaInternalStringPutWithAbstractImpl.putNamed(): Int = put(t = "")
+
+fun JavaInternalIntegerPutWithDefaultBoxedImpl.putNamed(): Int = put(t = 1)
+
+class JavaInternalIntegerPutWithDefaultBoxedConcrete : JavaInternalIntegerPutWithDefaultBoxedImpl() {
+    override fun put(t: Int?): Int = 0
+}
+
+abstract class JavaInternalStringPutWithDefaultImpl : com.xemantic.kotlin.introspection.test.other.JavaInternalStringPutWithDefault()
+
+class JavaInternalStringPutWithDefaultConcrete : JavaInternalStringPutWithDefaultImpl() {
+    override fun put(t: String?): Int = 0
+}
+
+// next to a default method taking the primitive type, a member of its own
+abstract class JavaInternalIntegerPutWithDefaultPrimitiveImpl : com.xemantic.kotlin.introspection.test.other.JavaInternalIntegerPutWithDefaultPrimitive()
+
+class JavaInternalIntegerPutWithDefaultPrimitiveConcrete : JavaInternalIntegerPutWithDefaultPrimitiveImpl() {
+    override fun put(t: Int?): Int = 0
+}
+
+// and the member of an internal interface, which the default method of a Java interface implements, or the other way round,
+// so that a concrete subclass compiles, checked by the build
+internal interface InternalGenericPutFace<T> {
+    fun put(t: T): Int
+}
+
+abstract class JavaInternalIntegerPutFaceWithDefaultBoxed :
+    com.xemantic.kotlin.introspection.test.other.JavaInternalIntegerPutFace(), com.xemantic.kotlin.introspection.test.other.JavaDefaultBoxedPut
+
+class JavaInternalIntegerPutFaceWithDefaultBoxedConcrete : JavaInternalIntegerPutFaceWithDefaultBoxed()
+
+fun JavaInternalIntegerPutFaceWithDefaultBoxed.putNamed(): Int = put(t = null)
+
+internal interface InternalOpenPutFace<T> {
+    fun put(t: T): String = ""
+}
+
+abstract class JavaInternalOpenIntegerPutFaceWithAbstractBoxed :
+    com.xemantic.kotlin.introspection.test.other.JavaInternalOpenIntegerPutFace(), com.xemantic.kotlin.introspection.test.other.JavaBoxedPutInterface
+
+class JavaInternalOpenIntegerPutFaceWithAbstractBoxedConcrete : JavaInternalOpenIntegerPutFaceWithAbstractBoxed()
+
+fun JavaInternalOpenIntegerPutFaceWithAbstractBoxed.putNamed(): String = put(t = null)
 
 // and so through a Kotlin class exposing an internal supertype, though only with an error suppressed
 @Suppress("EXPOSED_SUPER_CLASS")
@@ -1097,6 +1350,39 @@ class JavaImplementingInternalDefaultConcrete : JavaImplementingInternalDefaultS
 abstract class JavaPlainFImplementingInternalFaceSub : com.xemantic.kotlin.introspection.test.other.JavaPlainFImplementingInternalFace()
 
 class JavaPlainFImplementingInternalFaceConcrete : JavaPlainFImplementingInternalFaceSub()
+
+// while the methods of a Java superclass win over the members of a body of an internal interface the Java class implements,
+// so that a subclass of JavaFinalFAbstractGImplementingInternalDefaultsSub cannot override f(), and has to implement g()
+internal interface InternalDefaultFG {
+    fun f(): Int = 2
+    fun g(): Int = 2
+}
+
+abstract class JavaFinalFAbstractGImplementingInternalDefaultsSub :
+    com.xemantic.kotlin.introspection.test.other.JavaFinalFAbstractGImplementingInternalDefaults()
+
+// and so when the internal interface overrides the members of a public one, which is listed in its place
+interface PublicFG {
+    fun f(): Int
+    fun g(): Int
+}
+
+internal interface InternalOverridingDefaultFG : PublicFG {
+    override fun f(): Int = 2
+    override fun g(): Int = 2
+}
+
+abstract class JavaFinalFAbstractGImplementingInternalOverridingDefaultsSub :
+    com.xemantic.kotlin.introspection.test.other.JavaFinalFAbstractGImplementingInternalOverridingDefaults()
+
+// the members of an internal interface reached through a package-private Java interface, inherited from the public one
+// extending it, which the user code can name, like the members reached through a package-private Java class
+internal interface InternalFaceBelowPackagePrivateJava {
+    fun a3(): Int
+    fun d3(): Int = 1
+}
+
+abstract class JavaPublicFaceBelowPackagePrivateSub : com.xemantic.kotlin.introspection.test.other.JavaPublicFaceBelowPackagePrivate
 
 // A Kotlin class extending java.util.AbstractList and implementing MutableList, whose members K2 merges,
 // picking the Java method of AbstractList, first, when not returning a platform type
@@ -1372,3 +1658,322 @@ class KotlinStringSubject : com.xemantic.kotlin.introspection.test.other.JavaTit
 
 // A type argument annotated not nullable, given by a Java class not marked for a type variable of a nullable bound
 abstract class InheritedJavaNotNullArgument : com.xemantic.kotlin.introspection.test.other.JavaNotNullArgument()
+
+// The arrays of Java, also of a vararg parameter, merged with the ones of Kotlin members, invariant, projected, or vararg ones (#337)
+interface StringVarargAcceptor {
+    fun acceptAll(vararg values: String)
+}
+
+interface StringArrayAcceptor {
+    fun acceptAll(values: Array<String>)
+}
+
+interface OutStringArrayAcceptor {
+    fun acceptAll(values: Array<out String>)
+}
+
+interface VarargAcceptor<T> {
+    fun acceptAll(vararg values: T)
+}
+
+abstract class JavaVarargStringVarargAcceptorJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaStringVarargAcceptor(), StringVarargAcceptor
+
+abstract class StringVarargAcceptorJavaVarargJoin :
+    StringVarargAcceptor, com.xemantic.kotlin.introspection.test.other.JavaStringVarargAcceptor()
+
+abstract class JavaVarargStringArrayAcceptorJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaStringVarargAcceptor(), StringArrayAcceptor
+
+abstract class JavaArrayStringVarargAcceptorJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaStringArrayAcceptor(), StringVarargAcceptor
+
+abstract class OutStringArrayAcceptorJavaArrayJoin :
+    OutStringArrayAcceptor, com.xemantic.kotlin.introspection.test.other.JavaStringArrayAcceptor()
+
+abstract class GenericVarargAcceptorJavaVarargJoin :
+    VarargAcceptor<String>, com.xemantic.kotlin.introspection.test.other.JavaStringVarargAcceptor()
+
+// The members of a Java interface, a Kotlin interface, and a Java class, each winning over the next one, in a circle (#337)
+abstract class JavaInterfaceGenericAcceptorJavaClassJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaStringAcceptorInterface, GenericAcceptor<String>,
+    com.xemantic.kotlin.introspection.test.other.JavaStringAcceptor()
+
+// A Kotlin member taking a mutable collection, implemented by a Java class, or merged with the method of a Java class (#337)
+interface MutableIntCollectionAdder {
+    fun addAll2(c: MutableCollection<Int>): Boolean
+}
+
+interface OutMutableIntCollectionAdder {
+    fun addAll2(c: MutableCollection<out Int>): Boolean
+}
+
+abstract class JavaMutableIntCollectionAdderSubclass : com.xemantic.kotlin.introspection.test.other.JavaMutableIntCollectionAdder()
+
+abstract class JavaIntegerOutMutableCollectionAdderJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaIntegerCollectionAdder(), OutMutableIntCollectionAdder
+
+abstract class OutMutableCollectionAdderJavaIntegerJoin :
+    OutMutableIntCollectionAdder, com.xemantic.kotlin.introspection.test.other.JavaIntegerCollectionAdder()
+
+// A nullable type argument given to a Java class, no platform type, next to a Kotlin member taking a type which is not nullable (#337)
+abstract class NullableStringJavaTypedAcceptorJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaTypedAcceptor<String?>(), StringAcceptor
+
+abstract class StringAcceptorNullableJavaTypedJoin :
+    StringAcceptor, com.xemantic.kotlin.introspection.test.other.JavaTypedAcceptor<String?>()
+
+// A nullable type argument within a vararg, or a collection, of a Java class, next to a Kotlin member taking the type not nullable (#337)
+abstract class StringVarargAcceptorNullableJavaTypedJoin : StringVarargAcceptor, com.xemantic.kotlin.introspection.test.other.JavaTypedVarargAcceptor<String?>()
+
+abstract class NullableJavaTypedStringVarargAcceptorJoin : com.xemantic.kotlin.introspection.test.other.JavaTypedVarargAcceptor<String?>(), StringVarargAcceptor
+
+abstract class OutMutableCollectionAdderNullableJavaTypedJoin : OutMutableIntCollectionAdder, com.xemantic.kotlin.introspection.test.other.JavaTypedCollectionAdder<Int?>()
+
+// A nullable array given to a Java class next to a Java vararg method, one member (#337)
+abstract class NullableArrayJavaTypedVarargInterfaceJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaTypedAcceptor<Array<String>?>(), com.xemantic.kotlin.introspection.test.other.JavaStringVarargAcceptInterface
+
+// A nullable type argument given to a Java interface, next to a member of its JVM signature, and one of another (#337)
+abstract class AbstractStringAcceptor {
+    abstract fun accept(s: String)
+}
+
+abstract class NullableJavaTypedInterfaceRedeclaredAcceptorJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaTypedAcceptorInterface<String?>, AbstractStringAcceptor(), com.xemantic.kotlin.introspection.test.other.JavaRedeclaringGenericAcceptor
+
+// A type parameter annotated not null, given a nullable type argument, merged with a Kotlin member (#337)
+interface StringPairPutter {
+    fun put2n(a: String, b: String)
+}
+
+abstract class NullableJavaNotNullTypedPutterJoin : com.xemantic.kotlin.introspection.test.other.JavaNotNullTypedPutter<String?>(), StringPairPutter
+
+// Five nested collection types of a Java method, merged with a Kotlin member taking the mutable map of them (#337)
+interface NestedMutableMapTaker {
+    fun big(m: MutableMap<List<List<String>>, List<List<String>>>)
+}
+
+abstract class JavaNestedMapTakerJoin : com.xemantic.kotlin.introspection.test.other.JavaNestedMapTaker(), NestedMutableMapTaker
+
+// A hidden member between the ones of a Java interface and of a Java class, winning over each other in a circle (#337)
+interface HiddenStringAcceptor {
+    @Deprecated("Hidden", level = DeprecationLevel.HIDDEN)
+    fun accept(s: String)
+}
+
+abstract class JavaInterfaceHiddenAcceptorJavaClassJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaStringAcceptorInterface, HiddenStringAcceptor, com.xemantic.kotlin.introspection.test.other.JavaStringAcceptor()
+
+// Members winning over each other in a circle, next to one of a less specific return type, declared first (#337)
+interface AnyGetter {
+    fun get2(k: String): Any
+}
+
+interface TypedGetter<T> {
+    fun get2(t: T): String
+}
+
+abstract class AnyGetterJavaInterfaceTypedGetterJavaClassJoin :
+    AnyGetter, com.xemantic.kotlin.introspection.test.other.JavaStringGetterInterface, TypedGetter<String>, com.xemantic.kotlin.introspection.test.other.JavaStringGetter()
+
+// A collection, or an array, of Java annotated nullable itself, next to a Kotlin member taking the one which is not nullable (#337)
+interface TypedFeeder<T> {
+    fun feed1(a: T)
+}
+
+interface OutMutableStringListFeederJavaNullableListJoin : TypedFeeder<MutableList<out String>>, com.xemantic.kotlin.introspection.test.other.JavaNullableListFeeder
+
+abstract class GenericVarargAcceptorJavaNullableArrayJoin : VarargAcceptor<String>, com.xemantic.kotlin.introspection.test.other.JavaNullableArrayAcceptor()
+
+// A Java vararg of a nullable array given for its type parameter, next to a Kotlin member taking an array of arrays (#337)
+interface TypedAllAcceptor<T> {
+    fun acceptAll(a: T)
+}
+
+abstract class NullableArrayJavaVarargArrayOfArraysJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaTypedVarargAcceptorInterface<Array<String>?>, VarargAcceptor<Array<String>?>, TypedAllAcceptor<Array<Array<String>>>
+
+// A Java vararg of elements annotated not null, a Java member given an array of nullable elements, and a Kotlin vararg, joined (#337)
+abstract class OpenStringVarargAcceptor {
+    open fun acceptAll(vararg values: String) {}
+}
+
+abstract class NotNullJavaVarargNullableArrayOpenVarargJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaNotNullStringVarargAcceptInterface,
+    com.xemantic.kotlin.introspection.test.other.JavaTypedAllAcceptorInterface<Array<String?>>, OpenStringVarargAcceptor()
+
+abstract class NotNullVarargArrayVarargJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaNotNullTypedVarargAcceptorInterface<String?>,
+    TypedAllAcceptor<Array<String?>>, VarargAcceptor<String>
+
+abstract class InheritedJavaNotNullVarargArrayVarargJoinSubclass :
+    com.xemantic.kotlin.introspection.test.other.JavaNotNullVarargArrayVarargJoinSubclass()
+
+// A Java vararg of elements annotated not null, merged with a Kotlin generic vararg naming it (#337)
+abstract class NotNullJavaVarargGenericVarargJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaNotNullStringVarargAcceptInterface, VarargAcceptor<String>
+
+// A Java vararg of nullable elements, merged with a projected array of nullable elements, next to an array of another nullability (#337)
+abstract class OutNullableArrayStringArrayNullableJavaVarargJoin :
+    TypedAllAcceptor<Array<out String?>>, StringArrayAcceptor,
+    com.xemantic.kotlin.introspection.test.other.JavaNullableTypedVarargAcceptorInterface<String?>
+
+abstract class NullableJavaVarargOutNullableArrayJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaNullableTypedVarargAcceptorInterface<String?>, TypedAllAcceptor<Array<out String?>>
+
+// A Java vararg of elements annotated not null next to a hidden member taking an array of nullable elements, of its JVM signature (#337)
+interface HiddenNullableArrayAcceptor {
+    @Deprecated("Hidden", level = DeprecationLevel.HIDDEN)
+    fun acceptAll(a: Array<String?>) {}
+}
+
+abstract class NotNullJavaVarargHiddenNullableArrayJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaNotNullStringVarargAcceptInterface, HiddenNullableArrayAcceptor
+
+// A Kotlin vararg, a hidden member taking an array of nullable elements, and a Java vararg of elements annotated not null (#337)
+abstract class StringVarargHiddenNullableArrayNotNullJavaVarargJoin :
+    StringVarargAcceptor, HiddenNullableArrayAcceptor, com.xemantic.kotlin.introspection.test.other.JavaNotNullTypedVarargAcceptorInterface<String>
+
+// A Java array, a Java member given an array of nullable elements, and a Kotlin member taking an array, merged through the first one (#337)
+abstract class JavaArrayNullableArrayStringArrayJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaStringArrayAcceptor(),
+    com.xemantic.kotlin.introspection.test.other.JavaTypedAllAcceptorInterface<Array<String?>>, StringArrayAcceptor
+
+// A Java vararg of elements annotated not null, a hidden member taking an array of nullable elements, and a Java vararg merged with both (#337)
+abstract class NotNullJavaVarargHiddenNullableArrayJavaVarargJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaNotNullStringVarargAcceptInterface, HiddenNullableArrayAcceptor,
+    com.xemantic.kotlin.introspection.test.other.JavaStringVarargAcceptor()
+
+// A Java array of nullable elements merged with a Kotlin member taking a projected one, next to arrays of elements which are not nullable (#337)
+interface OutNullableStringArrayAcceptor {
+    fun acceptAll(values: Array<out String?>)
+}
+
+interface HiddenStringVarargAcceptor {
+    @Deprecated("Hidden", level = DeprecationLevel.HIDDEN)
+    fun acceptAll(vararg values: String) {}
+}
+
+abstract class JavaNullableElementArrayStringArrayOutNullableArrayHiddenJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaNullableElementArrayAcceptor(), TypedAllAcceptor<Array<String>>,
+    OutNullableStringArrayAcceptor, HiddenStringVarargAcceptor
+
+// A Java interface member given a projected array declared before a Java vararg of a Java class merged with it, and after it (#337)
+abstract class OutNullableArrayJavaTypedVarargJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaTypedAllAcceptorInterface<Array<out String?>>,
+    com.xemantic.kotlin.introspection.test.other.JavaTypedVarargAcceptor<String?>()
+
+abstract class JavaTypedVarargOutNullableArrayJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaTypedVarargAcceptor<String?>(),
+    com.xemantic.kotlin.introspection.test.other.JavaTypedAllAcceptorInterface<Array<out String?>>
+
+// A Java interface member given an array of nullable elements, then a Java array merged with a Java vararg of elements annotated not null (#337)
+abstract class OutNullableArrayJavaArrayNotNullJavaVarargJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaTypedAllAcceptorInterface<Array<out String?>>,
+    com.xemantic.kotlin.introspection.test.other.JavaStringArrayAcceptInterface,
+    com.xemantic.kotlin.introspection.test.other.JavaNotNullTypedVarargAcceptor<String?>()
+
+// A Kotlin vararg merged with a Java array, and a Java member given an array, grouped apart from them (#337)
+abstract class OpenVarargJavaArrayTypedAllJoin :
+    OpenStringVarargAcceptor(), com.xemantic.kotlin.introspection.test.other.JavaStringArrayAcceptInterface,
+    com.xemantic.kotlin.introspection.test.other.JavaTypedAllAcceptorInterface<Array<String>>
+
+// A hidden Kotlin vararg, a Java vararg of a type parameter annotated not null, and a Java array of elements annotated nullable (#337)
+abstract class HiddenVarargNotNullJavaVarargNullableElementArrayJoin :
+    HiddenStringVarargAcceptor, com.xemantic.kotlin.introspection.test.other.JavaNotNullTypedVarargAcceptorInterface<String?>,
+    com.xemantic.kotlin.introspection.test.other.JavaNullableElementNotNullArrayAcceptor()
+
+// Java arrays of a type parameter given String?, and a Java vararg of elements annotated nullable, below a Java subclass (#337)
+abstract class TypedArrayNullableVarargJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaTypedArrayAcceptInterface<String?>,
+    com.xemantic.kotlin.introspection.test.other.JavaNullableStringVarargAcceptInterface,
+    com.xemantic.kotlin.introspection.test.other.JavaTypedArrayAcceptor<String?>()
+
+abstract class InheritedJavaTypedArrayNullableVarargJoinSubclass :
+    com.xemantic.kotlin.introspection.test.other.JavaTypedArrayNullableVarargJoinSubclass()
+
+// A Kotlin generic member of a projected array, a Java array of elements annotated nullable, and a Kotlin projected array (#337)
+interface OutTypedArrayAcceptor<T> {
+    fun acceptAll(a: Array<out T>)
+}
+
+abstract class OpenOutNullableStringArrayAcceptor {
+    open fun acceptAll(values: Array<out String?>) {}
+}
+
+abstract class OutTypedArrayNullableElementArrayOpenOutNullableArrayJoin :
+    OutTypedArrayAcceptor<String>, com.xemantic.kotlin.introspection.test.other.JavaNullableElementNotNullArrayAcceptInterface,
+    OpenOutNullableStringArrayAcceptor()
+
+// A Java member given a nullable array, a Kotlin generic member of a projected array, listed apart, and a Java array (#337)
+abstract class NullableArrayOutTypedArrayJavaArrayJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaTypedAllAcceptorInterface<Array<String>?>, OutTypedArrayAcceptor<String>,
+    com.xemantic.kotlin.introspection.test.other.JavaStringArrayAcceptor()
+
+// A Java member given a projected array of nullable elements, a hidden member taking a nullable array, and a Java vararg (#337)
+interface HiddenNullableStringArrayAcceptor {
+    @Deprecated("Hidden", level = DeprecationLevel.HIDDEN)
+    fun acceptAll(a: Array<String>?)
+}
+
+abstract class OutNullableArrayHiddenNullableArrayNullableJavaVarargJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaTypedAllAcceptorInterface<Array<out String?>>, HiddenNullableStringArrayAcceptor,
+    com.xemantic.kotlin.introspection.test.other.JavaNullableTypedVarargAcceptor<String?>()
+
+// A Java array annotated nullable, a hidden member taking an array of nullable elements, a Java array of elements annotated not null (#337)
+abstract class NullableArrayHiddenNullableArrayNotNullElementArrayJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaNullableArrayAcceptInterface, HiddenNullableArrayAcceptor,
+    com.xemantic.kotlin.introspection.test.other.JavaNotNullElementArrayAcceptor(),
+    com.xemantic.kotlin.introspection.test.other.JavaTypedAllAcceptorInterface<Array<out String?>>
+
+// A Java vararg of a type parameter annotated not null, a Java array annotated nullable, a Java class given an array, a Kotlin vararg (#337)
+abstract class NotNullJavaVarargNullableArrayTypedAllJavaClassGenericVarargJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaNotNullTypedVarargAcceptorInterface<String?>,
+    com.xemantic.kotlin.introspection.test.other.JavaNullableArrayAcceptInterface,
+    com.xemantic.kotlin.introspection.test.other.JavaTypedAllAcceptor<Array<String?>>(), VarargAcceptor<String>
+
+// A Kotlin generic vararg given String, a Java vararg, and a Java vararg of a nullable type argument, all of Object[] but the second (#337)
+abstract class OpenTypedVarargAcceptor<T> {
+    open fun acceptAll(vararg values: T) {}
+}
+
+abstract class GenericVarargJavaVarargNullableJavaTypedVarargJoin :
+    VarargAcceptor<String>, com.xemantic.kotlin.introspection.test.other.JavaStringVarargAcceptAllInterface,
+    com.xemantic.kotlin.introspection.test.other.JavaTypedVarargAcceptorInterface<String?>
+
+abstract class OpenGenericVarargNullableJavaTypedVarargJavaVarargGenericVarargJoin :
+    OpenTypedVarargAcceptor<String>(), com.xemantic.kotlin.introspection.test.other.JavaTypedVarargAcceptorInterface<String?>,
+    com.xemantic.kotlin.introspection.test.other.JavaStringVarargAcceptAllInterface, VarargAcceptor<String>
+
+// A hidden member taking an array, next to a Java array of elements annotated nullable (#337)
+interface HiddenStringArrayAcceptor {
+    @Deprecated("Hidden", level = DeprecationLevel.HIDDEN)
+    fun acceptAll(a: Array<String>) {}
+}
+
+abstract class HiddenArrayNullableElementArrayJoin :
+    HiddenStringArrayAcceptor, com.xemantic.kotlin.introspection.test.other.JavaNullableElementNotNullArrayAcceptor()
+
+// A Java interface member given a projected array reached through a Kotlin interface, before a Java vararg merged with it (#337)
+interface KotlinOutNullableArrayTypedAllAcceptor : com.xemantic.kotlin.introspection.test.other.JavaTypedAllAcceptorInterface<Array<out String?>>
+
+abstract class IndirectOutNullableArrayJavaTypedVarargJoin :
+    KotlinOutNullableArrayTypedAllAcceptor, com.xemantic.kotlin.introspection.test.other.JavaTypedVarargAcceptor<String?>()
+
+// A Java array annotated not null, a Java vararg of elements annotated not null, and an open Kotlin member of their JVM signature (#337)
+abstract class NotNullArrayNotNullVarargOpenOutNullableArrayJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaNotNullArrayAcceptInterface,
+    com.xemantic.kotlin.introspection.test.other.JavaNotNullStringVarargAcceptInterface, OpenOutNullableStringArrayAcceptor()
+
+// A Java collection of a nullable type argument, a Kotlin mutable collection, and a projected one of nullable elements (#337)
+interface OutNullableMutableIntCollectionAdder {
+    fun addAll2(c: MutableCollection<out Int?>): Boolean
+}
+
+abstract class NullableJavaTypedCollectionMutableIntOutNullableJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaTypedCollectionAdder<Int?>(), MutableIntCollectionAdder, OutNullableMutableIntCollectionAdder
+
+// A Java array merged with a Kotlin generic member given a projected array (#337)
+abstract class JavaArrayOutArrayTypedAllJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaStringArrayAcceptor(), TypedAllAcceptor<Array<out String>>
