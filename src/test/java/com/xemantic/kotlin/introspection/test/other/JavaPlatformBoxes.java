@@ -47,4 +47,14 @@ public interface JavaPlatformBoxes {
     interface NotNullList<T> extends PlatformNotNullBox<java.util.List<T>> {}
 
     class SameKeyMap<V> extends java.util.HashMap<V, V> {}
+
+    interface SinkOfString extends PlatformSink<String> {}
+
+    interface MixedOfBoxes<T> extends PlatformMixed<PlatformBox<T>, PlatformBox<String>> {}
+
+    interface NullableElementList<V> extends java.util.List<@org.jetbrains.annotations.Nullable V> {}
+
+    interface PassingList<V> extends java.util.List<V> {}
+
+    interface ListOfNullableElementLists<V> extends java.util.List<NullableElementList<V>> {}
 }
