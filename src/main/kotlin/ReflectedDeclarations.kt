@@ -2561,7 +2561,9 @@ private fun readJavaNullabilities(classLoader: ClassLoader?, binaryName: String)
     val nullableArguments = HashMap<Int, MutableSet<Int>>()
     val supertypeArguments = HashMap<Int, MutableMap<String, Boolean>>()
     var hasBridges = false
-    ClassReader(bytes).accept(object : ClassVisitor(Opcodes.ASM9) {
+    // also of a class file too new for ASM, like of a class of a JDK newer than it knows
+    val reader = classReader(bytes)
+    reader.accept(object : ClassVisitor(Opcodes.ASM9) {
 
         override fun visitAnnotation(annotation: String, visible: Boolean): AnnotationVisitor? {
             nullMarking(annotation)?.let { isClassNullMarked = it }
@@ -2685,17 +2687,16 @@ private fun readJavaNullabilities(classLoader: ClassLoader?, binaryName: String)
             }
         }
     }, ClassReader.SKIP_CODE or ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES)
-    val bridges = if (!hasBridges) emptyMap() else reflectedValue(default = null) { readJavaBridges(bytes) }
+    val bridges = if (!hasBridges) emptyMap() else reflectedValue(default = null) { readJavaBridges(reader) }
     return JavaClassNullability(isClassNullMarked, nullabilities, bridges, nullableBounds, nullableArguments, supertypeArguments)
 }
 
 /**
- * The methods the bridges of the class of the [bytes] call, see [JavaClassNullability.bridges], read in a pass of their own,
+ * The methods the bridges of the class of the [reader] call, see [JavaClassNullability.bridges], read in a pass of their own,
  * the only one reading the code, so that a class file whose code cannot be read still tells its annotations.
  */
-private fun readJavaBridges(bytes: ByteArray): Map<String, String> {
+private fun readJavaBridges(reader: ClassReader): Map<String, String> {
     val bridges = HashMap<String, String>()
-    val reader = ClassReader(bytes)
     val owner = reader.className
     reader.accept(object : ClassVisitor(Opcodes.ASM9) {
         override fun visitMethod(
