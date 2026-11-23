@@ -184,6 +184,21 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 - The Gradle test build rejects `abstract class X : J(), JDb` (`J implements GenericPut<Integer>`, `JDb` a default `put(Integer)`)
   with `must override 'put' because it inherits multiple interface methods`, while kotlinc compiles it against the compiled Java classes, so it is no fixture.
 
+- `reflectedValue` swallows what a conversion of a reflected member throws, dropping the whole member silently,
+  like every Java method overriding a Kotlin member taking a mutable collection was, see `reflectedClassName` —
+  a member missing from a listing may be a conversion failing, not a rule of the listing.
+
+- kotlinc compiling many probe files in one run reports the errors of the backend, like `inherited platform declarations clash`,
+  only when no file of the run has an error of the frontend —
+  compile the files which passed again, without the failing ones, until none of them fails.
+
+- A call missing an argument names the parameter of the member kotlinc picks, like the `p0` of a Java method,
+  while a named call still takes the name of a Kotlin member merged with it, like `m13(a = arrayOf(""))` —
+  so the message does not tell which names a call may use, probe the named call itself.
+
+- An empty concrete subclass of a class joining a hidden member may fail with `inherited platform declarations clash`, not `does not implement`,
+  though the joining class itself compiles — such a probe tells nothing of the abstract members, probe them by calls.
+
 ## Anti-patterns to avoid
 
 - Do not add content to this file that is already discoverable by reading the source or build scripts — that inflates context without adding signal, reducing AI agent task success rates (see [arxiv 2602.11988](https://arxiv.org/abs/2602.11988)).
