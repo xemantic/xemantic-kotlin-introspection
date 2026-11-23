@@ -2226,3 +2226,29 @@ abstract class OpenNullableStringArrayAcceptor {
 
 abstract class NotNullArrayOpenNullableArrayJoin :
     com.xemantic.kotlin.introspection.test.other.JavaNotNullArrayAcceptInterface, OpenNullableStringArrayAcceptor()
+
+// A Java member given an array of elements which are not nullable, kept apart from a Java vararg of nullable ones,
+// below a Java subclass of the class joining them (#368)
+abstract class NotNullArrayTypedAllNullableJavaVarargJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaTypedAllAcceptorInterface<Array<String>?>,
+    com.xemantic.kotlin.introspection.test.other.JavaNullableTypedVarargAcceptor<String>()
+
+abstract class InheritedJavaNotNullArrayTypedAllNullableVarargJoinSubclass :
+    com.xemantic.kotlin.introspection.test.other.JavaNotNullArrayTypedAllNullableVarargJoinSubclass()
+
+// A Java vararg and arrays merged with a Java array, and a Java member given an array kept apart from them,
+// below a Java subclass of the class joining them (#368)
+abstract class NotNullVarargNullableArrayOutNullableTypedAllJavaArrayJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaNotNullStringVarargAcceptInterface,
+    com.xemantic.kotlin.introspection.test.other.JavaNullableArrayAcceptInterface,
+    com.xemantic.kotlin.introspection.test.other.JavaTypedAllAcceptorInterface<Array<out String?>>,
+    com.xemantic.kotlin.introspection.test.other.JavaStringArrayAcceptor()
+
+abstract class InheritedJavaNotNullVarargOutNullableTypedAllJavaArrayJoinSubclass :
+    com.xemantic.kotlin.introspection.test.other.JavaNotNullVarargOutNullableTypedAllJavaArrayJoinSubclass()
+
+// A Java array of platform elements declared before a Java vararg of a type parameter annotated not null,
+// merged with an open Kotlin member taking a projected array (#368)
+abstract class NotNullArrayNotNullTypedVarargOpenOutNullableArrayJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaNotNullArrayAcceptInterface,
+    com.xemantic.kotlin.introspection.test.other.JavaNotNullTypedVarargAcceptorInterface<String>, OpenOutNullableStringArrayAcceptor()
