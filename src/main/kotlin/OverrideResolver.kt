@@ -2323,16 +2323,17 @@ internal class OverrideResolver(
         // but where the relocation of the owner alone tells, or guesses, like by its prefix, relocated class by class then,
         // or else by its metadata name, while the class declared there, which the class might inherit from otherwise,
         // like through a Java supertype naming it by its JVM name, is not named back by the name of the supertype,
-        // nor are its nested classes, which the relocation of the supertype would relocate with it otherwise
+        // nor are the other classes of its top-level class, which the relocation of the supertype relocates as a whole otherwise
         val misplaced = jvmSupertypes.misplacedSupertypes(owner.kmClass, dependencies, packages)
         val misplacedClasses = misplaced.keys.mapNotNull { metadataName ->
             own?.located(metadataName)?.let {
                 Relocation.topLevelClassOf(internalNameOf(metadataName)) to Relocation.topLevelClassOf(internalNameOf(it))
             }
         }.toMap()
-        val notRelocated = excluded + misplaced.keys.filter { own?.located(it) == null } + misplaced.values
-        val relocation = own?.withDependencies(packages, notRelocated, classes + misplacedClasses, rootPackages, misplaced.values.toSet())
-            ?: Relocation.ofDependencies(packages, notRelocated, classes, rootPackages, misplaced.values.toSet())
+        val declaredTopLevelClasses = misplaced.values.mapTo(HashSet()) { Relocation.topLevelClassOf(internalNameOf(it)) }
+        val notRelocated = excluded + misplaced.keys.filter { own?.located(it) == null } + declaredTopLevelClasses
+        val relocation = own?.withDependencies(packages, notRelocated, classes + misplacedClasses, rootPackages, declaredTopLevelClasses)
+            ?: Relocation.ofDependencies(packages, notRelocated, classes, rootPackages, declaredTopLevelClasses)
         return OwnerRelocation(relocation, classFile(declared), hasDependencies = true)
     }
 
