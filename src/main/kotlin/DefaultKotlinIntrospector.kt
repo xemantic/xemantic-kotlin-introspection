@@ -5321,6 +5321,8 @@ internal class DefaultKotlinIntrospector(
         ) {
             property.contextParameters.map { it.type }
         }
+        // the extensions told callable on the supertypes already, see listedOnOtherSupertypes, not to tell it again below
+        val toldCallable = HashSet<ReceiverBounded>()
         val listed = if (isBuiltin) {
             val supertypeNames = supertypes.names - "kotlin.Any"
             val listed = extensionsListedFor(
@@ -5401,9 +5403,9 @@ internal class DefaultKotlinIntrospector(
                         extension.isListedOn(supertype) && isTold(supertype, receiver, typeParameters) &&
                         (!isRecursivelyBoundedOnTypeParameters(supertype, typeParameters) ||
                             // first as told with the type parameters of the class standing for any type, which is cheaper
-                            supertypes.canBeCalledOn(extension) &&
-                            supertypes.witnessed(listOfNotNull(receiver) + typeParameters.flatMap { it.upperBounds })
-                                .any { it.canBeCalledOn(extension) })
+                            (supertypes.canBeCalledOn(extension) &&
+                                supertypes.witnessed(listOfNotNull(receiver) + typeParameters.flatMap { it.upperBounds })
+                                    .any { it.canBeCalledOn(extension) }).also { if (it) toldCallable += extension })
                 }
             }
             ListedExtensions(
@@ -5419,10 +5421,12 @@ internal class DefaultKotlinIntrospector(
         }
         val callable = ListedExtensions(
             listed.functions.filter { extension ->
-                (memberName == null || extension.function.name == memberName) && supertypes.canCall(extension.function)
+                (memberName == null || extension.function.name == memberName) &&
+                    (extension in toldCallable || supertypes.canCall(extension.function))
             },
             listed.properties.filter { extension ->
-                (memberName == null || extension.property.name == memberName) && supertypes.canCall(extension.property)
+                (memberName == null || extension.property.name == memberName) &&
+                    (extension in toldCallable || supertypes.canCall(extension.property))
             }
         )
         val builtinClass = declarations as? BuiltinClass
@@ -7237,17 +7241,18 @@ internal class DefaultKotlinIntrospector(
         val candidates = (WITNESS_TYPES + (bounds + extensionTypes).flatMap { it.closedTypes() })
             .distinctBy { it.structureKey() }
             .take(MAX_WITNESS_TYPES)
-        // the classes the supertypes, and the witnesses, refer to, other than the built-in types
-        fun KmType.classNames(): List<String> =
-            listOfNotNull((classifier as? KmClassifier.Class)?.name?.takeIf { it !in builtinClasses }) +
-                arguments.flatMap { it.type?.classNames().orEmpty() } + outerType?.classNames().orEmpty()
-        val isAnnotatedByJava = ((reached + candidates).flatMapTo(LinkedHashSet()) { it.classNames() } + kmClass.name).any { name ->
-            annotatingJavaSupertypeArguments.getOrPut(name) {
-                findClassByMetadataName(name)?.clazz?.let { annotatesJavaSupertypeArguments(it) } == true
-            }
-        }
-        if (isAnnotatedByJava) return emptyList()
+        // told once for these candidates, like the witnesses, as the supertypes they are matched with are the same
         return witnessed.getOrPut(candidates.joinToString(" ") { it.structureKey() }) {
+            // the classes the supertypes, and the witnesses, refer to, other than the built-in types
+            fun KmType.classNames(): List<String> =
+                listOfNotNull((classifier as? KmClassifier.Class)?.name?.takeIf { it !in builtinClasses }) +
+                    arguments.flatMap { it.type?.classNames().orEmpty() } + outerType?.classNames().orEmpty()
+            val isAnnotatedByJava = ((reached + candidates).flatMapTo(LinkedHashSet()) { it.classNames() } + kmClass.name).any { name ->
+                annotatingJavaSupertypeArguments.getOrPut(name) {
+                    findClassByMetadataName(name)?.clazz?.let { annotatesJavaSupertypeArguments(it) } == true
+                }
+            }
+            if (isAnnotatedByJava) return@getOrPut emptyList()
             // the type parameters passed through Java, as platform types, like V! of a Java HashMap<V, V>,
             // or which may be, within a type argument of another class than a built-in type, like V of List<JavaList<V>>
             fun KmType.typeParameterIds(): List<Int> = listOfNotNull((classifier as? KmClassifier.TypeParameter)?.id) +
@@ -7261,9 +7266,10 @@ internal class DefaultKotlinIntrospector(
             val platformIds = reached.flatMapTo(HashSet()) { it.platformTypeParameterIds() }
             fun isWitnessOf(id: Int, witness: KmType) =
                 id !in platformIds || (witness.classifier as? KmClassifier.Class)?.name != NOTHING_CLASS_NAME
-            // as many of the first ones as can be combined, at least one
+            // as many of the first ones as can be combined, at least one,
+            // counted only up to past MAX_WITNESSES, not to overflow, like 8^21 of 21 type parameters
             var combined = candidates.size
-            fun combinations() = typeParameters.fold(1L) { count, _ -> count * combined }
+            fun combinations() = typeParameters.fold(1L) { count, _ -> if (count > MAX_WITNESSES) count else count * combined }
             while (combined > 1 && combinations() > MAX_WITNESSES) combined--
             val combinations = typeParameters.fold(sequenceOf(emptyMap<Int, KmType>())) { substitutions, typeParameter ->
                 substitutions.flatMap { substitution -> candidates.asSequence().take(combined).map { substitution + (typeParameter.id to it) } }
@@ -8053,7 +8059,8 @@ internal class DefaultKotlinIntrospector(
         // whether the type a type parameter of the class takes against a platform type, like V? against String!, is told,
         // see isClassTypeParameterTyped: not where the types a type parameter is inferred from are compared, see typeMatcher,
         // whose positions are not told, nor when a bound of the class refers to a type parameter, like V : K,
-        // which is not checked against the types the other one takes, nor when a supertype refers to a type parameter
+        // kept out as before #334, though such a bound is checked against the types the other one takes,
+        // see isSubtypeOfClassTypeParameter, nor when a supertype refers to a type parameter
         // of an outer class, like O of an inner class, whose bounds are not told here
         private val isClassTypeParameterTold by lazy(LazyThreadSafetyMode.NONE) {
             val ids = supertypes.kmClass.typeParameters.mapTo(HashSet()) { it.id }

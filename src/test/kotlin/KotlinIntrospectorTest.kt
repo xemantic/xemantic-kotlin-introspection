@@ -11557,6 +11557,18 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve interface of list of one of many type parameters with extension on recursively bounded type parameter`() {
+        // A1 of String makes a List<A1> a List<T> of T : Comparable<T>, the combinations of the witnesses of all
+        // the 32 type parameters, past a Long, not enumerated
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.witness.WitnessManyTypeParametersList",
+            pageSize = 10000
+        ) should {
+            have(lines().any { ".witnessComparableElements()" in it })
+        }
+    }
+
+    @Test
     fun `should resolve interface of Java list of nullable type parameter without extension on recursively bounded type parameter`() {
         // List<@Nullable V> is a List<V?>, no List<T> of T : Comparable<T>
         resolver.resolve(

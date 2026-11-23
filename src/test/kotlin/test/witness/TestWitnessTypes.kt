@@ -88,6 +88,10 @@ interface WitnessNullableElementList<V> : JavaPlatformBoxes.NullableElementList<
 
 interface WitnessThreeKeyValueMap<A, K, V> : Map<K, V>
 
+// also of so many of them that their combinations are past a Long, like 4^32 of 32 type parameters
+
+interface WitnessManyTypeParametersList<A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19, A20, A21, A22, A23, A24, A25, A26, A27, A28, A29, A30, A31, A32> : List<A1>
+
 // nor through a Java supertype annotating a type argument which only a type argument of a supertype of another class reaches,
 // like the List<V?> of the NullableElementList<V> of WitnessProducerOfNullableElementList<V>, also through a Java class
 
