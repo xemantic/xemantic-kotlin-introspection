@@ -217,7 +217,11 @@ com.example.AnnotationTestClass
   unless the compiler takes the type parameter as given, whatever the type argument, so that `id<String>(null)` does not compile:
   one of an annotated bound, like `fun <U : Any> id(arg0: U): U` of `<U extends @NotNull Object>`,
   one bounded by such a one, like the `U` of `<T extends @NotNull Object, U extends T>`,
-  or of a class marked by `@NullMarked`, unlike a method marked by itself, like `fun <T> take(arg0: T?)` of `@NullMarked <T> void take(T t)`.
+  or of a class marked by `@NullMarked`, unlike a method marked by itself, like `fun <T> take(arg0: T?)` of `@NullMarked <T> void take(T t)`,
+  whose type parameter is nullable also as the element of a vararg, like `vararg arg0: T?`,
+  and as a type argument of a covariant type parameter of a read-only collection type, like `arg0: List<T?>` of `List<T>`,
+  where the mark tells the other types exactly, and nullable is what the compiler takes, like `take<String>(listOf(null))`,
+  unlike as any other type argument, like of `Comparator<T>`, or as the element of an array, taking both `T` and `T?`, which no rendering tells.
   One referred to by its own bound, like by a `Comparable` of itself, stays nullable, like `fun <T : Comparable<T>?> sort(arg0: T?)`,
   though `sort<String>(null)` does not compile, as `null` is accepted for a type argument declared by Java, like `sort<BigDecimal>(null)`,
   the convention for any type parameter in a contravariant position of its bound,
@@ -227,12 +231,18 @@ com.example.AnnotationTestClass
   An `Object` bound next to another one, like of `<T extends Object & Comparable<? super T>>`, is left out, like `T : Comparable<in T>?`.
   A method named with `$`, like `get$x()`, is rendered in backticks, like `` fun `get$x`(): String ``.
   The synthetic property which Kotlin reads a Java getter as is not listed as a member of its own,
-  as Kotlin does not let it be referenced, like `Thread::name`, and it would repeat every getter,
+  as it would repeat every getter,
   but hinted on the line above the getter, like `// also property: var name` above `fun getName(): String` of `java.lang.Thread`,
   a `var` when there is a setter taking the type the getter returns, like `setName(String)`,
-  as visible as the getter, or public, so that the property can be assigned wherever it can be read,
-  unlike a protected setter of a public getter, which leaves it a `val`,
-  named like kotlinc names it, like `url` of `getURL()`, or `isActive` of `isActive()`, but none of `get` followed by a digit,
+  of a single parameter, which is no vararg, like of `setName(String...)`, whatever it returns, like a fluent setter,
+  a platform type being the type of either nullability, like the `String!` of `setName(String)` for a `@NonNull String getName()`,
+  while a setter stricter, or laxer, than the getter leaves it a `val`,
+  like `setNick(@NonNull String)` of a `@Nullable String getNick()`, for which kotlinc reports `'val' cannot be reassigned`,
+  unless the getter overrides one returning a supertype, which the setter sets,
+  like `setWide(Object)` of a `String getWide()` overriding `Object getWide()`.
+  A protected setter of a public getter, which only a subclass can call, is told, like `// also property: var pr (protected set)`,
+  unless the class is final, which leaves it a `val`.
+  The property is named like kotlinc names it, like `url` of `getURL()`, or `isActive` of `isActive()`, but none of `get` followed by a digit,
   for a method of a Java class, a JVM-only member of a built-in type, like `getStackTrace()` of `kotlin.Throwable`,
   or a Kotlin function overriding one of them, unlike any other Kotlin function,
   as one of the topmost declarations it overrides has to be a Java one,
@@ -244,7 +254,7 @@ com.example.AnnotationTestClass
   also a property of another type, unrelated to the getter, like a `val title: Int` next to the `getTitle(): String`
   of a Java superclass, which is inherited next to it.
   Resolving the name of the synthetic property, like `com.example.MyThread.name`, finds the getter so hinted,
-  and the setter of a `var`, like `fun setName(arg0: String?)`,
+  and the setter of a `var`, like `fun setName(arg0: String?)`, but no overload of it,
   next to the other members, and the extensions, of the name, which are no properties, like a function `name()`,
   or which Kotlin does not read instead, like an extension property `val MyThread.name: Int`, even of the same package.
 * A typealias is rendered as its declaration,
@@ -617,6 +627,13 @@ com.example.AnnotationTestClass
   as a `when` expression covering the listed ones still needs an `else` branch.
 * A member overriding a member of a supertype is marked `override`,
   told by the Kotlin signatures, as the compiler does.
+  A generic function overrides one whose type parameters are of the same bounds, in any order,
+  like `fun <T> two(x: T) where T : Comparable<T>, T : CharSequence` the `<T extends CharSequence & Comparable<T>> void two(T)`
+  of a Java superclass, though they are erased to other JVM types,
+  while one of another bound is an overload, listed next to the inherited one,
+  like `fun <T : CharSequence> sort(x: T)` next to `fun <T : Comparable<T>> sort(x: T)`,
+  also one bounded by a type parameter of its class, like `fun <T : X> sort(x: T)`, whatever the bound of `X`,
+  or of one more bound, like `where T : Comparable<T>, T : Any`.
   An internal member of a supertype can be overridden only in its own module, or in a friend module,
   like the test module of the main one,
   which the metadata does not tell, as unrelated modules might share a module name,

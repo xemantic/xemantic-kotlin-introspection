@@ -255,6 +255,8 @@ internal class OverrideResolver(
      * @param javaKey the key of a Java method, see [javaMemberKey], telling which one is overridden, and its primitive types.
      * @param primitives whether each value parameter of a member of a Kotlin supertype is of a primitive type on the JVM,
      *   see [jvmPrimitives], or `null` if not told, see [primitivesMatch].
+     * @param typeParameterBounds the bounds of each type parameter of a function, or `null` if not told,
+     *   like of a Java method of a class which cannot be loaded, see [boundsMatch].
      */
     private class Overridable(
         val contexts: List<MemberType> = emptyList(),
@@ -267,7 +269,8 @@ internal class OverrideResolver(
         val declaresDefaultValues: Set<Int> = emptySet(),
         val key: String? = null,
         val javaKey: String? = null,
-        val primitives: List<Boolean>? = null
+        val primitives: List<Boolean>? = null,
+        val typeParameterBounds: List<List<MemberType>>? = null
     )
 
     /**
@@ -562,6 +565,8 @@ internal class OverrideResolver(
      * whose [relocation] tells the names the classes of the types are found by, see [variancesMatch].
      *
      * @param jvmPrimitives whether each parameter of a Java method is of a primitive type on the JVM, see [primitivesMatch].
+     * @param typeParameterBounds the bounds of each type parameter of a Kotlin function, see [boundsMatch],
+     *   or `null` of a Java method, which overrides by the erasures of its parameter types, like on the JVM.
      */
     private class FunctionSignature(
         val contexts: List<MemberType>,
@@ -570,7 +575,8 @@ internal class OverrideResolver(
         val typeParameterCount: Int,
         val isSuspend: Boolean,
         val relocation: Relocation?,
-        val jvmPrimitives: List<Boolean>? = null
+        val jvmPrimitives: List<Boolean>? = null,
+        val typeParameterBounds: List<List<MemberType>>? = null
     )
 
     /**
@@ -596,7 +602,10 @@ internal class OverrideResolver(
             typeParameterCount = function.typeParameters.size,
             isSuspend = function.isSuspend,
             relocation = relocation,
-            jvmPrimitives = jvmDescriptor?.let { jvmPrimitives(it) }
+            jvmPrimitives = jvmDescriptor?.let { jvmPrimitives(it) },
+            typeParameterBounds = if (jvmDescriptor != null) null else {
+                function.typeParameters.map { typeParameter -> typeParameter.upperBounds.map { type(it) } }
+            }
         )
     }
 
@@ -627,7 +636,7 @@ internal class OverrideResolver(
 
     private fun Overridable.matches(signature: FunctionSignature, onlyKnownTypes: Boolean = false): Boolean = matches(
         signature.contexts, signature.receiver, signature.parameters, signature.typeParameterCount, signature.isSuspend,
-        signature.relocation, onlyKnownTypes
+        signature.relocation, onlyKnownTypes, signature.typeParameterBounds
     )
 
     /**
@@ -1105,6 +1114,11 @@ internal class OverrideResolver(
      * @param relocation the relocation of the classes the overriding class refers to, see [variancesMatch].
      * @param onlyKnownTypes whether an unknown type matches no type, except for a star projection,
      *   only applying to a Kotlin member, as a Java one is matched by the erasures.
+     * @param typeParameterBounds the bounds of each type parameter of the overriding Kotlin function, if told,
+     *   which have to be the ones of this member, see [boundsMatch], a value parameter of a type parameter
+     *   of a Java method matching then the one of the type parameter at its position, whatever their erasures,
+     *   like the `T` of `fun <T> two(x: T) where T : Comparable<T>, T : CharSequence`, erased to `Comparable`,
+     *   the one of `<T extends CharSequence & Comparable<T>> void two(T)`, erased to `CharSequence`.
      */
     private fun Overridable.matches(
         contexts: List<MemberType>,
@@ -1113,9 +1127,12 @@ internal class OverrideResolver(
         typeParameterCount: Int,
         isSuspend: Boolean,
         relocation: Relocation?,
-        onlyKnownTypes: Boolean = false
+        onlyKnownTypes: Boolean = false,
+        typeParameterBounds: List<List<MemberType>>? = null
     ): Boolean {
         if (this.typeParameterCount != typeParameterCount) return false
+        val areBoundsTold = this.typeParameterBounds != null && typeParameterBounds != null
+        if (areBoundsTold && !boundsMatch(this.typeParameterBounds, typeParameterBounds, relocation)) return false
         if (isJava) {
             // a Java method has no context parameters, so it is not overridden by a member having them,
             // even if they are its parameters on the JVM, which also applies to a Kotlin supertype without metadata,
@@ -1126,8 +1143,16 @@ internal class OverrideResolver(
             // on the JVM, the receiver is the first parameter, and a suspend function takes a trailing Continuation
             val jvmParameters = listOfNotNull(receiver) + parameters +
                 if (isSuspend) listOf(ClassType("kotlin/coroutines/Continuation")) else emptyList()
+            // a type parameter of the function itself, see TypeParameterType.key
+            fun MemberType.isOwnTypeParameter() = this is TypeParameterType && key.startsWith('F')
             return this.parameters.size == jvmParameters.size &&
-                this.parameters.zip(jvmParameters).all { (overridden, overriding) -> erasuresMatch(overridden, overriding) }
+                this.parameters.zip(jvmParameters).all { (overridden, overriding) ->
+                    if (areBoundsTold && overridden.isOwnTypeParameter() && overriding.isOwnTypeParameter()) {
+                        (overridden as TypeParameterType).key == (overriding as TypeParameterType).key
+                    } else {
+                        erasuresMatch(overridden, overriding)
+                    }
+                }
         }
         if ((this.receiver == null) != (receiver == null)) return false
         if (this.parameters.size != parameters.size) return false
@@ -1138,6 +1163,28 @@ internal class OverrideResolver(
             (this.receiver == null || typesMatch(this.receiver, receiver!!)) &&
             this.parameters.zip(parameters).all { (overridden, overriding) -> typesMatch(overridden, overriding) }
     }
+
+    /**
+     * Whether the type parameters of an [overriding] Kotlin function are of the bounds of the ones of the [overridden] member,
+     * position by position, as kotlinc 2.4.21 requires of an override: of the same bounds, in any order,
+     * like `where T : Comparable<T>, T : CharSequence` of `<T extends CharSequence & Comparable<T>>`,
+     * a platform type of Java being of either nullability, like the `Comparable<T>!` of `T : Comparable<T>?`,
+     * and no bound being `Any?`, so that neither `fun <T : CharSequence> sort(x: T)`, nor `fun <T : X> sort(x: T)`
+     * of a type parameter `X` of the class, whatever its own bound, nor `fun <T> sort(x: T) where T : Comparable<T>, T : Any`,
+     * overrides `fun <T : Comparable<T>> sort(x: T)`, each an overload of it.
+     */
+    private fun boundsMatch(overridden: List<List<MemberType>>, overriding: List<List<MemberType>>, relocation: Relocation?): Boolean =
+        overridden.size == overriding.size && overridden.indices.all { index ->
+            val bounds = overridden[index].ifEmpty { noBounds }
+            val overridingBounds = overriding[index].ifEmpty { noBounds }
+            fun matches(bound: MemberType, overridingBound: MemberType) =
+                typesMatch(bound, overridingBound, relocation, onlyKnownTypes = false)
+            bounds.all { bound -> overridingBounds.any { matches(bound, it) } } &&
+                overridingBounds.all { overridingBound -> bounds.any { matches(it, overridingBound) } }
+        }
+
+    // the bound of a type parameter declaring none, see boundsMatch
+    private val noBounds: List<MemberType> = listOf(ClassType("kotlin/Any", nullable = true))
 
     // by the located name, as a relocated class might be found next to the original one of the same metadata name,
     // with other supertypes and outer classes, see Owner
@@ -1369,7 +1416,10 @@ internal class OverrideResolver(
                             function.valueParameters[it].declaresDefaultValue
                         }.toSet(),
                         key = memberKey(kmClass, function),
-                        primitives = substitutedJvmPrimitives(function, parameters)
+                        primitives = substitutedJvmPrimitives(function, parameters),
+                        typeParameterBounds = function.typeParameters.map { typeParameter ->
+                            typeParameter.upperBounds.map { kotlinType(it, substitution, typeParameters) }
+                        }
                     )
                 }
                 kmClass.properties.filter { it.visibility.isOverridable }.forEach { property ->
@@ -2826,7 +2876,8 @@ internal class OverrideResolver(
             declaresDefaultValues = declaresDefaultValues,
             key = key,
             javaKey = javaKey,
-            primitives = primitives
+            primitives = primitives,
+            typeParameterBounds = typeParameterBounds?.map { bounds -> bounds.map { it.unlocatedType(relocation) } }
         )
     }
 
@@ -2987,8 +3038,26 @@ internal class OverrideResolver(
             typeParameterCount = method.typeParameters.size,
             isJava = true,
             isPlatform = javaClass.isPlatformClass,
-            javaKey = javaMemberKey(javaClass.name, method.name, AsmType.getMethodDescriptor(method))
+            javaKey = javaMemberKey(javaClass.name, method.name, AsmType.getMethodDescriptor(method)),
+            typeParameterBounds = method.typeParameters.map { typeVariable ->
+                typeVariable.bounds.map { javaType(it, substitution, method).withPlatformTypeVariables() }
+            }
         )
+
+    /**
+     * This bound of a type variable of a Java method, with the type variables of the method as platform types,
+     * of either nullability, like the `T!` of `U extends T`, which a Kotlin override declares as `U : T`, or `U : T?`,
+     * unlike a type argument given for a type variable of its class, like the `String?` of `T extends X` of a `Base<String?>`.
+     */
+    private fun MemberType.withPlatformTypeVariables(): MemberType = when (this) {
+        is ClassType -> copy(
+            arguments = arguments.map { TypeArgument(it.variance, it.type.withPlatformTypeVariables()) },
+            outer = outer?.withPlatformTypeVariables() as ClassType?
+        )
+        // of the method itself, see TypeParameterType.key
+        is TypeParameterType -> if (key.startsWith('F')) copy(nullable = null) else this
+        UnknownType -> this
+    }
 
     private fun javaSupertypes(javaClass: Class<*>, substitution: JavaSubstitution): List<ClassType> {
         val rawSupertypes = listOfNotNull(javaClass.superclass) + javaClass.interfaces

@@ -1649,6 +1649,15 @@ internal val MUTABLE_COLLECTION_TYPES: Map<String, String> = listOf(
     ("kotlin/collections/Map.Entry" to "kotlin/collections/MutableMap.MutableEntry")
 
 /**
+ * The indices of the covariant type parameters of the read-only collection types, by their class names,
+ * like the `E` of `List<out E>`, or the `V` of `Map<K, out V>`, where a platform type of Java takes what the nullable type takes,
+ * like the `(Mutable)List<String!>` of a Java `List<String>` a `List<String?>`.
+ */
+internal val COVARIANT_COLLECTION_ARGUMENTS: Map<String, Set<Int>> =
+    listOf("Iterable", "Collection", "List", "Set", "Iterator", "ListIterator").associate { "kotlin/collections/$it" to setOf(0) } +
+        ("kotlin/collections/Map" to setOf(1)) + ("kotlin/collections/Map.Entry" to setOf(0, 1))
+
+/**
  * Whether the type of the read-only collection [kClass], like `Collection<out E>`, described by kotlin-reflect,
  * takes an `in` projection, the [arguments], of a type parameter it declares `out`, like `Collection<in E>`,
  * which conflicts with its variance, so that it stands for a Java type seen as a flexible collection type,
@@ -1999,7 +2008,10 @@ internal class JavaNullability(
  * winning over the enhancements of the JDK methods it overrides, see [enhanceNullableReturn].
  * A type variable annotated not nullable is definitely not nullable, like `T & Any`, not nullable whatever is given for it,
  * while one not annotated of a method marked by `@NullMarked` stays as given, like `T`, see [nullMarking],
- * but a type variable of the method itself, when only the method is marked, not its class, see [givenTypeVariableNames].
+ * but a type variable of the method itself, when only the method is marked, not its class, see [givenTypeVariableNames],
+ * a platform type, like `T!`, nullable as the type of a value parameter, like in a method not marked,
+ * and also where the mark tells the other types exactly: as the element of a vararg, and as a type argument
+ * of a covariant type parameter of a read-only collection type, see [markPlatformTypeVariables].
  * The bounds of its type parameters are marked alike, see [enhanceJavaBounds].
  */
 private fun enhanceJavaNullability(method: Method, function: KmFunction) {
@@ -2022,9 +2034,69 @@ private fun enhanceJavaNullability(method: Method, function: KmFunction) {
         }
     }
     enhance(RETURN_TYPE, function.returnType, method.returnType, varargElementType = null)
+    // the type variables of the method, which only its own mark tells nothing of, platform types
+    val platformTypeVariables = if (!nullability.isNullMarked || method.typeParameters.isEmpty()) emptySet() else {
+        reflectedValue(default = emptySet()) {
+            if (nullMarking(method.declaringClass) == true) emptySet() else {
+                method.typeParameters.mapTo(HashSet()) { it.name } - givenTypeVariableNames(method)
+            }
+        }
+    }
     function.valueParameters.forEachIndexed { position, parameter ->
         val javaType = method.parameterTypes.getOrNull(position) ?: return@forEachIndexed
         enhance(position, parameter.type, javaType, parameter.varargElementType)
+        if (platformTypeVariables.isNotEmpty()) {
+            reflectedValue(default = Unit) {
+                val genericType = method.genericParameterTypes.getOrNull(position) ?: return@reflectedValue
+                val annotated = nullability.nested[position].orEmpty().keys.mapTo(HashSet()) { it.replace("*", "") }
+                markPlatformTypeVariables(parameter, genericType, platformTypeVariables, annotated)
+            }
+        }
+    }
+}
+
+/**
+ * Marks the type variables of a Java method which are platform types, the [platformTypeVariables], by their names,
+ * see [enhanceJavaNullability], nullable where they are nested in the [genericType] of the value [parameter],
+ * and nullable is what kotlinc takes there, unless [annotated], by the type paths of the class file, see [nestedType]:
+ * as the element of a vararg, like the `U?` of `vararg values: U?` of `U...`, so that `each<String>(null)` compiles,
+ * and as a type argument of a covariant type parameter of a read-only collection type, see [COVARIANT_COLLECTION_ARGUMENTS],
+ * like the `List<U?>` of `List<U>`, so that `all<String>(listOf(null))` compiles, also nested in one, or the bound of `? extends U`,
+ * unlike any other type argument, like the `U` of `Comparator<U>`, or of an array `U[]`, where the platform type takes
+ * both `U` and `U?`, which neither rendering tells, and which stays as in a method not marked.
+ */
+private fun markPlatformTypeVariables(
+    parameter: KmValueParameter,
+    genericType: Type,
+    platformTypeVariables: Set<String>,
+    annotated: Set<String>
+) {
+    fun Type.isPlatformTypeVariable() = this is TypeVariable<*> && genericDeclaration is Method && name in platformTypeVariables
+    fun mark(type: KmType, javaType: Type, path: String) {
+        when (javaType) {
+            is TypeVariable<*> -> if (javaType.isPlatformTypeVariable() && path.isNotEmpty() && path !in annotated && !type.isDefinitelyNonNull) {
+                type.isNullable = true
+            }
+            is ParameterizedType -> {
+                val covariant = COVARIANT_COLLECTION_ARGUMENTS[(type.classifier as? KmClassifier.Class)?.name].orEmpty()
+                javaType.actualTypeArguments.forEachIndexed { index, argument ->
+                    val projection = type.arguments.getOrNull(index)
+                    val argumentType = projection?.type
+                    if (index !in covariant || argumentType == null || projection.variance == KmVariance.IN) return@forEachIndexed
+                    val bound = if (argument !is WildcardType) argument else {
+                        argument.upperBounds.firstOrNull()?.takeIf { argument.lowerBounds.isEmpty() } ?: return@forEachIndexed
+                    }
+                    mark(argumentType, bound, "$path$index;")
+                }
+            }
+        }
+    }
+    mark(parameter.type, genericType, path = "")
+    val elementType = parameter.varargElementType
+    if (elementType != null && ARRAY_ELEMENT !in annotated && !elementType.isDefinitelyNonNull &&
+        (genericType as? GenericArrayType)?.genericComponentType?.isPlatformTypeVariable() == true
+    ) {
+        elementType.isNullable = true
     }
 }
 
@@ -2116,6 +2188,33 @@ internal fun javaNullabilityOf(method: Method): JavaNullability? = reflectedValu
     // the types of a Kotlin class are told by its metadata, its JVM parameters including its context parameters, and its receiver
     if (declaring.isJdkClass || declaring.isAnnotationPresent(Metadata::class.java)) return@reflectedValue null
     effectiveJavaNullabilities.get(declaring).of(method)
+}
+
+/**
+ * Whether the nullability of a type of the Java [method] is told, of the type of the value [parameter] at the position,
+ * or of its return type, when `null`, also of the types nested in it, by their type paths of the class file, see [nestedType],
+ * but the bound of a wildcard, which the path of the type already tells, the empty one of the type itself:
+ * a primitive type, a type its annotations tell, see [javaNullabilityOf], also the ones of the methods it overrides,
+ * or one marked by `@NullMarked`, unlike a platform type of Java, which is of either nullability,
+ * like the `String!` of both `String` and `String?`.
+ */
+internal fun javaNullabilityTold(method: Method, parameter: Int?): (path: String) -> Boolean {
+    val position = parameter ?: RETURN_TYPE
+    val nullability = javaNullabilityOf(method)
+    val isPrimitive = reflectedValue(default = false) {
+        (if (parameter == null) method.returnType else method.parameterTypes.getOrNull(parameter))?.isPrimitive == true
+    }
+    val nested by lazy(LazyThreadSafetyMode.NONE) {
+        nullability?.nested?.get(position).orEmpty().keys.mapTo(HashSet()) { it.replace("*", "") }
+    }
+    return { path ->
+        when {
+            path.isEmpty() -> isPrimitive ||
+                (nullability != null && (nullability.types[position] != null || nullability.isMarkedNotNull(position)))
+            nullability == null -> false
+            else -> nullability.isNullMarked || path in nested
+        }
+    }
 }
 
 /**

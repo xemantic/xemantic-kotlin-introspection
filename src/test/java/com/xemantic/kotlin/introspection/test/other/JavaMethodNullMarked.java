@@ -32,4 +32,18 @@ public abstract class JavaMethodNullMarked<N> {
     @org.jspecify.annotations.NullMarked
     public abstract N put(N value);
 
+    // the type variable of the method is a platform type also as a type argument, and as the element of a vararg
+    @org.jspecify.annotations.NullMarked
+    public <U> void all(java.util.List<U> values, java.util.Map<String, U> named, java.util.Comparator<U> order, U[] array) {}
+
+    @org.jspecify.annotations.NullMarked
+    public <U> void each(String name, U... values) {}
+
+    // unlike the one of a bound annotated, taken as given
+    @org.jspecify.annotations.NullMarked
+    public <U extends @org.jspecify.annotations.Nullable Object> void given(java.util.List<U> values) {}
+
+    @org.jspecify.annotations.NullMarked
+    public <U> void two(U value, String name) {}
+
 }

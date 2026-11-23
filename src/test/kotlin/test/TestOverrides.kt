@@ -36,6 +36,7 @@ import com.xemantic.kotlin.introspection.test.other.JavaRawComparable
 import com.xemantic.kotlin.introspection.test.other.JavaRawInnerMid
 import com.xemantic.kotlin.introspection.test.other.JavaRawKotlinMid
 import com.xemantic.kotlin.introspection.test.other.JavaSortBase
+import com.xemantic.kotlin.introspection.test.other.JavaTwoBoundsBase
 import com.xemantic.kotlin.introspection.test.other.JavaVoidBase
 import com.xemantic.kotlin.introspection.test.other.PackagePrivateBase
 
@@ -448,6 +449,32 @@ class JavaSorter : JavaSortBase() {
 }
 
 class CharSequenceSorter : JavaSortBase() {
+    fun <T : CharSequence> sort(x: T) {}
+}
+
+// A function bounded by a type parameter of its class is an overload of the sort(T) of the Java superclass, bounded by Comparable<T>,
+// whatever the bound of the type parameter of the class
+class ClassBoundedSorter<X : CharSequence> : JavaSortBase() {
+    fun <T : X> sort(x: T) {}
+}
+
+// A function of one more bound, like Any, is an overload too, though erased to the same JVM type
+class AnyBoundedSorter : JavaSortBase() {
+    fun <T> sort(x: T) where T : Comparable<T>, T : Any {}
+}
+
+// An override declares the bounds of the type variable of the Java method in any order, erased to the first one
+class ReorderedBoundsOverride : JavaTwoBoundsBase() {
+    override fun <T> two(x: T) where T : Comparable<T>, T : CharSequence {}
+    override fun <T> obj(x: T) where T : Comparable<T>, T : Any {}
+}
+
+// The functions of a Kotlin superclass are overridden by the bounds of their type parameters as well
+open class KotlinSortBase {
+    open fun <T : Comparable<T>> sort(x: T) {}
+}
+
+class KotlinCharSequenceSorter : KotlinSortBase() {
     fun <T : CharSequence> sort(x: T) {}
 }
 
