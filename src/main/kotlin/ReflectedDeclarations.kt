@@ -845,8 +845,8 @@ private fun platformPositions(method: Method): Set<Int> {
  * retained in the class file only: the ones of a type parameter of the class of each Kotlin member it overrides,
  * see [overriddenKotlinMethods], given by Java classes only, along every path, none annotated nullable,
  * and one at least annotated not null, or marked by `@NullMarked`, see [TypeArgumentGiver.Java.isPlatform],
- * or the one of the first path, when a Kotlin class joins the paths, see [TypeArgumentGiver.join], whose member takes it,
- * when the [method] tells no nullability of its own, nor do the Java methods it overrides,
+ * or the one of the first path, when a Kotlin class joins all of them, see [TypeArgumentGiver.join], whose member takes it,
+ * when the [method] is not annotated there, nor do the Java methods it overrides tell a nullability, see [javaNullabilityOf],
  * like the `Int` of the `put(t: T)` of `GenericPut<T>`, which a Java interface gives `@NotNull Integer`,
  * for the `put(Integer)` of a Java class implementing it, also next to a path giving `Integer`, so that `put(null)` does not compile.
  */
@@ -910,6 +910,16 @@ private fun clashingNullabilityPositions(method: Method): Set<Int> {
         }
         nullabilities.size > 1
     }
+}
+
+/**
+ * Whether the method of the Java class [type] of the [name] and the JVM [descriptor], declared by it,
+ * takes a platform type as the nullabilities it combines disagree, see [clashingNullabilityPositions],
+ * an override of the Kotlin members for K2 then, whose parameter names it takes.
+ */
+internal fun takesClashingNullability(type: Class<*>, name: String, descriptor: String): Boolean = reflectedValue(default = false) {
+    type.declaredMethods.firstOrNull { !it.isBridge && it.name == name && AsmType.getMethodDescriptor(it) == descriptor }
+        ?.let { clashingNullabilityPositions(it).isNotEmpty() } == true
 }
 
 /**
@@ -1132,7 +1142,16 @@ private fun typeArgumentGivers(
                 supertypeClass != typeClass -> walk(supertypeClass, join)
                 supertype !is ParameterizedType -> givers += TypeArgumentGiver.Java(isPlatform = true, join = join)
                 !type.isKotlinClass -> givesNullableTypeArgument(type, typeClass, index).let { isNullable ->
-                    givers += TypeArgumentGiver.Java(isNullable || givesPlatformTypeArguments(type, typeClass, index), isNullable, join)
+                    val isPlatform = isNullable || givesPlatformTypeArguments(type, typeClass, index)
+                    // a type variable of its own passed on as a platform type, like the T of `JMid<T> extends GenericPut<T>`,
+                    // which a type argument annotated nullable given for it makes nullable, like `JMid<@Nullable Integer>`,
+                    // while any other one stays a platform type there
+                    val passed = (supertype.actualTypeArguments.getOrNull(index) as? TypeVariable<*>)
+                        ?.takeIf { isPlatform && !isNullable }
+                    val owner = passed?.genericDeclaration as? Class<*>
+                    val isPassedNullable = owner != null && typeArgumentGivers(javaClass, owner, owner.typeParameters.indexOf(passed), resolved)
+                        .any { (it is TypeArgumentGiver.Java && it.isNullable) || (it is TypeArgumentGiver.Kotlin && it.argument?.isNullable == true) }
+                    givers += TypeArgumentGiver.Java(isPlatform, isNullable || isPassedNullable, join)
                 }
                 else -> when (val argument = supertype.actualTypeArguments.getOrNull(index)) {
                     is TypeVariable<*> -> (argument.genericDeclaration as? Class<*>)?.let { argumentClass ->

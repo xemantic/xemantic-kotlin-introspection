@@ -152,7 +152,7 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   see `givenTypeVariableNames`.
 
 - Kotlin never passes named arguments to a Java method of its own, even one compiled with `-parameters`, so a Java method taking parameters never shadows an extension — see `isShadowingJavaMethod`;
-  a Java method overriding a Kotlin member, or merged with one, takes the names of the Kotlin one though, see below.
+  a Java method overriding a Kotlin member, or merged with one, takes the names of the Kotlin one though, see the entry on `namedByKotlinMembers` below.
 
 - kotlinc 2.4.21 infers the `T` of an invariant `X<T>` from an `out Nothing` projection, also nested in an invariant position,
   like `fun <T> Inv<MutableCollection<T>>.f()` on `Inv<MutableCollection<out Nothing>>`, but not from `out String`, nor does it accept `Inv<MutableCollection<String>>` there —
@@ -197,6 +197,10 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 
 - A Java `put(Integer)` overriding a member given `@NotNull Integer` along one path and `@Nullable Integer` along another takes a platform type,
   while the member itself, not overridden, takes the type of its first path, see `isJavaTypeArgument`, `givenPositions`.
+
+- A type argument annotated nullable given through a generic Java class passing its type variable on,
+  like `JMid<@Nullable Integer>` of `JMid<T> extends GenericPut<T>`, still disagrees with a `@NotNull Integer` of another path,
+  so that the Java override takes a platform type — a walk of the givers stopping at the Java class misses it, see `typeArgumentGivers`.
 
 - The Gradle test build rejects `abstract class X : J(), JDb` (`J implements GenericPut<Integer>`, `JDb` a default `put(Integer)`) with `must override 'put' because it inherits multiple interface methods`,
   while kotlinc compiles it against the compiled Java classes, so it is no fixture.

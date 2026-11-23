@@ -892,6 +892,18 @@ class NotNullBoxedJavaPutOverHiddenOpenAndNullableGenericPutConcrete : NotNullBo
 
 fun NotNullBoxedJavaPutOverHiddenOpenAndNullableGenericPutImpl.putNull(): String = put(t = null)
 
+abstract class HiddenAbstractGenericPut<T> {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    abstract fun put(t: T): String
+}
+
+// the put(Integer) of the Java class implements the hidden put(t: T) of HiddenAbstractGenericPut<Integer>,
+// and the one of GenericPut<@NotNull Integer>, which the Kotlin class merges with the put(t: T) of GenericDefaultPut<Int>
+abstract class BoxedJavaPutOverHiddenAbstractAndNotNullGenericPutDefaultJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOverHiddenAbstractAndNotNullGenericPut(), GenericDefaultPut<Int>
+
+fun BoxedJavaPutOverHiddenAbstractAndNotNullGenericPutDefaultJoin.putNamed(): String = put(t = 1)
+
 // the computeIfAbsent of java.util.HashMap keeps the enhancement of the one of java.util.Map, so that join.computeIfAbsent(…) compiles,
 // while the one of a Java override does not, losing to the hidden member, so that javaJoin.computeIfAbsent(…) does not,
 // nor the one of java.util.HashMap inherited through a Java class not declaring it again
