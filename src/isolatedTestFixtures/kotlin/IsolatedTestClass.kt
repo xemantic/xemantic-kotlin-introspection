@@ -205,3 +205,9 @@ class RelocatedSubBaseImpl : RelocatedSubBaseJavaMid()
 
 // tests relocate, like shading, the Kotlin class taken by the method of its Java supertypes, but neither them, nor itself
 abstract class RelocatedPickImpl : RelocatedPickListener, RelocatedPickJavaBase()
+
+// tests relocate, like shading, the Java class of the subpackage it extends, with the Java class its method takes
+open class RelocatedArgJavaBaseMid : com.xemantic.kotlin.introspection.isolated.sub.RelocatedArgJavaBase()
+
+// and the Kotlin interface elsewhere, which the class file of this class tells, unlike the relocation of the Java class
+class RelocatedTwoLibrariesImpl : RelocatedArgJavaBaseMid(), RelocatedDefaultInterface

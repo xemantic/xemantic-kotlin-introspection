@@ -109,6 +109,8 @@ com.example.AnnotationTestClass
   which are still resolved by the name of the class, like `com.example.Foo.parse` of `fun Parser.parse()` for `companion object : Parser`,
   following a comment telling how they are called, as their receivers do not tell it,
   like `/* called as Foo.parse() */ fun Parser.parse(): Foo`, or `/* called as Foo.parse(…) */` of one taking parameters,
+  or `/* called as Foo merge … */` of an infix one called only so,
+  as a member of the companion object which is not infix is called for `Foo.merge(…)`,
   unless the class extends the supertype too, so that they are also called on its instance, like `foo.parse()`,
   where no member of the class, like `fun parse()`, is called instead,
   except the ones of the standard library, like for the supertypes of the class,
@@ -377,6 +379,7 @@ com.example.AnnotationTestClass
   the more specific one is on a class without type arguments, the class itself, or one of its supertypes, like `val Order.total`,
   and the other one on a class it is a subclass of, without type arguments, like `val Entity.total`,
   but not a nullable one, like `val Entity?.total`, which alone is called on a nullable receiver, like `nullableOrder.total`,
+  unless the class is an object, or a companion object, called on its name, which is never `null`,
   or on a type parameter bounded only by such classes, like `val <T : Entity> T.total`,
   neither of them with context parameters, nor with type parameters of their own, but the one of the receiver.
   An extension property is shadowed so also when it is a `var`, as Kotlin assigns the more specific one,
@@ -387,11 +390,20 @@ com.example.AnnotationTestClass
 * An extension which Kotlin never calls on a class, as a member of the class is always called instead, is not listed for it,
   nor resolved by its name, unless the class is a built-in type:
   an extension property next to a member property of the same name, without context parameters,
+  or next to a public getter of a Java supertype which Kotlin reads as a synthetic property of the name,
+  like `val Bar.title` next to `getTitle()`,
   and an extension function next to a member function taking the same number of parameters, of the same names,
   each accepting every argument of the parameter of the extension:
   of the same type, also nullable, of a supertype without type arguments, or of an unbounded type parameter of the member,
   like `fun <T> put(x: T)`, `fun put(x: Int?)`, or `fun put(x: Number)`, next to `fun Bar.put(x: Int)`,
-  or of a supertype with the same type arguments, like `fun addAll(x: Collection<String>)` next to `fun Bar.addAll(x: List<String>)`,
+  or of a supertype with type arguments accepting its ones, by their variance:
+  the same ones, like `fun addAll(x: Collection<String>)` next to `fun Bar.addAll(x: List<String>)`,
+  the supertypes of the covariant ones, and the subtypes of the contravariant ones, also projected so,
+  like `fun addAll(x: Collection<CharSequence>)`, `fun addAll(x: Collection<out CharSequence>)`,
+  or `fun sortWith(x: Comparator<in String>)` next to `fun Bar.sortWith(x: Comparator<CharSequence>)`,
+  or star projections, like `fun addAll(x: Collection<*>)`,
+  while a function type of the parameter itself, not a type argument, accepts only one of as many context parameters and receivers,
+  as `fun run(x: String.() -> Unit)` does not take the lambda of `bar.run { s -> }`, which `fun Bar.run(x: (String) -> Unit)` takes,
   where a type parameter of the class stands for the type argument of the receiver of an extension on the class itself,
   like `fun put(x: T)` of `class Box<T>` next to `fun Box<String>.put(x: String)`,
   unless the type parameter is covariant, like of `class Box<out T>`, as a `Box<Nothing>` is a `Box<String>` too,
@@ -402,7 +414,8 @@ com.example.AnnotationTestClass
   A member property of a function type without parameters shadows an extension function without parameters too,
   like `val run: () -> Unit` next to `fun Bar.run()`,
   and so does a member property of a type with an `operator fun invoke` accepting every call of the extension, like a member function,
-  also with the named arguments, like `val run: Task` of `class Task { operator fun invoke(x: Int) }` next to `fun Bar.run(x: Int)`.
+  also with the named arguments, like `val run: Task` of `class Task { operator fun invoke(x: Int) }` next to `fun Bar.run(x: Int)`,
+  or of a Java type with an `invoke` method without parameters, as Kotlin passes no named argument to a Java method.
   The members are the public ones, also the inherited ones,
   of an object for the extensions called on its name, of a companion object for the ones called on the name of its class,
   and of any other class for the ones called on its instance,
@@ -590,7 +603,10 @@ com.example.AnnotationTestClass
     or the class still declares a JVM method of the same name, and of types of the same simple names,
     which is the JVM method of none of its members, like the one of a `@JvmOverloads` or a `@JvmStatic` function,
     next to which the member is not marked,
-    when the class refers to relocated classes, or might, like when a Java member of the same name takes a class of a library.
+    when the class refers to relocated classes, or might, like when a Java member of the same name takes a class of a library,
+    unless only the relocation calls for it, and the relocated Kotlin classes that JVM method takes tell, by their own metadata,
+    that it is not the JVM method of the member, which is then marked, as in the class which is not relocated;
+    with Java classes, or classes which are not found, telling no names, the member stays not marked there.
 * The whole classpath visible to the given class loader is scanned on creation, which takes a while,
   so the instance should be created once and reused.
   The scan can be disabled with `KotlinIntrospector(scanEntireClasspath = false)`,
