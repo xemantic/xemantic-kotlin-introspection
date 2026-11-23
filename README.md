@@ -354,11 +354,25 @@ com.example.AnnotationTestClass
   as nullable, like `V?`, as definitely not nullable, like `V & Any`, or as a platform type, satisfying its bounds,
   like `fun Map<String?, String>.ext()` for `interface Index<V> : Map<V, V & Any>`, of `Index<String?>`,
   but not `fun Box<String?>.ext()` for `interface NotNullBox<V> : Box<V & Any>`.
+  A bound which is another type parameter, also of an outer class, is checked against the types both take:
+  `fun <P> P.ext() where P : Box<String>, P : Other<Int>` is not listed for `interface Pair<V, X : V> : Box<V>, Other<X>`,
+  as `Int` is no `String`, nor is `fun Other<String>.ext()` for `inner class Inner : Other<O>` of `class Outer<O : Number>`.
+  Matched against the type parameters of the extension, a type parameter of the class takes one type in all its invariant positions too,
+  satisfying the bounds of both:
+  `fun <T> Pair<T, Box<T>>.ext()` is not listed for `interface Same<V> : Pair<V, V>`, as no `T` is a `Box<T>`,
+  nor `fun <T : Any> Pair<T?, T>.ext()`, as no `T : Any` is a `T?`,
+  nor `fun <T, U : T> Map<T, U>.ext()` for `interface Codes<V : Enum<V>> : Map<V, String>`, as no enum class is a supertype of `String`.
+  An extension of the package of the class on a `kotlin.*` or `java.*` supertype, bounded by itself, like `fun <T : Comparable<T>> Map<T, T>.ext()`,
+  is listed for a generic class when it can be called for some type argument tried,
+  like `String`, `Int`, `Nothing`, or a type the extension names:
+  for `class SameKeyMap<V> : HashMap<V, V>()`, of `SameKeyMap<String>`, but not for `interface Scores<V> : Map<V, Comparable<V>>`.
   A JDK interface named as a supertype, like `abstract class Orders : java.util.List<Order>`,
   is the Java one, with the supertypes Java declares,
   so that `fun Collection<Order>.count()` is listed for it, but not `fun List<Order>.total()`, as the compiler tells,
   and so is one named as a receiver, of invariant type parameters,
-  like `fun java.util.List<out Any>.ext()`, listed for it, but not `fun java.util.List<Any>.ext()`.
+  like `fun java.util.List<out Any>.ext()`, listed for it, but not `fun java.util.List<Any>.ext()`,
+  and so is one named in a type argument, whose projection its supertypes keep,
+  like `MutableCollection<out String>` of `interface Boxes : Box<java.util.List<out String>>`.
   An extension declaring type parameters is listed when a call without arguments, like `orders.ext()`, compiles,
   that is when the compiler infers them from the receiver, and from their bounds,
   also the bounds referring to each other, like `<A : Comparable<A>, B : A> Sink<B, A>.ext()`,
