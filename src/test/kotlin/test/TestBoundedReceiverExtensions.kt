@@ -1573,3 +1573,82 @@ fun <T : List<U>, U> InferredFunctionSink<T>.sinkOfList() {}
 fun <S : T, T : () -> U, U : CharSequence> InferredFunctionSink<S>.sinkUnderSupplier() {}
 
 class InferredFunctionSupplierOfSupplierSink : InferredFunctionSink<() -> () -> String>
+
+// a class comparable to what is comparable to it, see #343: whether it is comparable to itself, like T : Comparable<T> takes,
+// asks whether it is comparable to itself again, endlessly, where kotlinc gives up with "Arguments depth is too high",
+// so that x.selfComparable() does not compile
+interface NestedSelfComparable : Comparable<Comparable<NestedSelfComparable>>
+
+interface NestedSelfComparableSource<out T>
+
+fun <T : Comparable<T>> NestedSelfComparableSource<T>.selfComparable() {}
+
+fun <T> NestedSelfComparableSource<T>.anyComparable() {}
+
+class NestedSelfComparableHolder : NestedSelfComparableSource<NestedSelfComparable>
+
+// a type parameter nothing refers to, like W, is given explicitly, see #343, also next to a function type,
+// where the other ones are inferred like kotlinc does, as x.biSinkOfSupplierGiven<_, _, Nothing>() compiles on any class,
+// T inferred as the intersection of its upper bounds, like String & (() -> CharSequence), while a function type is no Comparable,
+// and U of T : List<U>, U : T, inferred as List<String> & List<List<String>> for List<String>, is no List<U>
+interface GivenFunctionBiSink<in A, in B>
+
+fun <T : () -> U, U : CharSequence, W> GivenFunctionBiSink<T, T>.biSinkOfSupplierGiven() {}
+
+fun <A : Comparable<A>, B : A, W> GivenFunctionBiSink<B, A>.biSinkUnderComparableGiven() {}
+
+fun <T : List<U>, U : T> GivenFunctionBiSink<T, U>.biSinkOfListOfBounded() {}
+
+class GivenFunctionStringBiSink : GivenFunctionBiSink<String, String>
+
+class GivenFunctionSupplierBiSink : GivenFunctionBiSink<() -> String, () -> String>
+
+class GivenFunctionListBiSink : GivenFunctionBiSink<List<String>, Any>
+
+// a suspend function type is no function type of one more parameter, as its metadata tells it, see #343,
+// but a kotlin.Function of its return type, like any function type, also one a class is a subtype of,
+// and no Comparable, nor String, also next to a type parameter given explicitly, like B of B : A, which nothing refers to
+interface GivenFunctionSource<out T>
+
+fun <A : Comparable<A>, B : A> GivenFunctionSource<A>.sourceOfComparableBounding() {}
+
+fun <A : String, B : A> GivenFunctionSource<B>.sourceUnderStringGiven() {}
+
+fun GivenFunctionSource<Function1<*, *>>.sourceOfFunctionOfOne() {}
+
+fun <T : suspend () -> U, U : CharSequence> GivenFunctionSource<T>.sourceOfSuspendSupplier() {}
+
+fun <T : Function<R>, R : Comparable<R>> GivenFunctionSource<T>.sourceOfFunctionOfComparable() {}
+
+fun GivenFunctionSource<Function<*>>.sourceOfFunction() {}
+
+interface GivenFunctionTask : () -> Unit
+
+class GivenFunctionRunSource : GivenFunctionSource<() -> Unit>
+
+class GivenFunctionSupplierSource : GivenFunctionSource<() -> String>
+
+class GivenFunctionSuspendRunSource : GivenFunctionSource<suspend () -> Unit>
+
+class GivenFunctionSuspendSupplierSource : GivenFunctionSource<suspend () -> String>
+
+class GivenFunctionTaskSource : GivenFunctionSource<GivenFunctionTask>
+
+interface GivenFunctionSink<in T>
+
+fun <A : Comparable<A>, B : A> GivenFunctionSink<B>.sinkUnderComparableGiven() {}
+
+class GivenFunctionSuspendRunSink : GivenFunctionSink<suspend () -> Unit>
+
+class GivenFunctionStringSink : GivenFunctionSink<String>
+
+// a class whose supertype refers to it within a type argument of a type argument, see #343, is inferred by kotlinc
+// in a way which is not modelled: x.triSinkUnderSelfList() compiles, A inferred from NestedSelfList for A : List<A>,
+// so next to a function type it is matched leniently, like before
+interface NestedSelfList : List<List<NestedSelfList>>
+
+interface GivenFunctionTriSink<in A, in B, in C>
+
+fun <A : List<A>, B : A, C : A> GivenFunctionTriSink<B, A, C>.triSinkUnderSelfList() {}
+
+class GivenFunctionNestedSelfListTriSink : GivenFunctionTriSink<suspend () -> Unit, NestedSelfList, GivenFunctionTask>

@@ -129,10 +129,19 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 - With a type argument given explicitly, like `x.ext<_, Nothing, _>()`, kotlinc reports the violated bound of an inferred type parameter
   as an error also next to an empty intersection, unlike when all of them are inferred, see `CallInference`.
 
-- When judging a sweep by calls with explicit type arguments, give explicitly only a type parameter kotlinc cannot infer
-  (`cannot infer type for type parameter 'W'. Specify it explicitly.`), or one nothing refers to, like `W` of `W : U`:
-  one it infers, given as `Nothing`, like in `x.ext<Nothing, _>()` of `<A : Comparable<A>, B : A> Sink<B>.ext()`,
+- When judging a sweep by calls with explicit type arguments, give explicitly only a type parameter nothing tells,
+  neither the receiver, nor a bound of one it refers to, like `W`, or `W` of `W : U`:
+  one the receiver refers to through a bound, like `E` of `T : List<E>`, is to be inferred, or the extension is not listed
+  (`consumeElements`), though kotlinc reports the same `cannot infer type for type parameter 'E'. Specify it explicitly.`,
+  and one it infers, given as `Nothing`, like in `x.ext<Nothing, _>()` of `<A : Comparable<A>, B : A> Sink<B>.ext()`,
   compiles on nearly any contravariant receiver, and would judge every such row as callable.
+  So does `x.ext<_, _, Nothing>()` for `W : B`, making `B` a supertype of `Nothing`, which is why the model does not reject there,
+  see `isRejectingOnlyByReceiver`.
+
+- kotlinc crashes on a call asking whether a class comparable to what is comparable to it is comparable to itself,
+  like `x.ext()` of `<T : Comparable<T>> Source<T>.ext()` for `interface Nested : Comparable<Comparable<Nested>>`
+  (`IllegalStateException: Arguments depth is too high`), and the crash ends the whole compilation:
+  a batch probe reports one such row per run, with no `error:` line, so keep such classes out of a batch, see `MAX_TYPE_ARGUMENTS_DEPTH`.
 
 - `CallInference` rejects where kotlinc accepts an intersection of generic types, like `(() -> CharSequence) & (() -> Plain)`
   as a `() -> CharSequence & Plain`, also without function types, like for `<S : T, T : List<U>, U : CharSequence> Sink<S>.ext()`

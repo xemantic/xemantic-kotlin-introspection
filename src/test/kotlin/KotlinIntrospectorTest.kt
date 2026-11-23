@@ -13703,6 +13703,165 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve class comparable to what is comparable to it without recursing endlessly`() {
+        // kotlinc fails on x.selfComparable() with: Arguments depth is too high
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.NestedSelfComparableHolder"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NestedSelfComparableHolder [page 1/1]
+            class NestedSelfComparableHolder : NestedSelfComparableSource<NestedSelfComparable>
+            // from com.xemantic.kotlin.introspection.test
+            fun <T> NestedSelfComparableSource<T>.anyComparable()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extension of type parameter given explicitly next to function type bound`() {
+        // x.biSinkOfSupplierGiven<_, _, Nothing>() compiles, T inferred as String & (() -> CharSequence)
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.GivenFunctionStringBiSink"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GivenFunctionStringBiSink [page 1/1]
+            class GivenFunctionStringBiSink : GivenFunctionBiSink<String, String>
+            // from com.xemantic.kotlin.introspection.test
+            fun <T : List<U>, U : T> GivenFunctionBiSink<T, U>.biSinkOfListOfBounded()
+            fun <T : () -> U, U : CharSequence, W> GivenFunctionBiSink<T, T>.biSinkOfSupplierGiven()
+            fun <A : Comparable<A>, B : A, W> GivenFunctionBiSink<B, A>.biSinkUnderComparableGiven()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve function type class without extension inferring comparable next to type parameter given explicitly`() {
+        // a function type is no Comparable, whatever W is given as, nor a List<U> of U : T
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.GivenFunctionSupplierBiSink"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GivenFunctionSupplierBiSink [page 1/1]
+            class GivenFunctionSupplierBiSink : GivenFunctionBiSink<() -> String, () -> String>
+            // from com.xemantic.kotlin.introspection.test
+            fun <T : () -> U, U : CharSequence, W> GivenFunctionBiSink<T, T>.biSinkOfSupplierGiven()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extension inferring type parameter as intersection which is no subtype of its bound`() {
+        // U is inferred as List<String> & List<List<String>>, which is no List<U>: kotlinc reports
+        // inferred type is 'String & List<String>', but 'List<List<String>>' was expected
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.GivenFunctionListBiSink"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GivenFunctionListBiSink [page 1/1]
+            class GivenFunctionListBiSink : GivenFunctionBiSink<List<String>, Any>
+            // from com.xemantic.kotlin.introspection.test
+            fun <T : () -> U, U : CharSequence, W> GivenFunctionBiSink<T, T>.biSinkOfSupplierGiven()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve function type class without extensions on function of comparable and under type parameter given explicitly`() {
+        // () -> Unit is a Function<Unit>, and Unit is no Comparable, nor is the function type, whatever B of B : A is given as
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.GivenFunctionRunSource"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GivenFunctionRunSource [page 1/1]
+            class GivenFunctionRunSource : GivenFunctionSource<() -> Unit>
+            // from com.xemantic.kotlin.introspection.test
+            fun GivenFunctionSource<Function<*>>.sourceOfFunction()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve function type class with extension on function of comparable return type`() {
+        // () -> String is a Function<String>, R inferred as String, but no suspend function type
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.GivenFunctionSupplierSource"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GivenFunctionSupplierSource [page 1/1]
+            class GivenFunctionSupplierSource : GivenFunctionSource<() -> String>
+            // from com.xemantic.kotlin.introspection.test
+            fun GivenFunctionSource<Function<*>>.sourceOfFunction()
+            fun <T : Function<R>, R : Comparable<R>> GivenFunctionSource<T>.sourceOfFunctionOfComparable()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve suspend function type class without extensions on function type of one parameter`() {
+        // suspend () -> Unit, stored as Function1<Continuation<Unit>, Any?>, is no Function1, no String, and no Comparable
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.GivenFunctionSuspendRunSource"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GivenFunctionSuspendRunSource [page 1/1]
+            class GivenFunctionSuspendRunSource : GivenFunctionSource<suspend () -> Unit>
+            // from com.xemantic.kotlin.introspection.test
+            fun GivenFunctionSource<Function<*>>.sourceOfFunction()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve suspend function type class with extensions inferring type parameters from suspend function type`() {
+        // U of T : suspend () -> U, and R of T : Function<R>, are inferred as String
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.GivenFunctionSuspendSupplierSource"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GivenFunctionSuspendSupplierSource [page 1/1]
+            class GivenFunctionSuspendSupplierSource : GivenFunctionSource<suspend () -> String>
+            // from com.xemantic.kotlin.introspection.test
+            fun GivenFunctionSource<Function<*>>.sourceOfFunction()
+            fun <T : Function<R>, R : Comparable<R>> GivenFunctionSource<T>.sourceOfFunctionOfComparable()
+            fun <T : suspend () -> U, U : CharSequence> GivenFunctionSource<T>.sourceOfSuspendSupplier()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class of function type subclass without extension on function of comparable`() {
+        // GivenFunctionTask is a Function<Unit>, through () -> Unit, and Unit is no Comparable
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.GivenFunctionTaskSource"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GivenFunctionTaskSource [page 1/1]
+            class GivenFunctionTaskSource : GivenFunctionSource<GivenFunctionTask>
+            // from com.xemantic.kotlin.introspection.test
+            fun GivenFunctionSource<Function<*>>.sourceOfFunction()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve suspend function type class without extension on type parameter under recursively bounded one`() {
+        // A is told only by the bound of B, and a suspend function type is no Comparable
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.GivenFunctionSuspendRunSink"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GivenFunctionSuspendRunSink [page 1/1]
+            class GivenFunctionSuspendRunSink : GivenFunctionSink<suspend () -> Unit>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extension on type parameter under recursively bounded one of sink of suspend function types`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.GivenFunctionStringSink"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GivenFunctionStringSink [page 1/1]
+            class GivenFunctionStringSink : GivenFunctionSink<String>
+            // from com.xemantic.kotlin.introspection.test
+            fun <A : Comparable<A>, B : A> GivenFunctionSink<B>.sinkUnderComparableGiven()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extension inferring type parameter from deeply recursive class next to function type`() {
+        // x.triSinkUnderSelfList() compiles, in a way which is not modelled, so it is matched leniently
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.GivenFunctionNestedSelfListTriSink"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GivenFunctionNestedSelfListTriSink [page 1/1]
+            class GivenFunctionNestedSelfListTriSink : GivenFunctionTriSink<suspend () -> Unit, NestedSelfList, GivenFunctionTask>
+            // from com.xemantic.kotlin.introspection.test
+            fun <A : List<A>, B : A, C : A> GivenFunctionTriSink<B, A, C>.triSinkUnderSelfList()
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve class without extension inferring reified type parameter as intersection`() {
         // A is inferred as CharSequence & Int, which kotlinc cannot reify
         resolver.resolve(

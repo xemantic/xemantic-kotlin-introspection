@@ -6330,6 +6330,14 @@ internal class DefaultKotlinIntrospector(
         val key = supertypeName.replace('/', '.')
         val declaration = if (name == kmClass.name) kmClass else builtinClasses[name] ?: loadKmClass(name)
         if (declaration == null) {
+            // kotlin.Function of the return type of a function type, like Function<String> of (Int) -> String,
+            // which no class file tells, see FunctionTypeClass, unless matched leniently, see lenientToFunctionTypes
+            if (!isLenientToFunctionTypes && supertypeName == FUNCTION_METADATA_NAME) {
+                FunctionTypeClass.of(name.replace('/', '.'))?.let { functionTypeClass ->
+                    val returnType = type.arguments.lastOrNull()?.takeIf { type.arguments.size == functionTypeClass.arity + 1 } ?: return null
+                    return listOf(classType(FUNCTION_METADATA_NAME).copy(arguments = listOf(returnType)))
+                }
+            }
             // a Java class, whose supertypes are told by its generic signature, see javaSupertypeTypes,
             // walked again from the type itself, when it takes type arguments, like Comparable<JavaBox<String!>> of JavaBox<String>
             val header = findClassByMetadataName(name)?.javaClassHeader ?: return null
@@ -6340,10 +6348,27 @@ internal class DefaultKotlinIntrospector(
                 }
             }[key]
         }
-        val supertypes = supertypeTypesOf(name)[key] ?: return null
+        val supertypes = supertypeTypesOf(name)[key] ?: functionSupertypesOf(name, supertypeName) ?: return null
         if (declaration.typeParameters.isEmpty()) return supertypes
         val projections = projectionsOf(declaration, type) ?: return null
         return supertypes.map { supertype -> supertype.substitutedProjecting(projections) { substituted(it) } }
+    }
+
+    /**
+     * The supertypes `kotlin.Function` of the class of the given [metadataName], when that is the [supertypeName],
+     * of the return types of its function type supertypes, like `Function<Unit>` of `interface Task : () -> Unit`,
+     * which no class file tells, see [FunctionTypeClass], or `null` if it has none, or is matched leniently,
+     * see [ClassSupertypes.lenientToFunctionTypes].
+     */
+    private fun ClassSupertypes.functionSupertypesOf(metadataName: String, supertypeName: String): List<KmType>? {
+        if (isLenientToFunctionTypes || supertypeName != FUNCTION_METADATA_NAME) return null
+        return supertypeTypesOf(metadataName).entries
+            .filter { (name, _) -> FunctionTypeClass.of(name) != null }
+            .flatMap { (_, types) -> types }
+            .mapNotNull { type -> type.withSuspendFunctionTypeClass().takeIf { !it.isSuspend }?.arguments?.lastOrNull() }
+            .distinctBy { it.type?.structureKey() }
+            .map { returnType -> classType(FUNCTION_METADATA_NAME).copy(arguments = listOf(returnType)) }
+            .ifEmpty { null }
     }
 
     /**
@@ -6407,6 +6432,21 @@ internal class DefaultKotlinIntrospector(
         otherTypes: () -> List<KmType>
     ): Boolean {
         if (receiver == null || receiver.classifier is KmClassifier.TypeAlias) return true
+        return try {
+            isCallableOnClass(receiver, typeParameters, returnType, otherTypes)
+        } catch (_: TypeArgumentsTooDeep) {
+            // kotlinc fails to compile such a call
+            false
+        }
+    }
+
+    // whether the extension on the receiver can be called on the class, see isCallableOn
+    private fun ClassSupertypes.isCallableOnClass(
+        receiver: KmType,
+        typeParameters: List<KmTypeParameter>,
+        returnType: () -> KmType,
+        otherTypes: () -> List<KmType>
+    ): Boolean {
         // what the type parameters are inferred from, the same for each type the receiver is matched against
         val referred = lazy(LazyThreadSafetyMode.NONE) { typeParameterIdsReferredBy(listOf(receiver), typeParameters) }
         val inferredOtherwise = lazy(LazyThreadSafetyMode.NONE) { typeParameterIdsReferredBy(otherTypes(), typeParameters) }
@@ -6423,22 +6463,33 @@ internal class DefaultKotlinIntrospector(
                 val isBoundedByEachOther = typeParameters.any { typeParameter ->
                     typeParameter.upperBounds.any { bound -> !bound.refersOnlyTo { id -> typeParameters.none { it.id == id } } }
                 }
-                val isInferenceModelled = isCallInferenceModelled(receiver, typeParameters, inferredOtherwise) &&
-                    reached.none { it.refersToNothingClass() || it.refersToSuspendFunctionType() }
-                // a function type next to a type parameter which the receiver itself does not refer to is inferred by kotlinc
-                // in ways which are not all modelled: only when the receiver, and the bounds of the type parameters it tells,
-                // refer to each of them, like to U of T : () -> U, not to W of W : U, given as Nothing, and cautiously then
-                val isCautious = isInferenceModelled &&
-                    typeParameters.any { typeParameter -> receiver.refersOnlyTo { it != typeParameter.id } } &&
-                    (receiver.refersToFunctionType() ||
-                        typeParameters.any { typeParameter -> typeParameter.upperBounds.any { it.refersToFunctionType() } } ||
-                        reached.any { it.refersToFunctionType() })
                 // first as kotlinc infers the type parameters, from all the types matched, when that is modelled,
                 // and only when it is not, also for a supertype matched, as each of them is inferred while matching
-                val isModelled = isInferenceModelled && (!isCautious || typeParameters.all { it.id in referred.value })
+                val isModelled = isCallInferenceModelled(receiver, typeParameters, inferredOtherwise) &&
+                    reached.none { it.refersToNothingClass() }
+                // a function type next to a type parameter which the receiver itself does not refer to is inferred by kotlinc
+                // in ways which are not all modelled, so the model is cautious then, see CallInference
+                val isNextToFunctionType = isModelled && (
+                    receiver.refersToFunctionType() ||
+                        typeParameters.any { typeParameter -> typeParameter.upperBounds.any { it.refersToFunctionType() } } ||
+                        reached.any { it.refersToFunctionType() }
+                    )
+                val isCautious = isNextToFunctionType &&
+                    typeParameters.any { typeParameter -> receiver.refersOnlyTo { it != typeParameter.id } }
+                // and there a type parameter which nothing tells, but whose bound refers to another one, like W of W : U,
+                // given explicitly as Nothing, makes that one a supertype of Nothing, which kotlinc fixes in ways not modelled:
+                // the model tells only that the plain call compiles, or that the receiver contradicts a constraint
+                // whatever is given, unlike for one bounded by nothing else, like W, or W : CharSequence, see CallInference
+                val isRejectingOnlyByReceiver = isNextToFunctionType && typeParameters.any { typeParameter ->
+                    typeParameter.id !in referred.value && (
+                        typeParameter.upperBounds.any { bound -> !bound.refersOnlyTo { id -> typeParameters.none { it.id == id } } } ||
+                            typeParameters.any { other -> other.upperBounds.any { bound -> !bound.refersOnlyTo { it != typeParameter.id } } }
+                        )
+                }
                 var isNotModelled = !isModelled
                 val isInferredByCall = isModelled && matches(isCollecting = true) {
-                    isInferredByCall(referred, referredByReturnType, isCautious) ?: false.also { isNotModelled = true }
+                    isInferredByCall(referred, referredByReturnType, isCautious, isRejectingOnlyByReceiver)
+                        ?: false.also { isNotModelled = true }
                 }
                 // a function type matched leniently, like before #319, where the inference of type parameters
                 // bounded by each other is not modelled, like next to Nothing, or with a value parameter referring to one
@@ -6464,10 +6515,8 @@ internal class DefaultKotlinIntrospector(
      * see [ReceiverMatcher.CallInference], as far as the extension tells: when a bound refers to a type parameter,
      * like `B : A`, or `T : Comparable<T>`, as they are told one by one without it,
      * and when no type parameter is told by the context, or value, parameters, the [inferredOtherwise] ones,
-     * when neither the [receiver], nor a bound, refers to a suspend function type, stored as a function type of one more
-     * parameter, like `Function2<A, Continuation<A>, Any?>` of `suspend (A) -> A`, which kotlinc tells from the others,
-     * as far as a supertype of the class matched does not refer to `Nothing`, or `Nothing?`, or a suspend function type,
-     * anywhere, see [isCallableOn], inferred by kotlinc in a way which is not modelled.
+     * as far as a supertype of the class matched does not refer to `Nothing`, or `Nothing?`, anywhere, see [isCallableOn],
+     * inferred by kotlinc in a way which is not modelled.
      */
     private fun isCallInferenceModelled(
         receiver: KmType,
@@ -6476,8 +6525,7 @@ internal class DefaultKotlinIntrospector(
     ): Boolean {
         val ids = typeParameters.mapTo(HashSet()) { it.id }
         val bounds = typeParameters.flatMap { it.upperBounds }
-        return bounds.any { bound -> !bound.refersOnlyTo { it !in ids } } && ids.none { it in inferredOtherwise.value } &&
-            !receiver.refersToSuspendFunctionType() && bounds.none { it.refersToSuspendFunctionType() }
+        return bounds.any { bound -> !bound.refersOnlyTo { it !in ids } } && ids.none { it in inferredOtherwise.value }
     }
 
     // whether this type, or a type argument of it, is a function type, like (String) -> Unit, or kotlin.Function
@@ -6488,6 +6536,18 @@ internal class DefaultKotlinIntrospector(
     // whether this type, or a type argument of it, is a suspend function type, like suspend (String) -> Unit
     private fun KmType.refersToSuspendFunctionType(): Boolean =
         isSuspend || arguments.any { it.type?.refersToSuspendFunctionType() == true }
+
+    // this type, and its type arguments, with the suspend function types as the types of their own classes,
+    // like SuspendFunction1<Int, String> of suspend (Int) -> String, see withSuspendFunctionTypeClass, as nullable as they are
+    private fun KmType.withSuspendFunctionTypeClasses(): KmType {
+        if (!refersToSuspendFunctionType()) return this
+        val type = withSuspendFunctionTypeClass().let { type -> if (type !== this && isNullable) type.also { it.isNullable = true } else type }
+        return type.copy(
+            arguments = type.arguments.map { argument ->
+                argument.type?.let { KmTypeProjection(argument.variance, it.withSuspendFunctionTypeClasses()) } ?: argument
+            }
+        )
+    }
 
     // whether this type, or a type argument of it, is Nothing, or Nothing?
     private fun KmType.refersToNothingClass(): Boolean =
@@ -7602,8 +7662,35 @@ internal class DefaultKotlinIntrospector(
             return isMatched
         }
 
-        // whether the expected type matches the actual one, see matches, matched anew
+        // the type arguments matched within each other so far, see matchesOnce
+        private var typeArgumentsDepth = 0
+
+        /**
+         * Whether the [expected] type matches the [actual] one, see [matches], matched anew,
+         * unless within more type arguments than kotlinc matches, [MAX_TYPE_ARGUMENTS_DEPTH] of them,
+         * like when a class comparable to what is comparable to it, like `interface Nested : Comparable<Comparable<Nested>>`,
+         * is asked whether it is comparable to itself, for `T : Comparable<T>`, which takes the same question, endlessly:
+         * kotlinc fails then ("Arguments depth is too high"), so the extension cannot be called, see [TypeArgumentsTooDeep].
+         */
         private fun matchesOnce(expected: KmType, actual: KmType, variance: KmVariance, isStrict: Boolean): Boolean {
+            if (typeArgumentsDepth >= MAX_TYPE_ARGUMENTS_DEPTH) throw TypeArgumentsTooDeep
+            typeArgumentsDepth++
+            try {
+                return matchesAtDepth(expected, actual, variance, isStrict)
+            } finally {
+                typeArgumentsDepth--
+            }
+        }
+
+        private fun matchesAtDepth(expected: KmType, actual: KmType, variance: KmVariance, isStrict: Boolean): Boolean {
+            // a suspend function type, stored as a function type of one more parameter, the continuation,
+            // is the type of its own class, like SuspendFunction0<Unit> of suspend () -> Unit, no Function1<Continuation<Unit>, Any?>,
+            // unless matched leniently, like before #343, see lenientToFunctionTypes
+            if (!supertypes.isLenientToFunctionTypes && (expected.isSuspend || actual.isSuspend)) {
+                val expectedClass = expected.withSuspendFunctionTypeClasses()
+                val actualClass = actual.withSuspendFunctionTypeClasses()
+                if (!expectedClass.isSuspend && !actualClass.isSuspend) return matchesOnce(expectedClass, actualClass, variance, isStrict)
+            }
             val actualClassifier = actual.classifier as? KmClassifier.Class
                 // a type parameter bounded by the class itself, like `E` of `Enum<E : Enum<E>>`, stands for the class
                 ?: KmClassifier.Class(supertypes.kmClass.name).takeIf { supertypes.isSelfTypeParameter(actual) }
@@ -8044,16 +8131,62 @@ internal class DefaultKotlinIntrospector(
          * but as kotlinc infers them for a call without arguments, like `x.ext()`, from all of them at once, see [CallInference],
          * when the types were only collected, see [isCallInferenceModelled], or `null` when that is not modelled,
          * like when what is not told was matched, see [isUntold], or a projection, or a nullable use, of a type parameter,
-         * and, when [isCautious], also what the model does not tell exactly, see [CallInference].
+         * and, when [isCautious], also what the model does not tell exactly, see [CallInference],
+         * or a type parameter inferred from a class it is not modelled for, see [isInferredFromDeeplyRecursiveClass].
+         *
+         * @param isRejectingOnlyByReceiver whether the model tells that the call does not compile only when the receiver
+         *   contradicts a constraint, see [isCallableOn], and whatever else it rejects is not modelled.
          */
-        fun isInferredByCall(referred: Lazy<Set<Int>>, referredByReturnType: Lazy<Set<Int>>, isCautious: Boolean): Boolean? {
+        fun isInferredByCall(
+            referred: Lazy<Set<Int>>,
+            referredByReturnType: Lazy<Set<Int>>,
+            isCautious: Boolean,
+            isRejectingOnlyByReceiver: Boolean
+        ): Boolean? {
             if (!isClassTypeParameterTyped()) return false
             if (isUntold || isMatchedBeyondInference) return null
             return try {
-                CallInference(isCautious).isInferred(referred.value, referredByReturnType)
+                val inference = CallInference(isCautious)
+                val isInferred = inference.isInferred(referred.value, referredByReturnType)
+                val isRejectionModelled = inference.isContradictedByReceiver ||
+                    (!isRejectingOnlyByReceiver && !isInferredFromDeeplyRecursiveClass())
+                if (isInferred || isRejectionModelled) isInferred else null
             } catch (_: InferenceNotModelled) {
                 null
             }
+        }
+
+        /**
+         * Whether a type parameter bounded by a type of itself as a covariant type argument, like `A` of `A : List<A>`,
+         * is inferred from a type referring to a class which is a subclass of the class of that bound through a supertype
+         * referring to the class itself within a type argument of a type argument, like `interface Nested : List<List<Nested>>`:
+         * kotlinc accepts `A` inferred from `Nested`, or `List<Nested>`, in a contravariant position, in a way which is
+         * not modelled, see [isInferredByCall], while `List<String>` is no `List<List<String>>`.
+         */
+        private fun isInferredFromDeeplyRecursiveClass(): Boolean = constrainedBy.any { (id, type, _) ->
+            val selfBoundClassNames = typeParameters[id]?.upperBounds.orEmpty().mapNotNullTo(HashSet()) { bound ->
+                val name = (bound.classifier as? KmClassifier.Class)?.name ?: return@mapNotNullTo null
+                val variances = declaredVariances(name) ?: return@mapNotNullTo null
+                val isSelfBound = bound.arguments.withIndex().any { (index, argument) ->
+                    (argument.type?.classifier as? KmClassifier.TypeParameter)?.id == id && variances.getOrNull(index) == KmVariance.OUT
+                }
+                name.replace('/', '.').takeIf { isSelfBound }
+            }
+            selfBoundClassNames.isNotEmpty() && type.refersToDeeplyRecursiveClass(selfBoundClassNames)
+        }
+
+        // whether this type, or a type argument of it, is of a class with a supertype of one of the given names
+        // referring to the class itself within a type argument of a type argument, see isInferredFromDeeplyRecursiveClass
+        private fun KmType.refersToDeeplyRecursiveClass(supertypeNames: Set<String>): Boolean {
+            val name = (classifier as? KmClassifier.Class)?.name
+            fun KmType.refersToClass(): Boolean =
+                (classifier as? KmClassifier.Class)?.name == name || arguments.any { it.type?.refersToClass() == true }
+            val isDeeplyRecursive = name != null && supertypes.supertypeTypesOf(name).any { (supertypeName, types) ->
+                supertypeName in supertypeNames && types.any { type ->
+                    type.arguments.any { argument -> argument.type?.arguments?.any { it.type?.refersToClass() == true } == true }
+                }
+            }
+            return isDeeplyRecursive || arguments.any { it.type?.refersToDeeplyRecursiveClass(supertypeNames) == true }
         }
 
         /**
@@ -8087,6 +8220,7 @@ internal class DefaultKotlinIntrospector(
          * taking it explicitly, like in `x.ext<_, Nothing>()`, unless the receiver contradicts a constraint,
          * and types of an intersection which are not, each on its own, a subtype of a type with type arguments,
          * like `(() -> CharSequence) & (() -> Plain)` of `() -> CharSequence & Plain`.
+         * A suspend function type is the type of its own class, like `SuspendFunction0<Unit>`, see [inferenceType].
          */
         private inner class CallInference(private val isCautious: Boolean) {
 
@@ -8100,7 +8234,8 @@ internal class DefaultKotlinIntrospector(
             private val pending = ArrayDeque<Pair<Int, InferenceConstraint>>()
 
             // whether a constraint is contradicted while adding the ones of the receiver, a receiver type mismatch for kotlinc
-            private var isContradictedByReceiver = false
+            var isContradictedByReceiver = false
+                private set
 
             // whether a constraint is contradicted while fixing a type parameter, which kotlinc reports as an error,
             // unless it warns about an empty intersection, see hasEmptyIntersection
@@ -8141,7 +8276,8 @@ internal class DefaultKotlinIntrospector(
                 }
                 typeParameters.keys.forEach { if (it in inferable) constraints[it] = ArrayList() }
                 typeParameters.values.filter { it.id in inferable }.forEach { typeParameter ->
-                    typeParameter.upperBounds.forEach { bound ->
+                    typeParameter.upperBounds.forEach { declared ->
+                        val bound = declared.inferenceType()
                         if (!bound.isModelled() || bound.isSelfTypeBound()) throw InferenceNotModelled
                         addSubtype(typeParameterType(typeParameter.id), bound, emptySet(), isFromDeclaredUpperBound = false)
                         process()
@@ -8150,7 +8286,8 @@ internal class DefaultKotlinIntrospector(
                 position = InferencePosition.RECEIVER
                 // Nothing, or Nothing?, is inferred by kotlinc in a way which is not modelled, see isCallableOn
                 if (constrainedBy.any { (_, type, _) -> type.refersToNothingClass() }) throw InferenceNotModelled
-                constrainedBy.forEach { (id, type, variance) ->
+                constrainedBy.forEach { (id, matched, variance) ->
+                    val type = matched.inferenceType()
                     if (!type.isModelled() || !type.refersToNoTypeParameter()) throw InferenceNotModelled
                     val kind = when (variance) {
                         KmVariance.OUT -> InferenceConstraintKind.LOWER
@@ -8538,6 +8675,7 @@ internal class DefaultKotlinIntrospector(
                 val reached = if (name == supertypeName) subtype else {
                     // also a supertype of Nothing type arguments, like Co<Nothing> of interface NCo : Co<Nothing>, is not modelled
                     supertypes.supertypesOf(subtype, supertypeName)?.singleOrNull()?.takeIf { !it.refersToNothingClass() }
+                        ?.inferenceType()
                         ?: throw InferenceNotModelled
                 }
                 val variances = declaredVariances(supertypeName)?.takeIf { it.size == supertype.arguments.size && it.size == reached.arguments.size }
@@ -8596,6 +8734,7 @@ internal class DefaultKotlinIntrospector(
                 val reached = candidates.map { candidate ->
                     if ((candidate.classifier as KmClassifier.Class).name == supertypeName) candidate else {
                         supertypes.supertypesOf(candidate, supertypeName)?.singleOrNull()?.takeIf { !it.refersToNothingClass() }
+                            ?.inferenceType()
                             ?: throw InferenceNotModelled
                     }
                 }
@@ -8666,7 +8805,8 @@ internal class DefaultKotlinIntrospector(
 
             /**
              * The common supertype of the [types], like kotlinc: the one all the other ones are subtypes of,
-             * or else the type of the only most specific class they are all subclasses of, like `List` of `List<SL2>`, and `SL1`,
+             * or else the type of the only most specific class they are all subclasses of, an intersection being a subclass
+             * of what any of its types is, like `List` of `List<SL2>`, and `SL1`,
              * where `interface SL1 : List<SL1>`, and `interface SL2 : SL1`, with the common supertypes of the type arguments
              * of its covariant type parameters, like `List<SL1>`, nullable, when any of them is.
              */
@@ -8684,12 +8824,19 @@ internal class DefaultKotlinIntrospector(
             }
 
             private fun commonSupertypeOfClasses(types: List<KmType>, depth: Int): KmType {
-                val names = types.map { (it.classifier as? KmClassifier.Class)?.name ?: throw InferenceNotModelled }
+                // an intersection is a subtype of what any of its types is
+                val components = types.map { it.components() }
+                val names = components.map { list -> list.map { (it.classifier as? KmClassifier.Class)?.name ?: throw InferenceNotModelled } }
                 val classSupertypes = this@ReceiverMatcher.supertypes
                 // the supertypes the JVM classes add, like java.io.Serializable, are not told by their types
-                val commonNames = names.map { classSupertypes.supertypeNamesOf(it) + it.replace('/', '.') }.reduce { common, other -> common intersect other }
-                val candidates = (listOf(names.first()) + classSupertypes.supertypeTypesOf(names.first()).values.flatten()
-                    .mapNotNull { (it.classifier as? KmClassifier.Class)?.name })
+                val commonNames = names
+                    .map { list -> list.flatMapTo(HashSet()) { classSupertypes.supertypeNamesOf(it) + it.replace('/', '.') } }
+                    .reduce<Set<String>, Set<String>> { common, other -> common intersect other }
+                val candidates = names.first()
+                    .flatMap { first ->
+                        listOf(first) + classSupertypes.supertypeTypesOf(first).values.flatten()
+                            .mapNotNull { (it.classifier as? KmClassifier.Class)?.name }
+                    }
                     .distinct()
                     .filter { it.replace('/', '.') in commonNames && it != ANY_CLASS_NAME }
                 if (!(commonNames - candidates.mapTo(HashSet()) { it.replace('/', '.') }).all { it == ANY_CLASS_NAME.replace('/', '.') }) {
@@ -8700,9 +8847,14 @@ internal class DefaultKotlinIntrospector(
                     .singleOrNull() ?: throw InferenceNotModelled
                 val variances = declaredVariances(name) ?: throw InferenceNotModelled
                 if (variances.isEmpty()) return classType(name)
-                val reached = types.map { type ->
-                    if ((type.classifier as KmClassifier.Class).name == name) type else {
-                        classSupertypes.supertypesOf(type, name)?.singleOrNull() ?: throw InferenceNotModelled
+                val reached = components.flatMap { list ->
+                    list.filter { type ->
+                        val typeName = (type.classifier as KmClassifier.Class).name
+                        list.size == 1 || typeName == name || name.replace('/', '.') in classSupertypes.supertypeNamesOf(typeName)
+                    }.map { type ->
+                        if ((type.classifier as KmClassifier.Class).name == name) type else {
+                            classSupertypes.supertypesOf(type, name)?.singleOrNull()?.inferenceType() ?: throw InferenceNotModelled
+                        }
                     }
                 }
                 val arguments = variances.indices.map { index ->
@@ -8718,6 +8870,14 @@ internal class DefaultKotlinIntrospector(
                 }
                 return classType(name).copy(arguments = arguments)
             }
+
+            /**
+             * This type as the inference tells it: a suspend function type the type of its own class, like `SuspendFunction0<Unit>`
+             * of `suspend () -> Unit`, see [withSuspendFunctionTypeClasses], which is not modelled when it cannot be told,
+             * like of a star projected one.
+             */
+            private fun KmType.inferenceType(): KmType =
+                withSuspendFunctionTypeClasses().also { if (it.refersToSuspendFunctionType()) throw InferenceNotModelled }
 
             /**
              * Whether this type is one the inference is modelled for: of classes, or of the type parameters of the extension,
@@ -8748,6 +8908,11 @@ internal class DefaultKotlinIntrospector(
 
         }
 
+    }
+
+    // told when the types matched are nested in more type arguments than kotlinc matches, see ReceiverMatcher.matchesOnce
+    private object TypeArgumentsTooDeep : RuntimeException() {
+        override fun fillInStackTrace(): Throwable = this
     }
 
     // told when the inference of the type parameters of an extension is not modelled, see ReceiverMatcher.CallInference
@@ -12218,8 +12383,14 @@ private fun KmType.depth(): Int {
 // the classifier of the type of an intersection, of its types as the type arguments, see CallInference
 private val INTERSECTION_CLASSIFIER = KmClassifier.TypeAlias("&")
 
+private const val FUNCTION_METADATA_NAME = "kotlin/Function"
+
 // the type of Nothing, never modified
 private val NOTHING_TYPE = classType("kotlin/Nothing")
+
+// the most type arguments within each other kotlinc matches the types of (AbstractTypeChecker.isSubtypeForSameConstructor),
+// failing beyond, see ReceiverMatcher.matchesOnce
+private const val MAX_TYPE_ARGUMENTS_DEPTH = 100
 
 // the most constraints the inference of the type parameters of an extension adds, not modelled beyond, see CallInference
 private const val MAX_INFERENCE_STEPS = 2000
