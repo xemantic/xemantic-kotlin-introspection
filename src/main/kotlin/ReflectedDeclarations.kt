@@ -497,8 +497,10 @@ internal fun givesPlatformTypeArguments(type: Class<*>, supertype: Class<*>, ind
  * see [givesPlatformTypeArguments], yet accepting `null` like one, unlike the one annotated not null.
  */
 internal fun givesNullableTypeArgument(type: Class<*>, supertype: Class<*>, index: Int): Boolean = reflectedValue(default = false) {
-    val supertypeIndex = if (type.superclass == supertype) -1 else type.interfaces.indexOf(supertype)
-    javaNullabilities.get(type).supertypeArguments[supertypeIndex]?.get("$index;") == true
+    // not the ones of the superclass, at -1, for a class which is no direct supertype
+    val supertypeIndex = if (type.superclass == supertype) -1 else type.interfaces.indexOf(supertype).takeIf { it >= 0 }
+    supertypeIndex != null && !type.isKotlinClass && !type.isJdkClass &&
+        javaNullabilities.get(type).supertypeArguments[supertypeIndex]?.get("$index;") == true
 }
 
 /**
@@ -811,21 +813,42 @@ private fun methodsMatchedByKotlinTypes(method: Method): List<Method> {
  * declared again as `put(t: Int)` of `IntPut : GenericPut<Int>`,
  * and the ones taking a type parameter of their class, which a Kotlin class gives a primitive type, not nullable,
  * where the [method] takes a boxed type, like the `put(t: T)` of `IntPut : GenericPut<Int>` of `put(Integer)`,
- * through the bridge javac generates, as K2 tells the boxed Java type from the `Int` given for `T`, see [isPrimitiveKotlinTypeArgument].
+ * through the bridge javac generates, as K2 tells the boxed Java type from the `Int` given for `T`, see [isPrimitiveKotlinTypeArgument],
+ * and the ones a Kotlin class above joins with such a one, one member there, taking the primitive type.
  */
 private fun overriddenKotlinMethods(method: Method, matched: List<Method>): List<Method> {
     val descriptors = jvmDescriptorsOf(method)
     val (overriding, notOverriding) = matched.filter { it.declaringClass.isKotlinClass }
         .partition { AsmType.getMethodDescriptor(it) in descriptors }
     val parameterTypes = method.parameterTypes
+    val givenPrimitive = overriding.filter { inherited ->
+        inherited.genericParameterTypes.indices.any { position ->
+            val type = inherited.genericParameterTypes[position] as? TypeVariable<*>
+            val typeClass = type?.genericDeclaration as? Class<*>
+            val isBoxed = parameterTypes.getOrNull(position)?.let { !it.isPrimitive && it.kotlin.javaPrimitiveType != null } == true
+            typeClass != null && isBoxed &&
+                isPrimitiveKotlinTypeArgument(method.declaringClass, typeClass, typeClass.typeParameters.indexOf(type))
+        }
+    }
+    // the Kotlin classes above the class of the method, each having one member of the ones it inherits
+    val kotlinSupertypes by lazy(LazyThreadSafetyMode.NONE) {
+        val supertypes = LinkedHashSet<Class<*>>()
+        val pending = ArrayDeque(listOfNotNull(method.declaringClass.superclass) + method.declaringClass.interfaces)
+        while (pending.isNotEmpty()) {
+            val type = pending.removeFirst()
+            if (supertypes.add(type)) pending += listOfNotNull(type.superclass) + type.interfaces
+        }
+        supertypes.filter { it.isKotlinClass }
+    }
     return overriding.filter { inherited ->
-        notOverriding.none { it.declaringClass != inherited.declaringClass && inherited.declaringClass.isAssignableFrom(it.declaringClass) } &&
-            inherited.genericParameterTypes.indices.none { position ->
-                val type = inherited.genericParameterTypes[position] as? TypeVariable<*>
-                val typeClass = type?.genericDeclaration as? Class<*>
-                val isBoxed = parameterTypes.getOrNull(position)?.let { !it.isPrimitive && it.kotlin.javaPrimitiveType != null } == true
-                typeClass != null && isBoxed &&
-                    isPrimitiveKotlinTypeArgument(method.declaringClass, typeClass, typeClass.typeParameters.indexOf(type))
+        inherited !in givenPrimitive &&
+            notOverriding.none { it.declaringClass != inherited.declaringClass && inherited.declaringClass.isAssignableFrom(it.declaringClass) } &&
+            // nor the ones a Kotlin class joins with one given a primitive type, one member taking it there,
+            // like the put(t: T) of GenericPut<@NotNull Integer> joined with the one of GenericDefaultPut<Int>
+            givenPrimitive.none { primitive ->
+                primitive.declaringClass != inherited.declaringClass && kotlinSupertypes.any { join ->
+                    primitive.declaringClass.isAssignableFrom(join) && inherited.declaringClass.isAssignableFrom(join)
+                }
             }
     }
 }
@@ -858,8 +881,10 @@ private val Class<*>.isKotlinClass: Boolean get() = isAnnotationPresent(Metadata
  */
 private fun isJavaTypeArgument(javaClass: Class<*>, typeClass: Class<*>, index: Int): Boolean {
     val givers = typeArgumentGivers(javaClass, typeClass, index)
-    return (givers.firstOrNull() as? TypeArgumentGiver.Java)?.isPlatform == true &&
-        givers.none { giver -> giver is TypeArgumentGiver.Kotlin && giver.argument?.isNullable == false }
+    val first = givers.firstOrNull() as? TypeArgumentGiver.Java ?: return false
+    // one annotated nullable along any path makes it accept null, also next to one annotated not null, which disagree
+    val acceptsNull = first.isPlatform || givers.any { it is TypeArgumentGiver.Java && it.isNullable }
+    return acceptsNull && givers.none { giver -> giver is TypeArgumentGiver.Kotlin && giver.argument?.isNullable == false }
 }
 
 /**
@@ -880,7 +905,7 @@ private sealed interface TypeArgumentGiver {
 
     // a Java class, giving a platform type, or a raw Java supertype, or one annotated nullable, accepting null alike,
     // see givesNullableTypeArgument, or giving it as read, not nullable, see givesPlatformTypeArguments
-    class Java(val isPlatform: Boolean) : TypeArgumentGiver
+    class Java(val isPlatform: Boolean, val isNullable: Boolean = false) : TypeArgumentGiver
 
     // a Kotlin class naming the type class as its direct supertype, giving the argument, if told, see kotlinTypeArguments
     class Kotlin(val argument: KotlinTypeArgument?) : TypeArgumentGiver
@@ -960,9 +985,9 @@ private fun typeArgumentGivers(
             when {
                 supertypeClass != typeClass -> walk(supertypeClass)
                 supertype !is ParameterizedType -> givers += TypeArgumentGiver.Java(isPlatform = true)
-                !type.isKotlinClass -> givers += TypeArgumentGiver.Java(
-                    givesPlatformTypeArguments(type, typeClass, index) || givesNullableTypeArgument(type, typeClass, index)
-                )
+                !type.isKotlinClass -> givesNullableTypeArgument(type, typeClass, index).let { isNullable ->
+                    givers += TypeArgumentGiver.Java(isNullable || givesPlatformTypeArguments(type, typeClass, index), isNullable)
+                }
                 else -> when (val argument = supertype.actualTypeArguments.getOrNull(index)) {
                     is TypeVariable<*> -> (argument.genericDeclaration as? Class<*>)?.let { argumentClass ->
                         givers += typeArgumentGivers(javaClass, argumentClass, argumentClass.typeParameters.indexOf(argument), resolved)

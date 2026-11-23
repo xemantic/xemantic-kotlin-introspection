@@ -157,8 +157,16 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   while a named-argument probe of a member merged only of Java methods fails —
   the listing still names a Java override `arg0`, so a row lost in a merge may take the only Kotlin name with it, see `withInheritedThroughApi`.
 
-- A kotlinc run per probe takes seconds, and tens of them under parallel load: for a sweep of thousands of probes
-  call `K2JVMCompiler().exec(…)` of `kotlinc/lib/kotlin-compiler.jar` per probe file in a few warm JVMs, which gives the same verdicts.
+- A class reaching a generic Kotlin supertype both through Java, giving `Integer`, and through Kotlin, giving `Int`,
+  like `abstract class Y : Cb(), JG, GP<Int>`, keeps a member of each for K2: neither the `put(Integer)`, nor a `put(int)`, of `Cb` implements both,
+  and an override taking `Int?` leaves one abstract — see `isGivenByKotlinToo`.
+
+- Type arguments annotated `@NotNull` and `@Nullable` along two paths to the same supertype disagree, a platform type then,
+  and a Kotlin class joining a member given `Int` with one given `@NotNull Integer` has one member a Java `put(Integer)` below does not override —
+  see `nullableGivenPositions`, `overriddenKotlinMethods`.
+
+- The Gradle test build rejects `abstract class X : J(), JDb` (`J implements GenericPut<Integer>`, `JDb` a default `put(Integer)`)
+  with `must override 'put' because it inherits multiple interface methods`, while kotlinc compiles it against the compiled Java classes, so it is no fixture.
 
 ## Anti-patterns to avoid
 
