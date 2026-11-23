@@ -31,7 +31,7 @@ fun <K : Comparable<K>, V> Map<K, V>.witnessComparableKeys() {}
 fun <T : Comparable<T>> Map<T, List<T>>.witnessComparableKeysOfLists() {}
 
 // a V of String makes a HashMap<V, V>, or a Map<V, V>, a Map<T, T> of T : Comparable<T>,
-// and a V of Nothing a Map<V, V> a Map<T, List<T>>
+// and a V of interface X : List<X>, Comparable<X> a Map<V, V> a Map<T, List<T>>, Nothing standing for such a declared type
 
 abstract class WitnessSameKeyHashMap<V> : HashMap<V, V>()
 
@@ -41,7 +41,7 @@ interface WitnessSameKeyMap<V> : Map<V, V>
 
 abstract class WitnessJavaSameKeyMap<V> : JavaPlatformBoxes.SameKeyMap<V>()
 
-// only a V of Nothing is a V : List<V> making a Map<V, V> one
+// a V of interface X : List<X>, Comparable<X>, Nothing standing for it, is a V : List<V> making a Map<V, V> one
 
 interface WitnessSelfListMap<V : List<V>> : Map<V, V>
 
@@ -53,7 +53,7 @@ interface WitnessNullableValueMap<V : Any> : Map<V, V?>
 
 interface WitnessComparableValueMap<V> : Map<V, Comparable<V>>
 
-// a K of String, and a V of Nothing, make a Map<K, V> a Map<T, List<T>>
+// a K of String, and a V of List<String>, make a Map<K, V> a Map<T, List<T>>
 
 interface WitnessKeyValueMap<K, V> : Map<K, V>
 
@@ -63,8 +63,8 @@ fun <T : Comparable<T>> List<T>.witnessComparableElements() {}
 
 interface WitnessFunctionList<V> : List<(V) -> Unit>
 
-// nor Nothing for a type parameter passed through Java, the platform type V!, which kotlinc does not take Nothing! for,
-// like the only V of V : WitnessFinal making a Map<V, V> a Map<K, V> of V : Comparable<V>
+// nor Nothing for a type parameter of a final class, which no declared type is a subtype of, like V : WitnessFinal,
+// whose only V making a Map<V, V> a Map<K, V> of V : Comparable<V> is Nothing, also passed through Java, the platform type V!
 
 class WitnessFinal
 
@@ -74,7 +74,7 @@ abstract class WitnessJavaFinalKeyMap<V : WitnessFinal> : JavaPlatformBoxes.Same
 
 interface WitnessFinalKeyMap<V : WitnessFinal> : Map<V, V>
 
-// nor for a type parameter passed to a Java class within a type argument, like V of List<PassingList<V>>
+// also passed to a Java class within a type argument, like V of List<PassingList<V>>
 
 fun <T : Comparable<T>> List<List<T>>.witnessComparableElementsOfLists() {}
 
@@ -107,6 +107,15 @@ interface WitnessListOfListsOfNullableElementLists<V> : List<JavaPlatformBoxes.L
 
 fun <T : Comparable<T>> List<Iterable<Iterable<T>>>.witnessComparableElementsOfIterablesOfIterables() {}
 
-// while such a Java class only a bound refers to, which no supertype reaches, leaves the witnesses, like the V of Nothing
+// while such a Java class only a bound refers to, which no supertype reaches, leaves the witnesses, like the V of a declared type
 
 interface WitnessNullableElementListKeyMap<V : JavaPlatformBoxes.NullableElementList<V>> : Map<V, V>
+
+// Nothing stands for a type which can be declared, like interface X : List<X>, Comparable<X> of a Map<V, V>
+// as a Map<T, List<T>?>, but not for a V : CharSequence, as no type is both a CharSequence and a List,
+// clashing on get(index: Int), nor for a V of a final class, like the V : WitnessFinal of WitnessFinalKeyMap,
+// but for a platform type V! as well, as kotlinc takes X! like X, like the MutableMap<V!, V!> of WitnessJavaSameKeyMap
+
+fun <T : Comparable<T>> Map<T, List<T>?>.witnessComparableKeysOfNullableLists() {}
+
+interface WitnessCharSequenceKeyMap<V : CharSequence> : Map<V, V?>

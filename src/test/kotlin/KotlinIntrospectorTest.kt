@@ -12105,7 +12105,8 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve interface with repeated type parameter in map supertype with extensions on recursively bounded type parameter`() {
-        // V of String makes a Map<V, V> a Map<T, T> of T : Comparable<T>, and V of Nothing a Map<T, List<T>>
+        // V of String makes a Map<V, V> a Map<T, T> of T : Comparable<T>, and V of interface X : List<X>, Comparable<X>,
+        // Nothing standing for it, a Map<T, List<T>>
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.witness.WitnessSameKeyMap",
             pageSize = 10000
@@ -12129,8 +12130,21 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve class extending Java map of same type parameter with extension callable on declared self-referring type`() {
+        // V of interface X : List<X>, Comparable<X> makes a MutableMap<V!, V!> a Map<T, List<T>>, Nothing standing for it,
+        // as kotlinc takes X! like X, unlike Nothing!
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.witness.WitnessJavaSameKeyMap",
+            pageSize = 10000
+        ) should {
+            have(lines().any { ".witnessComparableKeysOfLists()" in it })
+        }
+    }
+
+    @Test
     fun `should resolve interface of map of type parameter bounded recursively with extensions on recursively bounded type parameter`() {
-        // only V of Nothing is a V : List<V>, which makes a Map<V, V> a Map<T, T> of T : Comparable<T>
+        // V of interface X : List<X>, Comparable<X>, Nothing standing for it, is a V : List<V>, which makes a Map<V, V>
+        // a Map<T, T> of T : Comparable<T>
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.witness.WitnessSelfListMap",
             pageSize = 10000
@@ -12169,7 +12183,7 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve interface of map of two type parameters with extensions on recursively bounded type parameter`() {
-        // K of String, and V of Nothing, make a Map<K, V> a Map<T, List<T>> of T : Comparable<T>
+        // K of String, and V of List<String>, make a Map<K, V> a Map<T, List<T>> of T : Comparable<T>
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.witness.WitnessKeyValueMap",
             pageSize = 10000
@@ -12193,7 +12207,7 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve class extending Java map of type parameter bounded by final class without extension on recursively bounded value`() {
-        // WitnessFinal is no Comparable, and kotlinc does not take the platform type Nothing! for V
+        // WitnessFinal is no Comparable, and final, so that no type but Nothing, which does not count, is a V
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.witness.WitnessJavaFinalKeyMap",
             pageSize = 10000
@@ -12204,19 +12218,42 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should resolve interface of map of type parameter bounded by final class with extension on recursively bounded value`() {
-        // V of Nothing makes a Map<V, V> a Map<K, V> of V : Comparable<V>
+    fun `should resolve interface of map of type parameter bounded by final class without extension on recursively bounded value`() {
+        // only V of Nothing makes a Map<V, V> a Map<K, V> of V : Comparable<V>, as WitnessFinal is no Comparable,
+        // and Nothing does not count as a type argument of the class
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.witness.WitnessFinalKeyMap",
             pageSize = 10000
         ) should {
-            have(lines().any { ".witnessComparableValues()" in it })
+            have(lines().none { ".witnessComparableValues()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of map of same type parameter with extension callable on declared self-referring type`() {
+        // V of interface X : List<X>, Comparable<X> makes a Map<V, V> a Map<T, List<T>?>, Nothing standing for it
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.witness.WitnessSameKeyMap",
+            pageSize = 10000
+        ) should {
+            have(lines().any { ".witnessComparableKeysOfNullableLists()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of map of char sequence keys without extension callable only on list char sequence`() {
+        // V would be a CharSequence, a Comparable<V>, and a List<V>, which no type can be, clashing on get(index: Int)
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.witness.WitnessCharSequenceKeyMap",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".witnessComparableKeysOfNullableLists()" in it })
         }
     }
 
     @Test
     fun `should resolve interface of map of two of three type parameters with extensions on recursively bounded type parameter`() {
-        // K of String, and V of Nothing, make a Map<K, V> a Map<T, List<T>> of T : Comparable<T>, whatever A is
+        // K of String, and V of List<String>, make a Map<K, V> a Map<T, List<T>> of T : Comparable<T>, whatever A is
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.witness.WitnessThreeKeyValueMap",
             pageSize = 10000
@@ -12412,7 +12449,8 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve interface of map of type parameter bounded by Java list of nullable type parameter with extension on recursively bounded type parameter`() {
-        // V of Nothing makes a Map<V, V> a Map<T, T> of T : Comparable<T>, whatever the bound of V refers to
+        // V of a declared type, Nothing standing for it, makes a Map<V, V> a Map<T, T> of T : Comparable<T>,
+        // whatever the bound of V refers to
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.witness.WitnessNullableElementListKeyMap",
             pageSize = 10000
@@ -12423,7 +12461,7 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve interface of list of Java lists of type parameter bounded by final class without extension on recursively bounded type parameter`() {
-        // WitnessFinal is no Comparable, and kotlinc does not take the platform type Nothing! of PassingList<Nothing> for T
+        // WitnessFinal is no Comparable, and final, so that no type but Nothing, which does not count, is a V
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.witness.WitnessListOfJavaLists",
             pageSize = 10000
@@ -14582,6 +14620,18 @@ class KotlinIntrospectorTest {
         ) should {
             have(lines().none { ".mixedOfNullableString()" in it })
             have(lines().any { ".mixedOfString()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of type parameter bounded by type parameter of other positions without extension contradicting them`() {
+        // W is String by TypedSelfBox<W?>, and TypedSource<W>, which no String? of V : W is, while String? of TypedSource<String?> is
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.nullable.TypedBoundedBySourced",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".nullableSelfBoxSourceAndNullableSink()" in it })
+            have(lines().any { ".nullableSelfBoxNullableSourceAndNullableSink()" in it })
         }
     }
 

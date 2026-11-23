@@ -1502,6 +1502,42 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should list extension on recursively bounded type parameter by witness when bound refers to class on the classpath`() {
+        // given
+        val root = isolatedTestFixturesCopy("withAbsent")
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.AbsentBoundedKeyMap",
+            pageSize = 10000
+        )
+
+        // then - V of String makes a Map<V, V> a Map<T, T> of T : Comparable<T>, W of Absent satisfying its bound
+        signature should {
+            have(lines().any { ".absentSameComparables()" in it })
+        }
+    }
+
+    @Test
+    fun `should withhold witnesses of type parameters when bound refers to class missing from the classpath`() {
+        // given
+        val introspector = introspectorWithoutAbsentClass()
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.AbsentBoundedKeyMap",
+            pageSize = 10000
+        )
+
+        // then - a class which cannot be loaded, like the Absent of the bound, is taken as annotating
+        // a type argument of its Java supertype, see #362, like one whose supertypes cannot be reflected
+        signature should {
+            have(lines().none { ".absentSameComparables()" in it })
+        }
+    }
+
+    @Test
     fun `should resolve class whose generic supertype refers to a class missing from the classpath`() {
         // given
         val introspector = introspectorWithoutAbsentClass()
