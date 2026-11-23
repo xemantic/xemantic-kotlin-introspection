@@ -354,6 +354,9 @@ com.example.AnnotationTestClass
   A type parameter which only a type argument given explicitly tells, like `W` of `fun <T : Comparable<T>, W> Sink<T>.ext()`,
   is taken as given, like in `sink.ext<_, Unit>()`, where the compiler checks the types inferred for the other ones against their bounds,
   and a reified type parameter cannot be inferred as an intersection of types, nor as `Nothing`.
+  One whose bound refers to an inferred type parameter, like `W` of `fun <T : Comparable<T>, W : T> Sink<T>.ext()`, is inferred with them:
+  the extension is listed when `sink.ext()` compiles, not when only `sink.ext<_, Nothing>()` does,
+  except next to a function type, where it is rather listed, unless the receiver alone rules the call out.
   The inference of the Kotlin compiler is modelled for that, and where it is not,
   like for the projected type arguments, or for a type parameter the value parameters refer to,
   the extension is rather listed than left out.

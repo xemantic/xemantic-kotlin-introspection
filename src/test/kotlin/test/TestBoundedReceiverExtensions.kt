@@ -1685,3 +1685,33 @@ class GivenSuspendSupplierBiSink : GivenBiSink<suspend () -> String, Comparable<
 class GivenNestedSelfListBiSink : GivenBiSink<() -> Unit, NestedSelfList>
 
 class GivenListBiSink : GivenBiSink<List<String>, Any>
+
+// a class of a suspend function reference type is a suspend function type of the same type arguments, see #343,
+// and a projected type of a class of a suspend function type supertype is one of the return type projected,
+// neither of them a suspend () -> Int
+interface GivenFunctionSuspendReference : kotlin.reflect.KSuspendFunction0<String>
+
+class GivenFunctionSuspendReferenceSource : GivenFunctionSource<GivenFunctionSuspendReference>
+
+interface GivenFunctionSuspendBox<T> : suspend () -> T
+
+class GivenFunctionSuspendBoxSource : GivenFunctionSource<GivenFunctionSuspendBox<out CharSequence>>
+
+// without a function type, a type parameter nothing tells, whose bound refers to an inferred one, like W of W : B, see #343,
+// does not make the extension callable where the other ones are not inferred: a String is no List<String>, whatever W is given as,
+// and Nothing cannot be reified
+interface GivenUnderSink<in T>
+
+inline fun <A : List<A>, B : A, reified W : B> GivenUnderSink<B>.sinkUnderSelfListReified() {}
+
+fun <A : List<A>, B : A, W : List<B>> GivenUnderSink<B>.sinkUnderSelfListOfLists() {}
+
+fun <A : Comparable<A>, B : A, W : B> GivenUnderSink<B>.sinkUnderComparableBounding() {}
+
+class GivenUnderStringSink : GivenUnderSink<String>
+
+interface GivenUnderBiSink<in A, in B>
+
+fun <A : List<B>, B : A, W : A> GivenUnderBiSink<B, A>.biSinkOfListUnderBound() {}
+
+class GivenUnderAnyBiSink : GivenUnderBiSink<Any, Any>

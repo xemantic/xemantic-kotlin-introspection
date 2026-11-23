@@ -13947,6 +13947,57 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve class of suspend function reference type subclass without extension on other suspend function type`() {
+        // GivenFunctionSuspendReference is a KSuspendFunction0<String>, a suspend () -> String, no suspend () -> Int
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.GivenFunctionSuspendReferenceSource"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GivenFunctionSuspendReferenceSource [page 1/1]
+            class GivenFunctionSuspendReferenceSource : GivenFunctionSource<GivenFunctionSuspendReference>
+            // from com.xemantic.kotlin.introspection.test
+            fun GivenFunctionSource<Function<*>>.sourceOfFunction()
+            fun <T : Function<R>, R : Comparable<R>> GivenFunctionSource<T>.sourceOfFunctionOfComparable()
+            fun <T : suspend () -> U, U : CharSequence> GivenFunctionSource<T>.sourceOfSuspendSupplier()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class of projected suspend function type subclass without extension on other suspend function type`() {
+        // GivenFunctionSuspendBox<out CharSequence> is a suspend () -> CharSequence, no suspend () -> Int
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.GivenFunctionSuspendBoxSource"
+        ) should {
+            have("fun GivenFunctionSource<suspend () -> Int>.sourceOfSuspendInt()" !in lines())
+            have("fun GivenFunctionSource<Function<*>>.sourceOfFunction()" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve class without extensions of type parameter under inferred one which the plain call does not infer`() {
+        // x.sinkUnderSelfListReified() is rejected: inferred type is 'String', but 'List<String>' was expected,
+        // x.sinkUnderSelfListReified<_, _, Nothing>(): cannot use 'Nothing' as reified type parameter
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.GivenUnderStringSink"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GivenUnderStringSink [page 1/1]
+            class GivenUnderStringSink : GivenUnderSink<String>
+            // from com.xemantic.kotlin.introspection.test
+            fun <A : Comparable<A>, B : A, W : B> GivenUnderSink<B>.sinkUnderComparableBounding()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extension of type parameter under inferred one of unsatisfiable bounds`() {
+        // Any is no List<B>, whatever W of W : A is given as
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.GivenUnderAnyBiSink"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GivenUnderAnyBiSink [page 1/1]
+            class GivenUnderAnyBiSink : GivenUnderBiSink<Any, Any>
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve class without extension inferring reified type parameter as intersection`() {
         // A is inferred as CharSequence & Int, which kotlinc cannot reify
         resolver.resolve(

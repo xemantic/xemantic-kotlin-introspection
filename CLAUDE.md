@@ -136,10 +136,8 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   One it infers, given as `Nothing`, like in `x.ext<Nothing, _>()` of `<A : Comparable<A>, B : A> Sink<B>.ext()`,
   compiles on nearly any contravariant receiver, and would judge every such row as callable.
 
-- kotlinc crashes on a call asking whether a class comparable to what is comparable to it is comparable to itself,
-  like `x.ext()` of `<T : Comparable<T>> Source<T>.ext()` for `interface Nested : Comparable<Comparable<Nested>>`
-  (`IllegalStateException: Arguments depth is too high`), and the crash ends the whole compilation:
-  a batch probe reports one such row per run, with no `error:` line, so keep such classes out of a batch.
+- A kotlinc crash, like `IllegalStateException: Arguments depth is too high` (see `matchesOnce`), ends the whole compilation:
+  a batch probe reports one such row per run, with no `error:` line, so keep the classes causing it out of a batch.
 
 - In a kotlinc probe `import java.util.function.*` does not bring `Function`: the default import of `kotlin.Function` wins over a star import,
   so `Function<String, String>` fails with `one type argument expected` — import `java.util.function.Function` explicitly.
