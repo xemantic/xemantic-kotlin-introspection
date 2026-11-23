@@ -6656,7 +6656,9 @@ internal class DefaultKotlinIntrospector(
                         else -> classifier.name != specificName
                     }
                 is KmClassifier.TypeParameter -> {
-                    val bounds = typeParameters.singleOrNull()?.takeIf { it.id == classifier.id }?.upperBounds.orEmpty()
+                    // an unbounded one, like of fun <T> T.f(), bounded by Any?, shadowed by one on a nullable type, see #366
+                    val bounds = typeParameters.singleOrNull()?.takeIf { it.id == classifier.id }?.upperBounds
+                        ?.ifEmpty { listOf(NULLABLE_ANY_TYPE) }.orEmpty()
                     val isOfClasses = bounds.isNotEmpty() && bounds.all { bound ->
                         val name = (bound.classifier as? KmClassifier.Class)?.name
                         bound.arguments.isEmpty() && name != null && isSubclass(specificName, name)

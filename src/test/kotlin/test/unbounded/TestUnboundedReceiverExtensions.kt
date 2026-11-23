@@ -27,6 +27,18 @@ fun <T> T?.unboundedNullableReceiver() {}
 
 val <T> T.unboundedProperty: Int get() = 0
 
+// never called on a class next to an extension of the same name on a nullable type of its supertype,
+// like Any?, see TestUnboundedShadowingExtensions, called instead also on a nullable receiver,
+// unlike next to one on a type which is not nullable, like UnboundedStringPair, called on UnboundedStringPair? then
+
+fun <T> T.unboundedNextToNullableAny() {}
+
+fun <T> T?.unboundedNullableNextToNullableAny() {}
+
+fun <T> T.unboundedNextToNullableClass() {}
+
+fun <T> T.unboundedNextToClass() {}
+
 interface UnboundedPair<A, B>
 
 interface UnboundedStringPair : UnboundedPair<String, String>

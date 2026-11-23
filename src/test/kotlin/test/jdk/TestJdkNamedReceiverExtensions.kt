@@ -60,6 +60,10 @@ fun JdkBox<out Collection<String>>.readOnlyJdkStrings() {}
 
 interface JdkProjectedNothingListBox : JdkBox<java.util.List<out Nothing>>
 
+// and out Nothing?, like out Nothing
+
+interface JdkProjectedNullableNothingListBox : JdkBox<java.util.List<out Nothing?>>
+
 interface JdkProjectedElementListBox<V> : JdkBox<java.util.List<out V>>
 
 fun <T> JdkBox<out MutableCollection<T>>.mutableJdkElements() {}

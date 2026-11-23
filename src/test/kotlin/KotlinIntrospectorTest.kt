@@ -12032,6 +12032,17 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve interface of JDK list of out nullable Nothing named directly with extension on supertype of type parameter`() {
+        // kotlinc infers the T of MutableCollection<T> from MutableCollection<out Nothing?> too, which is no MutableCollection<String>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.jdk.JdkProjectedNullableNothingListBox"
+        ) should {
+            have(lines().any { ".mutableJdkElements()" in it })
+            have(lines().none { ".mutableJdkStrings()" in it })
+        }
+    }
+
+    @Test
     fun `should resolve interface of JDK list of out type parameter named directly without extension on supertype of type parameter`() {
         // only V of Nothing makes it a JdkBox<java.util.List<out Nothing>>, which does not count, while the out of out V
         // is kept, like of out String, by MutableCollection<out V>
@@ -12508,14 +12519,32 @@ class KotlinIntrospectorTest {
     fun `should resolve interface with extensions of its package on unbounded type parameter`() {
         // like the extensions of its package on Any
         resolver.resolve(
-            "com.xemantic.kotlin.introspection.test.unbounded.UnboundedStringPair"
+            "com.xemantic.kotlin.introspection.test.unbounded.UnboundedStringPair",
+            pageSize = 10000
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.unbounded.UnboundedStringPair [page 1/1]
             interface UnboundedStringPair : UnboundedPair<String, String>
             // from com.xemantic.kotlin.introspection.test.unbounded
             val <T> T.unboundedProperty: Int
+            fun <T> T.unboundedNextToClass()
+            fun UnboundedStringPair.unboundedNextToClass()
+            fun Any?.unboundedNextToNullableAny()
+            fun UnboundedStringPair?.unboundedNextToNullableClass()
+            fun Any?.unboundedNullableNextToNullableAny()
             fun <T> T?.unboundedNullableReceiver()
             fun <T> T.unboundedReceiver()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve extension of its package on unbounded type parameter next to one on nullable supertype`() {
+        // kotlinc calls the one on Any? instead, also on a nullable receiver
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.unbounded.UnboundedHolder.unboundedNextToNullableAny"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.unbounded.UnboundedHolder.unboundedNextToNullableAny [page 1/1]
+            // from com.xemantic.kotlin.introspection.test.unbounded
+            fun Any?.unboundedNextToNullableAny()
         """.trimIndent()
     }
 
