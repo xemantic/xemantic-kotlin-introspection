@@ -3058,12 +3058,13 @@ internal class DefaultKotlinIntrospector(
          * Makes the [member] of a Java class, once listed, take the [names] of its value parameters, the ones of the Kotlin members
          * it overrides, or is merged with, which the compiler lets a call name, unlike the ones of a Java method,
          * like the `t` of `put(t: T)` of a Kotlin class for the `put(Integer)` of a Java subclass, so that `put(t = 1)` compiles,
-         * see [inheritedCandidates], unless they differ in number, or a value parameter is a vararg one.
+         * see [inheritedCandidates], unless they differ in number, also of a vararg one,
+         * like the `a` of `vararg a: String` for a `@NotNull String...`, so that `acceptAll(a = arrayOf(""))` compiles.
          */
         fun takeNames(names: List<String>) {
             val function = effectiveMember as? Member.Function ?: return
             val parameters = function.function.valueParameters
-            if (parameters.size != names.size || parameters.any { it.varargElementType != null }) return
+            if (parameters.size != names.size) return
             val named = function.function.withValueParameterTypes { it }
             named.valueParameters.forEachIndexed { index, parameter -> parameter.name = names[index] }
             javaTypedMember = Member.Function(named, function.declaration)
@@ -3288,9 +3289,9 @@ internal class DefaultKotlinIntrospector(
          * The types of the value parameters themselves have to agree too, the one of a Java member being a platform type,
          * agreeing with either, unless annotated, see [javaNullabilityOf]: a `@Nullable List<@NotNull String>` of Java
          * never implements a `MutableList<out String>`, nor a `@NotNull String @Nullable []` a `vararg a: String`.
-         * A vararg parameter of Java of nullable elements, no platform types, like a `T...` given `Array<String>?`, agrees with none:
-         * merged with the `vararg a: T` of a Kotlin interface given the same, it would join the group of a member the Java method
-         * is merged with otherwise, like an `a: T` given `Array<Array<String>>`, which the compiler keeps apart.
+         * A vararg parameter of Java of nullable elements, no platform types, like a `@Nullable T...` given `String?`,
+         * agrees so with an `Array<out String?>`, while it is kept apart from an array of elements which are not nullable,
+         * also by the plain signatures, see [isElementNullabilityClash].
          */
         private fun hasNestedNullabilityOf(other: InheritedCandidate): Boolean {
             val parameters = nestedNullability ?: return false
@@ -3319,7 +3320,6 @@ internal class DefaultKotlinIntrospector(
                 val elementType = parameter.varargElementType
                 val isPlatformElement = declarations is JavaClass && elementType != null && elementType.isNullable && flags.firstOrNull() == false
                 if (isPlatformElement) flags[0] = null
-                if (declarations is JavaClass && elementType != null && flags.firstOrNull() == true) return@lazy null
                 val isNullable = if (declarations !is JavaClass) parameter.type.isNullable else {
                     javaNullability?.let { it.types[position] ?: false.takeIf { _ -> it.isMarkedNotNull(position) } }
                 }
@@ -3332,7 +3332,44 @@ internal class DefaultKotlinIntrospector(
         // where the one of the other member is not nullable, nor a platform type, like the String of accept(s: String),
         // which the compiler keeps apart, see isMergedWith, so that the Java method never implements the Kotlin member
         private fun isNullabilityClash(other: InheritedCandidate): Boolean =
-            nullableGivenPositions.any { other.isNotNullAt(it) } || other.nullableGivenPositions.any { isNotNullAt(it) }
+            nullableGivenPositions.any { other.isNotNullAt(it) } || other.nullableGivenPositions.any { isNotNullAt(it) } ||
+                isElementNullabilityClash(other)
+
+        // or whether a value parameter of one of the members takes an array of elements which are not nullable,
+        // where the other one takes an array of nullable elements, neither of them platform types, see elementNullability,
+        // like the @NotNull String... of a Java interface, and the acceptAll(T) of another one given Array<String?>,
+        // which the compiler keeps apart, unless of the same JVM signature: comparing the rivalry signatures regardless
+        // of nullability, the Java vararg would be merged with both the member given Array<String?>
+        // and a Kotlin vararg acceptAll(vararg values: String), which the compiler keeps apart, so that the group swallows one of them
+        private fun isElementNullabilityClash(other: InheritedCandidate): Boolean {
+            val signature = jvmSignature ?: return false
+            if (signature == other.jvmSignature) return false
+            val otherElements = other.elementNullability
+            return elementNullability.withIndex().any { (index, isNullable) ->
+                val isOtherNullable = otherElements.getOrNull(index)
+                isNullable != null && isOtherNullable != null && isNullable != isOtherNullable
+            }
+        }
+
+        // whether the elements of the array each value parameter takes, also as a vararg, are nullable,
+        // or null when not told so, of no array, or of a platform type: of a Java array which is not annotated,
+        // whose elements are rendered not nullable, or of a type argument a Java class gives a Kotlin member
+        private val elementNullability: List<Boolean?> by lazy(LazyThreadSafetyMode.NONE) {
+            (member as? Member.Function)?.function?.valueParameters?.mapIndexed { position, parameter ->
+                val element = parameter.type.takeIf { (it.classifier as? KmClassifier.Class)?.name == ARRAY_CLASS_NAME }
+                    ?.arguments?.singleOrNull()?.type
+                when {
+                    element == null -> null
+                    declarations !is JavaClass ->
+                        element.isNullable.takeUnless { position in classTypeParameterPositions && takesPlatformTypes }
+                    // a nullable type argument a Kotlin class gives, or elements annotated nullable
+                    element.isNullable -> true
+                    // the elements of a vararg annotated not null, unlike the platform ones, rendered nullable
+                    parameter.varargElementType?.isNullable == false -> false
+                    else -> null
+                }
+            } ?: emptyList()
+        }
 
         // the JVM name and descriptor of the member, as told, see nullableGivenPositions
         val jvmSignature: JvmMethodSignature? get() = jvmMethod?.signature ?: (member as? Member.Function)?.declaration?.signature
@@ -4947,7 +4984,8 @@ internal class DefaultKotlinIntrospector(
                     kotlin !== java && kotlin.declarations !is JavaClass && kotlin.declarations !is BuiltinClass &&
                         kotlin.member is Member.Function && (java.overrides(kotlin) || java.isMergedWith(kotlin))
                 }
-                val isNoOverride = parameters.any { it.type.isNullable } && kotlinMembers.any { kotlin ->
+                // but a vararg one, whose array is a platform type, merged also of elements of another nullability, see takeNames
+                val isNoOverride = parameters.any { it.varargElementType == null && it.type.isNullable } && kotlinMembers.any { kotlin ->
                     kotlin.classTypeParameterPositions.isNotEmpty() &&
                         (reaches(setOf(kotlin.name)).firstOrNull()?.isPlatform != true || isJoinedByKotlinClassBelow(kotlin))
                 }
