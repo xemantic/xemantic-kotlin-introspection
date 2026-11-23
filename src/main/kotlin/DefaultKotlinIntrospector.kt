@@ -2170,7 +2170,7 @@ internal class DefaultKotlinIntrospector(
      * or none, like when the [kmClass] has a property of the name, which Kotlin reads instead, see [syntheticPropertyOf].
      * As verified with kotlinc 2.4.21, Kotlin reads the synthetic property also when the [kmClass] has a function of the name,
      * like `name()`, which is no property, found next to them, or an extension property of the name, like `val Holder.name: Int`,
-     * even of its own package, which is not listed then, see [hasPublicSyntheticProperty].
+     * even of its own package, which is not listed then, see [publicSyntheticPropertyType].
      * A getter named like the property itself, like `isActive()` of `isActive`, is found by its name already, so only its setter is added.
      * The setter is the one taking the type the getter returns, as rendered, regardless of its nullability,
      * like `setName(arg0: String?)` of `getName(): String`, the one the `var` of the hint tells, see [syntheticPropertyOf].
@@ -5127,8 +5127,8 @@ internal class DefaultKotlinIntrospector(
     }
 
     /**
-     * These extensions without the ones called on the name of an object, like `Obj.ext()`,
-     * on an instance of a class, like `foo.ext()`, or on the name of the class whose companion object it is, like `Foo.ext()`,
+     * These extensions without the ones called on an instance of a class, like `foo.ext()`, also on a value of an object,
+     * like `Obj.ext()`, or on the name of the class whose companion object it is, like `Foo.ext()`,
      * told by their receivers, see [isCalledOnClass],
      * shadowed by a member of the class, given by [membersNamed] their name, which Kotlin always calls instead,
      * reporting an extension on the class itself as shadowed by the member:
@@ -5160,7 +5160,8 @@ internal class DefaultKotlinIntrospector(
         val supertypes by lazy(LazyThreadSafetyMode.NONE, classSupertypes)
         // the type of the synthetic property of each name, looked up once, null if there is none
         val syntheticProperties = HashMap<String, KmType?>()
-        fun syntheticPropertyTypeOf(name: String) = syntheticProperties.getOrPut(name) { syntheticPropertyType(name) }
+        fun syntheticPropertyTypeOf(name: String): KmType? =
+            if (name in syntheticProperties) syntheticProperties[name] else syntheticPropertyType(name).also { syntheticProperties[name] = it }
         // a function type, or a type with an operator invoke, of a property invoked instead of the extension
         fun KmType.isInvoked(extension: KmFunction, isOfJavaGetter: Boolean = false) = isInvokedInsteadOf(extension) ||
             isInvokedByOperatorInsteadOf(extension, className, { supertypes }, isOfJavaGetter = isOfJavaGetter)
@@ -5218,6 +5219,7 @@ internal class DefaultKotlinIntrospector(
      * each one accepting every argument of the parameter of the [extension]:
      * of a type parameter of its own, bounded only by `Any?`, inferred then as the type of the argument, like `x: T` for `x: Int`,
      * or bounded by the types accepting the argument, when inferred alone, see [infers], like `x: T` of `T : CharSequence` for `x: String`,
+     * unless a lambda might be converted to the type of the parameter of the [extension], see [isConvertedTo],
      * while one no parameter is of does not matter, as Kotlin calls the member also when it cannot infer it,
      * or of the same type, see [isSameType], also nullable, like `x: Int?` for `x: Int`,
      * where the type parameter of the receiver of the [extension] stands for the class, when pinned to it, see [pinsFinal],
@@ -5233,7 +5235,9 @@ internal class DefaultKotlinIntrospector(
      * like `x: Outer<out CharSequence>.Inner` for `x: Outer<String>.Inner`,
      * where the type parameters of the class, in a function it declares, stand for what the type arguments of the receiver
      * of the [extension] on the class itself tell of them, see [classTypeArguments],
-     * like `x: T` of `class Box<T>` for `fun Box<String>.f(x: String)`, or for `fun <T> Box<T>.f(x: T)`,
+     * like `x: T` of `class Box<T>` for `fun Box<String>.f(x: String)`, or `x: List<T>` for `fun <T> Box<T>.f(x: List<T>)`,
+     * but only for the very type arguments, or for some subtype of one, when a lambda might be converted to the type
+     * of the parameter of the [extension], see [isConvertedTo], like to the `T` of `fun <T> Box<T>.f(x: T)`,
      * while a type parameter of the [extension] is accepted like any of its bounds, as the argument is a subtype of each of them,
      * like `x: Bar` for `x: T` of `fun <T : Bar> T.ext(x: T)`, where `T` can be inferred as a supertype of the class,
      * unlike `x: Obj`, which `Obj.ext(other)` does not accept,
@@ -5306,6 +5310,9 @@ internal class DefaultKotlinIntrospector(
                 ?: supertypes()?.supertypesOf(argument, (type.classifier as KmClassifier.Class).name)?.singleOrNull()
             return supertype?.copy()?.also { it.isNullable = argument.isNullable }
         }
+        // whether a lambda, or a function reference, might be converted to the type of the parameter of the extension being accepted,
+        // but not to a type parameter standing for it, see isConvertedTo
+        var isConverted = false
         // a type parameter of this function is inferred as the type of a whole argument, or, alone, as its type argument, see infers
         fun accepts(type: KmType, argument: KmType, visited: MutableSet<Int>, isTypeArgument: Boolean = false): Boolean {
             // whether a type of this function is accepted by the one of the extension, the other way round:
@@ -5339,8 +5346,9 @@ internal class DefaultKotlinIntrospector(
             if (classifier is KmClassifier.TypeParameter) {
                 if (isTypeArgument || type.isDefinitelyNonNull) return false
                 if (classifier.id in inferred) return true
-                // a bounded one as a type whose bounds accept the argument, like U : CharSequence for a String
-                val typeParameter = inferredAlone(type) ?: return false
+                // a bounded one as a type whose bounds accept the argument, like U : CharSequence for a String,
+                // but not as a type which a lambda is converted to, like U : Runnable for a Runnable
+                val typeParameter = inferredAlone(type)?.takeUnless { isConverted } ?: return false
                 val inferredType = if (type.isNullable) argument.notNullable() else argument
                 return typeParameter.upperBounds.all { accepts(it, inferredType, HashSet(), isTypeArgument = true) }
             }
@@ -5369,13 +5377,10 @@ internal class DefaultKotlinIntrospector(
                 is KmClassifier.Class -> when {
                     classifier !is KmClassifier.Class -> false
                     // an inner class of a class with type arguments, the same one, of an outer type accepting the one of the argument
-                    type.outerType != null -> {
-                        val outerType = type.outerType
-                        val argumentOuterType = argument.outerType
-                        argumentClassifier.name == classifier.name && outerType != null && argumentOuterType != null &&
-                            type.arguments.isEmpty() && argument.arguments.isEmpty() &&
-                            accepts(outerType, argumentOuterType, visited, isTypeArgument = true)
-                    }
+                    type.outerType != null && !(
+                        argumentClassifier.name == classifier.name &&
+                            argument.outerType?.let { accepts(type.outerType!!, it, visited, isTypeArgument) } == true
+                        ) -> false
                     type.arguments.isEmpty() -> isSubclass(argumentClassifier.name, classifier.name)
                     else -> {
                         val supertype = if (argumentClassifier.name == classifier.name) argument else asSupertype(argument, type)
@@ -5421,13 +5426,28 @@ internal class DefaultKotlinIntrospector(
             }
         }
         val classTypeArguments = typeArguments ?: classTypeArguments(extension, className, supertypes)
-        // the ones referring to no type parameter of the extension, which a type parameter used as definitely not nullable stands for too
+        // the very type arguments, referring to no type parameter of the extension, which alone a type parameter of the class
+        // stands for when used as definitely not nullable,
         val concreteTypeArguments by lazy(LazyThreadSafetyMode.NONE) { classTypeArguments.filterValues { it.isConcrete() } }
+        // and, next to a parameter of the extension of a type which a lambda, or a function reference, is converted to,
+        // also some subtype of such a type argument, accepted only within a type which the lambda is typed against,
+        // like the T of x: (T) -> Unit, unlike a type parameter of the extension, or some supertype of a type argument,
+        // which the parameter of this function, of a function type of an unknown shape, or of none, might be
+        val convertedTypeArguments by lazy(LazyThreadSafetyMode.NONE) {
+            classTypeArguments.filterValues { type ->
+                type.isConcrete() || (type.classifier == AT_MOST_CLASSIFIER && type.arguments.single().type?.isConcrete() == true)
+            }
+        }
         return valueParameters.take(givenCount).zip(extension.valueParameters).all { (parameter, shadowed) ->
             val type = parameter.type
-            parameter.name == shadowed.name && parameter.varargElementType == null && accepts(
-                type.substituted(if (type.hasDefinitelyNonNull()) concreteTypeArguments else classTypeArguments), shadowed.type, HashSet()
-            )
+            isConverted = isConvertedTo(shadowed.type, extension.typeParameters)
+            val substitution = when {
+                type.hasDefinitelyNonNull() -> concreteTypeArguments
+                isConverted -> convertedTypeArguments
+                else -> classTypeArguments
+            }
+            parameter.name == shadowed.name && parameter.varargElementType == null &&
+                accepts(type.substituted(substitution), shadowed.type, HashSet())
         }
     }
 
@@ -5477,6 +5497,40 @@ internal class DefaultKotlinIntrospector(
     }
 
     /**
+     * Whether a lambda, or a function reference, might be converted to the [type] of a parameter of an extension,
+     * declaring the [typeParameters], see [shadowsAsMember], so that Kotlin calls the extension with it next to a member
+     * whose parameter, of a type parameter, accepts every value of the [type], but gives the lambda nothing to be converted to,
+     * like `bar.run { }` of `fun Bar.run(x: Runnable)` next to `fun <U : Runnable> run(x: U)`,
+     * or `box.put { it.length }` of `fun Box<in (String) -> Unit>.put(x: (String) -> Unit)` next to `fun put(x: T)` of `class Box<T>`:
+     * a function type, to which a lambda is typed, of its shape, and a reference adapted, like one returning a value to return `Unit`,
+     * a suspend function type, a functional interface, and any Java interface, which might be one, or a class which is not found,
+     * or a type parameter which might stand for one of them, bounded by them, or by `Any`, only,
+     * unlike any other class, like `String`, or `List<String>`, or a function reference type, like `KFunction0<Unit>`.
+     */
+    private fun isConvertedTo(type: KmType, typeParameters: List<KmTypeParameter>, visited: MutableSet<Int> = HashSet()): Boolean {
+        if (type.isSuspend) return true
+        return when (val classifier = type.classifier) {
+            is KmClassifier.TypeParameter -> !visited.add(classifier.id) ||
+                typeParameters.firstOrNull { it.id == classifier.id }?.upperBounds.orEmpty().all { bound ->
+                    (bound.classifier as? KmClassifier.Class)?.name == ANY_CLASS_NAME || isConvertedTo(bound, typeParameters, visited)
+                }
+            is KmClassifier.TypeAlias -> true
+            is KmClassifier.Class -> {
+                val name = classifier.name
+                val functionTypeClass = FunctionTypeClass.of(name.replace('/', '.'))
+                when {
+                    functionTypeClass != null -> !functionTypeClass.kind.isReference
+                    name == ANY_CLASS_NAME -> false
+                    name.replace('/', '.') == FUNCTION_CLASS_NAME -> true
+                    else -> (builtinClasses[name] ?: loadKmClass(name))?.let { it.kind == ClassKind.INTERFACE && it.isFunInterface }
+                        ?: findClassByMetadataName(name)?.clazz?.let { reflectedValue(default = true) { it.isInterface } }
+                        ?: true
+                }
+            }
+        }
+    }
+
+    /**
      * Whether no lambda can be given as an argument of the [type] of the last parameter of an extension, see [shadowsAsMember],
      * which a member taking more parameters would take as its own last one: a Kotlin class which is neither `Any`,
      * nor an interface, like a function type, or a functional interface.
@@ -5494,6 +5548,8 @@ internal class DefaultKotlinIntrospector(
      * `Function<R>`, like `Function<String>` of `() -> String`, and of a function reference type also `KFunction<R>`, `KCallable<R>`,
      * and its function type, like `Function1<String, Unit>` of `KFunction1<String, Unit>`, of the shape of the [type],
      * see [isFunctionTypeShapedLike], as a function reference is no lambda.
+     * A function type returning `Unit` has none but `Function<*>` and `Function<Any?>`, as a reference to a function returning anything
+     * is coerced to it, like `bar.on(::describe)` of `fun Bar.on(x: () -> Unit)`, while a `KFunction0<String>` is no `Function<Unit>`.
      */
     private fun functionSupertypeOf(argument: KmType, type: KmType): KmType? {
         if (argument.isSuspend || type.isSuspend) return null
@@ -5502,7 +5558,11 @@ internal class DefaultKotlinIntrospector(
         if (argument.arguments.size != functionTypeClass.arity + 1) return null
         val typeName = (type.classifier as? KmClassifier.Class)?.name?.replace('/', '.') ?: return null
         val isReference = functionTypeClass.kind.isReference
+        // a reference to a function returning anything is coerced to a function type returning Unit, while it is no Function<Unit>
+        val isCoercedToUnit = !isReference && argument.arguments.last().type?.isUnit == true &&
+            type.arguments.singleOrNull()?.type?.isNullableAny() == false
         return when {
+            isCoercedToUnit -> null
             typeName == FUNCTION_CLASS_NAME || (isReference && (typeName == KFUNCTION_CLASS_NAME || typeName == KCALLABLE_CLASS_NAME)) ->
                 classType(typeName.replace('.', '/')).also { it.arguments += argument.arguments.last() }
             isReference && typeName == FunctionTypeKind.FUNCTION.kotlinName(functionTypeClass.arity) ->
@@ -5594,7 +5654,7 @@ internal class DefaultKotlinIntrospector(
      * as the class of a value the [extension] is called on can take other type arguments than its receiver:
      * the very type argument of an invariant type parameter, like `String` of `T` of `put(x: T)` of `class Box<T>`
      * next to `fun Box<String>.put(x: String)`, where a type parameter of the [extension] stands for itself, see [EXACTLY_CLASSIFIER],
-     * like `T` of `fun <T> Box<T>.put(x: T)`,
+     * like `T` of `fun <T> Box<T>.putAll(x: List<T>)`,
      * some subtype of the type argument of a covariant one, or of one projected so, see [AT_MOST_CLASSIFIER],
      * as `Box<Nothing>` of `class Box<out T>` is a `Box<String>` too, whose `put(x: Nothing)` does not take a `String`,
      * while its `compare(x: Comparable<T>)` takes a `Comparable<CharSequence>`,

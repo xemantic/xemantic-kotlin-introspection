@@ -368,7 +368,9 @@ fun BoundedStarShadowedSupertype.narrowerBox(x: BoundedBox<*>): Int = 1
 // members taking a supertype of the function type, or of the function reference type, of the extension, called instead of it,
 // like functionSupertypeShadowing.function { "" }, or functionSupertypeShadowing.reference(::describe),
 // unlike one returning a narrower type, or a suspend function type, which takes no anonymous function,
-// so that functionSupertypeShadowing.suspendConversion(fun(): String = "") calls the extension
+// so that functionSupertypeShadowing.suspendConversion(fun(): String = "") calls the extension,
+// and unlike a Function<Unit> next to a function type returning Unit, which a reference to a function returning
+// anything is coerced to, so that functionSupertypeShadowing.unitFunction(::toString) calls the extension
 interface FunctionSupertypeShadowedSupertype
 
 class FunctionSupertypeShadowing : FunctionSupertypeShadowedSupertype {
@@ -381,6 +383,8 @@ class FunctionSupertypeShadowing : FunctionSupertypeShadowedSupertype {
     fun narrowerFunction(x: Function<String>): Int = 0
     fun otherReference(x: (Int) -> Unit): Int = 0
     fun suspendConversion(x: suspend () -> CharSequence): Int = 0
+    fun unitFunction(x: Function<Unit>): Int = 0
+    fun anyFunction(x: Function<Any?>): Int = 0
 }
 
 fun FunctionSupertypeShadowedSupertype.function(x: () -> String): Int = 1
@@ -400,6 +404,10 @@ fun FunctionSupertypeShadowedSupertype.narrowerFunction(x: () -> CharSequence): 
 fun FunctionSupertypeShadowedSupertype.otherReference(x: KFunction1<String, Unit>): Int = 1
 
 fun FunctionSupertypeShadowedSupertype.suspendConversion(x: () -> String): Int = 1
+
+fun FunctionSupertypeShadowedSupertype.unitFunction(x: () -> Unit): Int = 1
+
+fun FunctionSupertypeShadowedSupertype.anyFunction(x: () -> Unit): Int = 1
 
 // members accepting a type parameter of the extension bounded by another one, like its bounds, called instead of the extensions,
 // like boundedTypeParameterShadowing.boundedByOther(listOf("")), unlike one accepting less
@@ -427,7 +435,9 @@ fun <T : CharSequence, U : T> BoundedTypeParameterShadowedSupertype.narrower(x: 
 // or bounded by a type accepting it, called instead of the extensions, like memberTypeParameterShadowing.covariant(listOf("")),
 // unlike the ones whose type parameter cannot be inferred so: of a bound which the type argument violates,
 // captured from a projection nested in a type argument, inferred from two types, bounded by another type parameter,
-// or having no subtype in common with the type argument
+// or having no subtype in common with the type argument, and unlike the ones bounded by a type which a lambda,
+// or a function reference, is converted to, but not to the type parameter: memberTypeParameterShadowing.boundedSam { }
+// and memberTypeParameterShadowing.boundedFunction(::toString) call the extensions
 interface MemberTypeParameterShadowedSupertype
 
 class MemberTypeParameterShadowing : MemberTypeParameterShadowedSupertype {
@@ -447,6 +457,8 @@ class MemberTypeParameterShadowing : MemberTypeParameterShadowedSupertype {
     fun <U, V : U> boundedByOther(x: Map<U, V>): Int = 0
     fun <U : CharSequence> nothingInCommon(x: ProjectedBox<in U>): Int = 0
     fun <U> receiverFunction(x: U.() -> Unit): Int = 0
+    fun <U : Runnable> boundedSam(x: U): Int = 0
+    fun <U : () -> Unit> boundedFunction(x: U): Int = 0
 }
 
 fun MemberTypeParameterShadowedSupertype.covariant(x: List<String>): Int = 1
@@ -481,9 +493,16 @@ fun MemberTypeParameterShadowedSupertype.nothingInCommon(x: ProjectedBox<Int>): 
 
 fun MemberTypeParameterShadowedSupertype.receiverFunction(x: (String) -> Unit): Int = 1
 
+fun MemberTypeParameterShadowedSupertype.boundedSam(x: Runnable): Int = 1
+
+fun MemberTypeParameterShadowedSupertype.boundedFunction(x: () -> Unit): Int = 1
+
 // members of a generic class, whose type parameter stands for the type argument of the receiver of an extension on the class,
 // also for a type parameter of the extension, or for a supertype of a contravariant projection, called instead of the extensions,
-// like classTypeParameterShadowing.typeParameterReceiver(listOf("")), unlike the ones which the receiver tells too little of
+// like classTypeParameterShadowing.typeParameterReceiver(listOf("")), unlike the ones which the receiver tells too little of,
+// and the ones taking a type which a lambda is converted to, but not to the type parameter of the class:
+// on a ClassTypeParameterShadowing<in (String) -> Unit>, .inProjectedFunction { it.length } calls the extension,
+// and so does .typeParameter { s -> } on a ClassTypeParameterShadowing<String.() -> Unit>
 class ClassTypeParameterShadowing<T> {
     fun inProjectedReceiver(x: Collection<T>): Int = 0
     fun typeParameterReceiver(x: Collection<T>): Int = 0
@@ -497,6 +516,9 @@ class ClassTypeParameterShadowing<T> {
     fun contravariantInProjectedReceiver(x: Comparable<T>): Int = 0
     fun nullableTypeParameter(x: T): Int = 0
     fun starProjectedReceiver(x: Collection<T>): Int = 0
+    fun inProjectedFunction(x: T): Int = 0
+    fun typeParameter(x: T): Int = 0
+    fun boundedTypeParameter(x: T): Int = 0
 }
 
 fun ClassTypeParameterShadowing<in String>.inProjectedReceiver(x: List<String>): Int = 1
@@ -522,6 +544,12 @@ fun ClassTypeParameterShadowing<in String>.contravariantInProjectedReceiver(x: C
 fun <T> ClassTypeParameterShadowing<T>.nullableTypeParameter(x: T?): Int = 1
 
 fun ClassTypeParameterShadowing<*>.starProjectedReceiver(x: List<String>): Int = 1
+
+fun ClassTypeParameterShadowing<in (String) -> Unit>.inProjectedFunction(x: (String) -> Unit): Int = 1
+
+fun <T> ClassTypeParameterShadowing<T>.typeParameter(x: T): Int = 1
+
+fun <T : CharSequence> ClassTypeParameterShadowing<T>.boundedTypeParameter(x: T): Int = 1
 
 // and of a class with two type parameters, each standing for its own type argument of the receiver
 class TwoClassTypeParametersShadowing<T, U> {

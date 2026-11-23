@@ -155,6 +155,15 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   which a lambda, a callable reference, and a value of the function type call —
   so probe a parameter of a function type with an anonymous function too, see `acceptsTypeArguments`.
 
+- A lambda, or a function reference, is typed against the type of the parameter of the candidate, so a member accepting every value
+  of the type of an extension's parameter may still not take them, and kotlinc calls the extension:
+  `k.run { }` next to `fun <U : Runnable> run(x: U)` (no SAM conversion to a type parameter),
+  `k.on(::describe)` of a function returning `String` next to `fun on(x: Function<Unit>)` (coerced to `() -> Unit` only),
+  `box.put { it.length }` on a `Box<in (String) -> Unit>` next to `fun put(x: T)`, `cell.set { s -> }` on a `Cell<String.() -> Unit>`.
+  Probe a parameter of a function type, or of a functional interface, also with lambdas with and without explicit parameters,
+  anonymous functions, with and without a receiver, references to functions of another return type, with a default parameter,
+  and suspend ones, and a generic class also on projected and function-typed receivers — see `isConvertedTo`.
+
 - A member / extension pair is told as never reaching the extension only as far as its probes go:
   `fun f(x: Comparable<String>)` next to `fun <T : CharSequence> S.f(x: Comparable<T>)` calls the member for a `Comparable<String>`
   and a `Comparable<CharSequence>`, but the extension for a `Comparable<StringBuilder>` —

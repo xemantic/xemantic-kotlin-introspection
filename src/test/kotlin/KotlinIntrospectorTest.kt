@@ -2265,7 +2265,9 @@ class KotlinIntrospectorTest {
     @Test
     fun `should resolve class without extensions shadowed by members taking supertypes of function types`() {
         // functionSupertypeShadowing.function { "" }, or .reference(::describe), call the members,
-        // while .suspendConversion(fun(): String = "") calls the extension, as an anonymous function is not converted to a suspend one
+        // while .suspendConversion(fun(): String = "") calls the extension, as an anonymous function is not converted to a suspend one,
+        // and .unitFunction(::toString), or .receiverFunction(String::trim), as the reference is coerced to return Unit,
+        // while it is no Function<Unit>, unlike a Function<Any?> of .anyFunction(::toString)
         resolver.resolve("com.xemantic.kotlin.introspection.test.FunctionSupertypeShadowing", pageSize = 20) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.FunctionSupertypeShadowing [page 1/1]
             class FunctionSupertypeShadowing : FunctionSupertypeShadowedSupertype {
@@ -2278,11 +2280,15 @@ class KotlinIntrospectorTest {
                 fun narrowerFunction(x: Function<String>): Int
                 fun otherReference(x: (Int) -> Unit): Int
                 fun suspendConversion(x: suspend () -> CharSequence): Int
+                fun unitFunction(x: Function<Unit>): Int
+                fun anyFunction(x: Function<Any?>): Int
             }
             // from com.xemantic.kotlin.introspection.test
             fun FunctionSupertypeShadowedSupertype.narrowerFunction(x: () -> CharSequence): Int
             fun FunctionSupertypeShadowedSupertype.otherReference(x: KFunction1<String, Unit>): Int
+            fun FunctionSupertypeShadowedSupertype.receiverFunction(x: String.() -> Unit): Int
             fun FunctionSupertypeShadowedSupertype.suspendConversion(x: () -> String): Int
+            fun FunctionSupertypeShadowedSupertype.unitFunction(x: () -> Unit): Int
         """.trimIndent()
     }
 
@@ -2306,7 +2312,8 @@ class KotlinIntrospectorTest {
     @Test
     fun `should resolve class without extensions shadowed by members inferring their type parameters from type arguments`() {
         // memberTypeParameterShadowing.covariant(listOf("")), or .bounded(""), call the members, inferring U as String,
-        // while each call with an argument of the type of a listed extension, like .boundViolated(listOf(1)), calls the extension
+        // while each call with an argument of the type of a listed extension, like .boundViolated(listOf(1)), calls the extension,
+        // and so do .boundedSam { }, and .boundedFunction(::toString), converted to the types of the extensions, but not to U
         resolver.resolve("com.xemantic.kotlin.introspection.test.MemberTypeParameterShadowing", pageSize = 30) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.MemberTypeParameterShadowing [page 1/1]
             class MemberTypeParameterShadowing : MemberTypeParameterShadowedSupertype {
@@ -2326,10 +2333,14 @@ class KotlinIntrospectorTest {
                 fun <U, V : U> boundedByOther(x: Map<U, V>): Int
                 fun <U : CharSequence> nothingInCommon(x: ProjectedBox<in U>): Int
                 fun <U> receiverFunction(x: U.() -> Unit): Int
+                fun <U : java.lang.Runnable> boundedSam(x: U): Int
+                fun <U : () -> Unit> boundedFunction(x: U): Int
             }
             // from com.xemantic.kotlin.introspection.test
             fun MemberTypeParameterShadowedSupertype.boundViolated(x: List<Int>): Int
             fun MemberTypeParameterShadowedSupertype.boundedByOther(x: java.util.HashMap<String, Int>): Int
+            fun MemberTypeParameterShadowedSupertype.boundedFunction(x: () -> Unit): Int
+            fun MemberTypeParameterShadowedSupertype.boundedSam(x: java.lang.Runnable): Int
             fun MemberTypeParameterShadowedSupertype.nestedCaptured(x: List<ProjectedBox<*>>): Int
             fun MemberTypeParameterShadowedSupertype.notNullBoundViolated(x: List<String?>): Int
             fun MemberTypeParameterShadowedSupertype.nothingInCommon(x: ProjectedBox<Int>): Int
@@ -2341,8 +2352,11 @@ class KotlinIntrospectorTest {
     @Test
     fun `should resolve generic class without extensions shadowed by members taking its type parameter told by their receivers`() {
         // classTypeParameterShadowing.typeParameterReceiver(listOf("")) calls the member, whose T is the one of the receiver of the extension,
-        // while .outProjectedReceiver(listOfAnything) calls the extension, inferring its T as a supertype of the one of the class
-        resolver.resolve("com.xemantic.kotlin.introspection.test.ClassTypeParameterShadowing", pageSize = 20) sameAsKotlin """
+        // while .outProjectedReceiver(listOfAnything) calls the extension, inferring its T as a supertype of the one of the class,
+        // and so do .inProjectedFunction { it.length }, and .typeParameter { s -> } on a ClassTypeParameterShadowing<String.() -> Unit>,
+        // as a lambda is typed against the type of the extension, but not against the T of the class,
+        // which .boundedTypeParameter { } never is, T being a CharSequence
+        resolver.resolve("com.xemantic.kotlin.introspection.test.ClassTypeParameterShadowing", pageSize = 30) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.ClassTypeParameterShadowing [page 1/1]
             class ClassTypeParameterShadowing<T> {
                 fun inProjectedReceiver(x: Collection<T>): Int
@@ -2357,12 +2371,17 @@ class KotlinIntrospectorTest {
                 fun contravariantInProjectedReceiver(x: Comparable<T>): Int
                 fun nullableTypeParameter(x: T): Int
                 fun starProjectedReceiver(x: Collection<T>): Int
+                fun inProjectedFunction(x: T): Int
+                fun typeParameter(x: T): Int
+                fun boundedTypeParameter(x: T): Int
             }
             // from com.xemantic.kotlin.introspection.test
             fun ClassTypeParameterShadowing<in String>.contravariantInProjectedReceiver(x: Comparable<CharSequence>): Int
+            fun ClassTypeParameterShadowing<in (String) -> Unit>.inProjectedFunction(x: (String) -> Unit): Int
             fun <T> ClassTypeParameterShadowing<T>.nullableTypeParameter(x: T?): Int
             fun <T> ClassTypeParameterShadowing<out T>.outProjectedReceiver(x: List<T>): Int
             fun ClassTypeParameterShadowing<*>.starProjectedReceiver(x: List<String>): Int
+            fun <T> ClassTypeParameterShadowing<T>.typeParameter(x: T): Int
         """.trimIndent()
     }
 
@@ -2720,7 +2739,8 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should hint operator extension inc on supertype of companion object by its name, as it has no operator form on class name`() {
-        // the name of a class cannot be assigned, so OperatorCompanionHolder++ does not compile, and OperatorCompanionHolder.inc() calls the member
+        // the name of a class cannot be assigned, so OperatorCompanionHolder++ does not compile, and OperatorCompanionHolder.inc() calls the member:
+        // no call reaches the extension, yet it is listed, hinted by its name, like the other operators of no form on the name of a class
         resolver.resolve("com.xemantic.kotlin.introspection.test.OperatorCompanionHolder.inc") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.OperatorCompanionHolder.inc [page 1/1]
             companion object : OperatorCompanionSupertype {
@@ -2733,7 +2753,8 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should hint operator extension invoke on supertype of companion object by its name next to constructor taking as many arguments`() {
-        // OperatorConstructedCompanionHolder(1) calls the constructor, and OperatorConstructedCompanionHolder.invoke(1) the member
+        // OperatorConstructedCompanionHolder(1) calls the constructor, and OperatorConstructedCompanionHolder.invoke(1) the member:
+        // no call reaches the extension, yet it is listed, hinted by its name, as the constructors are told only by the count of their parameters
         resolver.resolve("com.xemantic.kotlin.introspection.test.OperatorConstructedCompanionHolder.invoke") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.OperatorConstructedCompanionHolder.invoke [page 1/1]
             companion object : OperatorCompanionSupertype {
