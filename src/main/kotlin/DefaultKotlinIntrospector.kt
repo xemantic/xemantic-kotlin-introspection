@@ -1357,7 +1357,9 @@ internal class DefaultKotlinIntrospector(
      * or, of a public [method], the one resolved on the [inheriting] class being declared by a subtype of its class,
      * as a JVM class, whose superclasses can be told, tells it, unlike the Kotlin view of its methods.
      * Neither a bridge, like the one javac generates in a public class for a public method of its package-private superclass,
-     * nor a private, or a static, method of the same signature overrides it, nor one returning another type without a bridge.
+     * nor a private, or a static, method of the same signature overrides it, nor one returning another type without a bridge,
+     * nor the `toArray` the compiler generates in a Kotlin collection class, which its metadata does not declare,
+     * like the `toArray(T[])` of a Kotlin subclass of a Java class overriding it by its erasure, `toArray(Object[])`.
      */
     private fun overridingBelow(method: Method, inheriting: Class<*>?): Method? = reflectedValue(default = null) {
         if (inheriting == null) return@reflectedValue null
@@ -1367,8 +1369,10 @@ internal class DefaultKotlinIntrospector(
         // next to the `String getTitle()` of a Java superclass, or the getter of a `val obj: String` next to `Object getObj()`,
         // unless its class bridges it, like the compiler does for an override returning a subtype,
         // see OverrideResolver.isOverride of a property
+        fun Method.isGeneratedToArray() = name == "toArray" && declaringClass.isAnnotationPresent(Metadata::class.java) &&
+            kmClassOf(declaringClass)?.functions?.none { it.name == name && it.signature?.descriptor == AsmType.getMethodDescriptor(this) } == true
         fun Method.overrides() = !isBridge && !Modifier.isPrivate(modifiers) && !Modifier.isStatic(modifiers) &&
-            name == method.name && this.parameterTypes.contentEquals(parameterTypes) &&
+            name == method.name && this.parameterTypes.contentEquals(parameterTypes) && !isGeneratedToArray() &&
             (returnType == method.returnType || declaringClass.declaredMethods.any { bridge ->
                 bridge.isBridge && bridge.name == name && bridge.returnType == method.returnType &&
                     bridge.parameterTypes.contentEquals(parameterTypes)
@@ -3059,12 +3063,15 @@ internal class DefaultKotlinIntrospector(
          * The [member] of a Java class takes so the types of the method of a Java supertype it overrides, the [pickedMember]
          * as reached apart from it, see [withPlatformTypes], and its return type, when [isTakingReturnType],
          * like the `String` of the `apply` of `java.util.function.Function<String, String>` the `apply` of a Java class
-         * implementing it, see [inheritedCandidates], unless a value parameter of either is a vararg one, which is not told then.
+         * implementing it, see [inheritedCandidates], unless a value parameter of either is a vararg one, which is not told then,
+         * a platform type when [isReturningPlatformType], see [returnsPlatformType], which the [member] is compared by then,
+         * see [compareReturnType].
          */
         fun takeTypesOf(
             picked: InheritedCandidate,
             pickedMember: Member = picked.effectiveMember,
-            isTakingReturnType: Boolean = false
+            isTakingReturnType: Boolean = false,
+            isReturningPlatformType: Boolean = false
         ) {
             val function = member as? Member.Function ?: return
             val pickedFunction = (pickedMember as? Member.Function)?.function ?: return
@@ -3084,9 +3091,21 @@ internal class DefaultKotlinIntrospector(
             typed.valueParameters.forEachIndexed { index, parameter ->
                 parameter.varargElementType = pickedParameters[index].varargElementType?.substituted(own)
             }
-            if (isTakingReturnType) typed.returnType = pickedFunction.returnType.substituted(own)
+            // the return type taken before, of another member, is no more
+            takenReturnType = if (isTakingReturnType) pickedFunction.returnType.substituted(own).also { typed.returnType = it } else null
+            isTakenReturnTypePlatform = isTakingReturnType && isReturningPlatformType
             javaTypedMember = Member.Function(typed, function.declaration)
         }
+
+        // the return type taken of the method of a Java supertype picked in place of the member, see takeTypesOf,
+        // and whether it is a platform type, unlike one given by Kotlin, or given nullable
+        private var takenReturnType: KmType? = null
+        private var isTakenReturnTypePlatform: Boolean = false
+
+        /**
+         * Whether the [member] returns the type of the method of a Java supertype picked in its place, see [takeTypesOf].
+         */
+        val hasTakenReturnType: Boolean get() = takenReturnType != null
 
         /**
          * Makes the [member] of a Java class, once listed, take the [names] of its value parameters, the ones of the Kotlin members
@@ -3176,11 +3195,14 @@ internal class DefaultKotlinIntrospector(
          * as substituted, unlike the `V!` of `call()` of `java.util.concurrent.Callable<String?>`, which is `String?`,
          * also when the JDK enhancement of its return type is lost, see [isEnhancementLost],
          * or of a JVM-only member, or a Kotlin member returning a type parameter of its class given by Java,
-         * which [standsForPlatformType], told once the inherited candidates are walked.
+         * which [standsForPlatformType], told once the inherited candidates are walked,
+         * or as the method of a Java supertype picked in its place does, see [takeTypesOf].
          */
         val returnsPlatformType: Boolean
-            get() = returnsJavaPlatformType || (platformCandidate != null && standsForPlatformType) ||
-                (isEnhancementLost && returnsPlatformTypeWithoutEnhancement)
+            get() = if (takenReturnType != null) isTakenReturnTypePlatform else {
+                returnsJavaPlatformType || (platformCandidate != null && standsForPlatformType) ||
+                    (isEnhancementLost && returnsPlatformTypeWithoutEnhancement)
+            }
 
         /**
          * Whether the return type of the [member] is more specific than the one of the [other] candidate, a positive number,
@@ -3196,7 +3218,8 @@ internal class DefaultKotlinIntrospector(
         fun compareReturnType(other: InheritedCandidate, supertypeNamesOf: (String) -> Set<String>): Int? {
             val isPlatformRivalry = returnsPlatformType != other.returnsPlatformType
             val specificity = compareSpecificity(
-                member.returnType, other.member.returnType, supertypeNamesOf, ignoreNullability = isPlatformRivalry
+                takenReturnType ?: member.returnType, other.takenReturnType ?: other.member.returnType, supertypeNamesOf,
+                ignoreNullability = isPlatformRivalry
             )
             return if (specificity == 0 && isPlatformRivalry) (if (returnsPlatformType) -1 else 1) else specificity
         }
@@ -3421,9 +3444,25 @@ internal class DefaultKotlinIntrospector(
         // type argument, like the T of accept(T) of a Java JavaAcceptor<T> for `X : JavaAcceptor<String?>()`, a String?, no platform type,
         // where the one of the other member is not nullable, nor a platform type, like the String of accept(s: String),
         // which the compiler keeps apart, see isMergedWith, so that the Java method never implements the Kotlin member
+        // but the members of the classes a Kotlin class merges them with, see mergedThroughClasses
         private fun isNullabilityClash(other: InheritedCandidate, isProjecting: Boolean = isProjectedRivalry): Boolean =
-            nullableArgumentPositions.any { other.isNotNullAt(it) } || other.nullableArgumentPositions.any { isNotNullAt(it) } ||
+            (other.name !in mergedThroughClasses && nullableArgumentPositions.any { other.isNotNullAt(it) }) ||
+                (name !in other.mergedThroughClasses && other.nullableArgumentPositions.any { isNotNullAt(it) }) ||
                 (isProjecting && isElementNullabilityClash(other))
+
+        /**
+         * The classes whose members the [member], given a nullable type argument, see [nullableArgumentPositions],
+         * is merged with by a Kotlin class every path to it runs through, which inherits them as one member,
+         * so that they are not kept apart by the nullability, see [isNullabilityClash], unlike the members of other classes,
+         * see [inheritedCandidates].
+         */
+        var mergedThroughClasses: Set<String> = emptySet()
+
+        /**
+         * Whether the [member] is kept apart from the one of the [other] candidate by a nullable type argument,
+         * see [isNullabilityClash], not by the elements of their arrays.
+         */
+        fun isKeptApartByTypeArgumentFrom(other: InheritedCandidate): Boolean = isNullabilityClash(other, isProjecting = false)
 
         /**
          * Whether the [member] is kept apart from the one of the [other] candidate by the nullability of the elements
@@ -4057,6 +4096,42 @@ internal class DefaultKotlinIntrospector(
         if (kmClass.name != ANY_CLASS_NAME) collect(ANY_CLASS_NAME, classType(ANY_CLASS_NAME))
         // all the candidates walked, also the Java ones removed below, see withInheritedThroughApi
         val walked = candidates.toList()
+        // the order in which the supertypes of the kmClass contribute their members, see listed: depth-first,
+        // in the order of declaration of the direct supertypes of each class, so that the first direct supertype
+        // reaching a class tells its place, and, among the classes reached through the same one, its own direct supertype
+        // reaching it first, like JavaAcceptor before Acceptor for a subclass of `Join : JavaAcceptor(), Acceptor`,
+        // which inherits the member the join picks, while the supertypes of a Java class share its place,
+        // the Kotlin members staying first among them, see listed, as a Java class, or interface, joining the method
+        // of a Java supertype and a Kotlin member inherits the Kotlin types, whatever the order of its supertypes,
+        // like `interface JavaJoin extends JavaAcceptor, Acceptor`, so that accept(null) does not compile,
+        // but a Java class only one direct supertype of which contributes a member of the name, which joins nothing,
+        // inheriting the member its supertype picks, like the accept(s: String?) of `Join : JavaAcceptor(), Acceptor`
+        // for a subclass of a Java subclass of it, also one implementing java.lang.Runnable, which has no accept
+        val memberClasses = walked.mapTo(HashSet()) { it.name }.also { it -= ANY_CLASS_NAME }
+        val contributing = HashMap<String, Boolean>()
+        fun contributesMember(name: String): Boolean = contributing[name] ?: run {
+            // false while walked, not to follow a supertype cycle of malformed class files
+            contributing[name] = false
+            (name in memberClasses || directSupertypes[name].orEmpty().any(::contributesMember)).also { contributing[name] = it }
+        }
+        // told only of a class inheriting the members through one direct supertype: next to another one contributing them,
+        // the Java class shares its place with its supertypes as before, as the members the Kotlin class below it picks
+        // are not told apart from the ones it merges
+        val isContributedOnce = directSupertypes[kmClass.name].orEmpty().count(::contributesMember) == 1
+        fun isJavaJoin(name: String) = name in javaClasses && directSupertypes[name].orEmpty().let { supertypes ->
+            if (isContributedOnce) supertypes.count(::contributesMember) > 1 else supertypes.count { it != ANY_CLASS_NAME } > 1
+        }
+        val contributionOrder = HashMap<String, Int>()
+        fun orderContributions(name: String, javaClassOrder: Int?) {
+            directSupertypes[name].orEmpty().forEach { supertype ->
+                if (supertype !in contributionOrder) {
+                    val order = javaClassOrder ?: contributionOrder.size
+                    contributionOrder[supertype] = order
+                    orderContributions(supertype, javaClassOrder ?: order.takeIf { isJavaJoin(supertype) })
+                }
+            }
+        }
+        orderContributions(kmClass.name, if (declarations is JavaClass) 0 else null)
         // a member of a Java class given a nullable type argument is kept apart from the members which are not nullable,
         // see InheritedCandidate.isNullabilityClash, only when no Kotlin member is of its JVM signature, overriding it on the JVM,
         // like the accept(t: T) of a Kotlin `GenericAcceptor<String>` the accept(T) of a Java class given String?,
@@ -4068,6 +4143,69 @@ internal class DefaultKotlinIntrospector(
             }
             if (signature == null || isOverriddenOnJvm) candidate.nullableArgumentPositions = emptySet()
         }
+        // the classes reached from the class, by their order of contribution, depth-first, see contributionOrder
+        val contributionOrders = HashMap<String, Map<String, Int>>()
+        fun contributionOrderOf(root: String): Map<String, Int> = contributionOrders.getOrPut(root) {
+            val order = HashMap<String, Int>()
+            fun walk(name: String) {
+                directSupertypes[name].orEmpty().forEach { supertype ->
+                    if (supertype !in order) {
+                        order[supertype] = order.size
+                        walk(supertype)
+                    }
+                }
+            }
+            walk(root)
+            order
+        }
+        // nor is the member of a Java class given a nullable type argument kept apart from the members a Kotlin class,
+        // other than the inheriting one, merges it with, when every path to it runs through that class, its single member
+        // inherited as one, like the apply of Function<String?, String?> of `Join : JavaStringApplier(), Function<String?, String?>, StringApplier`,
+        // merged with the apply(x: String) of StringApplier by the apply(String) of the Java class, of platform types,
+        // contributed first, see groupedAroundFirst, for `X : StringApplier, Join()`,
+        // unlike `Join : StringApplier, JavaStringApplier(), Function<String?, String?>`, or the members of the other supertypes of X,
+        // told once for all the candidates, as the ones merged are not kept apart while told, see InheritedCandidate.mergedThroughClasses
+        val mergedThrough = IdentityHashMap<InheritedCandidate, Set<String>>()
+        walked.filter { it.nullableArgumentPositions.isNotEmpty() && it.member is Member.Function }.forEach { candidate ->
+            fun mergesBelow(name: String): Boolean {
+                val order = contributionOrderOf(name)
+                val candidateOrder = order[candidate.name] ?: return false
+                return walked.any { java ->
+                    val javaOrder = order[java.name]
+                    javaOrder != null && javaOrder < candidateOrder && java.declarations is JavaClass &&
+                        java.className != candidate.className && java.member is Member.Function && java.isPlainRival(candidate) &&
+                        !java.isKeptApartByTypeArgumentFrom(candidate) && walked.filter { other ->
+                            other.className != candidate.className && other.className != java.className && other.name in order &&
+                                candidate.isPlainRival(other) && candidate.isKeptApartByTypeArgumentFrom(other)
+                        }.let { apart ->
+                            apart.isNotEmpty() && apart.all { other ->
+                                order.getValue(other.name) > javaOrder && java.isPlainRival(other) && !java.isKeptApartByTypeArgumentFrom(other)
+                            }
+                        }
+                }
+            }
+            // the Kotlin classes merging it, through which every path to it runs, or null when some path does not,
+            // also on a supertype cycle of malformed class files, which leaves it apart
+            val walking = HashSet<String>()
+            val merging = HashMap<String, List<String>?>()
+            fun mergingClasses(name: String): List<String>? {
+                if (name in merging) return merging[name]
+                if (name == candidate.name || !walking.add(name)) return null
+                val classes = if (name != kmClass.name && name !in javaClasses && mergesBelow(name)) listOf(name) else {
+                    val reaching = directSupertypes[name].orEmpty().filter { it == candidate.name || candidate.name in contributionOrderOf(it) }
+                    val reached = reaching.map(::mergingClasses)
+                    if (reached.isEmpty() || null in reached) null else reached.flatMap { it.orEmpty() }
+                }
+                walking -= name
+                merging[name] = classes
+                return classes
+            }
+            // the members of the classes each of them reaches, as the members of the other ones are no part of the merged member,
+            // like the apply(x: String) of a Kotlin interface of a body named next to the join
+            mergingClasses(kmClass.name)?.map { contributionOrderOf(it).keys }?.reduce { a, b -> a intersect b }
+                ?.let { mergedThrough[candidate] = it }
+        }
+        mergedThrough.forEach { (candidate, classes) -> candidate.mergedThroughClasses = classes }
         walked.forEach { candidate -> candidate.isPlainCollectionRival = walked.any { it !== candidate && candidate.isPlainCollectionRivalOf(it) } }
         // as is the merging by the variants of the arrays and projected collections, next to a hidden member merged so with another one,
         // see InheritedCandidate.isProjectedRivalry, but not a hidden one kept apart from the members by the nullability of the elements
@@ -4301,6 +4439,46 @@ internal class DefaultKotlinIntrospector(
             walk(kmClass.name, emptyList(), isPlatform = false)
             return reaches
         }
+        // the type of the class reached, of the type arguments given along the path, or null when not told,
+        // like through a raw Java supertype
+        fun typeReached(reach: Reach): KmType? {
+            var type = reach.path.firstOrNull()?.let { kmClass.supertypes.getOrNull(it) }?.substituted(inheriting) ?: return null
+            reach.path.drop(1).forEach { index ->
+                val (superKmClass, supertypes) = (type.withSuspendFunctionTypeClass().classifier as? KmClassifier.Class)
+                    ?.let { declaredSupertypes[it.name] } ?: return null
+                type = supertypes.getOrNull(index)?.substituted(supertypeSubstitution(superKmClass, type, declarations)) ?: return null
+            }
+            return type.takeIf { (it.withSuspendFunctionTypeClass().classifier as? KmClassifier.Class)?.name == reach.name }
+        }
+        // the classes of the targets reached from the inheriting class like by reaches, but by every path giving other
+        // type arguments, each with the type reached, see typeReached, or null when not told, as a Java class reached again
+        // through another Java class is given other type arguments, like the String? of a Java `F<T> extends Function<T, T>`
+        // named as F<String?>, next to the String! of a Java class implementing Function<T, T> given String
+        fun typedReaches(targets: Set<String>): List<Pair<Reach, KmType?>> {
+            val reaches = ArrayList<Pair<Reach, KmType?>>()
+            val visited = HashSet<Triple<String, Boolean, String?>>()
+            // the classes of the path walked, not to follow a supertype cycle of malformed class files,
+            // whose type arguments may grow on each lap, like `C1<T> : C2<List<T>>` next to `C2<T> : C1<List<T>>`
+            val walking = hashSetOf(kmClass.name)
+            fun walk(name: String, path: List<Int>, isPlatform: Boolean) {
+                directSupertypes[name].orEmpty().forEachIndexed { index, supertype ->
+                    if (supertype in walking) return@forEachIndexed
+                    val isGivenPlatform = isPlatform || givesPlatformTypes(name, supertype)
+                    val reach = Reach(supertype, path + index, isGivenPlatform, giver = name, isPlatformBelow = isPlatform)
+                    val type = typeReached(reach)
+                    if (!visited.add(Triple(supertype, isGivenPlatform, type?.structureKey()))) return@forEachIndexed
+                    if (supertype in targets) {
+                        reaches += reach to type
+                    } else {
+                        walking += supertype
+                        walk(supertype, reach.path, isGivenPlatform)
+                        walking -= supertype
+                    }
+                }
+            }
+            walk(kmClass.name, emptyList(), isPlatform = false)
+            return reaches
+        }
         // the class where the paths of the reaches part, by the positions among the direct supertypes, see reaches
         fun partingClass(a: Reach, b: Reach): String {
             var name = kmClass.name
@@ -4329,27 +4507,18 @@ internal class DefaultKotlinIntrospector(
         }
         candidates.filter { it.declarations is JavaClass && it.classTypeParameterPositions.isNotEmpty() }.forEach(::pickPlatformTypes)
         // the method of a Java class is merged alike with the methods of the Java supertypes it overrides, each contributed
-        // by a direct supertype, the first one reached through it, of which the compiler picks the first one not returning
-        // a platform type, like the apply of java.util.function.Function<String, String>, declared again, returning String,
+        // by a direct supertype, by every path giving it other type arguments, see typedReaches, of which the compiler picks
+        // the first one of the most specific return type which is no platform type, like the apply of
+        // java.util.function.Function<String, String>, declared again, returning String,
         // for `X : JavaFunctionImpl<String>(), Function<String, String>`, whose own apply returns String!,
         // so that apply(null) does not compile, or else the first one, like the accept of a Java class implementing
         // java.util.function.Consumer, returning Unit, declared before it: the overriding method, listed as the implementation,
         // takes the types of the picked one then, also its return type, like the String? of Function<String?, String?>,
         // of the type arguments given along the path it is picked by, like the ones of a Kotlin `interface F : Function<String?, String?>`
         // for `X : JavaFunctionImpl<String>(), F`, not of the path walked first, through the Java class,
-        // told only of the Java methods no Kotlin member of the same number of value parameters, related to them, competes with,
-        // which are picked above, and when their return types are equally specific, see compareSpecificity
-        // the type of the class reached, of the type arguments given along the path, or null when not told,
-        // like through a raw Java supertype
-        fun typeReached(reach: Reach): KmType? {
-            var type = reach.path.firstOrNull()?.let { kmClass.supertypes.getOrNull(it) }?.substituted(inheriting) ?: return null
-            reach.path.drop(1).forEach { index ->
-                val (superKmClass, supertypes) = (type.withSuspendFunctionTypeClass().classifier as? KmClassifier.Class)
-                    ?.let { declaredSupertypes[it.name] } ?: return null
-                type = supertypes.getOrNull(index)?.substituted(supertypeSubstitution(superKmClass, type, declarations)) ?: return null
-            }
-            return type.takeIf { (it.withSuspendFunctionTypeClass().classifier as? KmClassifier.Class)?.name == reach.name }
-        }
+        // told only when their return types are equally specific, see compareSpecificity, and no Kotlin member
+        // of the same number of value parameters, related to them, competes, which are picked below, see listed,
+        // unless the picked one returns a more specific type than each of these
         val javaFunctions = candidates.filter { it.declarations is JavaClass && it.member is Member.Function && !it.isHidden }
         if (javaFunctions.size > 1) {
             fun InheritedCandidate.arity() = (member as Member.Function).function.valueParameters.size
@@ -4361,30 +4530,69 @@ internal class DefaultKotlinIntrospector(
                 val related = javaFunctions.filter { other -> other === candidate || overridden.any { it === other || other.overrides(it) } }
                     .groupBy { it.name }
                 if (related.values.any { it.size > 1 }) return@forEach
-                // but a Kotlin member of the same number of value parameters, related to one of them, competes, picked above,
-                // unlike an unrelated overload, like the apply(x: Int) of a Kotlin interface next to the apply of Function<String, String>
+                // by every path giving it other type arguments, like the String? of a Java `F<T> extends Function<T, T>` named
+                // as F<String?>, reached after a Java class implementing Function<T, T> given String, each as reached,
+                // but through a relocated, or a raw, supertype, whose members are told otherwise, see collect above,
+                // nor of a member whose types are translated back, which the declaration would name by their JVM names again
+                val contributions = typedReaches(related.keys).map { (reach, type) ->
+                    val member = related.getValue(reach.name).single()
+                    val reached = type?.takeUnless { isRelocated || member.name in rawlyReached || member in unlocatedCandidates }?.let {
+                        Member.Function((member.member as Member.Function).declaration)
+                            .substituted(supertypeSubstitution(member.kmClass, it, declarations), inheritingNames) as Member.Function
+                    }
+                    Triple(reach, member, reached)
+                }
+                // a type argument given nullable makes no platform type, like the String? of the R of Function<String?, String?>
+                val notPlatform = contributions.filter { (reach, member, reached) ->
+                    reached?.function?.returnType?.isNullable == true ||
+                        (!member.returnsPlatformType && !(reach.isPlatform && member.returnsClassTypeParameter))
+                }
+                // the first one of the most specific return type, like the String of Function<String, String>,
+                // declared after a Java interface given String?
+                fun Triple<Reach, InheritedCandidate, Member.Function?>.returnType() = (third ?: second.member as Member.Function).function.returnType
+                val (reach, picked, reached) = notPlatform.firstOrNull { contribution ->
+                    notPlatform.none { other ->
+                        other !== contribution &&
+                            (compareSpecificity(other.returnType(), contribution.returnType(), supertypeNamesOf) ?: 0) > 0
+                    }
+                } ?: contributions.firstOrNull() ?: return@forEach
+                if (picked !in overridden || reached == null) return@forEach
+                // a collection type of a Java method is as specific as either its read-only, or its mutable, Kotlin type,
+                // like the (Mutable)List<T!>! of a Java class implementing Function<List<T>, List<T>> as the MutableList<String>
+                // of the Function<MutableList<String>, MutableList<String>> declared again
+                val returnType = reached.function.returnType
+                val isPlatform = !returnType.isNullable &&
+                    (picked.returnsPlatformType || (reach.isPlatform && picked.returnsClassTypeParameter))
+                val javaReturnType = candidate.member.returnType
+                val isAsSpecific = compareSpecificity(javaReturnType, returnType, supertypeNamesOf, ignoreNullability = true) == 0 ||
+                    (javaReturnType.classifier as? KmClassifier.Class)?.name?.let { name ->
+                        val pickedName = (returnType.classifier as? KmClassifier.Class)?.name
+                        pickedName != null && (MUTABLE_COLLECTION_TYPES[name] == pickedName || READ_ONLY_COLLECTION_TYPES[name] == pickedName)
+                    } == true
+                if (!isAsSpecific) return@forEach
+                // but a Kotlin member of the same number of value parameters, related to one of them, competes, picked below,
+                // unlike an unrelated overload, like the apply(x: Int) of a Kotlin interface next to the apply of Function<String, String>,
+                // unless the picked one returns a more specific type than each of them, like the String of Function<String, String>
+                // than the String? of the apply(x: String?) of a Kotlin interface, which the Java method implements,
+                // so that the Java method, of the types of the picked one, wins over them, see listed,
+                // told only of a Java class named first, as a direct supertype, next to the picked one, a direct supertype too:
+                // its method, taking platform types, is merged with all of them then, while declared after the picked one,
+                // or joined with it by a class below, it leaves the Kotlin member apart, which is not told
+                val isFirstDirectSupertype = contributions.first().let { (first, member) -> member === candidate && first.path.size == 1 } &&
+                    reach.path.size == 1
                 val isCompeting = kotlinFunctions.any { kotlin ->
                     kotlin.arity() == candidate.arity() && related.values.any { members ->
                         members.any { it.overrides(kotlin) || kotlin.overrides(it) || it.isMergedWith(kotlin) || kotlin.isMergedWith(it) }
-                    }
+                    } && (
+                        isPlatform || !isFirstDirectSupertype ||
+                            (compareSpecificity(returnType, kotlin.member.returnType, supertypeNamesOf) ?: 0) <= 0
+                        )
                 }
                 if (isCompeting) return@forEach
-                val contributions = reaches(related.keys).map { reach -> reach to related.getValue(reach.name).single() }
-                val (reach, picked) = contributions.firstOrNull { (reach, member) ->
-                    !member.returnsPlatformType && !(reach.isPlatform && member.returnsClassTypeParameter)
-                } ?: contributions.firstOrNull() ?: return@forEach
-                if (picked !in overridden ||
-                    compareSpecificity(candidate.member.returnType, picked.member.returnType, supertypeNamesOf, ignoreNullability = true) != 0
-                ) {
-                    return@forEach
-                }
-                // but through a relocated, or a raw, supertype, whose members are told otherwise, see collect above,
-                // nor of a member whose types are translated back, which the declaration would name by their JVM names again
-                if (isRelocated || picked.name in rawlyReached || picked in unlocatedCandidates) return@forEach
-                val substitution = supertypeSubstitution(picked.kmClass, typeReached(reach) ?: return@forEach, declarations)
-                val reached = Member.Function((picked.member as Member.Function).declaration)
-                    .substituted(substitution, inheritingNames) as Member.Function
-                candidate.takeTypesOf(picked, if (reach.isPlatform) picked.withPlatformTypes(reached) else reached, isTakingReturnType = true)
+                candidate.takeTypesOf(
+                    picked, if (reach.isPlatform) picked.withPlatformTypes(reached) else reached,
+                    isTakingReturnType = true, isReturningPlatformType = isPlatform
+                )
             }
         }
         // the compiler merges a Kotlin member with the Java methods overriding it, or a member it overrides,
@@ -4767,6 +4975,19 @@ internal class DefaultKotlinIntrospector(
             candidate.declarations is BuiltinClass && candidate.jvmMethod != null && isListable(candidate) &&
                 javaMethodSignatures[candidate.jvmMethod.signature]?.onEach { it.isJvmOnlyOverride = true } != null
         }
+        // and so is the toArray of a Java collection class of the user code overriding a method of java.util.Collection,
+        // like toArray(T[]), also by its erasure, toArray(Object[]), or the default toArray(IntFunction),
+        // which Kotlin hides of the collection types, so that the override resolver does not tell it
+        if (memberName == "toArray") {
+            candidates.forEach { candidate ->
+                val javaClass = candidate.declarations as? JavaClass ?: return@forEach
+                val method = (candidate.member as? Member.Function)?.let { javaClass.javaMethodOf(it.declaration) } ?: return@forEach
+                candidate.isJvmOnlyOverride = candidate.isJvmOnlyOverride || reflectedValue(default = false) {
+                    !javaClass.clazz.isJdkClass && Collection::class.java.isAssignableFrom(javaClass.clazz) &&
+                        Collection::class.java.methods.any { it.name == method.name && it.parameterTypes.contentEquals(method.parameterTypes) }
+                }
+            }
+        }
         val notOverridden = candidates.filter { isListable(it) && it !in jvmOnlyOverridden }
         // whether the member a wins over the merged member b, of a less specific return type, see compareReturnType,
         // or else the method of a Java class over the one of a Java interface, which it implements in Kotlin,
@@ -4791,28 +5012,6 @@ internal class DefaultKotlinIntrospector(
         }?.value ?: members.firstOrNull()?.takeIf { first ->
             members.size > 2 && members.all { it === first || it.compareReturnType(first, supertypeNamesOf) == 0 }
         }
-        // the order in which the supertypes of the kmClass contribute their members, see listed: depth-first,
-        // in the order of declaration of the direct supertypes of each class, so that the first direct supertype
-        // reaching a class tells its place, and, among the classes reached through the same one, its own direct supertype
-        // reaching it first, like JavaAcceptor before Acceptor for a subclass of `Join : JavaAcceptor(), Acceptor`,
-        // which inherits the member the join picks, while the supertypes of a Java class share its place,
-        // the Kotlin members staying first among them, see listed, as a Java class, or interface, joining the method
-        // of a Java supertype and a Kotlin member inherits the Kotlin types, whatever the order of its supertypes,
-        // like `interface JavaJoin extends JavaAcceptor, Acceptor`, so that accept(null) does not compile,
-        // but a Java class of a single direct supertype, which joins nothing, inheriting the member its supertype picks,
-        // like the accept(s: String?) of `Join : JavaAcceptor(), Acceptor` for a subclass of a Java subclass of it
-        val contributionOrder = HashMap<String, Int>()
-        fun orderContributions(name: String, javaClassOrder: Int?) {
-            directSupertypes[name].orEmpty().forEach { supertype ->
-                if (supertype !in contributionOrder) {
-                    val order = javaClassOrder ?: contributionOrder.size
-                    contributionOrder[supertype] = order
-                    val isJavaJoin = supertype in javaClasses && directSupertypes[supertype].orEmpty().count { it != ANY_CLASS_NAME } > 1
-                    orderContributions(supertype, javaClassOrder ?: order.takeIf { isJavaJoin })
-                }
-            }
-        }
-        orderContributions(kmClass.name, if (declarations is JavaClass) 0 else null)
         // the names of the supertypes reached through the superclass of the kmClass, like java.util.Map through java.util.TreeMap,
         // whose members of a body, like the default getOrDefault of Map, the superclass inherits as implementations, see listed
         val reachedThroughSuperclass by lazy(LazyThreadSafetyMode.NONE) {
@@ -4992,13 +5191,21 @@ internal class DefaultKotlinIntrospector(
             // a Kotlin interface of addAll2(c: Collection<Int>): Boolean, so that addAll2(null) compiles, unlike after it:
             // the Kotlin member, listed as overriding the method on the JVM, see javaOverrides, takes its types then,
             // also of a method implementing a member of a Kotlin generic interface, like the String! of the accept(String)
-            // of a Java class implementing `GenericAcceptor<String>`, given for the T of its accept(t: T)
+            // of a Java class implementing `GenericAcceptor<String>`, given for the T of its accept(t: T),
+            // or of a method of the types of the method of a Java supertype picked in its place, see takeTypesOf, also its return type,
+            // more specific than the one of the Kotlin member, like the String of the apply of Function<String, String>,
+            // which a Java class implements, declared again before `Applier<String?>`, of an apply(x: T): T
             listed.forEach { candidate ->
                 val picked = groups[candidate] ?: return@forEach
                 if (picked === candidate || candidate.jvmMethod != null || candidate.declarations is BuiltinClass ||
-                    picked.jvmMethod == null || picked.declarations !is JavaClass ||
-                    (picked.signature == candidate.signature && picked.isVarargLike(candidate)) || overriddenOnJvm.none { it === picked } ||
-                    picked.compareReturnType(candidate, supertypeNamesOf) != 0
+                    picked.jvmMethod == null || picked.declarations !is JavaClass || overriddenOnJvm.none { it === picked }
+                ) {
+                    return@forEach
+                }
+                val specificity = picked.compareReturnType(candidate, supertypeNamesOf)
+                if (if (picked.hasTakenReturnType) specificity == null || specificity < 0 else {
+                        (picked.signature == candidate.signature && picked.isVarargLike(candidate)) || specificity != 0
+                    }
                 ) {
                     return@forEach
                 }
@@ -5014,7 +5221,11 @@ internal class DefaultKotlinIntrospector(
                 }
                 val overriding = javaOverrides.overridingBySignature(picked.jvmMethod) ?: return@forEach
                 val isUnrelated = walked.none { it !== picked && it.key in overriding && picked.name in supertypeNamesOf(it.name) }
-                if (isUnrelated) candidate.takeTypesOf(picked)
+                if (isUnrelated) {
+                    candidate.takeTypesOf(
+                        picked, isTakingReturnType = picked.hasTakenReturnType, isReturningPlatformType = picked.returnsPlatformType
+                    )
+                }
             }
             // the method of a Java class merged with the one of a Java interface contributed before it, one of them a vararg,
             // takes its types, as the compiler calls the form of the first one, like the acceptAll(T) of a Java interface

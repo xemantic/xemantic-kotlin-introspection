@@ -50,6 +50,8 @@ import kotlin.io.path.readBytes
 import kotlin.io.path.writeBytes
 import kotlin.metadata.KmClassifier
 import kotlin.metadata.KmType
+import kotlin.metadata.KmTypeProjection
+import kotlin.metadata.KmVariance
 import kotlin.metadata.jvm.KotlinModuleMetadata
 import kotlin.metadata.jvm.moduleName
 import kotlin.test.Test
@@ -3121,6 +3123,55 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should resolve member of Java class joined with JDK interface next to cyclic generic supertypes of growing type arguments`() {
+        // given
+        fun type(name: String, vararg arguments: KmType) = KmType().apply {
+            classifier = KmClassifier.Class(name)
+            arguments.forEach { this.arguments += KmTypeProjection(KmVariance.INVARIANT, it) }
+        }
+        val typeParameter = KmType().apply { classifier = KmClassifier.TypeParameter(0) }
+        val root = isolatedTestFixturesCopy("cyclicGeneric") { fileName, bytes ->
+            if (fileName != "CyclicGenericSecond.class") bytes else withSupertypesInMetadata(
+                bytes,
+                type("com/xemantic/kotlin/introspection/isolated/CyclicGenericFirst", type("kotlin/collections/List", typeParameter))
+            )
+        }
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.CyclicGenericFunctionLeaf.apply")
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.CyclicGenericFunctionLeaf.apply [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.isolated.CyclicFunctionImpl
+            override fun apply(arg0: String): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve overloads inherited through cyclic supertypes`() {
+        // given
+        fun type(name: String) = KmType().apply { classifier = KmClassifier.Class("com/xemantic/kotlin/introspection/isolated/$name") }
+        val root = isolatedTestFixturesCopy("cyclicOverloads") { fileName, bytes ->
+            if (fileName == "CyclicOverloadBase.class") withSupertypesInMetadata(bytes, type("CyclicOverloadMid")) else bytes
+        }
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.CyclicOverloadLeaf.f")
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.CyclicOverloadLeaf.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.isolated.CyclicOverloadMid
+            fun f(x: String)
+            // inherited from com.xemantic.kotlin.introspection.isolated.CyclicOverloadBase
+            fun f(x: Int)
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve entries of enum class whose metadata does not tell them`() {
         // given
         // like an enum class compiled before Kotlin 1.9, for which kotlinc still resolves LegacyEntriesEnum.entries
@@ -3646,14 +3697,15 @@ class ClassLoaderIntrospectionTest {
         """.trimIndent()
     }
 
-    @Test
-    fun `should resolve types of Java class marked by NullMarked whose class file is too new to be parsed`() {
-        // given
-        // like a class of a library compiled for a JVM newer than ASM knows, which the JVM running it still loads
-        val unreadableClass = "com.xemantic.kotlin.introspection.test.other.JavaNullMarkedBase"
-        val definedClasses = setOf(unreadableClass, "com.xemantic.kotlin.introspection.test.InheritedJavaNullMarked")
-        // defining the classes itself, as the nullability annotations are read through the class loader of the class
-        val classLoader = object : ClassLoader(javaClass.classLoader) {
+    /**
+     * A class loader defining the [unreadableClass], and the [subclass] extending it, itself,
+     * as the nullability annotations, and the bridges, are read through the class loader of the class,
+     * serving the class file of the [unreadableClass] too new to be parsed,
+     * like of a class of a library compiled for a JVM newer than ASM knows, which the JVM running it still loads.
+     */
+    private fun classLoaderOfClassFileTooNew(unreadableClass: String, subclass: String): ClassLoader {
+        val definedClasses = setOf(unreadableClass, subclass)
+        return object : ClassLoader(javaClass.classLoader) {
             override fun loadClass(name: String, resolve: Boolean): Class<*> =
                 if (name in definedClasses) {
                     synchronized(getClassLoadingLock(name)) {
@@ -3672,6 +3724,39 @@ class ClassLoaderIntrospectionTest {
                 } else stream
             }
         }
+    }
+
+    @Test
+    fun `should resolve Java override through a bridge next to overload when its class file is too new to be parsed`() {
+        // given
+        val classLoader = classLoaderOfClassFileTooNew(
+            unreadableClass = "com.xemantic.kotlin.introspection.test.other.JavaAnnotationInheriting",
+            subclass = "com.xemantic.kotlin.introspection.test.InheritedJavaAnnotationInheriting"
+        )
+        val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
+
+        // when
+        val resolve = introspector.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaAnnotationInheriting.resolve")
+
+        // then
+        // the code of the bridge resolve(Object) is read from the class file all the same, calling resolve(String),
+        // which inherits the annotations of the resolve(T) it overrides, unlike the overload resolve(Integer),
+        // which the bridge might take as well, as far as its types tell
+        resolve sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaAnnotationInheriting.resolve [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaAnnotationInheriting
+            abstract fun resolve(arg0: Int?): String
+            abstract override fun resolve(arg0: String): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve types of Java class marked by NullMarked whose class file is too new to be parsed`() {
+        // given
+        val classLoader = classLoaderOfClassFileTooNew(
+            unreadableClass = "com.xemantic.kotlin.introspection.test.other.JavaNullMarkedBase",
+            subclass = "com.xemantic.kotlin.introspection.test.InheritedJavaNullMarked"
+        )
         val introspector = KotlinIntrospector(classLoader, scanEntireClasspath = false)
 
         // when
