@@ -129,6 +129,11 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 - With a type argument given explicitly, like `x.ext<_, Nothing, _>()`, kotlinc reports the violated bound of an inferred type parameter
   as an error also next to an empty intersection, unlike when all of them are inferred, see `CallInference`.
 
+- A plain `x.ext()` rejected by kotlinc does not tell that the extension cannot be called:
+  a type parameter which neither the receiver nor a bound refers to, like `U` of `fun <T : Comparable<T>?, U : T> Ct<T & Any>.ext()`,
+  given explicitly, changes what the ones its bound refers to are inferred as — `x.ext()` fails on a `Ct<String>` with `inferred type is 'String?'`, while `x.ext<_, String>()` compiles.
+  A probe judging an extension not callable must give such type parameters explicitly too, but not the ones the receiver refers to.
+
 - In a kotlinc probe `import java.util.function.*` does not bring `Function`: the default import of `kotlin.Function` wins over a star import,
   so `Function<String, String>` fails with `one type argument expected` — import `java.util.function.Function` explicitly.
 
@@ -147,6 +152,16 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   see `givenTypeVariableNames`.
 
 - Kotlin never passes named arguments to a Java method, even one compiled with `-parameters`, so a Java method taking parameters never shadows an extension — see `isShadowingJavaMethod`.
+
+- kotlinc 2.4.21 infers the `T` of an invariant `X<T>` from an `out Nothing` projection, also nested in an invariant position,
+  like `fun <T> Inv<MutableCollection<T>>.f()` on `Inv<MutableCollection<out Nothing>>`, but not from `out String`, nor does it accept `Inv<MutableCollection<String>>` there —
+  so keeping a projection of an invariant type parameter, like the `out` of `java.util.List<out V>`, can hide what `V` of `Nothing` makes callable, see `projectionsOf`.
+
+- A JDK interface named in Kotlin, like `java.util.Collection<String>`, is no supertype of another one named so, like `java.util.List<String>`:
+  the Java supertypes of `java.util.List` are mapped to the built-in types, like `MutableCollection<E!>`, so only those are reached.
+
+- In a sweep of classes of two type parameters, like `interface R<K, V : K> : Pair<K, V>`, the type arguments have to be combined per extension,
+  like `R<W<Nothing>, Nothing>` for `fun <T> Pair<W<T>, T>.f()` — a fixed pool of pairs judges such rows as rejected, which kotlinc accepts.
   A Java method overriding a Kotlin function takes them though, by the names of the Kotlin one, like `k.over(x = 1)`,
   which is not modelled: the extension next to it stays listed.
 
@@ -184,24 +199,6 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 - The Gradle test build rejects `abstract class X : J(), JDb` (`J implements GenericPut<Integer>`, `JDb` a default `put(Integer)`)
   with `must override 'put' because it inherits multiple interface methods`, while kotlinc compiles it against the compiled Java classes, so it is no fixture.
 
-- K2 judges the override of a Java method by the first path to a generic Kotlin supertype, not by the nearest one, see `typeArgumentGivers`.
-
-- A Java `put(int)` never implements a Kotlin `put(t: T)` given `Integer` by a Java class, whatever its nullability, see `javaGivenPositions` —
-  the listing does not follow it for a `@NullMarked` class yet.
-
-- A Java method overriding a Kotlin member, or merged with one, takes its parameter names for kotlinc, so `put(t = 1)` compiles,
-  while a named-argument probe of a member merged only of Java methods fails, see `namedByKotlinMembers` —
-  a merge dropping the only Kotlin row for an `arg0` one is a regression a sweep must probe by a named call.
-
-- The `inheritedCandidates` rules deciding which merged member is listed are not transitive: a rule overriding the rank order
-  let three members beat each other in a circle, and `resolve` returned `null` — keep the guard of `listed`, and sweep three-way joins.
-
-- A Java `put(Integer)` overriding a member given `@NotNull Integer` along one path and `@Nullable Integer` along another takes a platform type,
-  while the member itself, not overridden, takes the type of its first path, see `isJavaTypeArgument`, `givenPositions`.
-
-- The Gradle test build rejects `abstract class X : J(), JDb` (`J implements GenericPut<Integer>`, `JDb` a default `put(Integer)`)
-  with `must override 'put' because it inherits multiple interface methods`, while kotlinc compiles it against the compiled Java classes, so it is no fixture.
-
 - kotlinc merges the members the direct supertypes contribute around the first one, so their order tells the listing:
   `X : JImpl<String>(), Function<String, String>, K` (`K` an `apply(x: String?)`) has one `apply`, as the `String!` of `JImpl` is merged with both,
   while `X : Function<String, String>, K, JImpl<String>()` has two, as K2 enhances the JDK method to take `String` —
@@ -220,6 +217,21 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   an override of only one of them does,
   and an `override fun <T> toArray(g: IntFunction<Array<T>>)` compiles also on a class where `x.toArray(g)` does not resolve,
   as Kotlin hides the member of `java.util.Collection` only from calls.
+
+- `reflectedValue` swallows what a conversion of a reflected member throws, dropping the whole member silently,
+  like every Java method overriding a Kotlin member taking a mutable collection was, see `reflectedClassName` —
+  a member missing from a listing may be a conversion failing, not a rule of the listing.
+
+- kotlinc compiling many probe files in one run reports the errors of the backend, like `inherited platform declarations clash`,
+  only when no file of the run has an error of the frontend —
+  compile the files which passed again, without the failing ones, until none of them fails.
+
+- A call missing an argument names the parameter of the member kotlinc picks, like the `p0` of a Java method,
+  while a named call still takes the name of a Kotlin member merged with it, like `m13(a = arrayOf(""))` —
+  so the message does not tell which names a call may use, probe the named call itself.
+
+- An empty concrete subclass of a class joining a hidden member may fail with `inherited platform declarations clash`, not `does not implement`,
+  though the joining class itself compiles — such a probe tells nothing of the abstract members, probe them by calls.
 
 ## Anti-patterns to avoid
 
