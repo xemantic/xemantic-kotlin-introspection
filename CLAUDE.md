@@ -168,15 +168,17 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 
 - kotlinc merges the members the direct supertypes contribute around the first one, so their order tells the listing:
   `X : JImpl<String>(), Function<String, String>, K` (`K` an `apply(x: String?)`) has one `apply`, as the `String!` of `JImpl` is merged with both,
-  while `X : Function<String, String>, K, JImpl<String>()` has two, as K2 enhances the JDK method to take `String`, see `isNotNullUnlike` —
-  and a Kotlin class joining some of them below contributes only the one it picks, see `groupedByDirectSupertypes`.
-  A sweep of joins needs every order of the supertypes, and the joins named through a Kotlin class too.
+  while `X : Function<String, String>, K, JImpl<String>()` has two, as K2 enhances the JDK method to take `String`, see `isGivenUnlike` —
+  and a Kotlin class joining some of them below contributes every member it keeps apart, each by the one it picks, see `groupedByJoins`,
+  while a Java class joining them merges them all.
+  A sweep of joins needs every order of the supertypes, the joins named through Kotlin and Java classes next to other supertypes,
+  and empty Kotlin subclasses of the joins: each of these regressed on its own (#339).
 
-- kotlinc generates a `toArray(T[])` in a Kotlin subclass of a Java collection class overriding it by its erasure, `toArray(Object[])`,
-  a method of the class file which no metadata declares, and which overrides nothing for the compiler, see `overridingBelow`.
+- A class file of a Kotlin collection class may declare a `toArray` no metadata declares, see `overridingBelow`.
 
 - When probing kotlinc, `val r: Marker = x::apply` names the type of one overload, with no ambiguity, when the class has two,
-  the message of an empty concrete subclass tells one abstract member from several (`member:` / `members:`), but not which,
+  the message of an empty concrete subclass tells one abstract member from several (`member:` / `members:`), but not which —
+  an override of only one of them does,
   and an `override fun <T> toArray(g: IntFunction<Array<T>>)` compiles also on a class where `x.toArray(g)` does not resolve,
   as Kotlin hides the member of `java.util.Collection` only from calls.
 

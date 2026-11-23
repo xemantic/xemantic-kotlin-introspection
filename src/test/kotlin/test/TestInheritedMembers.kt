@@ -1393,6 +1393,12 @@ abstract class InheritedJavaRawToArrayLinkedHashSetSubclass :
 abstract class InheritedJavaRawToArrayArrayListSubclass :
     com.xemantic.kotlin.introspection.test.other.JavaRawToArrayArrayListSubclass<String>()
 
+// declaring toArray() itself, next to the toArray(T[]) the compiler generates, which is no member either
+abstract class JavaRawToArrayArrayListSubclassOverridingToArray :
+    com.xemantic.kotlin.introspection.test.other.JavaRawToArrayArrayListSubclass<String>() {
+    override fun toArray(): Array<Any?> = super.toArray()
+}
+
 // overriding the toArray(IntFunction) of java.util.Collection, which Kotlin hides of it
 abstract class InheritedJavaGeneratedToArrayLinkedHashSetSubclass :
     com.xemantic.kotlin.introspection.test.other.JavaGeneratedToArrayLinkedHashSetSubclass<String>()
@@ -1535,6 +1541,61 @@ interface NullableStringTester {
 // as it overrides it on the JVM, though the test of Predicate<String> is contributed before it
 abstract class InheritedJavaStringTesterPredicateNullableMemberJoin :
     com.xemantic.kotlin.introspection.test.other.JavaStringTester(), java.util.function.Predicate<String>, NullableStringTester
+
+// A Kotlin class below a join inherits the members it keeps apart, each of them
+abstract class GenericBoxedJavaPrimitiveGenericPutJoinSubclass : GenericBoxedJavaPrimitiveGenericPutJoin()
+
+interface CharSequenceApplier {
+    fun apply(x: String): CharSequence
+}
+
+// the apply of the Java class, returning String!, is merged with the apply(x: String) declared first, the apply(x: String?) stays apart
+abstract class CharSequenceApplierJavaFunctionImplementationNullableMemberJoin :
+    CharSequenceApplier, com.xemantic.kotlin.introspection.test.other.JavaSameTypeFunctionImplementation<String>(), NullableStringApplier
+
+abstract class CharSequenceApplierJavaFunctionImplementationNullableMemberJoinSubclass :
+    CharSequenceApplierJavaFunctionImplementationNullableMemberJoin()
+
+// the subclasses of the joins of the apply of a Java class, Function<String, String>, and a Kotlin member, inherit the member picked
+abstract class InheritedJavaFunctionImplementationDiamondWithNullableMemberSubclass :
+    InheritedJavaFunctionImplementationDiamondWithNullableMember()
+
+abstract class InheritedJavaFunctionImplementationDiamondWithNullableGenericMemberSubclass :
+    InheritedJavaFunctionImplementationDiamondWithNullableGenericMember()
+
+abstract class InheritedJavaFunctionImplementationApplierJoinWithNullableMemberSubclass :
+    InheritedJavaFunctionImplementationApplierJoinWithNullableMember()
+
+// A Kotlin interface of two members, the apply of Function<String?, String?>, and the apply(x: String): CharSequence
+interface NullableFunctionCharSequenceApplierJoin : java.util.function.Function<String?, String?>, CharSequenceApplier
+
+// the apply(x: String?) declared before it is merged with the former only
+abstract class InheritedNullableStringApplierNullableFunctionCharSequenceApplierJoin :
+    NullableStringApplier, NullableFunctionCharSequenceApplierJoin
+
+// the Java interface joining the apply(x: String?) with the apply of Function<String, String> contributes one member,
+// merged with the apply of Function<String, String> declared before it
+abstract class InheritedStringFunctionJavaNullableStringApplierFunctionJoinAgain :
+    StringFunction, com.xemantic.kotlin.introspection.test.other.JavaNullableStringApplierFunctionJoinAgain
+
+interface NullableStringAcceptor {
+    fun accept(s: String?)
+}
+
+interface DefaultStringAcceptor {
+    fun accept(s: String) {}
+}
+
+// the accept(s: String) of a body implements the accept of Consumer<String>, merged with it, the accept(s: String?) stays abstract
+abstract class InheritedNullableStringAcceptorConsumerDefaultStringAcceptorJoin :
+    NullableStringAcceptor, java.util.function.Consumer<String>, DefaultStringAcceptor
+
+abstract class InheritedConsumerDefaultStringAcceptorJoin : java.util.function.Consumer<String>, DefaultStringAcceptor
+
+// the apply(String) of the Java class, declared first, is merged with both, of which K2 picks the one of Function<String, String>,
+// named by the Kotlin member
+abstract class InheritedJavaStringApplierFunctionNullableMemberJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaStringApplier(), java.util.function.Function<String, String>, NullableStringApplier
 
 abstract class InheritedJavaConsumerFirstImplementationDiamond :
     java.util.function.Consumer<String>, com.xemantic.kotlin.introspection.test.other.JavaTypeConsumerImplementation<String>()
