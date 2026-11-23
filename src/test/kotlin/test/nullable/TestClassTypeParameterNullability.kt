@@ -172,6 +172,10 @@ fun <T : List<T>?> PlatformSink<T & Any>.sinkOfNotNullSelfList() {}
 
 fun <T> PlatformSink<T & Any>.sinkOfNotNull() {}
 
+// unless a bound of another type parameter refers to T, like U : T, which, given explicitly, as String, makes T a String
+
+fun <T : Comparable<T>?, U : T> PlatformSink<T & Any>.sinkOfNotNullComparableAndBounded() {}
+
 // V of V : W, of W which no supertype refers to, takes any type, like String?, as W does
 
 interface TypedFreelyBoundedMixed<W, V : W> : TypedNotNullMixed<V>
@@ -221,3 +225,41 @@ class TypedOuter<O : Number> {
 }
 
 fun TypedSink<JavaPlatformBoxes.PassingString>.sinkOfStringBox() {}
+
+// nor is X : K, of K of String, an Int, next to V of the unconstrained W
+
+interface TypedFreelyBoundedMixedAndBoundedOther<W, V : W, K, X : K> : TypedNotNullMixed<V>, TypedSelfBox<K>, TypedOther<X>
+
+fun <P> P.mixedOfNullableStringAndStringBoxAndIntOther() where P : TypedMixed<String, String?>, P : TypedSelfBox<String>, P : TypedOther<Int> {}
+
+fun <P> P.mixedOfNullableStringAndStringBoxAndStringOther() where P : TypedMixed<String, String?>, P : TypedSelfBox<String>, P : TypedOther<String> {}
+
+// nor the type parameter of an outer class, like O of O : Number, a String, next to V of the unconstrained W
+
+class TypedBoundedOuter<O : Number> {
+
+    abstract inner class Inner<W, V : W> : TypedNotNullMixed<V>, TypedOther<O>
+
+}
+
+fun <P> P.mixedOfNullableStringAndStringOther() where P : TypedMixed<String, String?>, P : TypedOther<String> {}
+
+// a bound which is another type parameter is checked against the types both take, like X : V, of V of String, no Int,
+// also through other type parameters, like C : B of B : A, which V of the unconstrained A is a subtype of as well,
+// like the bound of a type parameter of an outer class
+
+interface TypedBoxAndBoundedOther<V, X : V> : TypedSelfBox<V>, TypedOther<X>
+
+fun <P> P.stringBoxAndIntOther() where P : TypedSelfBox<String>, P : TypedOther<Int> {}
+
+fun <P> P.stringBoxAndStringOther() where P : TypedSelfBox<String>, P : TypedOther<String> {}
+
+interface TypedChainBoundedBoxAndOther<A, B : A, C : B> : TypedSelfBox<A>, TypedOther<C>
+
+interface TypedChainBoundedMixed<A, B : A, C : B> : TypedNotNullMixed<C>
+
+class TypedBoundedOuterOfBox<O : Number> {
+
+    abstract inner class Inner<V> : TypedSelfBox<V>, TypedOther<O>
+
+}

@@ -55,4 +55,6 @@ public interface JavaPlatformBoxes {
     interface NullableElementList<V> extends java.util.List<@org.jetbrains.annotations.Nullable V> {}
 
     interface PassingList<V> extends java.util.List<V> {}
+
+    interface ListOfNullableElementLists<V> extends java.util.List<NullableElementList<V>> {}
 }

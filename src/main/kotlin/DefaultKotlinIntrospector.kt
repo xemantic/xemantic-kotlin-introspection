@@ -6210,6 +6210,12 @@ internal class DefaultKotlinIntrospector(
         val witnessed = HashMap<String, List<ClassSupertypes>>()
 
         /**
+         * Whether the classes of the metadata names reach a Java class annotating a type argument of its supertype,
+         * see [annotatesJavaSupertypeArguments], told once each, as the same classes are asked of for each extension.
+         */
+        val annotatingJavaSupertypeArguments = HashMap<String, Boolean>()
+
+        /**
          * These supertypes, sharing what is walked, but with the supertypes of the function type classes not told,
          * matched for an extension of type parameters bounded by each other whose inference is not modelled,
          * see [isCallableOn], as kotlinc accepts some such shapes, inferring empty intersections, like `((String) -> Unit) & String`.
@@ -6489,9 +6495,9 @@ internal class DefaultKotlinIntrospector(
      * like `Comparable<K<V>>`, whose supertypes would be the ones of the witness, also of other type arguments, like of `K<Int>`,
      * or when a supertype, or a type of the extension, refers to a function type, like `List<(V) -> Unit>`,
      * matched leniently, see [ClassSupertypes.lenientToFunctionTypes], where kotlinc rejects the call,
-     * or when the class, or a class a type argument of a supertype refers to, has a Java supertype annotating
-     * a type argument of its own supertype, like `List<@Nullable V>`, see [annotatesJavaSupertypeArguments],
-     * which the supertypes told by the generic signatures do not tell.
+     * or when the class, or a class a supertype, or a witness, refers to, reaches a Java class annotating
+     * a type argument of its own supertype, like `List<@Nullable V>`, also through the type arguments of its supertypes,
+     * see [annotatesJavaSupertypeArguments], which the supertypes told by the generic signatures do not tell.
      */
     private fun ClassSupertypes.witnessed(extensionTypes: List<KmType>): List<ClassSupertypes> {
         val typeParameters = kmClass.typeParameters
@@ -6506,14 +6512,6 @@ internal class DefaultKotlinIntrospector(
                 type.refersOnlyTo { it in ids } && !type.refersToClass() && !type.refersToFunctionType() && !type.refersToSuspendFunctionType()
             }
         if (!isTold) return emptyList()
-        // the classes the type arguments of the supertypes refer to, other than the built-in types
-        fun KmType.argumentClassNames(isArgument: Boolean = false): List<String> =
-            listOfNotNull((classifier as? KmClassifier.Class)?.name?.takeIf { isArgument && it !in builtinClasses }) +
-                arguments.flatMap { it.type?.argumentClassNames(isArgument = true).orEmpty() }
-        val isAnnotatedByJava = (reached.flatMapTo(LinkedHashSet()) { it.argumentClassNames() } + kmClass.name).any { name ->
-            findClassByMetadataName(name)?.clazz?.let { annotatesJavaSupertypeArguments(it) } == true
-        }
-        if (isAnnotatedByJava) return emptyList()
         // the types of classes referring to no type parameter, each before its type arguments, but no projection
         fun KmType.closedTypes(): List<KmType> =
             listOfNotNull(takeIf { it.classifier is KmClassifier.Class && it.outerType == null && it.refersOnlyTo { false } }) +
@@ -6521,6 +6519,16 @@ internal class DefaultKotlinIntrospector(
         val candidates = (WITNESS_TYPES + (bounds + extensionTypes).flatMap { it.closedTypes() })
             .distinctBy { it.structureKey() }
             .take(MAX_WITNESS_TYPES)
+        // the classes the supertypes, and the witnesses, refer to, other than the built-in types
+        fun KmType.classNames(): List<String> =
+            listOfNotNull((classifier as? KmClassifier.Class)?.name?.takeIf { it !in builtinClasses }) +
+                arguments.flatMap { it.type?.classNames().orEmpty() } + outerType?.classNames().orEmpty()
+        val isAnnotatedByJava = ((reached + candidates).flatMapTo(LinkedHashSet()) { it.classNames() } + kmClass.name).any { name ->
+            annotatingJavaSupertypeArguments.getOrPut(name) {
+                findClassByMetadataName(name)?.clazz?.let { annotatesJavaSupertypeArguments(it) } == true
+            }
+        }
+        if (isAnnotatedByJava) return emptyList()
         return witnessed.getOrPut(candidates.joinToString(" ") { it.structureKey() }) {
             // the type parameters passed through Java, as platform types, like V! of a Java HashMap<V, V>,
             // or which may be, within a type argument of another class than a built-in type, like V of List<JavaList<V>>
@@ -6844,9 +6852,16 @@ internal class DefaultKotlinIntrospector(
 
     /**
      * A position a type parameter of a class, of the given [id], is matched in, see `ReceiverMatcher.isClassTypeParameterTyped`,
-     * against the [type] of the extension, in a position of the [variance], used there as the [use] tells.
+     * against the [type] of the extension, in a position of the [variance], used there as the [use] tells,
+     * unless the type it takes there is not [isTold], like against a type parameter of the extension.
      */
-    private class ClassTypeParameterPosition(val id: Int, val type: KmType, val variance: KmVariance, val use: ClassTypeParameterUse)
+    private class ClassTypeParameterPosition(
+        val id: Int,
+        val type: KmType,
+        val variance: KmVariance,
+        val use: ClassTypeParameterUse,
+        val isTold: Boolean = true
+    )
 
     /**
      * How a type parameter of a class is used in a position, like `V`, the [NULLABLE] `V?`, the [NOT_NULLABLE] `V & Any`,
@@ -6863,6 +6878,18 @@ internal class DefaultKotlinIntrospector(
         val candidates: List<KmType>? = null,
         val upper: KmType? = null,
         val lower: KmType? = null
+    )
+
+    /**
+     * What a type parameter of a class takes by all the [positions] it is matched in, see `ReceiverMatcher.isClassTypeParameterTyped`:
+     * one of the [candidates] types, of its invariant positions, if any, a subtype of the [upper] types,
+     * and a supertype of the [lower] ones.
+     */
+    private class ClassTypeParameterTyping(
+        val positions: List<ClassTypeParameterPosition>,
+        val candidates: List<KmType>?,
+        val upper: List<KmType>,
+        val lower: List<KmType>
     )
 
     /**
@@ -7058,81 +7085,144 @@ internal class DefaultKotlinIntrospector(
          * and the ones referring only to itself, like `Comparable<V>`, when told by an invariant position,
          * and not nullable when a bound is not, like `Comparable<V>`, also in a contravariant position, like no `String?`,
          * where each type it is a supertype of satisfies a bound comparing it to itself, like no `String?` of `Comparable<V>?`.
-         * A bound referring to another type parameter of the class, or to itself only in other positions, like `List<V>`,
-         * is not checked in contravariant, and covariant, positions alone, as the type it takes is not told then.
+         * A bound which is another type parameter, also of an outer class, like `W` of `V : W`, or `W?`, is satisfied by the type
+         * it takes when that is a subtype of a type the other one can take, see [isSubtypeOfClassTypeParameter].
+         * Any other bound referring to a type parameter of the class, or to itself only in other positions, like `List<V>`,
+         * also of a type parameter bounding it, like of `W`, is not checked in contravariant, and covariant, positions alone,
+         * as the type it takes is not told then.
          */
-        private fun isClassTypeParameterTyped(): Boolean = classTypeParameterTypes.groupBy { it.id }.all { (id, positions) ->
-            val bounds = classTypeParameterBounds(id)
-            val constraints = positions.map { classTypeParameterConstraintOf(it) ?: return@all false }
-            // the types it can take, of the invariant positions, if any
-            val candidates = constraints.mapNotNull { it.candidates }.reduceOrNull { types, others ->
-                types.filter { type -> others.any { typeMatcher.matches(it, type, KmVariance.INVARIANT, isStrict = false) } }
+        private fun isClassTypeParameterTyped(): Boolean {
+            val told = classTypeParameterTypes.filter { it.isTold }
+            if (told.isEmpty()) return true
+            // whether each type parameter of the class is matched only against types referring to no type parameter,
+            // so that the types they take are all told by these positions, and their bounds
+            val isAllTold = told.size == classTypeParameterTypes.size
+            val typings = told.groupBy { it.id }.mapValues { (_, positions) ->
+                val constraints = positions.map { classTypeParameterConstraintOf(it) ?: return false }
+                ClassTypeParameterTyping(
+                    positions,
+                    // the types it can take, of the invariant positions, if any
+                    candidates = constraints.mapNotNull { it.candidates }.reduceOrNull { types, others ->
+                        types.filter { type -> others.any { typeMatcher.matches(it, type, KmVariance.INVARIANT, isStrict = false) } }
+                    },
+                    upper = constraints.mapNotNull { it.upper },
+                    lower = constraints.mapNotNull { it.lower }
+                )
             }
-            // also the bounds of the type parameter, like CharSequence of V : CharSequence, referring to no type parameter
-            val upper = constraints.mapNotNull { it.upper } + bounds.filter { bound -> bound.refersOnlyTo { false } }
-            val lower = constraints.mapNotNull { it.lower }
+            val scope = classTypeParametersInScope
             // not nullable when a bound is not, also through other type parameters, like V : W of W : Any
-            val isNotNullable = id in notNullableTypeParameters(supertypes.kmClass.typeParameters)
-            // whether the subtype is a subtype of the supertype, as far as told
-            fun isSubtype(subtype: KmType, supertype: KmType) = typeMatcher.matches(supertype, subtype, KmVariance.OUT, isStrict = false)
-            // a bound comparing it to itself, like Comparable<V>, satisfied by a subtype of a type satisfying it,
-            // so by each type it is a supertype of, like no String? of Comparable<V>?
-            val comparableBounds = bounds.filter { bound ->
-                val argument = bound.arguments.singleOrNull()?.type
-                (bound.classifier as? KmClassifier.Class)?.name == "kotlin/Comparable" && argument != null &&
-                    (argument.classifier as? KmClassifier.TypeParameter)?.id == id && !argument.isNullable && !argument.isDefinitelyNonNull
-            }
-            // the bounds referring to type parameters not checked against the types of contravariant positions,
-            // like List<V>?, or Cmp<V>? of another class than Comparable, or W of V : W
-            val hasUncheckedBounds = bounds.any { bound -> !bound.refersOnlyTo { false } && bound !in comparableBounds }
-            when {
-                isNotNullable && lower.any { it.isNullable } -> false
-                // a nullable type of a contravariant position, like String? of V of Mx<V & Any, V>, against a not nullable type
-                // of a covariant one, like String, which V & Any is a subtype of, not checked against such bounds, is no type,
-                // as before #323
-                candidates == null && hasUncheckedBounds && lower.any { it.isNullable } && positions.any { position ->
-                    position.variance == KmVariance.OUT && !position.type.isNullable &&
-                        (position.use == ClassTypeParameterUse.NOT_NULLABLE || position.use == ClassTypeParameterUse.NOT_NULLABLE_PLATFORM)
-                } -> false
-                candidates == null -> lower.all { subtype ->
-                    upper.all { isSubtype(subtype, it) } &&
-                        comparableBounds.all { bound -> isSubtype(subtype, bound.substituted(mapOf(id to subtype))) }
+            val notNullable = notNullableTypeParameters(scope.values.toList())
+            return typings.all { (id, typing) ->
+                val bounds = scope[id]?.upperBounds.orEmpty()
+                val candidates = typing.candidates
+                // also the bounds of the type parameter, like CharSequence of V : CharSequence, referring to no type parameter
+                val upper = typing.upper + bounds.filter { bound -> bound.refersOnlyTo { false } }
+                val lower = typing.lower
+                val isNotNullable = id in notNullable
+                // a bound comparing it to itself, like Comparable<V>, satisfied by a subtype of a type satisfying it,
+                // so by each type it is a supertype of, like no String? of Comparable<V>?
+                val comparableBounds = bounds.filter { bound ->
+                    val argument = bound.arguments.singleOrNull()?.type
+                    (bound.classifier as? KmClassifier.Class)?.name == "kotlin/Comparable" && argument != null &&
+                        (argument.classifier as? KmClassifier.TypeParameter)?.id == id && !argument.isNullable && !argument.isDefinitelyNonNull
                 }
-                else -> candidates.any { type ->
-                    (!isNotNullable || !type.isNullable) && upper.all { isSubtype(type, it) } && lower.all { isSubtype(it, type) } &&
-                        // and the bounds referring only to itself, like Comparable<V> of V : Comparable<V>, of the type it takes
-                        bounds.filter { bound -> !bound.refersOnlyTo { false } && bound.refersOnlyTo { it == id } }
-                            .all { bound -> isSubtype(type, bound.substituted(mapOf(id to type))) }
+                // the bounds which are other type parameters, like W of V : W
+                fun satisfiesBounding(type: KmType) = bounds.all { bound ->
+                    val boundId = bound.classTypeParameterIdInScope()
+                    boundId == null || isSubtypeOfClassTypeParameter(type, boundId, bound.isNullable, typings, hashSetOf(id))
+                }
+                when {
+                    isNotNullable && lower.any { it.isNullable } -> false
+                    // a nullable type of a contravariant position, like String? of V of Mx<V & Any, V>, against a not nullable type
+                    // of a covariant one, like String, which V & Any is a subtype of, not checked against such bounds, is no type,
+                    // as before #323
+                    candidates == null && hasUncheckedClassTypeParameterBounds(id, comparableBounds, isAllTold) && lower.any { it.isNullable } &&
+                        typing.positions.any { position ->
+                            position.variance == KmVariance.OUT && !position.type.isNullable &&
+                                (position.use == ClassTypeParameterUse.NOT_NULLABLE || position.use == ClassTypeParameterUse.NOT_NULLABLE_PLATFORM)
+                        } -> false
+                    candidates == null -> lower.all { subtype ->
+                        upper.all { isSubtypeAsTold(subtype, it) } &&
+                            comparableBounds.all { bound -> isSubtypeAsTold(subtype, bound.substituted(mapOf(id to subtype))) } &&
+                            satisfiesBounding(subtype)
+                    }
+                    else -> candidates.any { type ->
+                        (!isNotNullable || !type.isNullable) && upper.all { isSubtypeAsTold(type, it) } && lower.all { isSubtypeAsTold(it, type) } &&
+                            // and the bounds referring only to itself, like Comparable<V> of V : Comparable<V>, of the type it takes
+                            bounds.filter { bound -> !bound.refersOnlyTo { false } && bound.refersOnlyTo { it == id } }
+                                .all { bound -> isSubtypeAsTold(type, bound.substituted(mapOf(id to type))) } &&
+                            satisfiesBounding(type)
+                    }
                 }
             }
         }
 
-        /**
-         * The bounds of the type parameter of the class of the given [id], see [isClassTypeParameterTyped],
-         * a bound which is another type parameter of the class no supertype refers to, nor any other bound,
-         * which would pin it, like `X : MutableList<W>`, like `W` of `V : W` of `interface R<W, V : W> : Mx<V & Any, V>`,
-         * replaced by its own bounds, as it takes any type they allow, which `V` is a subtype of then,
-         * nullable ones for a nullable bound, like `W?`, unless a bound of another type parameter refers to `V` itself,
-         * like `X : V`, which is not checked against the type `V` takes.
-         */
-        private fun classTypeParameterBounds(id: Int, visited: MutableSet<Int> = HashSet()): List<KmType> {
-            if (!visited.add(id)) return emptyList()
-            val reached by lazy(LazyThreadSafetyMode.NONE) { supertypes.types.values.flatten() }
-            val isBounding = supertypes.kmClass.typeParameters.any { typeParameter ->
-                typeParameter.id != id && typeParameter.upperBounds.any { other -> !other.refersOnlyTo { it != id } }
+        // whether the subtype is a subtype of the supertype, as far as told, see isClassTypeParameterTyped
+        private fun isSubtypeAsTold(subtype: KmType, supertype: KmType) = typeMatcher.matches(supertype, subtype, KmVariance.OUT, isStrict = false)
+
+        // the type parameters of the class, and of its outer classes, as far as they can be read, when it is an inner class,
+        // like O of class Outer<O : Number> { inner class Inner<V> }, whose supertypes can refer to them, by their ids
+        private val classTypeParametersInScope: Map<Int, KmTypeParameter> by lazy(LazyThreadSafetyMode.NONE) {
+            val scope = supertypes.kmClass.typeParameters.associateByTo(HashMap()) { it.id }
+            var current = supertypes.kmClass
+            while (current.isInner) {
+                current = enclosingClassNames(current.name).lastOrNull()?.let { loadKmClass(it) } ?: break
+                current.typeParameters.forEach { scope.putIfAbsent(it.id, it) }
             }
-            return supertypes.kmClass.typeParameters.find { it.id == id }?.upperBounds.orEmpty().flatMap { bound ->
-                val boundId = (bound.classifier as? KmClassifier.TypeParameter)?.id
-                val isFree = boundId != null && !bound.isDefinitelyNonNull && !isBounding &&
-                    supertypes.kmClass.typeParameters.any { it.id == boundId } && reached.all { type -> type.refersOnlyTo { it != boundId } } &&
-                    supertypes.kmClass.typeParameters.all { typeParameter ->
-                        typeParameter.upperBounds.all { other -> other === bound || other.refersOnlyTo { it != boundId } }
+            scope
+        }
+
+        // the id of this bound of a type parameter of the class which is another type parameter in scope, like W of V : W, or of V : W?
+        private fun KmType.classTypeParameterIdInScope(): Int? =
+            (classifier as? KmClassifier.TypeParameter)?.id?.takeIf { it in classTypeParametersInScope }
+
+        /**
+         * Whether the [type] a type parameter of the class takes, see [isClassTypeParameterTyped], can be a subtype
+         * of the type parameter of the given [id] bounding it, like `Int` of `X` of `X : K`, the nullable one when [isNullable],
+         * like `K?`: a subtype of a type `K` takes in its invariant positions, like not of `String` of `Box<K>` for `Box<String>`,
+         * or else of each type it is a subtype of, of its covariant positions, of its bounds referring to no type parameter,
+         * like `Number` of `O : Number` of an outer class, and of the type parameters bounding it in turn.
+         * A bound referring to a type parameter otherwise, like `List<K>`, is not checked.
+         */
+        private fun isSubtypeOfClassTypeParameter(
+            type: KmType,
+            id: Int,
+            isNullable: Boolean,
+            typings: Map<Int, ClassTypeParameterTyping>,
+            visited: MutableSet<Int>
+        ): Boolean {
+            if (!visited.add(id)) return true
+            fun KmType.bounding() = if (isNullable) nullable() else this
+            val typing = typings[id]
+            typing?.candidates?.let { candidates -> return candidates.any { isSubtypeAsTold(type, it.bounding()) } }
+            return typing?.upper.orEmpty().all { isSubtypeAsTold(type, it.bounding()) } &&
+                classTypeParametersInScope[id]?.upperBounds.orEmpty().all { bound ->
+                    val boundId = bound.classTypeParameterIdInScope()
+                    when {
+                        boundId != null -> isSubtypeOfClassTypeParameter(type, boundId, isNullable || bound.isNullable, typings, visited)
+                        bound.refersOnlyTo { false } -> isSubtypeAsTold(type, bound.bounding())
+                        else -> true
                     }
-                when {
-                    boundId == null || !isFree -> listOf(bound)
-                    bound.isNullable -> classTypeParameterBounds(boundId, visited).map { it.nullable() }
-                    else -> classTypeParameterBounds(boundId, visited)
                 }
+        }
+
+        /**
+         * Whether a bound of the type parameter of the class of the given [id] is not checked against the types it is a supertype of,
+         * see [isClassTypeParameterTyped]: one referring to type parameters, like `List<V>?`, or `Cmp<V>?` of another class
+         * than `Comparable`, see the [comparableBounds], but for another type parameter itself, like `W` of `V : W`,
+         * see [isSubtypeOfClassTypeParameter], which is checked only when all there is to tell is told:
+         * no type parameter in scope has a bound referring to type parameters otherwise, like `X : MutableList<W>`,
+         * or `K : Comparable<K>`, which might pin the types they take in ways not modelled, and the types
+         * all the type parameters of the class take are told, [isAllTold], by types referring to no type parameter.
+         */
+        private fun hasUncheckedClassTypeParameterBounds(id: Int, comparableBounds: List<KmType>, isAllTold: Boolean): Boolean {
+            val scope = classTypeParametersInScope
+            val bounds = scope[id]?.upperBounds.orEmpty()
+            fun KmType.isUnchecked() = classTypeParameterIdInScope() == null && !refersOnlyTo { false } && this !in comparableBounds
+            return when {
+                bounds.any { it.isUnchecked() } -> true
+                bounds.none { it.classTypeParameterIdInScope() != null } -> false
+                else -> !isAllTold || scope.values.any { typeParameter -> typeParameter.upperBounds.any { it.isUnchecked() } }
             }
         }
 
@@ -7790,7 +7880,14 @@ internal class DefaultKotlinIntrospector(
                     // like V : Comparable<V> no List<T>, in an invariant, or a contravariant, position
                     (variance == KmVariance.OUT || isClassOfClassTypeParameter(expected, actual)) &&
                     matchesUntold(isStrict = false).also {
-                        classTypeParameterPositionOf(expected, actual, variance)?.let { classTypeParameterTypes += it }
+                        val position = classTypeParameterPositionOf(expected, actual, variance)
+                        if (position != null) classTypeParameterTypes += position
+                        // against a type referring to a type parameter, like T, or List<T>, the type it takes is not told
+                        if (position == null || !expected.refersToNoTypeParameter()) {
+                            (actual.classifier as? KmClassifier.TypeParameter)?.let {
+                                classTypeParameterTypes += ClassTypeParameterPosition(it.id, expected, variance, ClassTypeParameterUse.PLAIN, isTold = false)
+                            }
+                        }
                     }
             return when (val classifier = expected.classifier) {
                 is KmClassifier.TypeParameter -> when (classifier.id) {
@@ -7802,14 +7899,26 @@ internal class DefaultKotlinIntrospector(
                         }
                     in typeParameters -> {
                         if (expected.isNullable || expected.isDefinitelyNonNull) isMatchedBeyondInference = true
+                        // inferred from a type referring to a type parameter of the class, like List<V>,
+                        // the type that one takes is not told, see isClassTypeParameterTyped
+                        if (!actual.refersOnlyTo { false }) {
+                            classTypeParameterTypes +=
+                                ClassTypeParameterPosition(UNTOLD_TYPE_PARAMETER_ID, expected, variance, ClassTypeParameterUse.PLAIN, isTold = false)
+                        }
                         when {
                             !expected.isDefinitelyNonNull ->
                                 inferredFrom(expected, actual, variance)?.let { infer(classifier.id, it, variance, isStrict) } == true
                             // a nullable type is no definitely not nullable one, like String? for T & Any, only a supertype of it
                             actual.isNullable -> variance == KmVariance.IN && infer(classifier.id, actual, variance, isStrict)
                             // a platform type, like String!, in a contravariant position, is a supertype of T & Any
-                            // of T of String?, like String, which kotlinc infers T as, checking its bounds, like Comparable<T>?
-                            actual.flexibleTypeUpperBound != null && variance == KmVariance.IN -> {
+                            // of T of String?, like String, which kotlinc infers T as, checking its bounds, like Comparable<T>?,
+                            // unless a bound of another type parameter, but the receiver, refers to it, like U : T, or U : List<T>,
+                            // which, given explicitly, like String, makes T a String
+                            actual.flexibleTypeUpperBound != null && variance == KmVariance.IN &&
+                                typeParameters.values.none { other ->
+                                    other.id != classifier.id && other.id != receiverTypeParameterId &&
+                                        other.upperBounds.any { bound -> !bound.refersOnlyTo { it != classifier.id } }
+                                } -> {
                                 val nullable = actual.copy().also { type ->
                                     type.isNullable = true
                                     type.flexibleTypeUpperBound = null
@@ -12992,6 +13101,10 @@ private const val MAX_WITNESS_TYPES = 8
 
 // the most combinations of the types given for the type parameters of a class, see WITNESS_TYPES
 private const val MAX_WITNESSES = 64
+
+// the id of a position of a type parameter of a class which is not told, within a type a type parameter of the extension
+// is inferred from, like List<V>, see ClassTypeParameterPosition.isTold
+private const val UNTOLD_TYPE_PARAMETER_ID = -1
 
 /**
  * The names of the members of `kotlin.Any` whose overrides the compiler reports no hidden deprecation of,

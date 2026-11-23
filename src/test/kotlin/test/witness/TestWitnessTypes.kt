@@ -87,3 +87,22 @@ interface WitnessNullableElementList<V> : JavaPlatformBoxes.NullableElementList<
 // each type parameter is given its own witness, also of more of them than can all be combined
 
 interface WitnessThreeKeyValueMap<A, K, V> : Map<K, V>
+
+// nor through a Java supertype annotating a type argument which only a type argument of a supertype of another class reaches,
+// like the List<V?> of the NullableElementList<V> of WitnessProducerOfNullableElementList<V>, also through a Java class
+
+interface WitnessProducer<out T>
+
+interface WitnessProducerOfNullableElementList<V> : WitnessProducer<JavaPlatformBoxes.NullableElementList<V>>
+
+interface WitnessListOfProducersOfNullableElementLists<V> : List<WitnessProducerOfNullableElementList<V>>
+
+fun <T : Comparable<T>> List<WitnessProducer<Iterable<T>>>.witnessComparableElementsOfProducedIterables() {}
+
+interface WitnessListOfListsOfNullableElementLists<V> : List<JavaPlatformBoxes.ListOfNullableElementLists<V>>
+
+fun <T : Comparable<T>> List<Iterable<Iterable<T>>>.witnessComparableElementsOfIterablesOfIterables() {}
+
+// while such a Java class only a bound refers to, which no supertype reaches, leaves the witnesses, like the V of Nothing
+
+interface WitnessNullableElementListKeyMap<V : JavaPlatformBoxes.NullableElementList<V>> : Map<V, V>

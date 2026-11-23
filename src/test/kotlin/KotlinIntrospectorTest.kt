@@ -10673,6 +10673,40 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve interface of list of producers of Java lists of nullable type parameter without extension on recursively bounded type parameter`() {
+        // the Iterable<V?> of List<@Nullable V>, reached through the type argument of the supertype of another class,
+        // is no Iterable<T> of T : Comparable<T>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.witness.WitnessListOfProducersOfNullableElementLists",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".witnessComparableElementsOfProducedIterables()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of list of Java lists of Java lists of nullable type parameter without extension on recursively bounded type parameter`() {
+        // nor is the one reached through the type argument of the supertype of a Java class
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.witness.WitnessListOfListsOfNullableElementLists",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".witnessComparableElementsOfIterablesOfIterables()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of map of type parameter bounded by Java list of nullable type parameter with extension on recursively bounded type parameter`() {
+        // V of Nothing makes a Map<V, V> a Map<T, T> of T : Comparable<T>, whatever the bound of V refers to
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.witness.WitnessNullableElementListKeyMap",
+            pageSize = 10000
+        ) should {
+            have(lines().any { ".witnessSameComparables()" in it })
+        }
+    }
+
+    @Test
     fun `should resolve interface of list of Java lists of type parameter bounded by final class without extension on recursively bounded type parameter`() {
         // WitnessFinal is no Comparable, and kotlinc does not take the platform type Nothing! of PassingList<Nothing> for T
         resolver.resolve(
@@ -12872,12 +12906,13 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve interface of contravariant platform type without extension on definitely not nullable type parameter of nullable comparable bound`() {
-        // and so of the platform type String! given through Java
+        // and so of the platform type String! given through Java, unless U : T, given explicitly, as String, makes T a String
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.nullable.TypedJavaStringSink",
             pageSize = 10000
         ) should {
             have(lines().none { ".sinkOfNotNullComparable()" in it })
+            have(lines().any { ".sinkOfNotNullComparableAndBounded()" in it })
             have(lines().any { ".sinkOfNotNullSelfList()" in it })
             have(lines().any { ".sinkOfNotNull()" in it })
         }
@@ -12984,6 +13019,77 @@ class KotlinIntrospectorTest {
             pageSize = 10000
         ) should {
             have(lines().none { ".sinkOfStringBox()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of type parameter bounded by unconstrained one next to bounded type parameters without extension on other types`() {
+        // X : K is no Int for K of String, while V is String?, as W is
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.nullable.TypedFreelyBoundedMixedAndBoundedOther",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".mixedOfNullableStringAndStringBoxAndIntOther()" in it })
+            have(lines().any { ".mixedOfNullableStringAndStringBoxAndStringOther()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve inner class of type parameter bounded by unconstrained one without extension on other type of outer type parameter`() {
+        // O : Number is no String, but an Int
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.nullable.TypedBoundedOuter.Inner",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".mixedOfNullableStringAndStringOther()" in it })
+            have(lines().any { ".mixedOfNullableStringAndIntOther()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of type parameter bounded by other one only with extension on subtype of type of other one`() {
+        // X : V is no Int for V of String
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.nullable.TypedBoxAndBoundedOther",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".stringBoxAndIntOther()" in it })
+            have(lines().any { ".stringBoxAndStringOther()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of type parameter bounded through other one only with extension on subtype of type of bounding one`() {
+        // C : B, of B : A, is no Int for A of String
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.nullable.TypedChainBoundedBoxAndOther",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".stringBoxAndIntOther()" in it })
+            have(lines().any { ".stringBoxAndStringOther()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of type parameter bounded through unconstrained ones with extension on its nullable type in contravariant position`() {
+        // C is String?, as B, and A, are
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.nullable.TypedChainBoundedMixed",
+            pageSize = 10000
+        ) should {
+            have(lines().any { ".mixedOfNullableString()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve inner class only with extension on type satisfying bound of outer type parameter`() {
+        // O : Number is no String, but an Int
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.nullable.TypedBoundedOuterOfBox.Inner",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".stringBoxAndStringOther()" in it })
+            have(lines().any { ".stringBoxAndIntOther()" in it })
         }
     }
 
