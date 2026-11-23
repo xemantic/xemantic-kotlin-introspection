@@ -2267,7 +2267,8 @@ class KotlinIntrospectorTest {
         // functionSupertypeShadowing.function { "" }, or .reference(::describe), call the members,
         // while .suspendConversion(fun(): String = "") calls the extension, as an anonymous function is not converted to a suspend one,
         // and .unitFunction(::toString), or .receiverFunction(String::trim), as the reference is coerced to return Unit,
-        // while it is no Function<Unit>, unlike a Function<Any?> of .anyFunction(::toString)
+        // while it is no Function<Unit>, unlike a Function<Any?> of .anyFunction(::toString), and .anyReturning(::nullable),
+        // of a function returning String?, which is no () -> Any, unlike a () -> Any? of .nullableAnyReturning(::nullable)
         resolver.resolve("com.xemantic.kotlin.introspection.test.FunctionSupertypeShadowing", pageSize = 20) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.FunctionSupertypeShadowing [page 1/1]
             class FunctionSupertypeShadowing : FunctionSupertypeShadowedSupertype {
@@ -2282,8 +2283,11 @@ class KotlinIntrospectorTest {
                 fun suspendConversion(x: suspend () -> CharSequence): Int
                 fun unitFunction(x: Function<Unit>): Int
                 fun anyFunction(x: Function<Any?>): Int
+                fun anyReturning(x: () -> Any): Int
+                fun nullableAnyReturning(x: () -> Any?): Int
             }
             // from com.xemantic.kotlin.introspection.test
+            fun FunctionSupertypeShadowedSupertype.anyReturning(x: () -> Unit): Int
             fun FunctionSupertypeShadowedSupertype.narrowerFunction(x: () -> CharSequence): Int
             fun FunctionSupertypeShadowedSupertype.otherReference(x: KFunction1<String, Unit>): Int
             fun FunctionSupertypeShadowedSupertype.receiverFunction(x: String.() -> Unit): Int
@@ -2313,8 +2317,9 @@ class KotlinIntrospectorTest {
     fun `should resolve class without extensions shadowed by members inferring their type parameters from type arguments`() {
         // memberTypeParameterShadowing.covariant(listOf("")), or .bounded(""), call the members, inferring U as String,
         // while each call with an argument of the type of a listed extension, like .boundViolated(listOf(1)), calls the extension,
-        // and so do .boundedSam { }, and .boundedFunction(::toString), converted to the types of the extensions, but not to U
-        resolver.resolve("com.xemantic.kotlin.introspection.test.MemberTypeParameterShadowing", pageSize = 30) sameAsKotlin """
+        // and so do .boundedSam { }, and .boundedFunction(::toString), converted to the types of the extensions, but not to U,
+        // unlike .anyBoundedSam { }, and .anyBoundedFunction { s -> }, inferring U : Any as the type of the lambda
+        resolver.resolve("com.xemantic.kotlin.introspection.test.MemberTypeParameterShadowing", pageSize = 40) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.MemberTypeParameterShadowing [page 1/1]
             class MemberTypeParameterShadowing : MemberTypeParameterShadowedSupertype {
                 fun <U> covariant(x: Collection<U>): Int
@@ -2335,6 +2340,8 @@ class KotlinIntrospectorTest {
                 fun <U> receiverFunction(x: U.() -> Unit): Int
                 fun <U : java.lang.Runnable> boundedSam(x: U): Int
                 fun <U : () -> Unit> boundedFunction(x: U): Int
+                fun <U : Any> anyBoundedSam(x: U): Int
+                fun <U : Any> anyBoundedFunction(x: U): Int
             }
             // from com.xemantic.kotlin.introspection.test
             fun MemberTypeParameterShadowedSupertype.boundViolated(x: List<Int>): Int
@@ -2457,6 +2464,28 @@ class KotlinIntrospectorTest {
             }
             // from com.xemantic.kotlin.introspection.test
             fun ContravariantUnshadowing<String>.contravariant(x: Comparable<String>): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extensions shadowed by members taking its contravariant type parameter`() {
+        // contravariantShadowingOfAny.nullable(null), .sam { }, .runnable { }, or .nestedSink(sinkOfSinkOfString) call the members,
+        // as every supertype of the type argument takes the argument, a lambda too, when the functional interface extends Any only,
+        // while contravariantShadowingOfMarker.markedSam { }, and contravariantShadowingOfFunctionOfUnit.function(::returnsString)
+        // call the extensions
+        resolver.resolve("com.xemantic.kotlin.introspection.test.ContravariantShadowing") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ContravariantShadowing [page 1/1]
+            class ContravariantShadowing<in T> {
+                fun nullable(x: T): Int
+                fun sam(x: T): Int
+                fun runnable(x: T): Int
+                fun nestedSink(x: NothingSink<NothingSink<T>>): Int
+                fun markedSam(x: T): Int
+                fun function(x: T): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun ContravariantShadowing<() -> Unit>.function(x: () -> Unit): Int
+            fun ContravariantShadowing<ContravariantShadowingMarkedSam>.markedSam(x: ContravariantShadowingMarkedSam): Int
         """.trimIndent()
     }
 
@@ -2611,6 +2640,22 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should hint infix extension on supertype of companion object as called only infix next to Java getter invoked by operator`() {
+        // JavaInfixInvokedGetterHolder.gotInfix(1) invokes the synthetic property of getGotInfix(), only JavaInfixInvokedGetterHolder gotInfix 1 calls the extension
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaInfixInvokedGetterHolder.gotInfix") should {
+            have(lines().last() == "/* called as JavaInfixInvokedGetterHolder gotInfix … */ infix fun InfixCompanionSupertype.gotInfix(other: Int): Int")
+        }
+    }
+
+    @Test
+    fun `should hint operator extension on supertype of companion object as called only as operator next to Java getter invoked by operator`() {
+        // JavaInfixInvokedGetterHolder.plus(1) invokes the synthetic property of getPlus(), only JavaInfixInvokedGetterHolder + 1 calls the extension
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaInfixInvokedGetterHolder.plus") should {
+            have(lines().last() == "/* called as JavaInfixInvokedGetterHolder + … */ operator fun OperatorCompanionSupertype.plus(other: Int): Int")
+        }
+    }
+
+    @Test
     fun `should hint infix extension on supertype of companion object as called only infix next to member taking one more optional parameter`() {
         // InfixMembersCompanionHolder.optional(1), and .optional(other = 1), call the member, only InfixMembersCompanionHolder optional 1 calls the extension
         resolver.resolve("com.xemantic.kotlin.introspection.test.InfixMembersCompanionHolder.optional") sameAsKotlin """
@@ -2738,30 +2783,79 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should hint operator extension inc on supertype of companion object by its name, as it has no operator form on class name`() {
+    fun `should resolve companion object member without operator extension inc, as it has no operator form on class name`() {
         // the name of a class cannot be assigned, so OperatorCompanionHolder++ does not compile, and OperatorCompanionHolder.inc() calls the member:
-        // no call reaches the extension, yet it is listed, hinted by its name, like the other operators of no form on the name of a class
+        // no call reaches the extension
         resolver.resolve("com.xemantic.kotlin.introspection.test.OperatorCompanionHolder.inc") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.OperatorCompanionHolder.inc [page 1/1]
             companion object : OperatorCompanionSupertype {
                 fun inc(): OperatorCompanionSupertype
             }
-            // from com.xemantic.kotlin.introspection.test
-            /* called as OperatorCompanionHolder.inc() */ operator fun OperatorCompanionSupertype.inc(): OperatorCompanionSupertype
         """.trimIndent()
     }
 
     @Test
-    fun `should hint operator extension invoke on supertype of companion object by its name next to constructor taking as many arguments`() {
-        // OperatorConstructedCompanionHolder(1) calls the constructor, and OperatorConstructedCompanionHolder.invoke(1) the member:
-        // no call reaches the extension, yet it is listed, hinted by its name, as the constructors are told only by the count of their parameters
+    fun `should hint operator extension invoke on supertype of companion object as operator next to constructor taking other parameter names`() {
+        // OperatorConstructedCompanionHolder(1) calls the constructor, and OperatorConstructedCompanionHolder.invoke(1) the member,
+        // while OperatorConstructedCompanionHolder(other = 1) calls the extension, as the constructor takes no parameter of the name
         resolver.resolve("com.xemantic.kotlin.introspection.test.OperatorConstructedCompanionHolder.invoke") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.OperatorConstructedCompanionHolder.invoke [page 1/1]
             companion object : OperatorCompanionSupertype {
                 fun invoke(other: Int): Int
             }
             // from com.xemantic.kotlin.introspection.test
-            /* called as OperatorConstructedCompanionHolder.invoke(…) */ operator fun OperatorCompanionSupertype.invoke(other: Int): Int
+            /* called as OperatorConstructedCompanionHolder(…) */ operator fun OperatorCompanionSupertype.invoke(other: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve companion object member without operator extension invoke next to constructor taking its every call`() {
+        // OperatorSameNameConstructedCompanionHolder(1), and (other = 1), call the constructor,
+        // and OperatorSameNameConstructedCompanionHolder.invoke(1) the member: no call reaches the extension
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OperatorSameNameConstructedCompanionHolder.invoke") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OperatorSameNameConstructedCompanionHolder.invoke [page 1/1]
+            companion object : OperatorCompanionSupertype {
+                fun invoke(other: Int): Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should hint operator extension invoke on supertype of companion object as operator next to private constructor`() {
+        // OperatorPrivatelyConstructedCompanionHolder(1) cannot call the private constructor, it calls the extension
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OperatorPrivatelyConstructedCompanionHolder.invoke") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OperatorPrivatelyConstructedCompanionHolder.invoke [page 1/1]
+            companion object : OperatorCompanionSupertype {
+                fun invoke(other: Int): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            /* called as OperatorPrivatelyConstructedCompanionHolder(…) */ operator fun OperatorCompanionSupertype.invoke(other: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should hint operator extension invoke on supertype of companion object as operator next to constructor taking other type`() {
+        // OperatorOtherwiseConstructedCompanionHolder(1) cannot call the constructor taking a String, it calls the extension
+        resolver.resolve("com.xemantic.kotlin.introspection.test.OperatorOtherwiseConstructedCompanionHolder.invoke") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OperatorOtherwiseConstructedCompanionHolder.invoke [page 1/1]
+            companion object : OperatorCompanionSupertype {
+                fun invoke(other: Int): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            /* called as OperatorOtherwiseConstructedCompanionHolder(…) */ operator fun OperatorCompanionSupertype.invoke(other: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve companion object members without infix operator extension next to members taking both forms`() {
+        // InfixOperatorNextToBothHolder + 1 calls the operator member, InfixOperatorNextToBothHolder plus 1, and .plus(1), the infix one:
+        // no call reaches the extension
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InfixOperatorNextToBothHolder.plus") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InfixOperatorNextToBothHolder.plus [page 1/1]
+            companion object : InfixOperatorCompanionSupertype {
+                operator fun plus(other: Number): Int
+                infix fun plus(other: Int): Int
+            }
         """.trimIndent()
     }
 
@@ -5963,6 +6057,26 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.test.InheritedJvmException.addSuppressed [page 1/1]
             // inherited from kotlin.Throwable
             fun addSuppressed(arg0: Throwable?)
+            // from kotlin
+            fun Throwable.addSuppressed(exception: Throwable)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension hiding JVM-only member of both class and companion object without hint`() {
+        // the @HidesMembers Throwable.addSuppressed is called both as exception.addSuppressed(e)
+        // and as InheritedJvmCompanionException.addSuppressed(e), so it tells no call form
+        assumeNoParameterNames(Throwable::class.java.getMethod("addSuppressed", Throwable::class.java))
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJvmCompanionException.addSuppressed"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJvmCompanionException.addSuppressed [page 1/1]
+            // inherited from kotlin.Throwable
+            fun addSuppressed(arg0: Throwable?)
+            companion object : java.lang.Exception {
+                // inherited from kotlin.Throwable
+                fun addSuppressed(arg0: Throwable?)
+            }
             // from kotlin
             fun Throwable.addSuppressed(exception: Throwable)
         """.trimIndent()

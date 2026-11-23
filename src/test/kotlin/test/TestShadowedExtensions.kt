@@ -18,6 +18,7 @@
 
 package com.xemantic.kotlin.introspection.test
 
+import com.xemantic.kotlin.introspection.test.other.JavaInfixInvokedGetterBase
 import com.xemantic.kotlin.introspection.test.other.JavaInvokedGenericTask
 import com.xemantic.kotlin.introspection.test.other.JavaInvokedGetterBase
 import com.xemantic.kotlin.introspection.test.other.JavaInvokedInheritedTask
@@ -370,7 +371,9 @@ fun BoundedStarShadowedSupertype.narrowerBox(x: BoundedBox<*>): Int = 1
 // unlike one returning a narrower type, or a suspend function type, which takes no anonymous function,
 // so that functionSupertypeShadowing.suspendConversion(fun(): String = "") calls the extension,
 // and unlike a Function<Unit> next to a function type returning Unit, which a reference to a function returning
-// anything is coerced to, so that functionSupertypeShadowing.unitFunction(::toString) calls the extension
+// anything is coerced to, so that functionSupertypeShadowing.unitFunction(::toString) calls the extension,
+// also next to a function type returning Any, which a reference to a function returning a nullable value is not,
+// so that functionSupertypeShadowing.anyReturning(::nullable) calls the extension
 interface FunctionSupertypeShadowedSupertype
 
 class FunctionSupertypeShadowing : FunctionSupertypeShadowedSupertype {
@@ -385,6 +388,8 @@ class FunctionSupertypeShadowing : FunctionSupertypeShadowedSupertype {
     fun suspendConversion(x: suspend () -> CharSequence): Int = 0
     fun unitFunction(x: Function<Unit>): Int = 0
     fun anyFunction(x: Function<Any?>): Int = 0
+    fun anyReturning(x: () -> Any): Int = 0
+    fun nullableAnyReturning(x: () -> Any?): Int = 0
 }
 
 fun FunctionSupertypeShadowedSupertype.function(x: () -> String): Int = 1
@@ -408,6 +413,10 @@ fun FunctionSupertypeShadowedSupertype.suspendConversion(x: () -> String): Int =
 fun FunctionSupertypeShadowedSupertype.unitFunction(x: () -> Unit): Int = 1
 
 fun FunctionSupertypeShadowedSupertype.anyFunction(x: () -> Unit): Int = 1
+
+fun FunctionSupertypeShadowedSupertype.anyReturning(x: () -> Unit): Int = 1
+
+fun FunctionSupertypeShadowedSupertype.nullableAnyReturning(x: () -> Unit): Int = 1
 
 // members accepting a type parameter of the extension bounded by another one, like its bounds, called instead of the extensions,
 // like boundedTypeParameterShadowing.boundedByOther(listOf("")), unlike one accepting less
@@ -437,7 +446,8 @@ fun <T : CharSequence, U : T> BoundedTypeParameterShadowedSupertype.narrower(x: 
 // captured from a projection nested in a type argument, inferred from two types, bounded by another type parameter,
 // or having no subtype in common with the type argument, and unlike the ones bounded by a type which a lambda,
 // or a function reference, is converted to, but not to the type parameter: memberTypeParameterShadowing.boundedSam { }
-// and memberTypeParameterShadowing.boundedFunction(::toString) call the extensions
+// and memberTypeParameterShadowing.boundedFunction(::toString) call the extensions,
+// while a type parameter bounded by Any takes them like an unbounded one, like memberTypeParameterShadowing.anyBoundedSam { }
 interface MemberTypeParameterShadowedSupertype
 
 class MemberTypeParameterShadowing : MemberTypeParameterShadowedSupertype {
@@ -459,6 +469,8 @@ class MemberTypeParameterShadowing : MemberTypeParameterShadowedSupertype {
     fun <U> receiverFunction(x: U.() -> Unit): Int = 0
     fun <U : Runnable> boundedSam(x: U): Int = 0
     fun <U : () -> Unit> boundedFunction(x: U): Int = 0
+    fun <U : Any> anyBoundedSam(x: U): Int = 0
+    fun <U : Any> anyBoundedFunction(x: U): Int = 0
 }
 
 fun MemberTypeParameterShadowedSupertype.covariant(x: List<String>): Int = 1
@@ -496,6 +508,10 @@ fun MemberTypeParameterShadowedSupertype.receiverFunction(x: (String) -> Unit): 
 fun MemberTypeParameterShadowedSupertype.boundedSam(x: Runnable): Int = 1
 
 fun MemberTypeParameterShadowedSupertype.boundedFunction(x: () -> Unit): Int = 1
+
+fun MemberTypeParameterShadowedSupertype.anyBoundedSam(x: Runnable): Int = 1
+
+fun MemberTypeParameterShadowedSupertype.anyBoundedFunction(x: (String) -> Unit): Int = 1
 
 // members of a generic class, whose type parameter stands for the type argument of the receiver of an extension on the class,
 // also for a type parameter of the extension, or for a supertype of a contravariant projection, called instead of the extensions,
@@ -610,6 +626,42 @@ class ContravariantUnshadowing<in T> {
 fun ContravariantUnshadowing<String>.contravariant(x: Comparable<String>): Int = 1
 
 fun ContravariantUnshadowing<String>.covariant(x: String): Int = 1
+
+// members of a class with a contravariant type parameter, called instead of the extensions for any supertype of the type argument
+// of the receiver, like contravariantShadowingOfAny.nullable(null), contravariantShadowingOfAny.sam { },
+// as a member taking Any takes a lambda too, or contravariantShadowingOfAny.nestedSink(sinkOfSinkOfString),
+// unlike next to a functional interface with a supertype, like contravariantShadowingOfMarker.markedSam { },
+// or a function type, like contravariantShadowingOfFunctionOfUnit.function(::returnsString)
+interface ContravariantShadowingMarker
+
+fun interface ContravariantShadowingSam {
+    fun run()
+}
+
+fun interface ContravariantShadowingMarkedSam : ContravariantShadowingMarker {
+    fun run()
+}
+
+class ContravariantShadowing<in T> {
+    fun nullable(x: T): Int = 0
+    fun sam(x: T): Int = 0
+    fun runnable(x: T): Int = 0
+    fun nestedSink(x: NothingSink<NothingSink<T>>): Int = 0
+    fun markedSam(x: T): Int = 0
+    fun function(x: T): Int = 0
+}
+
+fun ContravariantShadowing<String?>.nullable(x: String?): Int = 1
+
+fun ContravariantShadowing<ContravariantShadowingSam>.sam(x: ContravariantShadowingSam): Int = 1
+
+fun ContravariantShadowing<in Runnable>.runnable(x: Runnable): Int = 1
+
+fun ContravariantShadowing<String>.nestedSink(x: NothingSink<NothingSink<String>>): Int = 1
+
+fun ContravariantShadowing<ContravariantShadowingMarkedSam>.markedSam(x: ContravariantShadowingMarkedSam): Int = 1
+
+fun ContravariantShadowing<() -> Unit>.function(x: () -> Unit): Int = 1
 
 // a member taking an inner class of a generic outer class, called instead of the extension only when its outer type
 // accepts the one of the extension, like innerShadowing.sameOuter(inner), unlike innerShadowing.otherOuter(inner)
@@ -781,6 +833,15 @@ infix fun InfixCompanionSupertype.variadic(other: Int): Int = 1
 
 infix fun InfixCompanionSupertype.functionTyped(other: Int): Int = 1
 
+// and the ones next to the getters of a Java supertype of the companion object, read as synthetic properties of a type
+// with an operator invoke, called only as JavaInfixInvokedGetterHolder gotInfix 1, or JavaInfixInvokedGetterHolder + 1,
+// as JavaInfixInvokedGetterHolder.gotInfix(1), and JavaInfixInvokedGetterHolder.plus(1), invoke the properties
+class JavaInfixInvokedGetterHolder {
+    companion object : JavaInfixInvokedGetterBase(), InfixCompanionSupertype, OperatorCompanionSupertype
+}
+
+infix fun InfixCompanionSupertype.gotInfix(other: Int): Int = 1
+
 // operator extensions on the supertype of a companion object, called only as OperatorCompanionHolder + 1,
 // OperatorCompanionHolder[1], 1 in OperatorCompanionHolder, -OperatorCompanionHolder, or OperatorCompanionHolder(1),
 // next to its members which are no operators, called for OperatorCompanionHolder.plus(1),
@@ -799,8 +860,30 @@ class OperatorCompanionHolder {
     }
 }
 
-// and one whose invoke the constructor is called instead of, like OperatorConstructedCompanionHolder(1)
+// and one whose invoke the constructor is called instead of, like OperatorConstructedCompanionHolder(1),
+// but not for OperatorConstructedCompanionHolder(other = 1), naming no parameter of the constructor
 class OperatorConstructedCompanionHolder(val value: Int) {
+    companion object : OperatorCompanionSupertype {
+        fun invoke(other: Int): Int = 0
+    }
+}
+
+// and one whose invoke the constructor is always called instead of, also for OperatorSameNameConstructedCompanionHolder(other = 1)
+class OperatorSameNameConstructedCompanionHolder(val other: Int) {
+    companion object : OperatorCompanionSupertype {
+        fun invoke(other: Int): Int = 0
+    }
+}
+
+// and ones whose constructor OperatorPrivatelyConstructedCompanionHolder(1), or OperatorOtherwiseConstructedCompanionHolder(1),
+// cannot call, so they call the extension
+class OperatorPrivatelyConstructedCompanionHolder private constructor(val other: Int) {
+    companion object : OperatorCompanionSupertype {
+        fun invoke(other: Int): Int = 0
+    }
+}
+
+class OperatorOtherwiseConstructedCompanionHolder(val other: String) {
     companion object : OperatorCompanionSupertype {
         fun invoke(other: Int): Int = 0
     }
@@ -853,6 +936,15 @@ class InfixOperatorNextToInfixHolder {
 class InfixOperatorNextToNeitherHolder {
     companion object : InfixOperatorCompanionSupertype {
         fun plus(other: Int): Int = 0
+    }
+}
+
+// and next to two of them, which together take both forms, InfixOperatorNextToBothHolder + 1 calling the operator,
+// InfixOperatorNextToBothHolder plus 1, and InfixOperatorNextToBothHolder.plus(1), the infix one, so that no call reaches the extension
+class InfixOperatorNextToBothHolder {
+    companion object : InfixOperatorCompanionSupertype {
+        operator fun plus(other: Number): Int = 0
+        infix fun plus(other: Int): Int = 0
     }
 }
 

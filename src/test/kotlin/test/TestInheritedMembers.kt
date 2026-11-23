@@ -153,6 +153,11 @@ class InheritedJvmOverridingException : Exception() {
 
 class InheritedJvmException : Exception()
 
+// The class and its companion object both inheriting addSuppressed, which Throwable.addSuppressed hides on both
+class InheritedJvmCompanionException : Exception() {
+    companion object : Exception()
+}
+
 class InheritedJvmOverridingIterable : Iterable<String> {
     override fun iterator(): Iterator<String> = emptyList<String>().iterator()
     override fun forEach(action: java.util.function.Consumer<in String>) {}

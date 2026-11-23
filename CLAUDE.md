@@ -152,6 +152,8 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   see `givenTypeVariableNames`.
 
 - Kotlin never passes named arguments to a Java method, even one compiled with `-parameters`, so a Java method taking parameters never shadows an extension — see `isShadowingJavaMethod`.
+  A Java method overriding a Kotlin function takes them though, by the names of the Kotlin one, like `k.over(x = 1)`,
+  which is not modelled: the extension next to it stays listed.
 
 - kotlinc 2.4.21 infers the `T` of an invariant `X<T>` from an `out Nothing` projection, also nested in an invariant position,
   like `fun <T> Inv<MutableCollection<T>>.f()` on `Inv<MutableCollection<out Nothing>>`, but not from `out String`, nor does it accept `Inv<MutableCollection<String>>` there —
@@ -162,16 +164,15 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 
 - In a sweep of classes of two type parameters, like `interface R<K, V : K> : Pair<K, V>`, the type arguments have to be combined per extension,
   like `R<W<Nothing>, Nothing>` for `fun <T> Pair<W<T>, T>.f()` — a fixed pool of pairs judges such rows as rejected, which kotlinc accepts.
-  A Java method overriding a Kotlin function takes them though, by the names of the Kotlin one, like `k.over(x = 1)`,
-  which is not modelled: the extension next to it stays listed.
 
 - kotlinc does not convert an anonymous function to a suspend function type:
   `k.f(fun(): String = "")` calls the extension taking `() -> String` next to a member taking `suspend () -> CharSequence`,
   which a lambda, a callable reference, and a value of the function type call —
   so probe a parameter of a function type with an anonymous function too, see `acceptsTypeArguments`.
 
-- A lambda, or a function reference, is typed against the type of the parameter of each candidate, so a member accepting every value
-  of the type of an extension's parameter may still not take them, and kotlinc calls the extension — see `isConvertedTo`, `functionSupertypeOf`.
+- A lambda, or a function reference, is typed against the type of the parameter of each candidate,
+  so a member accepting every value of the type of an extension's parameter may still not take them,
+  and kotlinc calls the extension — see `isConvertedTo`, `functionSupertypeOf`.
   Probe a parameter of a function type, or of a functional interface, also with lambdas with and without explicit parameters,
   anonymous functions, with and without a receiver, references to functions of another return type, with a default parameter,
   and suspend ones, and a generic class also on projected and function-typed receivers.
