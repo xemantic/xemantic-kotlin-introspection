@@ -359,12 +359,18 @@ com.example.AnnotationTestClass
   as `Int` is no `String`, nor is `fun Other<String>.ext()` for `inner class Inner : Other<O>` of `class Outer<O : Number>`.
   Matched against the type parameters of the extension, a type parameter of the class takes one type in all its invariant positions too,
   satisfying the bounds of both:
-  `fun <T> Pair<T, Box<T>>.ext()` is not listed for `interface Same<V> : Pair<V, V>`, as no `T` is a `Box<T>`,
-  nor `fun <T : Any> Pair<T?, T>.ext()`, as no `T : Any` is a `T?`,
+  `fun <T> Two<T, Box<T>>.ext()` is not listed for `interface Same<V> : Two<V, V>`, as no `T` is a `Box<T>`,
+  nor `fun <T : Any> Two<T?, T>.ext()`, as no `T : Any` is a `T?`,
+  nor `fun <T> Two<MutableList<T>, List<T>>.ext()`, as no mutable list is a read-only one, unless it is a platform type of Java,
   nor `fun <T, U : T> Map<T, U>.ext()` for `interface Codes<V : Enum<V>> : Map<V, String>`, as no enum class is a supertype of `String`.
+  `Nothing`, or `Nothing?`, does not count as a type argument of the class making an extension callable,
+  so that an extension callable only on `X<Nothing>` is not listed for `X`,
+  like `fun Producer<Int>.ext()` for `interface Texts<V : CharSequence> : Producer<V>`, of `interface Producer<out T>`,
+  or `fun <T : Enum<T>> Map<T, String>.ext()` for `interface Keys<V> : Map<V, V>`,
+  as no type but `Nothing` is a subtype of both the final `Int`, or `String`, and of `CharSequence`, or of an enum class.
   An extension of the package of the class on a `kotlin.*` or `java.*` supertype, bounded by itself, like `fun <T : Comparable<T>> Map<T, T>.ext()`,
   is listed for a generic class when it can be called for some type argument tried,
-  like `String`, `Int`, `Nothing`, or a type the extension names:
+  like `String`, `Int`, or a type the extension names, and still `Nothing` there:
   for `class SameKeyMap<V> : HashMap<V, V>()`, of `SameKeyMap<String>`, but not for `interface Scores<V> : Map<V, Comparable<V>>`.
   A JDK interface named as a supertype, like `abstract class Orders : java.util.List<Order>`,
   is the Java one, with the supertypes Java declares,
@@ -493,8 +499,10 @@ com.example.AnnotationTestClass
   unless the member takes as many of them, whatever they are, like `fun <T> parse()`,
   while a call giving explicitly the type arguments which are otherwise inferred,
   like `foo.ext<Bar>()` of `fun <T : Bar> T.ext()`, which would reach the extension next to a member `fun ext()`, is not told.
-  The extensions on an unbounded type parameter, like `let` or `also`, are not listed for any type,
-  as they would be listed for every one.
+  The extensions on an unbounded type parameter, like `let` or `also`, are listed only for the classes of their own package,
+  like the extensions on `Any` there, like `fun <T> T.describe()` next to `class Order`,
+  but not for the classes of the other packages, nor for the ones of the `kotlin.*` and `java.*` packages,
+  as `let` would be listed for every one.
 * The types of the `kotlin.*` packages are rendered with simple names, as LLMs know them well,
   and so are the types of the package of the rendered class, or of the file facade, relative to it,
   like `Outer.Nested`, while the other types are fully qualified, to avoid ambiguity.

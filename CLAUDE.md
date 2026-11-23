@@ -163,18 +163,20 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   see `givenTypeVariableNames`.
 
 - Kotlin never passes named arguments to a Java method, even one compiled with `-parameters`, so a Java method taking parameters never shadows an extension — see `isShadowingJavaMethod`.
+  A Java method overriding a Kotlin function takes them though, by the names of the Kotlin one, like `k.over(x = 1)`,
+  which is not modelled: the extension next to it stays listed.
 
 - kotlinc 2.4.21 infers the `T` of an invariant `X<T>` from an `out Nothing` projection, also nested in an invariant position,
   like `fun <T> Inv<MutableCollection<T>>.f()` on `Inv<MutableCollection<out Nothing>>`, but not from `out String`, nor does it accept `Inv<MutableCollection<String>>` there —
-  so keeping a projection of an invariant type parameter, like the `out` of `java.util.List<out V>`, can hide what `V` of `Nothing` makes callable, see `projectionsOf`.
+  as `Nothing` does not count as a type argument making an extension callable (#366), the `out` of `java.util.List<out V>` is kept, see `projectionsOf`.
 
 - A JDK interface named in Kotlin, like `java.util.Collection<String>`, is no supertype of another one named so, like `java.util.List<String>`:
   the Java supertypes of `java.util.List` are mapped to the built-in types, like `MutableCollection<E!>`, so only those are reached.
 
 - In a sweep of classes of two type parameters, like `interface R<K, V : K> : Pair<K, V>`, the type arguments have to be combined per extension,
-  like `R<W<Nothing>, Nothing>` for `fun <T> Pair<W<T>, T>.f()` — a fixed pool of pairs judges such rows as rejected, which kotlinc accepts.
-  A Java method overriding a Kotlin function takes them though, by the names of the Kotlin one, like `k.over(x = 1)`,
-  which is not modelled: the extension next to it stays listed.
+  like `R<W<X>, X>` of `interface X : W<X>` for `fun <T> Pair<W<T>, T>.f()` — a fixed pool of pairs judges such rows as rejected, which kotlinc accepts.
+  A row callable only with `Nothing`, or `Nothing?`, as a type argument of the class counts as rejected (#366),
+  but a pool lacking a self-referring type, like `X`, also judges so the rows which only such a declared type makes callable.
 
 - kotlinc does not convert an anonymous function to a suspend function type:
   `k.f(fun(): String = "")` calls the extension taking `() -> String` next to a member taking `suspend () -> CharSequence`,
