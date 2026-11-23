@@ -7729,7 +7729,9 @@ internal class DefaultKotlinIntrospector(
      * or when the class, or a class a supertype, or a witness, refers to, reaches a Java class annotating
      * a type argument of its own supertype, like `List<@Nullable V>`, also through the type arguments of its supertypes,
      * see [annotatesJavaSupertypeArguments], which the supertypes told by the generic signatures do not tell,
-     * or a class which cannot be loaded, also under the name it is [located] by, when relocated with the class.
+     * or a class which cannot be loaded, also under the name it is [located] by, when relocated with the class,
+     * and one which is not found when the generic signature of the class cannot be resolved, see [resolvesGenericSignature],
+     * not when it is found by no name only because it is a dependency relocated by shading, the metadata keeping its old name.
      */
     private fun ClassSupertypes.witnessed(extensionTypes: List<KmType>, located: (String) -> String): List<ClassSupertypes> {
         val typeParameters = kmClass.typeParameters
@@ -7758,12 +7760,22 @@ internal class DefaultKotlinIntrospector(
             fun KmType.classNames(): List<String> =
                 listOfNotNull((classifier as? KmClassifier.Class)?.name?.takeIf { it !in builtinClasses }) +
                     arguments.flatMap { it.type?.classNames().orEmpty() } + outerType?.classNames().orEmpty()
+            fun find(name: String) =
+                findClassByMetadataName(name) ?: located(name).takeIf { it != name }?.let { findClassByMetadataName(it) }
+            // whether the generic signature of the class resolves the classes it refers to, like a dependency relocated
+            // by shading, not found by the name of the metadata, which shading does not rewrite, unlike one missing
+            val resolvesOwnSignature by lazy(LazyThreadSafetyMode.NONE) {
+                find(kmClass.name)?.clazz?.let { resolvesGenericSignature(it) } == true
+            }
             val isAnnotatedByJava = ((reached + candidates).flatMapTo(LinkedHashSet()) { it.classNames() } + kmClass.name).any { name ->
                 annotatingJavaSupertypeArguments.getOrPut(name) {
                     // also one which cannot be loaded, like one kotlin-reflect fails on, see #362,
-                    // found by its located name when relocated with the class, like by shading, see ClassDeclarations.located
-                    val found = findClassByMetadataName(name) ?: located(name).takeIf { it != name }?.let { findClassByMetadataName(it) }
-                    found?.clazz?.let { annotatesJavaSupertypeArguments(it) } ?: true
+                    // found by its located name when relocated with the class, like by shading, see ClassDeclarations.located,
+                    // while one not found at all is taken as missing only when the generic signature of the class tells it is
+                    when (val found = find(name)) {
+                        null -> !resolvesOwnSignature
+                        else -> found.clazz?.let { annotatesJavaSupertypeArguments(it) } ?: true
+                    }
                 }
             }
             if (isAnnotatedByJava) return@getOrPut emptyList()

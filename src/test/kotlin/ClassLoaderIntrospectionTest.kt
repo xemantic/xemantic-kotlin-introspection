@@ -209,6 +209,28 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should list extension on recursively bounded type parameter by witness for class bounded by relocated dependency`() {
+        // given
+        // like an app shading its dependencies, rewriting the references of its own classes to them, but not the Kotlin metadata
+        val dependencies = arrayOf("RelocatedDependencyBound.class")
+        val root = isolatedTestFixturesCopy("relocatedWitnessDependency", *dependencies, "RelocatedDependencyBoundedMap.class")
+        relocatedCopy(root, *dependencies, dependents = listOf("RelocatedDependencyBoundedMap.class"))
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.RelocatedDependencyBoundedMap",
+            pageSize = 10000
+        )
+
+        // then - V of RelocatedDependencyBound makes a Map<V, V> a Map<T, T> of T : Comparable<T>,
+        // the bound not found by its metadata name, but resolved by the generic signature of the class, see #362
+        signature should {
+            have(lines().any { ".relocatedSameComparables()" in it })
+        }
+    }
+
+    @Test
     fun `should not take overload of relocated inner class with bounded type parameter of its relocated outer class for override`() {
         // given
         val classFiles = arrayOf("RelocatedBoundedOuter.class", "RelocatedBoundedOuter\$Comparing.class")

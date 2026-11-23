@@ -24,3 +24,11 @@ package com.xemantic.kotlin.introspection.isolated
 interface RelocatedSameKeyMap<V> : Map<V, V>
 
 fun <T : Comparable<T>> Map<T, T>.relocatedSameComparables() {}
+
+// tests relocate only the dependency bounding the type parameter of a class which is not relocated,
+// so that the bound is not found by its metadata name, while the generic signature of the class resolves it,
+// giving the witnesses, like RelocatedDependencyBound of V
+
+interface RelocatedDependencyBound : Comparable<RelocatedDependencyBound>
+
+interface RelocatedDependencyBoundedMap<V : RelocatedDependencyBound> : Map<V, V>
