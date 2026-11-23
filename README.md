@@ -204,8 +204,9 @@ com.example.AnnotationTestClass
   like `abstract fun put(k: Int?): Int` next to the `open fun put(arg0: Int): Int` the Java class declares, a JVM method of its own,
   or else `open`, or final, like `fun h(): Int`,
   and so through a Kotlin class exposing such a supertype, which only a suppressed `EXPOSED_SUPER_CLASS` error allows.
-  The method of a Java class merged with the member of an internal interface keeps its own modality,
-  as the class wins: final, or abstract, also next to a member of a body.
+  The method of a Java class merged with a function of an internal interface keeps its own modality,
+  as the class wins: final, or abstract, also next to a function of a body,
+  and when the internal function overrides the one of a public interface, listed in its place.
   The types of a Java method are nullable, or not, as the compiler reads its nullability annotations,
   like `@NotNull` of JetBrains, or `@Nullable`, and `@NullMarked`, of JSpecify,
   also the ones of the methods it overrides,

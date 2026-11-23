@@ -3490,6 +3490,20 @@ internal class DefaultKotlinIntrospector(
                         ?.takeUnless { reflectedValue(default = true) { it.isInterface } }
                 }
         }
+        // all the JVM supertypes of the kmClass, classes and interfaces, of its superclass, when its own Class cannot be loaded,
+        // see inheritedFromName
+        val jvmSupertypes = lazy(LazyThreadSafetyMode.NONE) {
+            val supertypes = LinkedHashSet<Class<*>>()
+            val pending = ArrayDeque<Class<*>>()
+            declarations.clazz?.let(pending::add) ?: superclass.value?.let { if (supertypes.add(it)) pending += it }
+            reflectedValue(default = Unit) {
+                while (pending.isNotEmpty()) {
+                    val type = pending.removeFirst()
+                    (listOfNotNull(type.superclass) + type.interfaces).filter(supertypes::add).forEach(pending::addLast)
+                }
+            }
+            supertypes
+        }
         return inherited.map { candidate ->
             // a member of a supertype which is not part of the API is rendered as within the class it is inherited through,
             // see InheritedCandidate.inheritedThrough, a Java class, or a Kotlin class exposing it,
@@ -3497,7 +3511,7 @@ internal class DefaultKotlinIntrospector(
             val through = candidate.inheritedThrough?.let { inheritedDeclarations(inheritedName(declarations, it)) }
             val renderedIn = through?.kmClass ?: candidate.kmClass
             ListingItem.InheritedMember(
-                inheritedFromName(candidate, through, superclass, declarations),
+                inheritedFromName(candidate, through, superclass, jvmSupertypes, declarations),
                 formatMember(
                     candidate.renderedMember(isOpenForOverrides), renderedIn, candidate.declarations, scope, contextPackage,
                     isOwnerOpenForOverrides = isOpenForOverrides,
@@ -3517,8 +3531,8 @@ internal class DefaultKotlinIntrospector(
      * like a package-private one, or one nested in it, the public JVM class extending it, closest to it, if any,
      * among the [superclass] of the inheriting class and its superclasses,
      * which inherits its public members, like the public subclass of a package-private class, which javac bridges them in,
-     * or else, of a package-private interface, the public interface extending it, closest to it, among all the supertypes
-     * of the inheriting class, like the public Java interface extending a package-private one, which extends an internal one,
+     * or else, when none of them is, the nameable one closest to it among all the [jvmSupertypes] of the inheriting class,
+     * classes and interfaces, like the public Java interface extending a package-private one, which extends an internal one,
      * named by the name the Kotlin metadata of the inheriting class, of the [declarations], refers to it by, see [unlocatedName],
      * like the other classes, when relocated, like by shading,
      * and of a Kotlin class which is not part of the API, the class it is inherited through, of the [throughDeclarations],
@@ -3528,6 +3542,7 @@ internal class DefaultKotlinIntrospector(
         candidate: InheritedCandidate,
         throughDeclarations: ClassDeclarations?,
         superclass: Lazy<Class<*>?>,
+        jvmSupertypes: Lazy<Collection<Class<*>>>,
         declarations: ClassDeclarations
     ): String {
         val className = candidate.inheritedThrough ?: candidate.className
@@ -3542,15 +3557,7 @@ internal class DefaultKotlinIntrospector(
                 .takeWhile { it != declaring }
                 .lastOrNull { it.isNameable() && declaring.isAssignableFrom(it) }
                 ?: run {
-                    val supertypes = LinkedHashSet<Class<*>>()
-                    val pending = ArrayDeque(listOfNotNull(declarations.clazz))
-                    while (pending.isNotEmpty()) {
-                        val type = pending.removeFirst()
-                        listOfNotNull(type.superclass).plus(type.interfaces)
-                            .filter { it != declaring && declaring.isAssignableFrom(it) && supertypes.add(it) }
-                            .forEach(pending::addLast)
-                    }
-                    val nameable = supertypes.filter { it.isNameable() }
+                    val nameable = jvmSupertypes.value.filter { it != declaring && declaring.isAssignableFrom(it) && it.isNameable() }
                     nameable.firstOrNull { nearest -> nameable.none { it != nearest && it.isAssignableFrom(nearest) } }
                 }
         }
@@ -4325,11 +4332,13 @@ internal class DefaultKotlinIntrospector(
                 // but never the member of a class, which wins over the members of the interfaces it is merged with,
                 // also by its JVM signature only: abstract, final, or open, like the final f() of an unrelated Java superclass
                 // next to the f() of a body of an internal interface a Java subclass implements, or the f() of JavaPlainF,
-                // which implements the abstract f() of such an interface
+                // which implements the abstract f() of such an interface,
+                // and so a member of a class merged with the member of an interface the internal one overrides,
+                // like the final f() of a Java superclass next to the f() of a public interface, which an internal one overrides
                 val override = if (implementing == null) {
                     classOverride ?: if (!isInterfaceMember) null else nearest(
                         unlistedOverrides.filter { it.kmClass.kind == ClassKind.INTERFACE && it.overrides(candidate) }
-                    )
+                    )?.let { interfaceOverride -> nearest(classMembers.filter { it.standsFor() }) ?: interfaceOverride }
                 } else {
                     classOverride?.takeIf { override ->
                         reflectedValue(default = false) { override.declarations.clazz?.let(implementing::isAssignableFrom) == true }

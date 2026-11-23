@@ -1361,6 +1361,20 @@ internal interface InternalDefaultFG {
 abstract class JavaFinalFAbstractGImplementingInternalDefaultsSub :
     com.xemantic.kotlin.introspection.test.other.JavaFinalFAbstractGImplementingInternalDefaults()
 
+// and so when the internal interface overrides the members of a public one, which is listed in its place
+interface PublicFG {
+    fun f(): Int
+    fun g(): Int
+}
+
+internal interface InternalOverridingDefaultFG : PublicFG {
+    override fun f(): Int = 2
+    override fun g(): Int = 2
+}
+
+abstract class JavaFinalFAbstractGImplementingInternalOverridingDefaultsSub :
+    com.xemantic.kotlin.introspection.test.other.JavaFinalFAbstractGImplementingInternalOverridingDefaults()
+
 // the members of an internal interface reached through a package-private Java interface, inherited from the public one
 // extending it, which the user code can name, like the members reached through a package-private Java class
 internal interface InternalFaceBelowPackagePrivateJava {
