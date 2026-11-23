@@ -918,8 +918,14 @@ private fun clashingNullabilityPositions(method: Method): Set<Int> {
  * an override of the Kotlin members for K2 then, whose parameter names it takes.
  */
 internal fun takesClashingNullability(type: Class<*>, name: String, descriptor: String): Boolean = reflectedValue(default = false) {
-    type.declaredMethods.firstOrNull { !it.isBridge && it.name == name && AsmType.getMethodDescriptor(it) == descriptor }
-        ?.let { clashingNullabilityPositions(it).isNotEmpty() } == true
+    declaredMethodsByDescriptor.get(type)[name + descriptor]?.let { clashingNullabilityPositions(it).isNotEmpty() } == true
+}
+
+// the methods declared by a class, but the bridges, by their names and JVM descriptors, read once per class
+private val declaredMethodsByDescriptor = object : ClassValue<Map<String, Method>>() {
+    override fun computeValue(type: Class<*>): Map<String, Method> = reflectedValue(default = emptyMap()) {
+        type.declaredMethods.filter { !it.isBridge }.associateBy { it.name + AsmType.getMethodDescriptor(it) }
+    }
 }
 
 /**
@@ -1080,9 +1086,10 @@ private class KotlinTypeArgument(val isNullable: Boolean, val isPrimitive: Boole
 private val kotlinTypeArguments = object : ClassValue<Map<String, Map<Int, KotlinTypeArgument>>>() {
     override fun computeValue(type: Class<*>): Map<String, Map<Int, KotlinTypeArgument>> = reflectedValue(default = emptyMap()) {
         val supertypes = readKmClass(type)?.supertypes.orEmpty()
-        // the supertypes of the metadata by the Kotlin ones of the JVM class, by the names their own metadata tells
-        (listOfNotNull(type.superclass) + type.interfaces).filter { it.isKotlinClass }.associate { supertypeClass ->
-            val name = readKmClass(supertypeClass)?.name
+        // the supertypes of the metadata by the ones of the JVM class, by the names their own metadata tells,
+        // or of a Java class, by its binary name, like the `JMid<Int?>` of `interface KN : JMid<Int?>`
+        (listOfNotNull(type.superclass) + type.interfaces).associate { supertypeClass ->
+            val name = readKmClass(supertypeClass)?.name ?: supertypeClass.name.replace('.', '/').replace('$', '.')
             val supertype = supertypes.firstOrNull { (it.classifier as? KmClassifier.Class)?.name == name }
             supertypeClass.name to supertype?.arguments.orEmpty().withIndex().mapNotNull { (index, argument) ->
                 val argumentType = argument.type
@@ -1143,15 +1150,17 @@ private fun typeArgumentGivers(
                 supertype !is ParameterizedType -> givers += TypeArgumentGiver.Java(isPlatform = true, join = join)
                 !type.isKotlinClass -> givesNullableTypeArgument(type, typeClass, index).let { isNullable ->
                     val isPlatform = isNullable || givesPlatformTypeArguments(type, typeClass, index)
-                    // a type variable of its own passed on as a platform type, like the T of `JMid<T> extends GenericPut<T>`,
-                    // which a type argument annotated nullable given for it makes nullable, like `JMid<@Nullable Integer>`,
-                    // while any other one stays a platform type there
-                    val passed = (supertype.actualTypeArguments.getOrNull(index) as? TypeVariable<*>)
-                        ?.takeIf { isPlatform && !isNullable }
+                    // a type variable of its own passed on, not annotated, like the T of `JMid<T> extends GenericPut<T>`,
+                    // as a platform type, or as given, by a class marked by @NullMarked, which a type argument annotated nullable,
+                    // or a nullable one of a Kotlin class, given for it makes nullable, like `JMid<@Nullable Integer>`,
+                    // while any other one stays as it is there
+                    val supertypeIndex = if (type.superclass == typeClass) -1 else type.interfaces.indexOf(typeClass)
+                    val isAnnotated = javaNullabilities.get(type).supertypeArguments[supertypeIndex]?.containsKey("$index;") == true
+                    val passed = (supertype.actualTypeArguments.getOrNull(index) as? TypeVariable<*>)?.takeIf { !isAnnotated }
                     val owner = passed?.genericDeclaration as? Class<*>
                     val isPassedNullable = owner != null && typeArgumentGivers(javaClass, owner, owner.typeParameters.indexOf(passed), resolved)
                         .any { (it is TypeArgumentGiver.Java && it.isNullable) || (it is TypeArgumentGiver.Kotlin && it.argument?.isNullable == true) }
-                    givers += TypeArgumentGiver.Java(isPlatform, isNullable || isPassedNullable, join)
+                    givers += TypeArgumentGiver.Java(isPlatform || isPassedNullable, isNullable || isPassedNullable, join)
                 }
                 else -> when (val argument = supertype.actualTypeArguments.getOrNull(index)) {
                     is TypeVariable<*> -> (argument.genericDeclaration as? Class<*>)?.let { argumentClass ->

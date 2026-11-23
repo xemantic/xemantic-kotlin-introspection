@@ -1279,6 +1279,16 @@ abstract class BoxedJavaPutOfNotNullAndNullableMidIntegerPutImpl :
 
 fun BoxedJavaPutOfNotNullAndNullableMidIntegerPutImpl.putNull(): String = put(t = null)
 
+// the same, through JavaNullMarkedGenericMidPut<T>, marked by @NullMarked, which passes its T on as given
+abstract class BoxedJavaPutOfNotNullAndNullableNullMarkedMidIntegerPutImpl :
+    com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOfNotNullAndNullableNullMarkedMidIntegerPut()
+
+fun BoxedJavaPutOfNotNullAndNullableNullMarkedMidIntegerPutImpl.putNull(): String = put(t = null)
+
+interface GenericRenamedPut<T> {
+    fun put(q: T): String
+}
+
 // while the abstract method of a Java interface taking the primitive type is a member of its own, left to a concrete subclass
 abstract class JavaInternalOpenIntegerPutWithAbstractPrimitiveImpl : com.xemantic.kotlin.introspection.test.other.JavaInternalOpenIntegerPutWithAbstractPrimitive()
 

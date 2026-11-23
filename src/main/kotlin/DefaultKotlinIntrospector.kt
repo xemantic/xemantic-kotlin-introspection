@@ -5457,10 +5457,14 @@ internal class DefaultKotlinIntrospector(
                         // an override of both, visible then, like the put(Integer) of a Java class extending
                         // HiddenOpenGenericPut<Integer>, and implementing GenericPut<@Nullable Integer>,
                         // unless a visible member listed is of its signature, or merged with it, like the put(t: T)
-                        // of GenericDefaultPut<Int> of a Kotlin subclass of the Java class
+                        // of GenericDefaultPut<Int> of a Kotlin subclass of the Java class, or implemented by the same method,
+                        // one member with it, like the put(q: T) of an interface given Integer next to GenericPut<@Nullable Integer>
                         picked?.isHidden != true ||
                             (picked.implementingJvmMethod != null && picked.implementingJvmMethod === candidate.implementingJvmMethod &&
-                                visible.none { it.signature == candidate.signature || it.isMergedWith(candidate) || it.overrides(candidate) })
+                                visible.none {
+                                    it.signature == candidate.signature || it.isMergedWith(candidate) || it.overrides(candidate) ||
+                                        it.implementingJvmMethod === candidate.implementingJvmMethod
+                                })
                     }
                 }
                 .withoutCalledInstead(),

@@ -199,8 +199,9 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   while the member itself, not overridden, takes the type of its first path, see `isJavaTypeArgument`, `givenPositions`.
 
 - A type argument annotated nullable given through a generic Java class passing its type variable on,
-  like `JMid<@Nullable Integer>` of `JMid<T> extends GenericPut<T>`, still disagrees with a `@NotNull Integer` of another path,
-  so that the Java override takes a platform type — a walk of the givers stopping at the Java class misses it, see `typeArgumentGivers`.
+  like `JMid<@Nullable Integer>` of `JMid<T> extends GenericPut<T>`, also one marked by `@NullMarked`, or a Kotlin `KN : JMid<Int?>`,
+  still disagrees with a `@NotNull Integer` of another path, so that the Java override takes a platform type —
+  a walk of the givers stopping at the Java class misses it, see `typeArgumentGivers`.
 
 - The Gradle test build rejects `abstract class X : J(), JDb` (`J implements GenericPut<Integer>`, `JDb` a default `put(Integer)`) with `must override 'put' because it inherits multiple interface methods`,
   while kotlinc compiles it against the compiled Java classes, so it is no fixture.

@@ -21638,6 +21638,16 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve Java member taking boxed type implementing Kotlin generic one given boxed type annotated not null and nullable through null-marked generic Java interface as taking platform type`() {
+        // the @NullMarked JavaNullMarkedGenericMidPut<T> passes the @Nullable Integer on as given, so that put(Integer) takes Int!
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaPutOfNotNullAndNullableNullMarkedMidIntegerPutImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaPutOfNotNullAndNullableNullMarkedMidIntegerPutImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOfNotNullAndNullableNullMarkedMidIntegerPut
+            override fun put(t: Int?): String
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve Java member taking String overriding member of internal generic class given String annotated nullable and StringPut as taking platform type`() {
         // the nullabilities disagree, so that put(String) takes String!, an override of both, taking their name for kotlinc
         resolver.resolve("com.xemantic.kotlin.introspection.test.JavaStringPutOverInternalNullableStringPutImpl.put") sameAsKotlin """
@@ -22258,6 +22268,17 @@ class KotlinIntrospectorTest {
         // the Java method overrides a visible member too, visible then, taking Int!, as the nullabilities disagree
         resolver.resolve("com.xemantic.kotlin.introspection.test.NotNullBoxedJavaPutOverHiddenOpenAndNullableGenericPutImpl.put") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.NotNullBoxedJavaPutOverHiddenOpenAndNullableGenericPutImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.GenericPut
+            open fun put(t: Int?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member implementing hidden member and Kotlin generic ones of other parameter names once`() {
+        // one member for kotlinc, so that an empty concrete subclass compiles, and put(null) too,
+        // while the names disagree, which kotlinc lets no call name (#364)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaPutOverHiddenNullableAndRenamedGenericPutImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaPutOverHiddenNullableAndRenamedGenericPutImpl.put [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.GenericPut
             open fun put(t: Int?): String
         """.trimIndent()
