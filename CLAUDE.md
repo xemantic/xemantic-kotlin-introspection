@@ -150,8 +150,12 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   like `p/lib/sub/` to `p/lib/` next to `p/lib/` to `p/lib/old/`, so that a JVM method equals another signature by identity:
   a type of a Java member is matched by both its JVM name and the name the relocation translates it back to (`unlocatedType`),
   and a type argument substituted from the metadata is translated back once more,
-  so a rule pairing these JVM methods right turned missed overrides into false `final override`s on the relocation harness (#355) —
+  so a rule pairing these JVM methods right turned missed overrides into false `final override`s (#355),
+  like of `fun more(e: p.lib.sub.Event)` next to `override fun more(e: p.lib.Event)` of a Java `more(p.lib.Event)` —
   the matching has to change together with it.
+
+- An optimizer, like ProGuard (`method/marking/static`), makes the JVM method of a member static, keeping its descriptor and the metadata,
+  so a static method of a class is not necessarily a JVM-only one, like of a `@JvmStatic` function — see `staticMethodsOfNoMember`.
 
 - Kotlin never passes named arguments to a Java method, even one compiled with `-parameters`, so a Java method taking parameters never shadows an extension — see `isShadowingJavaMethod`.
 

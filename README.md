@@ -609,7 +609,9 @@ com.example.AnnotationTestClass
     by the relocated Kotlin classes it takes, by their own metadata,
     by the JVM method of another member, the only one of its name and simple type names, taking the same class,
     like the one of the `@JvmOverloads` function itself, also when the class is a Java one, or is not found,
-    or by being static in a class whose members are not, like the one of a `@JvmStatic` function of the companion object;
+    or by being a static method of the name, and the simple type names, of a function of the companion object,
+    like the one of its `@JvmStatic` function, while any other static method is taken for the JVM method of a member,
+    which an optimizer might have made static;
     with Java classes, or classes which are not found, which nothing tells, the member stays not marked there.
 * The whole classpath visible to the given class loader is scanned on creation, which takes a while,
   so the instance should be created once and reused.
