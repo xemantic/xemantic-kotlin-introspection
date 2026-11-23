@@ -7057,6 +7057,17 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve Java member taking boxed type implementing Kotlin generic one given boxed type annotated not null by Java interface`() {
+        // put(Integer) takes the Int of the member it overrides, though kotlin-reflect tells Int!,
+        // so that put(null) does not compile, unlike put(t = 1)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaNotNullIntegerPutImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaNotNullIntegerPutImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.GenericPut
+            open fun put(t: Int): String
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve Java member taking boxed type merged with Kotlin generic one given boxed type annotated not null by Java interface once`() {
         // one member for kotlinc, taking Int, so that an empty concrete subclass compiles, while put(null) does not
         resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaNotNullIntegerPutInterfaceJoin.put") sameAsKotlin """
@@ -21437,6 +21448,17 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve Java member taking boxed type annotated not null overriding member of internal generic class given boxed type annotated nullable`() {
+        // the nullabilities disagree, so that put(Integer) takes Int!, and put(t = null) compiles,
+        // though kotlin-reflect, and the annotation of the method, tell Int
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NotNullBoxedJavaPutOverInternalNullableIntegerImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NotNullBoxedJavaPutOverInternalNullableIntegerImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPutOverInternalNullableInteger
+            override fun put(t: Int?): String
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve Java member taking boxed type overriding member of internal generic class given boxed type annotated nullable`() {
         // the @Nullable Integer the Java class gives is no platform type, but Int?, so that put(null) compiles
         resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaPutOverInternalNullableIntegerImpl.put") sameAsKotlin """
@@ -22209,6 +22231,16 @@ class KotlinIntrospectorTest {
     @Test
     fun `should not resolve Java member taking primitive type merged with hidden one taking type argument of primitive type`() {
         assert(resolver.resolve("com.xemantic.kotlin.introspection.test.PrimitiveJavaHiddenGenericPutJoin.put") == null)
+    }
+
+    @Test
+    fun `should resolve Java member annotated not null overriding hidden member and Kotlin generic one given boxed type annotated nullable`() {
+        // the Java method overrides a visible member too, visible then, taking Int!, as the nullabilities disagree
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NotNullBoxedJavaPutOverHiddenOpenAndNullableGenericPutImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NotNullBoxedJavaPutOverHiddenOpenAndNullableGenericPutImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.GenericPut
+            open fun put(t: Int?): String
+        """.trimIndent()
     }
 
     @Test

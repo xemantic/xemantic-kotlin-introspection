@@ -5442,7 +5442,15 @@ internal class DefaultKotlinIntrospector(
                     hidden.isHidden && survivors.any { it.rivalrySignatures.matches(hidden.rivalrySignatures) }
                 }
             )
-                .filter { candidate -> contribution(kmClass.name, candidate).singleOrNull()?.isHidden != true }
+                .filter { candidate ->
+                    contribution(kmClass.name, candidate).singleOrNull().let { picked ->
+                        // but a hidden member which the method of a Java class implements next to the visible candidate,
+                        // an override of both, visible then, like the put(Integer) of a Java class extending
+                        // HiddenOpenGenericPut<Integer>, and implementing GenericPut<@Nullable Integer>
+                        picked?.isHidden != true ||
+                            (picked.implementingJvmMethod != null && picked.implementingJvmMethod === candidate.implementingJvmMethod)
+                    }
+                }
                 .withoutCalledInstead(),
             isPickedOverHidden = { candidate -> contribution(kmClass.name, candidate).singleOrNull() === candidate }
         ).namedByKotlinMembers()
