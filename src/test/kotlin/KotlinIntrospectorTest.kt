@@ -13684,7 +13684,9 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve function type class with extension of type parameter kotlinc cannot infer`() {
-        // x.sinkOfList() is rejected with: cannot infer type for type parameter 'U', while x.sinkOfList<_, Nothing>() compiles
+        // x.sinkOfList() is rejected with: cannot infer type for type parameter 'U', while x.sinkOfList<_, Nothing>() compiles:
+        // this is the lenient matching next to a function type, kept from before #319, not the convention, by which an extension
+        // is listed when kotlinc infers the type parameters the receiver refers to, like on InferredFunctionStringSink, where it is hidden
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.InferredFunctionSupplierSink"
         ) should {
@@ -13844,13 +13846,14 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.test.GivenFunctionStringSink [page 1/1]
             class GivenFunctionStringSink : GivenFunctionSink<String>
             // from com.xemantic.kotlin.introspection.test
+            fun <A : List<A>> GivenFunctionSink<A>.sinkOfSelfList()
             fun <A : Comparable<A>, B : A> GivenFunctionSink<B>.sinkUnderComparableGiven()
         """.trimIndent()
     }
 
     @Test
     fun `should resolve class with extension inferring type parameter from deeply recursive class next to function type`() {
-        // x.triSinkUnderSelfList() compiles, in a way which is not modelled, so it is matched leniently
+        // x.triSinkUnderSelfList() compiles, A inferred as NestedSelfList & List<NestedSelfList>
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.GivenFunctionNestedSelfListTriSink"
         ) sameAsKotlin """
@@ -13859,6 +13862,88 @@ class KotlinIntrospectorTest {
             // from com.xemantic.kotlin.introspection.test
             fun <A : List<A>, B : A, C : A> GivenFunctionTriSink<B, A, C>.triSinkUnderSelfList()
         """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class of suspend function type subclass without extension on other suspend function type`() {
+        // GivenFunctionSuspendTask is a suspend () -> String, no suspend () -> Int
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.GivenFunctionSuspendTaskSource"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GivenFunctionSuspendTaskSource [page 1/1]
+            class GivenFunctionSuspendTaskSource : GivenFunctionSource<GivenFunctionSuspendTask>
+            // from com.xemantic.kotlin.introspection.test
+            fun GivenFunctionSource<Function<*>>.sourceOfFunction()
+            fun <T : Function<R>, R : Comparable<R>> GivenFunctionSource<T>.sourceOfFunctionOfComparable()
+            fun <T : suspend () -> U, U : CharSequence> GivenFunctionSource<T>.sourceOfSuspendSupplier()
+            fun GivenFunctionSource<GivenFunctionSuspendTask>.sourceOfSuspendTask()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve suspend function type class with extension of type parameter given explicitly next to suspend function type bound`() {
+        // x.biSinkOfSuspendSupplierGiven<_, _, Nothing>() compiles, U inferred as String, a CharSequence
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.GivenSuspendSupplierBiSink"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GivenSuspendSupplierBiSink [page 1/1]
+            class GivenSuspendSupplierBiSink : GivenBiSink<suspend () -> String, Comparable<String>>
+            // from com.xemantic.kotlin.introspection.test
+            fun <A : List<B>, B : A, W : B> GivenBiSink<A, B>.biSinkOfListUnderGiven()
+            fun <T : suspend () -> U, U : CharSequence, W> GivenBiSink<T, U>.biSinkOfSuspendSupplierGiven()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extension inferring self bounded type parameter from function type and deeply recursive class`() {
+        // kotlinc: inferred type is 'List<NestedSelfList> & () -> Unit & NestedSelfList', but 'List<() -> Unit>' was expected
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.GivenNestedSelfListBiSink"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GivenNestedSelfListBiSink [page 1/1]
+            class GivenNestedSelfListBiSink : GivenBiSink<() -> Unit, NestedSelfList>
+            // from com.xemantic.kotlin.introspection.test
+            fun <A : List<B>, B : A, W : B> GivenBiSink<A, B>.biSinkOfListUnderGiven()
+            fun <T : suspend () -> U, U : CharSequence, W> GivenBiSink<T, U>.biSinkOfSuspendSupplierGiven()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extension of type parameter under inferred one given explicitly`() {
+        // x.biSinkOfListUnderGiven() does not compile, B inferred as List<String> & List<List<String>>,
+        // but x.biSinkOfListUnderGiven<_, _, Nothing>() does, B being a supertype of Nothing then
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.GivenListBiSink"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GivenListBiSink [page 1/1]
+            class GivenListBiSink : GivenBiSink<List<String>, Any>
+            // from com.xemantic.kotlin.introspection.test
+            fun <A : List<B>, B : A, W : B> GivenBiSink<A, B>.biSinkOfListUnderGiven()
+            fun <T : suspend () -> U, U : CharSequence, W> GivenBiSink<T, U>.biSinkOfSuspendSupplierGiven()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class with extension inferring self bounded type parameter from deeply recursive class`() {
+        // A is inferred as NestedSelfList & List<NestedSelfList>, a List<A> by the type arguments of its lists intersected
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.GivenFunctionNestedSelfListSink"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GivenFunctionNestedSelfListSink [page 1/1]
+            class GivenFunctionNestedSelfListSink : GivenFunctionSink<NestedSelfList>
+            // from com.xemantic.kotlin.introspection.test
+            fun <A : List<A>> GivenFunctionSink<A>.sinkOfSelfList()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve function type class with extension on type parameter under one bounded by function type of bounded one`() {
+        // x.sinkUnderSupplier() compiles, T inferred as (() -> Unit) & (() -> CharSequence), a () -> U of their return types intersected
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InferredFunctionSupplierSink"
+        ) should {
+            have("fun <S : T, T : () -> U, U : CharSequence> InferredFunctionSink<S>.sinkUnderSupplier()" in lines())
+        }
     }
 
     @Test

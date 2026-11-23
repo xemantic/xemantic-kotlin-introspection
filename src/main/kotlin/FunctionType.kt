@@ -294,6 +294,9 @@ private fun functionArity(name: String, prefix: String): Int? {
  */
 internal const val FUNCTION_CLASS_NAME = "kotlin.Function"
 
+// the supertypes of a function type class which is no function reference type, see FunctionTypeClass.supertypeNames
+private val FUNCTION_SUPERTYPE_NAMES = listOf(FUNCTION_CLASS_NAME)
+
 /**
  * The prefix of the metadata name of a JVM interface of a function type, like `kotlin/jvm/functions/Function1`.
  */
@@ -340,7 +343,7 @@ private const val MAX_FUNCTION_TYPE_CLASS_ARITY = 254
  */
 internal class FunctionTypeClass private constructor(val kind: FunctionTypeKind, val arity: Int) {
 
-    val simpleName: String = kind.simpleName(arity)
+    val simpleName: String get() = kind.simpleName(arity)
 
     /**
      * The Kotlin names of the supertypes, whose extensions are listed for this class:
@@ -348,20 +351,20 @@ internal class FunctionTypeClass private constructor(val kind: FunctionTypeKind,
      * `kotlin.reflect.KCallable` and `kotlin.reflect.KAnnotatedElement`, and its function type,
      * like `kotlin.Function1` of `kotlin.reflect.KFunction1`.
      */
-    val supertypeNames: List<String> =
-        if (kind.isReference) {
+    val supertypeNames: List<String>
+        get() = if (kind.isReference) {
             listOf(
                 KFUNCTION_CLASS_NAME, KCALLABLE_CLASS_NAME, KANNOTATED_ELEMENT_CLASS_NAME,
                 kind.functionTypeKind.kotlinName(arity), FUNCTION_CLASS_NAME
             )
         } else {
-            listOf(FUNCTION_CLASS_NAME)
+            FUNCTION_SUPERTYPE_NAMES
         }
 
     /**
      * The interface declaration, like `interface Function1<in P1, out R> : Function<R>`.
      */
-    val header: String = buildString {
+    val header: String get() = buildString {
         append("interface ")
         append(simpleName)
         append(((1..arity).map { "in P$it" } + "out R").joinToString(", ", prefix = "<", postfix = ">"))
@@ -377,7 +380,7 @@ internal class FunctionTypeClass private constructor(val kind: FunctionTypeKind,
     /**
      * The `invoke` operator, like `operator fun invoke(p1: P1): R`.
      */
-    val invoke: String = buildString {
+    val invoke: String get() = buildString {
         if (kind.isSuspend) append("suspend ")
         append("operator fun invoke")
         append((1..arity).joinToString(", ", prefix = "(", postfix = ")") { "p$it: P$it" })

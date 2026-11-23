@@ -1642,9 +1642,10 @@ class GivenFunctionSuspendRunSink : GivenFunctionSink<suspend () -> Unit>
 
 class GivenFunctionStringSink : GivenFunctionSink<String>
 
-// a class whose supertype refers to it within a type argument of a type argument, see #343, is inferred by kotlinc
-// in a way which is not modelled: x.triSinkUnderSelfList() compiles, A inferred from NestedSelfList for A : List<A>,
-// so next to a function type it is matched leniently, like before
+// a class whose supertype refers to it within a type argument of a type argument, see #343: x.triSinkUnderSelfList() compiles,
+// A of A : List<A> inferred as NestedSelfList & List<NestedSelfList>, which is a List<A>, as kotlinc tells the types of an intersection
+// which are of the same covariant class to be one of their type arguments intersected, List<List<NestedSelfList> & NestedSelfList>,
+// while T of T : List<T> inferred also from () -> Unit is no List<() -> Unit>
 interface NestedSelfList : List<List<NestedSelfList>>
 
 interface GivenFunctionTriSink<in A, in B, in C>
@@ -1652,3 +1653,35 @@ interface GivenFunctionTriSink<in A, in B, in C>
 fun <A : List<A>, B : A, C : A> GivenFunctionTriSink<B, A, C>.triSinkUnderSelfList() {}
 
 class GivenFunctionNestedSelfListTriSink : GivenFunctionTriSink<suspend () -> Unit, NestedSelfList, GivenFunctionTask>
+
+fun <A : List<A>> GivenFunctionSink<A>.sinkOfSelfList() {}
+
+class GivenFunctionNestedSelfListSink : GivenFunctionSink<NestedSelfList>
+
+// a class of a suspend function type supertype is no other suspend function type, see #343, also as a type argument
+interface GivenFunctionSuspendTask : suspend () -> String
+
+fun GivenFunctionSource<suspend () -> Int>.sourceOfSuspendInt() {}
+
+fun GivenFunctionSource<GivenFunctionSuspendTask>.sourceOfSuspendTask() {}
+
+fun GivenFunctionSink<GivenFunctionSuspendTask>.sinkOfSuspendTask() {}
+
+class GivenFunctionSuspendTaskSource : GivenFunctionSource<GivenFunctionSuspendTask>
+
+// a type parameter given explicitly, like W, next to a bound of a suspend function type, see #343,
+// and one whose bound refers to an inferred one, like W of W : B, given as Nothing, also without a function type:
+// x.biSinkOfListUnderGiven<_, _, Nothing>() compiles, though x.biSinkOfListUnderGiven() does not
+interface GivenBiSink<in A, in B>
+
+fun <T : suspend () -> U, U : CharSequence, W> GivenBiSink<T, U>.biSinkOfSuspendSupplierGiven() {}
+
+fun <T : List<T>> GivenBiSink<T, T>.biSinkOfSelfList() {}
+
+fun <A : List<B>, B : A, W : B> GivenBiSink<A, B>.biSinkOfListUnderGiven() {}
+
+class GivenSuspendSupplierBiSink : GivenBiSink<suspend () -> String, Comparable<String>>
+
+class GivenNestedSelfListBiSink : GivenBiSink<() -> Unit, NestedSelfList>
+
+class GivenListBiSink : GivenBiSink<List<String>, Any>
