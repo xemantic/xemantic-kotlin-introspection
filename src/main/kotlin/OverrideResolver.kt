@@ -1537,6 +1537,11 @@ internal class OverrideResolver(
         val isSynthetic: Boolean get() = access and (Opcodes.ACC_SYNTHETIC or Opcodes.ACC_BRIDGE) != 0
 
         val isStatic: Boolean get() = access and Opcodes.ACC_STATIC != 0
+
+        // a synthetic method, like other${'$'}default of a default argument, or a private static one, like tr${'$'}lambda${'$'}0
+        // of the body of a lambda, which the compiler does not mark synthetic, is the one of no function another class calls,
+        // like of no @JvmStatic function of the companion object
+        val isCompilerHelper: Boolean get() = isSynthetic || (isStatic && access and Opcodes.ACC_PRIVATE != 0)
     }
 
     /**
@@ -2303,9 +2308,11 @@ internal class OverrideResolver(
         // to p/app/shaded/p/lib/ev/Event, or be missing, which the JVM method cannot tell apart, and it is told alone,
         // see relocatedApart, so that its member is not taken for a shrunk one, an override, next to its own JVM method
         val namedClasses = signatureClassNames.entries.groupingBy { it.value }.eachCount()
-        // nor does a static method name it, which might be the one of a @JvmStatic function of the companion object, of no member
+        // nor does a static method name it, which might be the one of a @JvmStatic function of the companion object, of no member,
+        // unless it is the one of a default argument, or of a lambda, see isCompilerHelper
         val staticClassNames by lazy(LazyThreadSafetyMode.NONE) {
-            declared.orEmpty().filter { it.isStatic }.flatMapTo(HashSet()) { methodClassNames(it.name + it.descriptor) }
+            declared.orEmpty().filter { it.isStatic && !it.isCompilerHelper }
+                .flatMapTo(HashSet()) { methodClassNames(it.name + it.descriptor) }
         }
         val apartCandidates = subpackageNamed.filter { (metadataName, jvmName) ->
             if (namedClasses.getValue(jvmName) > 1 || jvmName in staticClassNames) return@filter false
@@ -2370,10 +2377,10 @@ internal class OverrideResolver(
         if (apartCandidates.isEmpty()) return relocatedApart
         // only when every JVM method naming such a class is the one of a signature then: when the relocation tells too little
         // of its other classes, like of on(Ls/ext/Event;Ls/lib/ev/Event;)V, with nothing telling p/ext/ relocated to s/ext/,
-        // or when a JVM method naming it is the one of no member, the class is not told, as before
+        // or when a JVM method naming it is the one of no member, but for a compiler helper, the class is not told, as before
         val apartNames = apartCandidates.mapTo(HashSet()) { it.second }
         val signatureSet = signatures.toHashSet()
-        val isExplaining = declared.orEmpty().asSequence().filter { !it.isSynthetic }.map { it.name + it.descriptor }
+        val isExplaining = declared.orEmpty().asSequence().filter { !it.isCompilerHelper }.map { it.name + it.descriptor }
             .filter { jvmMethod -> methodClassNames(jvmMethod).any { it in apartNames } }
             .all { jvmMethod -> relocatedApart.relocation?.unlocatedDescriptor(jvmMethod) in signatureSet }
         return if (isExplaining) relocatedApart else told(emptyList())

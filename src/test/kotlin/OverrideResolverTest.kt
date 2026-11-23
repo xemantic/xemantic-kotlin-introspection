@@ -452,7 +452,8 @@ class OverrideResolverTest {
      * The class file of a class of the [internalName], like `app/Owner`, extending the [superName], implementing the [interfaces],
      * and declaring the [methods], names followed by descriptors, like `on(Lapp/shaded/lib/Event;)V`,
      * or of a Java interface, if it [isInterface], telling the JVM names, which shading rewrites, unlike the Kotlin metadata,
-     * and the [staticMethods], like the ones of the `@JvmStatic` functions of a companion object.
+     * and the [staticMethods], like the ones of the `@JvmStatic` functions of a companion object,
+     * of the [staticAccess], like `ACC_SYNTHETIC` of the one of a default argument, or `ACC_PRIVATE` of the body of a lambda.
      *
      * @param isAnnotated whether the class is annotated with `lib/Marker`, of the single element `count`,
      *   the `RuntimeVisibleAnnotations` attribute being the only one of the class then, ending the class file,
@@ -465,7 +466,8 @@ class OverrideResolverTest {
         interfaces: List<String> = emptyList(),
         isInterface: Boolean = false,
         isAnnotated: Boolean = false,
-        staticMethods: List<String> = emptyList()
+        staticMethods: List<String> = emptyList(),
+        staticAccess: Int = Opcodes.ACC_PUBLIC
     ): ByteArray = ClassWriter(0).apply {
         val access = if (isInterface) Opcodes.ACC_ABSTRACT or Opcodes.ACC_INTERFACE else 0
         visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC or access, internalName, null, superName, interfaces.toTypedArray())
@@ -484,7 +486,7 @@ class OverrideResolverTest {
         }
         staticMethods.forEach { method ->
             val descriptor = method.indexOf('(')
-            visitMethod(Opcodes.ACC_PUBLIC or Opcodes.ACC_STATIC, method.substring(0, descriptor), method.substring(descriptor), null, null)
+            visitMethod(staticAccess or Opcodes.ACC_STATIC, method.substring(0, descriptor), method.substring(descriptor), null, null)
         }
         visitEnd()
     }.toByteArray()
@@ -2758,6 +2760,68 @@ class OverrideResolverTest {
         // no class is found by p/app/shaded/p/lib/Event, the name the package of the Java interface would give p/lib/Event,
         // so the JVM method naming p/app/shaded/p/lib/ev/Event is the one of the member, which is not shrunk then
         assert(overrides == listOf(false, false, false))
+    }
+
+    @Test
+    fun `should not take member for shrunk override next to synthetic static method of default argument naming class relocated into subpackage`() {
+        // given
+        // like the app relocating p/lib/Event alone into a subpackage of the relocated p/lib/, the classes its members take missing,
+        // another member taking the class with a default argument, compiled to the synthetic static other$default
+        val shaded = "p/app/shaded/p/lib"
+        val owner = kmClass("p/app/Owner", supertype = "p/lib/JTrap").apply {
+            functions += functionTaking("tr", "p/lib/Event")
+            functions += functionTaking("tr", "p/ext/Event")
+            functions += functionTaking("other", "p/lib/Event")
+        }
+        val resolver = overrideResolver(
+            classFiles = mapOf(
+                "p/app/Owner" to classFile(
+                    "p/app/Owner", listOf("tr(L$shaded/ev/Event;)V", "tr(Lp/ext/Event;)V", "other(L$shaded/ev/Event;)V"),
+                    interfaces = listOf("$shaded/JTrap"),
+                    staticMethods = listOf("other\$default(Lp/app/Owner;L$shaded/ev/Event;ILjava/lang/Object;)V"),
+                    staticAccess = Opcodes.ACC_PUBLIC or Opcodes.ACC_SYNTHETIC
+                )
+            ),
+            unloadableClassFiles = mapOf("$shaded/JTrap" to classFile("$shaded/JTrap", listOf("tr(L$shaded/sub/Event;)V"), isInterface = true))
+        )
+
+        // when
+        val overrides = owner.functions.map { resolver.isOverride(OverrideResolver.Owner(owner), it) }
+
+        // then
+        // the synthetic static method is the one of no @JvmStatic function, so it does not keep p/lib/Event from being told relocated alone
+        assert(overrides == listOf(false, false, false))
+    }
+
+    @Test
+    fun `should not take member for shrunk override next to private static method of lambda naming class relocated into subpackage`() {
+        // given
+        // like the app relocating p/lib/Event alone into a subpackage of the relocated p/lib/, the classes its members take missing,
+        // the member taking the class declaring a lambda which takes it too, compiled to the private static tr$lambda$0
+        val shaded = "p/app/shaded/p/lib"
+        val owner = kmClass("p/app/Owner", supertype = "p/lib/JTrap").apply {
+            functions += functionTaking("tr", "p/lib/Event")
+            functions += functionTaking("tr", "p/ext/Event")
+        }
+        val resolver = overrideResolver(
+            classFiles = mapOf(
+                "p/app/Owner" to classFile(
+                    "p/app/Owner", listOf("tr(L$shaded/ev/Event;)V", "tr(Lp/ext/Event;)V"),
+                    interfaces = listOf("$shaded/JTrap"),
+                    staticMethods = listOf("tr\$lambda\$0(L$shaded/ev/Event;)L$shaded/ev/Event;"),
+                    staticAccess = Opcodes.ACC_PRIVATE or Opcodes.ACC_FINAL
+                )
+            ),
+            unloadableClassFiles = mapOf("$shaded/JTrap" to classFile("$shaded/JTrap", listOf("tr(L$shaded/sub/Event;)V"), isInterface = true))
+        )
+
+        // when
+        val overrides = owner.functions.map { resolver.isOverride(OverrideResolver.Owner(owner), it) }
+
+        // then
+        // a private static method is the one of no function callable from outside, like of no @JvmStatic one,
+        // and of no member, so it neither keeps p/lib/Event from being told relocated alone, nor is it left unexplained
+        assert(overrides == listOf(false, false))
     }
 
     @Test

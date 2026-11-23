@@ -164,6 +164,12 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   and a class file relocated twice keeps the metadata name of the first relocation, like `o/ext/Event` found as `s/p/ext/Event`,
   while the classes compiled against it refer to it as `p/ext/Event`, so the name a Kotlin class tells is not always the one its users know (#355).
 
+- With the parameter classes missing, a class relocated alone into a subpackage of its relocated package (`p/lib/Event` to `s/lib/ev/Event`)
+  cannot be told from a JVM method of no member naming a class of that subpackage next to a shrunk override (`je(Ls/lib/sub/Event;)V`, added by a bytecode tool):
+  the class files are the same up to the names, see `apartCandidates` —
+  taking a Kotlin class found by the package-given name, but telling a name of a relocation before, for the class itself fixes the latter
+  and breaks package merges of the review harness (#355).
+
 - Kotlin never passes named arguments to a Java method, even one compiled with `-parameters`, so a Java method taking parameters never shadows an extension — see `isShadowingJavaMethod`.
 
 - kotlinc 2.4.21 infers the `T` of an invariant `X<T>` from an `out Nothing` projection, also nested in an invariant position,
