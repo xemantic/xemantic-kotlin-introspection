@@ -188,6 +188,27 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should list extension on recursively bounded type parameter by witness for relocated class`() {
+        // given
+        val classFiles = arrayOf("RelocatedSameKeyMap.class", "RelocatedWitnessKt.class")
+        val root = isolatedTestFixturesCopy("relocatedWitness", *classFiles)
+        relocatedCopy(root, *classFiles)
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve(
+            "shaded.com.xemantic.kotlin.introspection.isolated.RelocatedSameKeyMap",
+            pageSize = 10000
+        )
+
+        // then - V of String makes a Map<V, V> a Map<T, T> of T : Comparable<T>, the class found by its located name,
+        // not taken as one which cannot be loaded, see #362
+        signature should {
+            have(lines().any { ".relocatedSameComparables()" in it })
+        }
+    }
+
+    @Test
     fun `should not take overload of relocated inner class with bounded type parameter of its relocated outer class for override`() {
         // given
         val classFiles = arrayOf("RelocatedBoundedOuter.class", "RelocatedBoundedOuter\$Comparing.class")

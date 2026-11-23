@@ -510,8 +510,9 @@ internal class DefaultKotlinIntrospector(
 
         private const val ENUM_CLASS_NAME = "kotlin/Enum"
 
-        // a CharSequence, and a List, whose get(index: Int) clash, see isDeclarableFor
+        // a CharSequence, and a List of other elements than Char, whose get(index: Int) clash, see isDeclarableFor
         private const val CHAR_SEQUENCE_CLASS_NAME = "kotlin/CharSequence"
+        private const val CHAR_CLASS_NAME = "kotlin/Char"
         private const val LIST_CLASS_NAME = "kotlin/collections/List"
 
         /**
@@ -5824,7 +5825,7 @@ internal class DefaultKotlinIntrospector(
                         (!isRecursivelyBoundedOnTypeParameters(supertype, typeParameters) ||
                             // first as told with the type parameters of the class standing for any type, which is cheaper
                             (supertypes.canBeCalledOn(extension) &&
-                                supertypes.witnessed(listOfNotNull(receiver) + typeParameters.flatMap { it.upperBounds })
+                                supertypes.witnessed(listOfNotNull(receiver) + typeParameters.flatMap { it.upperBounds }, declarations::located)
                                     .any { witnessed ->
                                         witnessed.canBeCalledOn(extension) &&
                                             supertypes.isDeclarableFor(witnessed.nothingWitnessedIds, receiver, typeParameters)
@@ -7727,9 +7728,10 @@ internal class DefaultKotlinIntrospector(
      * matched leniently, see [ClassSupertypes.lenientToFunctionTypes], where kotlinc rejects the call,
      * or when the class, or a class a supertype, or a witness, refers to, reaches a Java class annotating
      * a type argument of its own supertype, like `List<@Nullable V>`, also through the type arguments of its supertypes,
-     * see [annotatesJavaSupertypeArguments], which the supertypes told by the generic signatures do not tell.
+     * see [annotatesJavaSupertypeArguments], which the supertypes told by the generic signatures do not tell,
+     * or a class which cannot be loaded, also under the name it is [located] by, when relocated with the class.
      */
-    private fun ClassSupertypes.witnessed(extensionTypes: List<KmType>): List<ClassSupertypes> {
+    private fun ClassSupertypes.witnessed(extensionTypes: List<KmType>, located: (String) -> String): List<ClassSupertypes> {
         val typeParameters = kmClass.typeParameters
         val ids = typeParameters.mapTo(HashSet()) { it.id }
         val bounds = typeParameters.flatMap { it.upperBounds }
@@ -7758,8 +7760,10 @@ internal class DefaultKotlinIntrospector(
                     arguments.flatMap { it.type?.classNames().orEmpty() } + outerType?.classNames().orEmpty()
             val isAnnotatedByJava = ((reached + candidates).flatMapTo(LinkedHashSet()) { it.classNames() } + kmClass.name).any { name ->
                 annotatingJavaSupertypeArguments.getOrPut(name) {
-                    // also one which cannot be loaded, like one kotlin-reflect fails on, see #362
-                    findClassByMetadataName(name)?.clazz?.let { annotatesJavaSupertypeArguments(it) } ?: true
+                    // also one which cannot be loaded, like one kotlin-reflect fails on, see #362,
+                    // found by its located name when relocated with the class, like by shading, see ClassDeclarations.located
+                    val found = findClassByMetadataName(name) ?: located(name).takeIf { it != name }?.let { findClassByMetadataName(it) }
+                    found?.clazz?.let { annotatesJavaSupertypeArguments(it) } ?: true
                 }
             }
             if (isAnnotatedByJava) return@getOrPut emptyList()
@@ -7801,34 +7805,46 @@ internal class DefaultKotlinIntrospector(
      * of the class, like `List<V>` of `JavaList<V>` of `List<JavaList<V>>` for `List<List<T>>`,
      * no final class which is no subclass of the others,
      * nor two classes which are not interfaces, neither of them a subclass of the other, see [isEmptyIntersectionOfClasses],
-     * nor a `CharSequence`, and a `List`, whose `get(index: Int)` clash, like for `V : CharSequence` of `Map<V, V>`.
+     * nor a `CharSequence`, and a `List` of an element which is no supertype of `Char`, like of itself,
+     * whose `get(index: Int)` clash, like for `V : CharSequence` of `Map<V, V>` as a `Map<T, List<T>>`,
+     * unlike a `List<Char>`, or a `Collection<V>`.
      * Other positions, like of a projection, are not told, the type taken as declarable.
      */
     private fun ClassSupertypes.isDeclarableFor(ids: Set<Int>, receiver: KmType?, typeParameters: List<KmTypeParameter>): Boolean {
         if (ids.isEmpty() || receiver == null) return true
-        fun classNames(types: List<KmType>) = types.mapNotNullTo(LinkedHashSet()) { (it.classifier as? KmClassifier.Class)?.name }
-        val required = ids.associateWithTo(HashMap()) { classNames(receiverBoundTypes(it, kmClass.typeParameters)) }
-        fun requiredBy(type: KmType): Set<String> = when (val classifier = type.classifier) {
-            is KmClassifier.Class -> setOf(classifier.name)
-            is KmClassifier.TypeParameter -> classNames(receiverBoundTypes(classifier.id, typeParameters))
-            is KmClassifier.TypeAlias -> emptySet()
+        // the types it is a subtype of, each telling whether it is of the extension, and the type parameters of the extension
+        // it is matched against, like T of Map<T, T>, which stand for it, like the type parameter itself does in its bounds
+        class Required(val types: MutableList<Pair<KmType, Boolean>>, val aliases: MutableSet<Int> = HashSet())
+        val required = ids.associateWithTo(HashMap()) { id ->
+            Required(receiverBoundTypes(id, kmClass.typeParameters).mapTo(ArrayList()) { it to false })
         }
         fun walk(reached: KmType, expected: KmType) {
-            val classifier = reached.classifier
-            if (classifier is KmClassifier.TypeParameter) {
-                required[classifier.id]?.addAll(requiredBy(expected))
-            } else if (classifier is KmClassifier.Class) {
-                val expectedName = (expected.classifier as? KmClassifier.Class)?.name ?: return
-                when {
-                    // its supertype of the class of the expected type, like List<V> of JavaList<V> for List<T>
-                    expectedName != classifier.name -> supertypesOf(reached, expectedName)?.forEach { supertype ->
-                        if ((supertype.classifier as? KmClassifier.Class)?.name == expectedName) walk(supertype, expected)
-                    }
-                    reached.arguments.size == expected.arguments.size ->
-                        reached.arguments.zip(expected.arguments).forEach { (argument, expectedArgument) ->
-                            walk(argument.type ?: return@forEach, expectedArgument.type ?: return@forEach)
+            when (val classifier = reached.classifier) {
+                is KmClassifier.TypeParameter -> {
+                    val requiring = required[classifier.id] ?: return
+                    when (val expectedClassifier = expected.classifier) {
+                        is KmClassifier.Class -> requiring.types += expected to true
+                        is KmClassifier.TypeParameter -> {
+                            requiring.aliases += expectedClassifier.id
+                            receiverBoundTypes(expectedClassifier.id, typeParameters).forEach { requiring.types += it to true }
                         }
+                        is KmClassifier.TypeAlias -> {}
+                    }
                 }
+                is KmClassifier.Class -> {
+                    val expectedName = (expected.classifier as? KmClassifier.Class)?.name ?: return
+                    when {
+                        // its supertype of the class of the expected type, like List<V> of JavaList<V> for List<T>
+                        expectedName != classifier.name -> supertypesOf(reached, expectedName)?.forEach { supertype ->
+                            if ((supertype.classifier as? KmClassifier.Class)?.name == expectedName) walk(supertype, expected)
+                        }
+                        reached.arguments.size == expected.arguments.size ->
+                            reached.arguments.zip(expected.arguments).forEach { (argument, expectedArgument) ->
+                                walk(argument.type ?: return@forEach, expectedArgument.type ?: return@forEach)
+                            }
+                    }
+                }
+                is KmClassifier.TypeAlias -> {}
             }
         }
         val receiverTypes = when (val classifier = receiver.classifier) {
@@ -7837,9 +7853,24 @@ internal class DefaultKotlinIntrospector(
         }
         receiverTypes.forEach { expected -> types[classReceiverIndexKey(expected)].orEmpty().forEach { walk(it, expected) } }
         fun isOf(name: String, className: String) = name == className || className.replace('/', '.') in supertypeNamesOf(name)
-        return required.values.none { names ->
+        // a List of an element which is no supertype of Char, like the type itself, of List<X>, or String,
+        // whose get(index: Int) clashes with the one of a CharSequence, unlike the one of a List<Char>, or a List<Any?>
+        fun isListClashingWithCharSequence(type: KmType, selfIds: Set<Int>): Boolean {
+            val name = (type.classifier as? KmClassifier.Class)?.name?.takeIf { isOf(it, LIST_CLASS_NAME) } ?: return false
+            val list = if (name == LIST_CLASS_NAME) type else supertypesOf(type, LIST_CLASS_NAME)?.firstOrNull() ?: return false
+            val element = list.arguments.firstOrNull()?.type ?: return false
+            return when (val classifier = element.classifier) {
+                is KmClassifier.TypeParameter -> classifier.id in selfIds
+                is KmClassifier.Class -> !isSubclass(CHAR_CLASS_NAME, classifier.name)
+                is KmClassifier.TypeAlias -> false
+            }
+        }
+        return required.none { (id, requiring) ->
+            val names = requiring.types.mapNotNullTo(LinkedHashSet()) { (type, _) -> (type.classifier as? KmClassifier.Class)?.name }
             isEmptyIntersectionOfClasses(names) ||
-                (names.any { isOf(it, CHAR_SEQUENCE_CLASS_NAME) } && names.any { isOf(it, LIST_CLASS_NAME) })
+                (names.any { isOf(it, CHAR_SEQUENCE_CLASS_NAME) } && requiring.types.any { (type, isOfExtension) ->
+                    isListClashingWithCharSequence(type, if (isOfExtension) requiring.aliases else setOf(id))
+                })
         }
     }
 

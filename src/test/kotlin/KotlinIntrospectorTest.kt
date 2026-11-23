@@ -12252,6 +12252,18 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve interface of map of char sequence keys with extension callable on list of chars char sequence`() {
+        // V of abstract class Y : CharSequence, List<Char>, Comparable<Y> makes a Map<V, V> a Map<T, T>
+        // of T : List<Char>, T : Comparable<T>, its get(index: Int) returning a Char either way
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.witness.WitnessCharSequenceSameKeyMap",
+            pageSize = 10000
+        ) should {
+            have(lines().any { ".witnessComparableCharLists()" in it })
+        }
+    }
+
+    @Test
     fun `should resolve interface of map of two of three type parameters with extensions on recursively bounded type parameter`() {
         // K of String, and V of List<String>, make a Map<K, V> a Map<T, List<T>> of T : Comparable<T>, whatever A is
         resolver.resolve(

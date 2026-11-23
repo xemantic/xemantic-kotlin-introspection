@@ -375,10 +375,11 @@ com.example.AnnotationTestClass
   like `String`, `Int`, a type the extension names, or a type which can be declared, like `interface X : List<X>, Comparable<X>`:
   for `class SameKeyMap<V> : HashMap<V, V>()`, of `SameKeyMap<String>`, but not for `interface Scores<V> : Map<V, Comparable<V>>`,
   and `fun <T : Comparable<T>> Map<T, List<T>>.ext()` for `SameKeyMap`, of `SameKeyMap<X>`,
-  but not for `interface Names<V : CharSequence> : Map<V, V>`, as no type is both a `CharSequence` and a `List`, clashing on `get(index: Int)`,
+  but not for `interface Names<V : CharSequence> : Map<V, V>`, as no type is both a `CharSequence` and a `List` of itself,
+  their `get(index: Int)` returning other types, unlike a `List<Char>`,
   nor for a type parameter bounded by a final class, which is no `Comparable`.
-  The types tried are combined across a few type parameters only, of more of them each takes one of the first types tried,
-  the others all the same one.
+  Each combination of the types tried is tried only for a class of a few type parameters;
+  for more of them, only some of the combinations are.
   A JDK interface named as a supertype, like `abstract class Orders : java.util.List<Order>`,
   is the Java one, with the supertypes Java declares,
   so that `fun Collection<Order>.count()` is listed for it, but not `fun List<Order>.total()`, as the compiler tells,

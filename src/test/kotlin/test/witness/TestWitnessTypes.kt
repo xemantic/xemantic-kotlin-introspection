@@ -112,10 +112,17 @@ fun <T : Comparable<T>> List<Iterable<Iterable<T>>>.witnessComparableElementsOfI
 interface WitnessNullableElementListKeyMap<V : JavaPlatformBoxes.NullableElementList<V>> : Map<V, V>
 
 // Nothing stands for a type which can be declared, like interface X : List<X>, Comparable<X> of a Map<V, V>
-// as a Map<T, List<T>?>, but not for a V : CharSequence, as no type is both a CharSequence and a List,
+// as a Map<T, List<T>?>, but not for a V : CharSequence, as no type is both a CharSequence and a List of itself,
 // clashing on get(index: Int), nor for a V of a final class, like the V : WitnessFinal of WitnessFinalKeyMap,
 // but for a platform type V! as well, as kotlinc takes X! like X, like the MutableMap<V!, V!> of WitnessJavaSameKeyMap
 
 fun <T : Comparable<T>> Map<T, List<T>?>.witnessComparableKeysOfNullableLists() {}
 
 interface WitnessCharSequenceKeyMap<V : CharSequence> : Map<V, V?>
+
+// while a CharSequence can be a List<Char>, like abstract class Y : CharSequence, List<Char>, Comparable<Y>,
+// its get(index: Int) returning a Char either way
+
+fun <T> Map<T, T>.witnessComparableCharLists() where T : List<Char>, T : Comparable<T> {}
+
+interface WitnessCharSequenceSameKeyMap<V : CharSequence> : Map<V, V>
