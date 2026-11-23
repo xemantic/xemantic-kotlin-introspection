@@ -129,19 +129,18 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 - With a type argument given explicitly, like `x.ext<_, Nothing, _>()`, kotlinc reports the violated bound of an inferred type parameter
   as an error also next to an empty intersection, unlike when all of them are inferred, see `CallInference`.
 
-- When judging a sweep by calls with explicit type arguments,
-  give explicitly only a type parameter related to nothing at all — neither the receiver nor a bound refers to it, nor does its own bound refer to another one — like `W` of `fun <T : Comparable<T>, W> Sink<T>.ext()`.
-  One whose bound refers to an inferred one, like `W` of `W : U`, is inferred too (decided in #343), so such an extension is listed only when `x.ext()` compiles —
-  next to a function type as well; the one exception is the platform-type shape of the next entry (#334), not yet reconciled.
-  One the receiver refers to through a bound, like `E` of `T : List<E>`, is to be inferred, or the extension is not listed (`consumeElements`),
-  though kotlinc reports the same `cannot infer type for type parameter 'E'. Specify it explicitly.`
-  `Nothing` does not count as a type argument making an extension callable (#366): one given as `Nothing`, like in `x.ext<Nothing, _>()` of `<A : Comparable<A>, B : A> Sink<B>.ext()`,
-  compiles on nearly any contravariant receiver, and would judge every such row as callable.
+- When judging a sweep by calls with explicit type arguments, give explicitly only what the README convention takes as given:
+  a `W` of `W : U`, or an `E` of `T : List<E>`, is judged by `x.ext()` alone (#343),
+  though kotlinc says `cannot infer type for type parameter 'E'. Specify it explicitly.`
+  Never count a call compiling only with `Nothing` (#366): `x.ext<Nothing, _>()` of `<A : Comparable<A>, B : A> Sink<B>.ext()`
+  compiles on nearly any contravariant receiver.
+  The next entry is the one shape not reconciled with this rule.
 
 - A plain `x.ext()` rejected by kotlinc does not tell that the extension cannot be called:
   a type parameter which neither the receiver nor a bound refers to, like `U` of `fun <T : Comparable<T>?, U : T> Ct<T & Any>.ext()`,
   given explicitly, changes what the ones its bound refers to are inferred as — `x.ext()` fails on a `Ct<String>` with `inferred type is 'String?'`, while `x.ext<_, String>()` compiles.
-  A probe judging an extension not callable must give such type parameters explicitly too, but not the ones the receiver refers to.
+  A probe judging an extension not callable must give such type parameters explicitly too, but not the ones the receiver refers to —
+  so #334 lists this platform-type shape, against the sweep rule above, which #343 decided later.
 
 - A kotlinc crash, like `IllegalStateException: Arguments depth is too high` (see `matchesOnce`), ends the whole compilation:
   a batch probe reports one such row per run, with no `error:` line, so keep the classes causing it out of a batch.

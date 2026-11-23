@@ -8581,7 +8581,9 @@ internal class DefaultKotlinIntrospector(
                 fun KmType.root(isExtension: Boolean): Any = resolved(this, isExtension).let { (type, isTypeExtension) ->
                     type.variableKey(isTypeExtension) ?: IdentityKey(type)
                 }
-                fun KmType.toldClassName(): String? = (classifier as? KmClassifier.Class)?.name
+                // of a suspend function type the class of its own, like SuspendFunction0 of suspend () -> String, see matchesAtDepth,
+                // as the types unified are, not the function type of one more parameter it is stored as
+                fun KmType.toldClassName(): String? = (withSuspendFunctionTypeClass().classifier as? KmClassifier.Class)?.name
                     ?.takeIf { flexibleTypeUpperBound == null && !it.startsWith("java/") }
                 variables.forEach { (typeParameter, isExtension) ->
                     val type = typeParameterType(typeParameter.id)

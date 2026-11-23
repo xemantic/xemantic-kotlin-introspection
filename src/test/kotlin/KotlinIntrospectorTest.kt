@@ -15624,7 +15624,7 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve class without extension of inferred type violating bound next to type parameter given explicitly`() {
-        // x.biSinkComparableExplicit<_, _, Nothing>() infers T as CharSequence, which kotlinc checks against Comparable<CharSequence>,
+        // x.biSinkComparableExplicit<_, _, String>() infers T as CharSequence, which kotlinc checks against Comparable<CharSequence>,
         // while T of biSinkSameListExplicit, inferred as CharSequence & Int, an intersection, is not checked against List<U>
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.InferredReceiverCharSequenceIntBiSink"
@@ -15755,7 +15755,7 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve class with extension of type parameter given explicitly next to function type bound`() {
-        // x.biSinkOfSupplierGiven<_, _, Nothing>() compiles, T inferred as String & (() -> CharSequence)
+        // x.biSinkOfSupplierGiven<_, _, String>() compiles, T inferred as String & (() -> CharSequence)
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.GivenFunctionStringBiSink"
         ) sameAsKotlin """
@@ -15796,8 +15796,8 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should resolve function type class without extensions on function of comparable and under type parameter given explicitly`() {
-        // () -> Unit is a Function<Unit>, and Unit is no Comparable, nor is the function type, whatever B of B : A is given as
+    fun `should resolve function type class without extensions on function of comparable and under type parameter bounded by inferred one`() {
+        // () -> Unit is a Function<Unit>, and Unit is no Comparable, nor is the function type, which B of B : A is inferred from
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.GivenFunctionRunSource"
         ) sameAsKotlin """
@@ -15918,7 +15918,7 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve suspend function type class with extension of type parameter given explicitly next to suspend function type bound`() {
-        // x.biSinkOfSuspendSupplierGiven<_, _, Nothing>() compiles, U inferred as String, a CharSequence
+        // x.biSinkOfSuspendSupplierGiven<_, _, String>() compiles, U inferred as String, a CharSequence
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.GivenSuspendSupplierBiSink"
         ) sameAsKotlin """
@@ -15956,6 +15956,26 @@ class KotlinIntrospectorTest {
             // from com.xemantic.kotlin.introspection.test
             fun <T : suspend () -> U, U : CharSequence, W> GivenBiSink<T, U>.biSinkOfSuspendSupplierGiven()
         """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class of invariant suspend function type with extensions bounded by suspend function type`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.GivenSuspendInvariantClass"
+        ) should {
+            have("fun <T : suspend () -> String> GivenSuspendInvariant<T>.invariantOfSuspend()" in lines())
+            have("fun <T : suspend () -> U, U> GivenSuspendInvariant<T>.invariantOfSuspendSupplier()" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve class of invariant suspend function type pair with extensions bounded by suspend function type`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.GivenSuspendInvariantPairClass"
+        ) should {
+            have("fun <T : suspend () -> U, U> GivenSuspendInvariantPair<T, U>.pairOfSuspendSupplier()" in lines())
+            have("fun <T : suspend () -> String> GivenSuspendInvariantPair<T, String>.pairOfSuspend()" in lines())
+        }
     }
 
     @Test
