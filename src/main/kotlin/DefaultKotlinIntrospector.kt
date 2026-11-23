@@ -3308,6 +3308,16 @@ internal class DefaultKotlinIntrospector(
          */
         var groupFirst: InheritedCandidate? = null
 
+        // whether the member is a vararg of a type parameter as declared, like the vararg values: T of VarargAcceptor<T>
+        val isTypeParameterVararg: Boolean
+            get() = (member as? Member.Function)?.declaration?.valueParameters?.any {
+                it.varargElementType?.classifier is KmClassifier.TypeParameter
+            } == true
+
+        // whether the value parameter at the position is declared of a type parameter, like the T of a Java acceptAll(T)
+        fun isTypeParameterAt(position: Int): Boolean =
+            (member as? Member.Function)?.declaration?.valueParameters?.getOrNull(position)?.type?.classifier is KmClassifier.TypeParameter
+
         // the positions of the value parameters of the member taking arrays, see inheritedCandidates
         val arrayPositions: Set<Int> by lazy(LazyThreadSafetyMode.NONE) {
             (member as? Member.Function)?.function?.valueParameters?.indices?.filterTo(HashSet()) { index ->
@@ -4001,12 +4011,13 @@ internal class DefaultKotlinIntrospector(
         // as is the merging by the variants of the arrays and projected collections, next to a hidden member merged so with another one,
         // see InheritedCandidate.isProjectedRivalry, but not a hidden one kept apart from the members by the nullability of the elements
         // or of the same plain signature and the same form, like a hidden acceptAll(a: Array<String>?) with an acceptAll(T) given Array<String>,
-        // or taking an array at the same position, like one given Array<out String?>
+        // or taking an array a type argument gives at the same position, like one given Array<out String?>
         val isNextToMergedHidden = walked.any { hidden ->
             hidden.isHidden && walked.any {
                 it !== hidden && !it.isHidden &&
                     (it.isProjectedRivalOf(hidden) || it.className != hidden.className && it.isVarargLike(hidden) &&
-                        (it.isPlainRival(hidden) || it.arrayPositions.any { position -> position in hidden.arrayPositions }))
+                        (it.isPlainRival(hidden) && !it.isKeptApartByElementsFrom(hidden) ||
+                            it.arrayPositions.any { position -> position in hidden.arrayPositions && it.isTypeParameterAt(position) }))
             }
         }
         if (isNextToMergedHidden) {
@@ -4672,11 +4683,20 @@ internal class DefaultKotlinIntrospector(
         fun isOverriddenAsKotlinMember(candidate: InheritedCandidate) =
             candidate.declarations is JavaClass && candidate.overridden.any { it in kotlinOverridden }
         // the declared signatures, of a Java candidate not hidden, include the ones of the untold overrides
+        // whether the Java method is overridden on the JVM only by Kotlin varargs of a type parameter, of its JVM signature by the erasure,
+        // kept apart from it by the nullability of the elements, see InheritedCandidate.isKeptApartByElementsFrom, which the compiler
+        // keeps a member of its own, like the T... of a Java interface given String? next to the vararg values: T of VarargAcceptor<String>,
+        // both of Object[], unlike a Kotlin member declaring the array, like an Array<out String?>, merged with a @NotNull String...
+        fun isKeptApartOnJvm(candidate: InheritedCandidate): Boolean {
+            val overriding = candidate.jvmMethod?.let { javaOverrides.overridingBySignature(it) } ?: return false
+            val overriders = walked.filter { it !== candidate && it.key in overriding }
+            return overriders.isNotEmpty() && overriders.all { it.isTypeParameterVararg && candidate.isKeptApartByElementsFrom(it) }
+        }
         fun isListable(candidate: InheritedCandidate) =
             !candidate.isHidden && candidate.isApi && candidate.key !in overridden && !isOverriddenAsKotlinMember(candidate) &&
                 when (candidate.jvmMethod) {
                     null -> candidate.signature !in untoldOverrideSignatures
-                    else -> !javaOverrides.overrides(candidate.jvmMethod, candidate.overridden) &&
+                    else -> (!javaOverrides.overrides(candidate.jvmMethod, candidate.overridden) || isKeptApartOnJvm(candidate)) &&
                         declaredSignatures[candidate.signature].orEmpty().none { it.isBoundedLike(candidate.member) }
                 }
         // the JVM-only members overridden by the Java candidates on the JVM, see javaMethodSignatures,
@@ -4940,13 +4960,13 @@ internal class DefaultKotlinIntrospector(
             // while the T... of the Java class given String?, implementing it, is listed for the modality,
             // when the first one is contributed first of all the members, not after a member kept apart from them,
             // like an acceptAll(T) of another Java interface given Array<out String?> next to a String[] and a @NotNull T...,
-            // both declared by direct supertypes, not below a Java subclass, whose order the compiler does not follow then,
-            // and not next to a hidden member merged with another one, see InheritedCandidate.isProjectedRivalry
-            val direct = directSupertypes[kmClass.name].orEmpty()
+            // both reached first through other direct supertypes, not through one Java subclass, whose order the compiler
+            // does not follow then, and not next to a hidden member merged with another one, see InheritedCandidate.isProjectedRivalry
+            fun firstDirect(candidate: InheritedCandidate) = reaches(setOf(candidate.name)).firstOrNull()?.path?.firstOrNull()
             listed.forEach { candidate ->
                 val picked = groups[candidate] ?: return@forEach
                 if (picked !== candidate && picked === ordered.firstOrNull() && picked.isProjectedRivalry &&
-                    picked.name in direct && candidate.name in direct &&
+                    firstDirect(picked).let { it != null && it != firstDirect(candidate) } &&
                     isJavaClassMember(candidate) && picked.declarations is JavaClass && !isJavaClassMember(picked) &&
                     !picked.isVarargLike(candidate) && picked.compareReturnType(candidate, supertypeNamesOf) == 0
                 ) {

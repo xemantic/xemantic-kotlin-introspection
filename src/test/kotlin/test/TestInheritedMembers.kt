@@ -1900,6 +1900,39 @@ abstract class NotNullJavaVarargNullableArrayTypedAllJavaClassGenericVarargJoin 
     com.xemantic.kotlin.introspection.test.other.JavaNullableArrayAcceptInterface,
     com.xemantic.kotlin.introspection.test.other.JavaTypedAllAcceptor<Array<String?>>(), VarargAcceptor<String>
 
+// A Kotlin generic vararg given String, a Java vararg, and a Java vararg of a nullable type argument, all of Object[] but the second (#337)
+abstract class OpenTypedVarargAcceptor<T> {
+    open fun acceptAll(vararg values: T) {}
+}
+
+abstract class GenericVarargJavaVarargNullableJavaTypedVarargJoin :
+    VarargAcceptor<String>, com.xemantic.kotlin.introspection.test.other.JavaStringVarargAcceptAllInterface,
+    com.xemantic.kotlin.introspection.test.other.JavaTypedVarargAcceptorInterface<String?>
+
+abstract class OpenGenericVarargNullableJavaTypedVarargJavaVarargGenericVarargJoin :
+    OpenTypedVarargAcceptor<String>(), com.xemantic.kotlin.introspection.test.other.JavaTypedVarargAcceptorInterface<String?>,
+    com.xemantic.kotlin.introspection.test.other.JavaStringVarargAcceptAllInterface, VarargAcceptor<String>
+
+// A hidden member taking an array, next to a Java array of elements annotated nullable (#337)
+interface HiddenStringArrayAcceptor {
+    @Deprecated("Hidden", level = DeprecationLevel.HIDDEN)
+    fun acceptAll(a: Array<String>) {}
+}
+
+abstract class HiddenArrayNullableElementArrayJoin :
+    HiddenStringArrayAcceptor, com.xemantic.kotlin.introspection.test.other.JavaNullableElementNotNullArrayAcceptor()
+
+// A Java interface member given a projected array reached through a Kotlin interface, before a Java vararg merged with it (#337)
+interface KotlinOutNullableArrayTypedAllAcceptor : com.xemantic.kotlin.introspection.test.other.JavaTypedAllAcceptorInterface<Array<out String?>>
+
+abstract class IndirectOutNullableArrayJavaTypedVarargJoin :
+    KotlinOutNullableArrayTypedAllAcceptor, com.xemantic.kotlin.introspection.test.other.JavaTypedVarargAcceptor<String?>()
+
+// A Java array annotated not null, a Java vararg of elements annotated not null, and an open Kotlin member of their JVM signature (#337)
+abstract class NotNullArrayNotNullVarargOpenOutNullableArrayJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaNotNullArrayAcceptInterface,
+    com.xemantic.kotlin.introspection.test.other.JavaNotNullStringVarargAcceptInterface, OpenOutNullableStringArrayAcceptor()
+
 // A Java collection of a nullable type argument, a Kotlin mutable collection, and a projected one of nullable elements (#337)
 interface OutNullableMutableIntCollectionAdder {
     fun addAll2(c: MutableCollection<out Int?>): Boolean
