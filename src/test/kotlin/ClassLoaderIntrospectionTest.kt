@@ -50,6 +50,8 @@ import kotlin.io.path.readBytes
 import kotlin.io.path.writeBytes
 import kotlin.metadata.KmClassifier
 import kotlin.metadata.KmType
+import kotlin.metadata.KmTypeProjection
+import kotlin.metadata.KmVariance
 import kotlin.metadata.jvm.KotlinModuleMetadata
 import kotlin.metadata.jvm.moduleName
 import kotlin.test.Test
@@ -3118,6 +3120,55 @@ class ClassLoaderIntrospectionTest {
             fun second()
         """.trimIndent()
         assert(missing == null)
+    }
+
+    @Test
+    fun `should resolve member of Java class joined with JDK interface next to cyclic generic supertypes of growing type arguments`() {
+        // given
+        fun type(name: String, vararg arguments: KmType) = KmType().apply {
+            classifier = KmClassifier.Class(name)
+            arguments.forEach { this.arguments += KmTypeProjection(KmVariance.INVARIANT, it) }
+        }
+        val typeParameter = KmType().apply { classifier = KmClassifier.TypeParameter(0) }
+        val root = isolatedTestFixturesCopy("cyclicGeneric") { fileName, bytes ->
+            if (fileName != "CyclicGenericSecond.class") bytes else withSupertypesInMetadata(
+                bytes,
+                type("com/xemantic/kotlin/introspection/isolated/CyclicGenericFirst", type("kotlin/collections/List", typeParameter))
+            )
+        }
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.CyclicGenericFunctionLeaf.apply")
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.CyclicGenericFunctionLeaf.apply [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.isolated.CyclicFunctionImpl
+            override fun apply(arg0: String): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve overloads inherited through cyclic supertypes`() {
+        // given
+        fun type(name: String) = KmType().apply { classifier = KmClassifier.Class("com/xemantic/kotlin/introspection/isolated/$name") }
+        val root = isolatedTestFixturesCopy("cyclicOverloads") { fileName, bytes ->
+            if (fileName == "CyclicOverloadBase.class") withSupertypesInMetadata(bytes, type("CyclicOverloadMid")) else bytes
+        }
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.CyclicOverloadLeaf.f")
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.CyclicOverloadLeaf.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.isolated.CyclicOverloadMid
+            fun f(x: String)
+            // inherited from com.xemantic.kotlin.introspection.isolated.CyclicOverloadBase
+            fun f(x: Int)
+        """.trimIndent()
     }
 
     @Test

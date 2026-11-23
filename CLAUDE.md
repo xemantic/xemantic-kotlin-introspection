@@ -219,6 +219,24 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 - The Gradle test build rejects `abstract class X : J(), JDb` (`J implements GenericPut<Integer>`, `JDb` a default `put(Integer)`)
   with `must override 'put' because it inherits multiple interface methods`, while kotlinc compiles it against the compiled Java classes, so it is no fixture.
 
+- kotlinc merges the members the direct supertypes contribute around the first one, so their order tells the listing:
+  `X : JImpl<String>(), Function<String, String>, K` (`K` an `apply(x: String?)`) has one `apply`, as the `String!` of `JImpl` is merged with both,
+  while `X : Function<String, String>, K, JImpl<String>()` has two, as K2 enhances the JDK method to take `String` —
+  and a Kotlin class joining some of them below contributes every member it keeps apart, each by the one it picks,
+  a merged member as one only next to the members of its own supertypes — another Kotlin member of the same signature named below the join parts it again —
+  while a Java class joining them from different supertypes merges them all.
+  `inheritedCandidates` groups the candidates of all the supertypes at once, one per class, telling the joins below only in narrow cases
+  (`contributionOrder`, `mergedThroughClasses`): broader rules (grouping by the joining classes, types of JDK interfaces merged by their nullability)
+  regressed neighbouring shapes in #339.
+  A sweep of joins needs every order of the supertypes, the joins named through Kotlin and Java classes next to other supertypes,
+  Kotlin classes one to three levels below the joins, and members with bodies: each of these regressed on its own.
+
+- When probing kotlinc, `val r: Marker = x::apply` names the type of one overload, with no ambiguity, when the class has two,
+  the message of an empty concrete subclass tells one abstract member from several (`member:` / `members:`), but not which —
+  an override of only one of them does,
+  and an `override fun <T> toArray(g: IntFunction<Array<T>>)` compiles also on a class where `x.toArray(g)` does not resolve,
+  as Kotlin hides the member of `java.util.Collection` only from calls.
+
 - `reflectedValue` swallows what a conversion of a reflected member throws, dropping the whole member silently,
   like every Java method overriding a Kotlin member taking a mutable collection was, see `reflectedClassName` —
   a member missing from a listing may be a conversion failing, not a rule of the listing.
