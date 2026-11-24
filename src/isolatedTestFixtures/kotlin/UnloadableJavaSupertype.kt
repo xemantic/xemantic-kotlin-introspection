@@ -32,3 +32,23 @@ interface AbsentGreetingMarker
 
 // cannot be loaded, while its public Java superclass, inheriting the members of a package-private one, can
 class UnloadableGreeterLeaf : PublicGreeterJavaMid(), AbsentGreetingMarker
+
+// An abstract internal member, which a concrete subclass has to implement, of a class which cannot be loaded,
+// and of its subclass, which cannot be loaded either, told by the metadata (#390)
+abstract class UnloadableInternalAbstractBase : AbsentGreetingMarker {
+    internal abstract fun ia(): String
+    internal abstract fun implemented(): String
+    abstract fun visible(): Int
+}
+
+abstract class UnloadableInternalAbstractSub : UnloadableInternalAbstractBase() {
+    override fun implemented(): String = ""
+}
+
+// and of a class exposing an internal interface, which cannot be loaded
+internal interface UnloadableExposedFace {
+    fun f(): Int
+}
+
+@Suppress("EXPOSED_SUPER_INTERFACE")
+abstract class UnloadableInternalExposing : UnloadableExposedFace, AbsentGreetingMarker

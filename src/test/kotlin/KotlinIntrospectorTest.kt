@@ -6921,6 +6921,18 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve Java member taking boxed type annotated not null next to Kotlin one of context parameters as no twins`() {
+        // the context parameter makes another signature, so neither is told by its JVM signature (#390)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NotNullBoxedJavaPutContextJoin.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NotNullBoxedJavaPutContextJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPut
+            open fun put(arg0: Int): String
+            // inherited from com.xemantic.kotlin.introspection.test.ContextPrimitivePut
+            context(c: String) fun put(key: Int): String
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve Java member taking primitive type next to Java one taking boxed type`() {
         resolver.resolve("com.xemantic.kotlin.introspection.test.PrimitiveBoxedJavaPutJoin.put") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.PrimitiveBoxedJavaPutJoin.put [page 1/1]
@@ -24235,6 +24247,102 @@ class KotlinIntrospectorTest {
         resolver.resolve("com.xemantic.kotlin.introspection.test.InternalExposedMembersExposing.g") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.InternalExposedMembersExposing.g [page 1/1]
             open fun g(): Int // declared by internal com.xemantic.kotlin.introspection.test.InternalExposedMembers
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve property of protected setter of internal supertype exposed by class with note on line of declaration`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InternalExposedProtectedSetterExposing.p") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InternalExposedProtectedSetterExposing.p [page 1/1]
+            var p: Int // declared by internal com.xemantic.kotlin.introspection.test.InternalExposedProtectedSetter
+                protected set
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve property of body of internal interface joined by Java class with abstract getter of its superclass as open`() {
+        // kotlinc 2.4.21 reads the property, implemented, not the getter, x.getPd() an unresolved reference (#390)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaJoiningGettersInternalPropertiesSub.pd") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaJoiningGettersInternalPropertiesSub.pd [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaJoiningGettersInternalProperties
+            open val pd: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve abstract getter of Java superclass joined with property of internal interface by its name`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.JavaJoiningGettersInternalPropertiesSub.getPd") == null)
+    }
+
+    @Test
+    fun `should not resolve abstract setter of Java superclass joined with var of internal interface by its name`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.JavaJoiningGettersInternalPropertiesSub.setVd") == null)
+    }
+
+    @Test
+    fun `should resolve var of body of internal interface joined by Java class with abstract accessors of its superclass as open`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaJoiningGettersInternalPropertiesSub.vd") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaJoiningGettersInternalPropertiesSub.vd [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaJoiningGettersInternalProperties
+            open var vd: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve abstract property of internal interface joined by Java class with abstract getter of its superclass as abstract`() {
+        // kotlinc 2.4.21: "does not implement abstract base class member: val pa: Int"
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaJoiningGettersInternalPropertiesSub.pa") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaJoiningGettersInternalPropertiesSub.pa [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaJoiningGettersInternalProperties
+            abstract val pa: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve property of internal interface joined by Java class with final getter of its superclass as final`() {
+        // kotlinc 2.4.21: "'pf' in 'JavaJoiningGettersInternalProperties' is final and cannot be overridden"
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaJoiningGettersInternalPropertiesSub.pf") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaJoiningGettersInternalPropertiesSub.pf [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaJoiningGettersInternalProperties
+            val pf: Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of package-private Java class extended by internal class as inherited from public Java subclass`() {
+        // the internal class is public on the JVM, but the user code cannot name it (#390)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaExtendingInternalOverPackagePrivateSub.f") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaExtendingInternalOverPackagePrivateSub.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaExtendingInternalOverPackagePrivate
+            open fun f(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve abstract member declared again by Java interface over body of internal interface`() {
+        // kotlinc 2.4.21: "does not implement abstract member: fun g(): Int", the int g() of the Java interface wins (#390)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaReabstractedInternalDefaultsSub.g") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaReabstractedInternalDefaultsSub.g [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.ReabstractedFace
+            fun g(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of default of Java interface over body of internal interface as open`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaReabstractedInternalDefaultsSub.f") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaReabstractedInternalDefaultsSub.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.ReabstractedFace
+            open fun f(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of body of internal interface not declared again by Java interface as open`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaReabstractedInternalDefaultsSub.h") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaReabstractedInternalDefaultsSub.h [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.ReabstractedFace
+            open fun h(): Int
         """.trimIndent()
     }
 

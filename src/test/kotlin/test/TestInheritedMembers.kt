@@ -308,6 +308,14 @@ abstract class GenericBoxedJavaPutJoin : com.xemantic.kotlin.introspection.test.
 
 abstract class NotNullBoxedJavaPutJoin : com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPut(), PrimitivePut
 
+// but a member of context parameters is of another signature, so neither is told by its JVM signature (#390)
+interface ContextPrimitivePut {
+    context(c: String)
+    fun put(key: Int): String
+}
+
+abstract class NotNullBoxedJavaPutContextJoin : com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPut(), ContextPrimitivePut
+
 abstract class PrimitiveBoxedJavaPutJoin : com.xemantic.kotlin.introspection.test.other.JavaPrimitivePut(), com.xemantic.kotlin.introspection.test.other.JavaBoxedPutInterface
 
 interface GenericPut<T> {
@@ -2424,6 +2432,56 @@ internal interface InternalExposedMembers {
 abstract class InternalExposedMembersExposing : InternalExposedMembers
 
 abstract class InternalExposedMembersExposingSub : InternalExposedMembersExposing()
+
+// The members of a public interface, which an internal one gives bodies, of a Java interface extending the latter,
+// declaring one abstract again, and giving another one a default of its own, so that a concrete subclass
+// has to implement the former, "does not implement abstract member: fun g(): Int", as kotlinc 2.4.21 tells (#390)
+interface ReabstractedFace {
+    fun f(): Int
+    fun g(): Int
+    fun h(): Int
+}
+
+internal interface InternalDefaultOverridingFace : ReabstractedFace {
+    override fun f(): Int = 2
+    override fun g(): Int = 2
+    override fun h(): Int = 2
+}
+
+abstract class JavaReabstractedInternalDefaultsSub :
+    com.xemantic.kotlin.introspection.test.other.JavaImplementingReabstractingInternalDefaultsFace()
+
+// The properties of an internal interface joined by a Java class with the accessors of its Java superclass,
+// which kotlinc 2.4.21 reads as the properties, not as the accessors, `x.getPd()` an unresolved reference,
+// implemented when either has a body, "pd" of a body over an abstract getPd(), final when the Java getter is (#390)
+internal interface InternalJoinedProperties {
+    val pd: Int get() = 1
+    var vd: Int
+        get() = 1
+        set(v) {}
+    val pa: Int
+    val pf: Int get() = 1
+}
+
+abstract class JavaJoiningGettersInternalPropertiesSub :
+    com.xemantic.kotlin.introspection.test.other.JavaJoiningGettersInternalProperties()
+
+// The member of a package-private Java class, which an internal Kotlin class extends, public on the JVM, but not nameable,
+// inherited from the public Java class extending the latter (#390)
+@Suppress("EXPOSED_SUPER_CLASS")
+internal abstract class InternalOverPackagePrivate : JavaPackagePrivateBelowInternal()
+
+abstract class JavaExtendingInternalOverPackagePrivateSub :
+    com.xemantic.kotlin.introspection.test.other.JavaExtendingInternalOverPackagePrivate()
+
+// and so a property of a protected setter, whose note goes on the line of its declaration, not of its setter (#390)
+internal abstract class InternalExposedProtectedSetter {
+    var p: Int = 0
+        protected set
+}
+
+@Suppress("EXPOSED_SUPER_CLASS")
+abstract class InternalExposedProtectedSetterExposing : InternalExposedProtectedSetter()
 
 // The getV(): Int? of an internal class overriding the getV() of a Java class returning a platform type,
 // which kotlinc reads x.getV() of the class exposing it by (#372)

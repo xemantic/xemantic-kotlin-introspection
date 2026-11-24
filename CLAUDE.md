@@ -299,6 +299,15 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   a visible member rendered abstract in place of the hidden one kotlinc demands — confirm a changed abstract count
   by overriding each candidate signature in a concrete subclass of its own.
 
+- A Java class joining the getter of its Java superclass with a property of a Kotlin interface, like `J extends JB implements IF`, has the property only for kotlinc:
+  `x.getPd()` is an unresolved reference, also of a public interface, see `javaJoinedGetterModality` —
+  while a `var` joined with a getter alone, or with accessors of two modalities, makes every Kotlin subclass fail with `inherited platform declarations clash`,
+  so such a shape is no fixture.
+
+- kotlinc 2.4.21 compiles a concrete subclass, of another module, of a class with an internal abstract member when it declares a function of that signature without `override`,
+  like `fun ia(): String = ""` — `override fun ia()` is rejected (`has no access … so it cannot override it`), and leaving it out too (`inherits invisible abstract member`),
+  though the JVM method `ia$pmod()`, of the mangled name, stays abstract.
+
 ## Anti-patterns to avoid
 
 - Do not add content to this file that is already discoverable by reading the source or build scripts — that inflates context without adding signal, reducing AI agent task success rates (see [arxiv 2602.11988](https://arxiv.org/abs/2602.11988)).

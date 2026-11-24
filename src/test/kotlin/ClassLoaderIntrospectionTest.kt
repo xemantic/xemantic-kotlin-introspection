@@ -3177,6 +3177,48 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should tell internal abstract members of class which cannot be loaded which concrete subclass has to implement`() {
+        // given
+        val introspector = introspectorWithoutAbsentClass("AbsentGreetingMarker.class")
+
+        // when
+        val base = introspector.resolve("com.xemantic.kotlin.introspection.isolated.UnloadableInternalAbstractBase")
+        val sub = introspector.resolve("com.xemantic.kotlin.introspection.isolated.UnloadableInternalAbstractSub")
+
+        // then
+        // told by the metadata, the one implemented by the subclass not told for it (#390)
+        base sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.UnloadableInternalAbstractBase [page 1/1]
+            abstract class UnloadableInternalAbstractBase : AbsentGreetingMarker {
+                // must implement internal: fun ia(): String
+                // must implement internal: fun implemented(): String
+                abstract fun visible(): Int
+            }
+        """.trimIndent()
+        sub sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.UnloadableInternalAbstractSub [page 1/1]
+            abstract class UnloadableInternalAbstractSub : UnloadableInternalAbstractBase {
+                // must implement internal: fun ia(): String
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of internal supertype exposed by class which cannot be loaded as its own`() {
+        // given
+        val introspector = introspectorWithoutAbsentClass("AbsentGreetingMarker.class")
+
+        // when
+        val signature = introspector.resolve("com.xemantic.kotlin.introspection.isolated.UnloadableInternalExposing.f")
+
+        // then
+        signature sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.UnloadableInternalExposing.f [page 1/1]
+            abstract fun f(): Int // declared by internal com.xemantic.kotlin.introspection.isolated.UnloadableExposedFace
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve member inherited through cyclic supertypes once`() {
         // given
         fun type(name: String) = KmType().apply { classifier = KmClassifier.Class("com/xemantic/kotlin/introspection/isolated/$name") }

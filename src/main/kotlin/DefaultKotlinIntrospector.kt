@@ -1408,20 +1408,54 @@ internal class DefaultKotlinIntrospector(
      */
     private fun javaGetterModality(property: KmProperty, declaring: Class<*>?, inheriting: Class<*>?): Modality? =
         reflectedValue(default = null) {
-            val getter = property.getterSignature ?: return@reflectedValue null
-            val parameters = getter.descriptor.substringBefore(')') + ')'
-            generateSequence(inheriting?.superclass) { it.superclass }.takeWhile { it != declaring }.firstNotNullOfOrNull { superclass ->
-                superclass.declaredMethods.firstOrNull { method ->
-                    !method.isBridge && !Modifier.isPrivate(method.modifiers) && !Modifier.isStatic(method.modifiers) &&
-                        method.name == getter.name && AsmType.getMethodDescriptor(method).startsWith(parameters)
-                }?.let { superclass to it }
-            }?.let { (superclass, method) ->
-                when {
-                    superclass.isAnnotationPresent(Metadata::class.java) -> null
-                    Modifier.isAbstract(method.modifiers) -> Modality.ABSTRACT
-                    Modifier.isFinal(method.modifiers) -> Modality.FINAL
-                    else -> Modality.OPEN
-                }
+            javaAccessorBelow(property.getterSignature, declaring, inheriting)?.let { (superclass, method) ->
+                if (superclass.isAnnotationPresent(Metadata::class.java)) null else method.modality
+            }
+        }
+
+    // the first method of the JVM signature, but the return type, of the superclasses of the inheriting class below the declaring one,
+    // with the class declaring it, see javaGetterModality
+    private fun javaAccessorBelow(accessor: JvmMethodSignature?, declaring: Class<*>?, inheriting: Class<*>?): Pair<Class<*>, Method>? {
+        accessor ?: return null
+        val parameters = accessor.descriptor.substringBefore(')') + ')'
+        return generateSequence(inheriting?.superclass) { it.superclass }.takeWhile { it != declaring }.firstNotNullOfOrNull { superclass ->
+            superclass.declaredMethods.firstOrNull { method ->
+                !method.isBridge && !Modifier.isPrivate(method.modifiers) && !Modifier.isStatic(method.modifiers) &&
+                    method.name == accessor.name && AsmType.getMethodDescriptor(method).startsWith(parameters)
+            }?.let { superclass to it }
+        }
+    }
+
+    private val Method.modality: Modality
+        get() = when {
+            Modifier.isAbstract(modifiers) -> Modality.ABSTRACT
+            Modifier.isFinal(modifiers) -> Modality.FINAL
+            else -> Modality.OPEN
+        }
+
+    /**
+     * The modality of the [property] of a Kotlin interface, of the [declaring] class, which a Java class, a superclass
+     * of the [inheriting] one, joins with the getter of a Java superclass of its own, of the same JVM signature,
+     * unrelated to the interface, like `getPd()` of `J extends JB implements IF` next to the `val pd` of IF,
+     * which kotlinc 2.4.21 reads as the property, not as the getter, `x.getPd()` an unresolved reference:
+     * final when the Java getter is, abstract when both are, or else open, as one implements the other,
+     * like the `pd` of a body next to an abstract `getPd()`, and so a `var` of the accessors of one modality,
+     * or `null` when not joined so, like by a Java getter overriding the property, or of a `var` whose Java setter is missing,
+     * or of another modality, which kotlinc rejects a Kotlin subclass of, "inherited platform declarations clash".
+     */
+    private fun javaJoinedGetterModality(property: KmProperty, declaring: Class<*>?, inheriting: Class<*>?): Modality? =
+        reflectedValue(default = null) {
+            if (declaring == null || !declaring.isInterface) return@reflectedValue null
+            val (getterClass, getter) = javaAccessorBelow(property.getterSignature, declaring, inheriting) ?: return@reflectedValue null
+            if (getterClass.isAnnotationPresent(Metadata::class.java) || declaring.isAssignableFrom(getterClass)) return@reflectedValue null
+            if (property.isVar) {
+                val (setterClass, setter) = javaAccessorBelow(property.setterSignature, declaring, inheriting) ?: return@reflectedValue null
+                if (setterClass != getterClass || setter.modality != getter.modality) return@reflectedValue null
+            }
+            when (getter.modality) {
+                Modality.FINAL -> Modality.FINAL
+                Modality.ABSTRACT -> if (property.modality == Modality.ABSTRACT) Modality.ABSTRACT else Modality.OPEN
+                else -> Modality.OPEN
             }
         }
 
@@ -4713,31 +4747,37 @@ internal class DefaultKotlinIntrospector(
         ) {
             return emptyList()
         }
-        val clazz = declarations.clazz ?: return emptyList()
+        // or, when it cannot be loaded, like when a supertype of it is missing, told by its metadata,
+        // and by the JVM classes of its supertypes which can be loaded
+        val clazz = declarations.clazz
         val inheritingTypeParameters = typeParameterScopeOf(kmClass, declarations)
         val inheritingScope = inheritingTypeParameters.mapIds(::inheritingTypeParameterId)
         val inheritingNames = inheritingScope.names
         val inheriting = inheritingTypeParameters.names.keys.associateWith { typeParameterType(inheritingTypeParameterId(it)) }
         // the abstract members found, hidden, or internal, rendered, with their JVM signatures, and their signatures as rendered,
-        // the class declaring them, and whether hidden
+        // the class declaring them, by its name, and its JVM class, if loaded, and whether hidden
         class Found(
             val name: String,
             val line: String,
             val signature: JvmMethodSignature,
             val renderedSignature: String,
+            val declaringName: String,
             val declaring: Class<*>?,
             val isHidden: Boolean
         )
         val found = ArrayList<Found>()
-        // the JVM signatures of the members of a body of the Kotlin classes walked, by the classes declaring them
-        val bodies = ArrayList<Pair<Class<*>?, JvmMethodSignature>>()
+        // the JVM signatures of the members of a body of the Kotlin classes walked, by the names of the classes declaring them
+        val bodies = ArrayList<Pair<String, JvmMethodSignature>>()
+        // the names of the direct supertypes of the classes walked, by their names, telling a body below a member, see isImplemented
+        val supertypeNames = HashMap<String, List<String>>()
         fun scan(superKmClass: KmClass, superDeclarations: ClassDeclarations, member: (Member) -> Member, typeParameters: TypeParameterScope) {
+            supertypeNames[superKmClass.name] = superKmClass.supertypes.classNames()
             if (superDeclarations is JavaClass || superDeclarations is BuiltinClass) return
             val declaring = superDeclarations.clazz
             fun add(declared: Member, signature: JvmMethodSignature?, isHidden: Boolean, isInternal: Boolean, isAbstract: Boolean) {
                 signature ?: return
                 if (!isAbstract) {
-                    bodies += declaring to signature
+                    bodies += superKmClass.name to signature
                     return
                 }
                 if (!isHidden && !isInternal) return
@@ -4762,7 +4802,7 @@ internal class DefaultKotlinIntrospector(
                 }
                 val name = (declared as? Member.Function)?.function?.name ?: (declared as Member.Property).property.name
                 val renderedSignature = substituted.twinSignature(inheritingNames) ?: substituted.signature(inheritingNames)
-                found += Found(name, rendered, signature, renderedSignature, declaring, isHidden)
+                found += Found(name, rendered, signature, renderedSignature, superKmClass.name, declaring, isHidden)
             }
             superKmClass.functions.forEach { function ->
                 val isInternal = function.visibility == Visibility.INTERNAL
@@ -4785,12 +4825,15 @@ internal class DefaultKotlinIntrospector(
         scan(kmClass, declarations, { it.withTypes { type -> type.substituted(inheriting) } }, inheritingScope)
         val visited = hashSetOf(kmClass.name)
         val pending = ArrayDeque(kmClass.supertypes.map { it.substituted(inheriting) })
+        // the JVM classes of the supertypes walked which can be loaded, see clazz
+        val loaded = ArrayList<Class<*>>()
         while (pending.isNotEmpty()) {
             val supertype = pending.removeFirst()
             val name = (supertype.classifier as? KmClassifier.Class)?.name ?: continue
             // but the standard library, and the JDK, which declare none, not to look the built-in types up through the class loader
             if (!visited.add(name) || name.startsWith("kotlin/") || name.startsWith("java/") || name.startsWith("javax/")) continue
             val superDeclarations = inheritedDeclarations(inheritedName(declarations, name)) ?: continue
+            superDeclarations.clazz?.let(loaded::add)
             val superKmClass = superDeclarations.kmClass ?: continue
             val substitution = supertypeSubstitution(superKmClass, supertype, declarations)
             val typeParameters = typeParameterScopeOf(superKmClass, superDeclarations) + inheritingScope
@@ -4798,10 +4841,27 @@ internal class DefaultKotlinIntrospector(
             pending += superKmClass.supertypes.map { it.substituted(substitution) }
         }
         if (found.isEmpty()) return emptyList()
+        // the class, or else the most specific superclass of it which can be loaded, whose methods tell the implementations
+        val superclass = clazz ?: reflectedValue(default = null) {
+            val classes = loaded.filter { !it.isInterface }
+            classes.firstOrNull { type -> classes.none { it != type && type.isAssignableFrom(it) } }
+        }
+        // whether the class named name is a supertype of the one named of, by the supertypes of the metadata
+        fun isSupertype(name: String, of: String): Boolean {
+            val seen = HashSet<String>()
+            val walking = ArrayDeque(supertypeNames[of].orEmpty())
+            while (walking.isNotEmpty()) {
+                val next = walking.removeFirst()
+                if (next == name) return true
+                if (seen.add(next)) walking += supertypeNames[next].orEmpty()
+            }
+            return false
+        }
         // the interfaces of the class, all of them, for their default methods
         val interfaces = reflectedValue(default = emptyList<Class<*>>()) {
             val walked = LinkedHashSet<Class<*>>()
-            val walking = ArrayDeque(listOf(clazz))
+            val walking = ArrayDeque(clazz?.let(::listOf) ?: loaded)
+            if (clazz == null) walked += loaded
             while (walking.isNotEmpty()) {
                 val type = walking.removeFirst()
                 (listOfNotNull(type.superclass) + type.interfaces).forEach { if (walked.add(it)) walking += it }
@@ -4812,7 +4872,7 @@ internal class DefaultKotlinIntrospector(
             this.name == name && this.descriptor.substringBefore(')') == descriptor.substringBefore(')')
         fun JvmMethodSignature.isOf(method: Method) = isOf(method.name, AsmType.getMethodDescriptor(method))
         fun isImplemented(member: Found): Boolean = reflectedValue(default = true) {
-            generateSequence(clazz) { it.superclass }.forEach { type ->
+            generateSequence(superclass) { it.superclass }.forEach { type ->
                 type.declaredMethods.firstOrNull { member.signature.isOf(it) }?.let { return@reflectedValue !Modifier.isAbstract(it.modifiers) }
             }
             // of the most specific interfaces declaring it, as one declaring it abstract again wins over the default it overrides
@@ -4822,8 +4882,7 @@ internal class DefaultKotlinIntrospector(
             declaringFaces.any { (type, method) ->
                 !Modifier.isAbstract(method.modifiers) && declaringFaces.none { (other, _) -> other != type && type.isAssignableFrom(other) }
             } || bodies.any { (declaring, signature) ->
-                declaring != null && declaring != member.declaring && signature.isOf(member.signature.name, member.signature.descriptor) &&
-                    member.declaring?.isAssignableFrom(declaring) != false
+                signature.isOf(member.signature.name, member.signature.descriptor) && isSupertype(member.declaringName, of = declaring)
             }
         }
         // a hidden one is stood for by a visible member of its signature, as rendered, which the compiler picks in its place,
@@ -4880,8 +4939,12 @@ internal class DefaultKotlinIntrospector(
         declarations: ClassDeclarations
     ): String {
         val className = candidate.inheritedThrough ?: candidate.className
-        // a public nested class of a package-private class cannot be named either
-        fun Class<*>.isNameable() = generateSequence(this) { it.enclosingClass }.all { Modifier.isPublic(it.modifiers) }
+        // a public nested class of a package-private class cannot be named either, nor an internal Kotlin class, public on the JVM,
+        // like the one a public Java class extends, extending a package-private one in turn, told by its metadata
+        fun Class<*>.isNameable() = generateSequence(this) { it.enclosingClass }.all { type ->
+            Modifier.isPublic(type.modifiers) && (!type.isAnnotationPresent(Metadata::class.java) ||
+                inheritedDeclarations(kotlinClassName(type))?.kmClass?.visibility.let { it == null || it == Visibility.PUBLIC || it == Visibility.PROTECTED })
+        }
         val named = if (candidate.inheritedThrough == null) candidate.declarations else throughDeclarations
         val declaring = (named as? JavaClass)?.clazz
             ?.takeUnless { reflectedValue(default = true) { it.isNameable() } }
@@ -5164,6 +5227,24 @@ internal class DefaultKotlinIntrospector(
             if (visited.add(name)) collect(name, supertype)
         }
         if (kmClass.name != ANY_CLASS_NAME) collect(ANY_CLASS_NAME, classType(ANY_CLASS_NAME))
+        // the accessors of a Java superclass which a Java class joins with a property of a Kotlin interface are no members,
+        // kotlinc 2.4.21 reads the property only, see javaJoinedGetterModality, like `x.getPd()` an unresolved reference
+        val joinedAccessors = declaredSupertypes.asSequence()
+            .filter { (name, supertype) -> name !in javaClasses && supertype.first.kind == ClassKind.INTERFACE }
+            .flatMap { (name, supertype) -> supertype.first.properties.asSequence().map { name to it } }
+            .filter { (_, property) ->
+                property.getterSignature?.name == memberName || (property.isVar && property.setterSignature?.name == memberName)
+            }
+            .filter { (name, property) -> javaJoinedGetterModality(property, walkedClasses[name], declarations.clazz) != null }
+            .flatMap { (_, property) -> listOfNotNull(property.getterSignature, property.setterSignature) }
+            .toList()
+        if (joinedAccessors.isNotEmpty()) {
+            candidates.removeAll { candidate ->
+                candidate.declarations is JavaClass && candidate.jvmMethod?.signature?.let { signature ->
+                    joinedAccessors.any { it.name == signature.name && it.descriptor.substringBefore(')') == signature.descriptor.substringBefore(')') }
+                } == true
+            }
+        }
         // all the candidates walked, also the Java ones removed below, see withInheritedThroughApi
         val walked = candidates.toList()
         walkedOut?.addAll(walked)
@@ -5903,12 +5984,16 @@ internal class DefaultKotlinIntrospector(
         if (candidates.isEmpty()) return emptyList()
         // the getter of a Java class implementing an abstract Kotlin property is no candidate, being named otherwise,
         // see javaGetterModality
+        // and so the getter a Java class joins with the property of an interface, also one of a body, see javaJoinedGetterModality
         candidates.forEach { candidate ->
             val property = (candidate.member as? Member.Property)?.declaration
-            if (property != null && property.modality == Modality.ABSTRACT && candidate.implementationModality == null &&
+            if (property != null && candidate.implementationModality == null &&
                 candidate.declarations !is JavaClass && candidate.declarations !is BuiltinClass
             ) {
-                candidate.implementationModality = javaGetterModality(property, candidate.declarations.clazz, declarations.clazz)
+                candidate.implementationModality = javaJoinedGetterModality(property, candidate.declarations.clazz, declarations.clazz)
+                    ?: if (property.modality != Modality.ABSTRACT) null else {
+                        javaGetterModality(property, candidate.declarations.clazz, declarations.clazz)
+                    }
             }
         }
         // a member standing for the visible override of a supertype which is not part of the API is of its modality as well,
@@ -5952,10 +6037,19 @@ internal class DefaultKotlinIntrospector(
                 // which implements the abstract f() of such an interface,
                 // and so a member of a class merged with the member of an interface the internal one overrides,
                 // like the final f() of a Java superclass next to the f() of a public interface, which an internal one overrides
+                // and the method of a Java interface overriding such an override again, removed above, which declares it
+                // abstract again, or of a default of its own, like the `int g()` of `interface JD extends IDF`
+                // of an internal `IDF : PI` giving g() a body, so that a concrete subclass has to implement it, as kotlinc tells
+                val interfaceOverrides = if (!isInterfaceMember) emptyList() else {
+                    unlistedOverrides.filter { it.kmClass.kind == ClassKind.INTERFACE && it.overrides(candidate) }
+                }
+                val javaRedeclarations = if (interfaceOverrides.isEmpty()) emptyList() else walked.filter { java ->
+                    java.declarations is JavaClass && java.kmClass.kind == ClassKind.INTERFACE && !java.isHidden &&
+                        java.member is Member.Function && interfaceOverrides.any { java.overrides(it) }
+                }
                 val override = if (implementing == null) {
-                    classOverride ?: if (!isInterfaceMember) null else nearest(
-                        unlistedOverrides.filter { it.kmClass.kind == ClassKind.INTERFACE && it.overrides(candidate) }
-                    )?.let { interfaceOverride -> nearest(classMembers.filter { it.standsFor() }) ?: interfaceOverride }
+                    classOverride ?: nearest(interfaceOverrides + javaRedeclarations)
+                        ?.let { interfaceOverride -> nearest(classMembers.filter { it.standsFor() }) ?: interfaceOverride }
                 } else {
                     classOverride?.takeIf { override ->
                         reflectedValue(default = false) { override.declarations.clazz?.let(implementing::isAssignableFrom) == true }
@@ -6451,7 +6545,9 @@ internal class DefaultKotlinIntrospector(
             through
         }
         fun isImplementedBelow(candidate: InheritedCandidate): Boolean = when (val member = candidate.member) {
-            is Member.Property -> javaGetterModality(member.declaration, candidate.declarations.clazz, declarations.clazz) != null
+            // but by a getter a Java class joins with it, of the property inherited through it, see javaJoinedGetterModality
+            is Member.Property -> javaGetterModality(member.declaration, candidate.declarations.clazz, declarations.clazz) != null &&
+                javaJoinedGetterModality(member.declaration, candidate.declarations.clazz, declarations.clazz) == null
             is Member.Function -> reflectedValue(default = null) {
                 val signature = member.declaration.signature
                 candidate.declarations.clazz?.declaredMethods?.firstOrNull {
@@ -6533,6 +6629,10 @@ internal class DefaultKotlinIntrospector(
                     candidate.implementationModality = modalityBesideJavaInterfaceMethods(candidate, merged)
                     replaced += merged
                 }
+                // of the modality of a getter a Java class joins it with, see javaJoinedGetterModality
+                (candidate.member as? Member.Property)
+                    ?.let { javaJoinedGetterModality(it.declaration, candidate.declarations.clazz, declarations.clazz) }
+                    ?.let { candidate.implementationModality = it }
                 candidate.inheritedThrough = apiClass.takeUnless { it == kmClass.name }
                 candidate.isExposedByInheriting = apiClass == kmClass.name
                 throughApi += candidate
