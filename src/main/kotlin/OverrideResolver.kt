@@ -1410,12 +1410,20 @@ internal class OverrideResolver(
         // or else as the metadata would, see unlocated
         // which is then the class the JVM links, also when it names itself so, like s1/sub/Listener.Callback,
         // or when the relocation of the owner tells another name of its metadata name, like shaded/lib/sub/Listener.Callback,
-        // as the Java class names it by the name it is found by, see javaNamedSupertypes
+        // as the Java class names it by the name it is found by, see javaNamedSupertypes,
+        // but for a direct supertype of the owner, whose class file tells the name it is found by, also when reached later,
+        // like lib/sub/Listener named s2/Listener next to a Java supertype naming another copy of it, s3/Listener
         val javaNamedSupertypes = HashSet<String>()
+        val ownerSupertypeNames = ownerClass.supertypes.mapNotNullTo(HashSet()) { (it.classifier as? KmClassifier.Class)?.name }
         fun metadataNamedSupertype(supertype: ClassType): ClassType {
             val unlocated = supertype.unlocated(relocation)
             val metadataName = kotlinNameOf(supertype.name) ?: return unlocated
-            if (reflectedSupertypeNames.putIfAbsent(metadataName, supertype.name) == null) javaNamedSupertypes += metadataName
+            if (metadataName in ownerSupertypeNames) {
+                if (metadataName == supertype.name) return unlocated
+                reflectedSupertypeNames.putIfAbsent(metadataName, supertype.name)
+            } else if (reflectedSupertypeNames.putIfAbsent(metadataName, supertype.name) == null) {
+                javaNamedSupertypes += metadataName
+            }
             return unlocated.copy(name = metadataName)
         }
 
@@ -2394,7 +2402,8 @@ internal class OverrideResolver(
         // named shaded/lib/sub/Listener by the class file of shaded/app/Owner, next to lib/Base named s1/Base,
         // as the relocation of lib/ to s1/ would look it up in s1/sub/ otherwise, the more specific package,
         // unless another direct supertype of its package is told relocated elsewhere, like lib/Base in s1/ next to lib/Listener,
-        // which would tell its package relocated to two
+        // which would tell its package relocated to two: then the guess of the prefix leaves it out, as before,
+        // so that lib/Listener is looked up by the relocation of lib/ to s1/
         fun isToldAlone(metadataName: String, jvmName: String) = directSupertypeDependencies.none { (otherName, otherJvmName) ->
             packageOf(otherName) == packageOf(metadataName) && packageOf(otherJvmName) != packageOf(jvmName)
         }
@@ -2519,7 +2528,7 @@ internal class OverrideResolver(
             // by the names the class file refers to them by, when it names each of its supertypes by the name of a class,
             // as one left out, or named like an array type, might be of the simple name of a class paired, like an interface added,
             // see JvmSupertypes.relocatedFrom
-            val splitDependencies = if (!jvmSupertypes.namesEach) emptyMap() else directSupertypeDependencies.filter { (metadataName, jvmName) ->
+            val splitDependencies = if (!jvmSupertypes.namesEach(owner.kmClass)) emptyMap() else directSupertypeDependencies.filter { (metadataName, jvmName) ->
                 dependencies[metadataName] == jvmName && packageOf(metadataName).let { it.isNotEmpty() && it !in packages } &&
                     packageOf(jvmName).isNotEmpty()
             }
@@ -2655,9 +2664,16 @@ internal class OverrideResolver(
     ) {
 
         /**
-         * Whether each of these supertypes is named, by the name of a class, see [isClassInternalName], none of them left out.
+         * Whether each of these supertypes of the [kmClass] is named, by the name of a class, see [isClassInternalName],
+         * none of them left out, but the superclass `java/lang/Object` of an interface, see [relocatedFrom].
          */
-        val namesEach: Boolean get() = leftOut == 0 && names.all { isClassInternalName(it) }
+        fun namesEach(kmClass: KmClass): Boolean = unknownOf(kmClass) == 0 && names.all { isClassInternalName(it) }
+
+        // how many of the supertypes left out might be any class, see relocatedFrom
+        private fun unknownOf(kmClass: KmClass): Int {
+            val isInterface = kmClass.kind == ClassKind.INTERFACE || kmClass.kind == ClassKind.ANNOTATION_CLASS
+            return if (isSuperclassLeftOut && isInterface) leftOut - 1 else leftOut
+        }
 
         /**
          * The names of the supertypes of the [kmClass] which these supertypes are relocated from, see [relocatedNames].
@@ -2720,8 +2736,7 @@ internal class OverrideResolver(
         // the supertypes telling the relocation of their packages, and the ones telling only their own, see relocatedFrom
         private fun paired(kmClass: KmClass): Pair<Map<String, String>, Map<String, String>> {
             val relocated = relocatedNames(kmClass.relocatableSupertypes().keys, names)
-            val isInterface = kmClass.kind == ClassKind.INTERFACE || kmClass.kind == ClassKind.ANNOTATION_CLASS
-            val unknown = if (isSuperclassLeftOut && isInterface) leftOut - 1 else leftOut
+            val unknown = unknownOf(kmClass)
             if (unknown == 0 || relocated.isEmpty()) return relocated to emptyMap()
             val none = emptyMap<String, String>() to emptyMap<String, String>()
             val metadataNames = kmClass.supertypes.map { (it.classifier as? KmClassifier.Class)?.name ?: return none }
@@ -3789,7 +3804,7 @@ internal class OverrideResolver(
 
         /**
          * The internal name of the class the [typeVariable] is erased to,
-         * or `null` if unknown, like for cyclic bounds of a malformed class file.
+         * or `null` if unknown, like for cyclic bounds of a malformed class file, or for an array type bound.
          */
         fun erasure(typeVariable: String): String? {
             val visited = mutableSetOf<String>()
@@ -3802,8 +3817,12 @@ internal class OverrideResolver(
             return null
         }
 
-        // the first bound of a type variable bounded by an array type, of an unknown erasure here
-        private val ARRAY_BOUND = "["
+        private companion object {
+
+            // the first bound of a type variable bounded by an array type, of an unknown erasure here
+            const val ARRAY_BOUND = "["
+
+        }
 
         // a supertype is no type variable, unlike a bound, declared before it is visited, see init
         private val supertypeValidator = object : ClassTypeValidator() {

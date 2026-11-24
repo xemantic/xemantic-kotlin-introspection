@@ -1786,6 +1786,45 @@ class OverrideResolverTest {
     }
 
     @Test
+    fun `should find relocated supertype which the class file names next to Java supertype naming another copy of it reached first`() {
+        // given
+        // like an app shading its dependencies, lib/sub/Listener relocated to s2/, its Java interface, a supertype before it,
+        // implementing another class of the metadata name lib/sub/Listener: the original one, or another copy, by its JVM name
+        val owner = kmClass("app/Owner", supertype = "app/JMid").apply {
+            supertypes += type("lib/Base")
+            supertypes += type("lib/sub/Listener")
+        }
+        val classes = mapOf(
+            "s1/Base" to kmClass("lib/Base", null, "base"),
+            "s2/Listener" to kmClass("lib/sub/Listener", null, "relocated"),
+            "lib/sub/Listener" to kmClass("lib/sub/Listener", null, "original"),
+            "s3/Listener" to kmClass("lib/sub/Listener", null, "third")
+        )
+        val owners = listOf("app/Owner" to "app/JMid", "shaded/app/Owner" to "shaded/app/JMid")
+
+        // when
+        val overrides = owners.flatMap { (ownerName, javaMidName) ->
+            val ownerClassFile = classFile(ownerName, javaMidName, "s1/Base", "s2/Listener")
+            listOf("lib/sub/Listener", "s3/Listener").flatMap { implemented ->
+                listOf(ownerClassFile, tooNew(ownerClassFile)).map { classFile ->
+                    val resolver = overrideResolver(
+                        classes = classes,
+                        classFiles = mapOf(ownerName to classFile),
+                        unloadableClassFiles = mapOf(
+                            javaMidName to classFile(javaMidName, listOf(), interfaces = listOf(implemented), isInterface = true)
+                        )
+                    )
+                    listOf("base", "relocated").map { resolver.isOverride(OverrideResolver.Owner(owner, ownerName), function(it)) }
+                }
+            }
+        }
+
+        // then
+        // the supertype the class file of the owner names is the owner's own, whichever supertype names its metadata name first
+        assert(overrides == List(8) { listOf(true, true) })
+    }
+
+    @Test
     fun `should take nested class inherited through Java supertype of prefix relocated owner by the name the Java class refers to it by`() {
         // given
         // like an app relocated by the prefix shaded/, with lib/sub/ relocated alike, and lib/ to s1/, the class file complete,
@@ -2332,6 +2371,35 @@ class OverrideResolverTest {
         // then
         // the package is told relocated to neither, but each class the class file names is
         assert(overrides == List(2) { listOf(true, true, false, false) })
+    }
+
+    @Test
+    fun `should find supertypes of package relocated to two packages of interface whose class file has no superclass`() {
+        // given
+        // like above, lib/Base relocated to s1/, and lib/Listener to s2/, of an interface owner, the superclass index 0,
+        // which is java/lang/Object of any interface
+        val owner = kmClass("app/Owner", supertype = "lib/Base").apply {
+            supertypes += type("lib/Listener")
+            kind = ClassKind.INTERFACE
+        }
+        val ownerClassFile = withSupertypeIndexes(
+            classFile("app/Owner", listOf(), interfaces = listOf("s1/Base", "s2/Listener"), isInterface = true), superclass = 0
+        )
+
+        // when
+        val overrides = listOf(ownerClassFile, tooNew(ownerClassFile)).map { classFile ->
+            val resolver = overrideResolver(
+                classes = mapOf(
+                    "s1/Base" to kmClass("lib/Base", null, "relocatedBase"),
+                    "s2/Listener" to kmClass("lib/Listener", null, "relocatedListener")
+                ),
+                classFiles = mapOf("app/Owner" to classFile)
+            )
+            listOf("relocatedBase", "relocatedListener").map { resolver.isOverride(OverrideResolver.Owner(owner), function(it)) }
+        }
+
+        // then
+        assert(overrides == List(2) { listOf(true, true) })
     }
 
     @Test
