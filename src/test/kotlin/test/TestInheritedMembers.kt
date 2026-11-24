@@ -1303,6 +1303,38 @@ abstract class BoxedJavaPutOfNotNullAndNullableNullMarkedMidIntegerPutImpl :
 
 fun BoxedJavaPutOfNotNullAndNullableNullMarkedMidIntegerPutImpl.putNull(): String = put(t = null)
 
+// a Kotlin interface giving Int, not nullable, to the generic JavaGenericMidPut<T>
+interface IntGenericMidPut : com.xemantic.kotlin.introspection.test.other.JavaGenericMidPut<Int>
+
+// a generic Kotlin interface passing its type parameter on to JavaGenericMidPut<T> as nullable
+interface NullableTypeParameterMidPut<T> : com.xemantic.kotlin.introspection.test.other.JavaGenericMidPut<T?>
+
+interface IntNullableTypeParameterMidPut : NullableTypeParameterMidPut<Int>
+
+abstract class BoxedJavaPutOfIntMidAndNotNullIntegerPutImpl :
+    com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOfIntMidAndNotNullIntegerPut()
+
+abstract class NotNullBoxedJavaPutOfNullableTypeParameterMidAndNotNullIntegerPutImpl :
+    com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPutOfNullableTypeParameterMidAndNotNullIntegerPut()
+
+fun NotNullBoxedJavaPutOfNullableTypeParameterMidAndNotNullIntegerPutImpl.putNull(): String = put(t = null)
+
+abstract class BoxedJavaPutOfNullableIntegerNotNullMidPutImpl :
+    com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOfNullableIntegerNotNullMidPut()
+
+// one member of the put(Integer) of JavaBoxedPutOverOpenGenericPut, taking Int!, and of the put(t: T) of GenericPut<@NotNull Integer>,
+// typed like the former, declared first
+abstract class BoxedJavaPutOverOpenGenericPutNotNullIntegerJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOverOpenGenericPut(),
+    com.xemantic.kotlin.introspection.test.other.JavaNotNullIntegerPutInterface
+
+abstract class BoxedJavaPutBelowOpenGenericPutNotNullIntegerJoinImpl :
+    com.xemantic.kotlin.introspection.test.other.JavaBoxedPutBelowOpenGenericPutNotNullIntegerJoin()
+
+class BoxedJavaPutBelowOpenGenericPutNotNullIntegerJoinConcrete : BoxedJavaPutBelowOpenGenericPutNotNullIntegerJoinImpl()
+
+fun BoxedJavaPutBelowOpenGenericPutNotNullIntegerJoinImpl.putNull(): String = put(null)
+
 interface GenericRenamedPut<T> {
     fun put(q: T): String
 }

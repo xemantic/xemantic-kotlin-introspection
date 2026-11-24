@@ -47,6 +47,7 @@ import kotlin.jvm.optionals.getOrNull
 import kotlin.metadata.*
 import kotlin.metadata.jvm.KotlinClassMetadata
 import kotlin.metadata.jvm.annotations
+import kotlin.metadata.jvm.signature
 import kotlin.reflect.KCallable
 import kotlin.reflect.KClass
 import kotlin.reflect.KFunction
@@ -463,8 +464,10 @@ private fun KmType.enhanceSupertypeArguments(type: Class<*>, supertype: Class<*>
     if (type.isJdkClass || arguments.isEmpty()) return
     // by the indices of the supertypes in the class file, the superclass at -1, see TypeReference.getSuperTypeIndex
     val index = if (type.superclass == supertype) -1 else type.interfaces.indexOf(supertype).takeIf { it >= 0 } ?: return
+    // a type variable annotated not null is definitely not nullable, like the `T & Any` of `GenericPut<@NotNull T>`,
+    // whatever type argument it is given in turn, also one annotated nullable
     javaNullabilities.get(type).supertypeArguments[index]?.forEach { (path, isNullable) ->
-        nestedType(path)?.markNullable(isNullable)
+        nestedType(path)?.markNullable(isNullable, isDefinitelyNonNull = !isNullable)
     }
 }
 
@@ -898,14 +901,53 @@ private fun platformPositions(method: Method): Set<Int> {
     ) {
         return emptySet()
     }
-    val overridden = overriddenKotlinMethods(method, matched)
+    val overridden = joinPicks(method, overriddenKotlinMethods(method, matched))
     return references.filterTo(HashSet()) { position ->
         overridden.all { inherited ->
-            val type = inherited.genericParameterTypes.getOrNull(position) as? TypeVariable<*>
+            val type = typeVariableParameterOf(inherited, position)
             val typeClass = type?.genericDeclaration as? Class<*>
             typeClass != null && isJavaTypeArgument(declaringClass, typeClass, typeClass.typeParameters.indexOf(type))
         }
     }
+}
+
+/**
+ * The [overridden] methods of the supertypes of the class of the [method] but the ones a Kotlin class above joins with another one,
+ * taking the types of that one, see [joinPick], which the [method] takes the types of, as an override of the joined member.
+ */
+private fun joinPicks(method: Method, overridden: List<Method>): List<Method> {
+    if (overridden.size < 2) return overridden
+    val kotlinSupertypes = LinkedHashSet<Class<*>>()
+    val pending = ArrayDeque(listOfNotNull(method.declaringClass.superclass) + method.declaringClass.interfaces)
+    while (pending.isNotEmpty()) {
+        val type = pending.removeFirst()
+        if (kotlinSupertypes.add(type)) pending += listOfNotNull(type.superclass) + type.interfaces
+    }
+    val joins = kotlinSupertypes.filter { it.isKotlinClass }
+    return overridden.filter { inherited ->
+        overridden.none { other ->
+            other.declaringClass != inherited.declaringClass && joins.firstOrNull { join ->
+                inherited.declaringClass.isAssignableFrom(join) && other.declaringClass.isAssignableFrom(join)
+            }?.let { join -> joinPick(join, inherited, other) == other } == true
+        }
+    }
+}
+
+/**
+ * The type parameter of its class the value parameter at the [position] of the [method] of a Kotlin class takes,
+ * like the `T` of the `put(t: T)` of `GenericPut<T>`, also of a member deprecated as hidden, compiled as a synthetic method
+ * of no generic signature, told by the Kotlin metadata of its class then, or `null` of a parameter of another type.
+ */
+private fun typeVariableParameterOf(method: Method, position: Int): TypeVariable<*>? {
+    (method.genericParameterTypes.getOrNull(position) as? TypeVariable<*>)?.let { return it }
+    if (!method.isSynthetic || !method.declaringClass.isKotlinClass) return null
+    val kmClass = readKmClass(method.declaringClass) ?: return null
+    val descriptor = AsmType.getMethodDescriptor(method)
+    val function = kmClass.functions.firstOrNull { it.name == method.name && it.signature?.descriptor == descriptor } ?: return null
+    val type = function.valueParameters.getOrNull(position)?.type?.takeIf { function.receiverParameterType == null }
+    val id = (type?.classifier as? KmClassifier.TypeParameter)?.id ?: return null
+    val index = kmClass.typeParameters.indexOfFirst { it.id == id }
+    return method.declaringClass.typeParameters.getOrNull(index)
 }
 
 /**
@@ -930,20 +972,20 @@ private fun notNullGivenPositions(method: Method): Set<Int> {
             javaNullabilityOf(method).let { it == null || (position !in it.types && position !in it.platform) }
     }
     if (references.isEmpty()) return emptySet()
-    val overridden = overriddenKotlinMethods(method, methodsMatchedByKotlinTypes(method))
+    val overridden = joinPicks(method, overriddenKotlinMethods(method, methodsMatchedByKotlinTypes(method)))
     if (overridden.isEmpty()) return emptySet()
     fun TypeArgumentGiver.isNotNull() = this is TypeArgumentGiver.Java && !isNullable && !isPlatform
     return references.filterTo(HashSet()) { position ->
-        overridden.all { inherited ->
-            val type = inherited.genericParameterTypes.getOrNull(position) as? TypeVariable<*>
-            val typeClass = type?.genericDeclaration as? Class<*>
-            typeClass != null && typeArgumentGivers(declaringClass, typeClass, typeClass.typeParameters.indexOf(type)).let { givers ->
-                val join = givers.firstOrNull()?.join
-                givers.isNotEmpty() && givers.all { it is TypeArgumentGiver.Java && !it.isNullable && it.join == join } &&
-                    // a Kotlin class joining the paths has a member of its own, of the type arguments of its first path
-                    if (join == null) givers.any { it.isNotNull() } else givers.first().isNotNull()
-            }
+        val givers = overridden.map { inherited ->
+            val type = typeVariableParameterOf(inherited, position)
+            val typeClass = type?.genericDeclaration as? Class<*> ?: return@filterTo false
+            typeArgumentGivers(declaringClass, typeClass, typeClass.typeParameters.indexOf(type))
         }
+        givers.all { it.isNotEmpty() && it.all { giver -> giver is TypeArgumentGiver.Java && !giver.isNullable } } &&
+            // a Kotlin class joining paths has a member of its own, of the type arguments of its first path,
+            // while a path through a Kotlin class joining none, like `KI : JMid<Int>`, tells its own,
+            // one annotated not null of any member overridden telling the nullability, also of a hidden one
+            givers.any { it.distinctBy { giver -> giver.join ?: giver }.any { giver -> giver.isNotNull() } }
     }
 }
 
@@ -973,7 +1015,7 @@ private fun clashingNullabilityPositions(method: Method): Set<Int> {
             (nullability.types[position] ?: false.takeIf { nullability.isMarkedNotNull(position) })?.let { nullabilities += it }
         }
         overriddenKotlin.forEach { inherited ->
-            val type = inherited.genericParameterTypes.getOrNull(position) as? TypeVariable<*>
+            val type = typeVariableParameterOf(inherited, position)
             val typeClass = type?.genericDeclaration as? Class<*> ?: return@forEach
             nullabilities += givenNullabilities(typeArgumentGivers(declaringClass, typeClass, typeClass.typeParameters.indexOf(type)))
         }
@@ -1043,8 +1085,8 @@ private fun overriddenKotlinMethods(method: Method, matched: List<Method>): List
         .partition { AsmType.getMethodDescriptor(it) in descriptors }
     val parameterTypes = method.parameterTypes
     val givenPrimitive = overriding.filter { inherited ->
-        inherited.genericParameterTypes.indices.any { position ->
-            val type = inherited.genericParameterTypes[position] as? TypeVariable<*>
+        inherited.parameterTypes.indices.any { position ->
+            val type = typeVariableParameterOf(inherited, position)
             val typeClass = type?.genericDeclaration as? Class<*>
             val isBoxed = parameterTypes.getOrNull(position)?.let { !it.isPrimitive && it.kotlin.javaPrimitiveType != null } == true
             typeClass != null && isBoxed &&
@@ -1061,17 +1103,47 @@ private fun overriddenKotlinMethods(method: Method, matched: List<Method>): List
         }
         supertypes.filter { it.isKotlinClass }
     }
+    // the member a Kotlin class above joins two of them into, see joinPick, by the nearest such class
+    fun pickOf(first: Method, second: Method): Method? = kotlinSupertypes.firstOrNull { join ->
+        first.declaringClass.isAssignableFrom(join) && second.declaringClass.isAssignableFrom(join)
+    }?.let { join -> joinPick(join, first, second) }
     return overriding.filter { inherited ->
-        inherited !in givenPrimitive &&
+        // a member given a primitive type is overridden only when a Kotlin class joins it with one the method overrides,
+        // which the joined member takes the type of, like the put(t: T) of PA<Integer> of `Y : JPA(), GenericPut<Int>`
+        (inherited !in givenPrimitive || overriding.any { other -> other !in givenPrimitive && pickOf(inherited, other) == other }) &&
             notOverriding.none { it.declaringClass != inherited.declaringClass && inherited.declaringClass.isAssignableFrom(it.declaringClass) } &&
             // nor the ones a Kotlin class joins with one given a primitive type, one member taking it there,
             // like the put(t: T) of GenericPut<@NotNull Integer> joined with the one of GenericDefaultPut<Int>
-            givenPrimitive.none { primitive ->
-                primitive.declaringClass != inherited.declaringClass && kotlinSupertypes.any { join ->
-                    primitive.declaringClass.isAssignableFrom(join) && inherited.declaringClass.isAssignableFrom(join)
-                }
-            }
+            givenPrimitive.none { primitive -> primitive.declaringClass != inherited.declaringClass && pickOf(primitive, inherited) == primitive }
     }
+}
+
+/**
+ * The one of the methods [first] and [second], of supertypes of the Kotlin class [join], which the member K2 joins them into
+ * there takes the types of: the one of the more specific return type, or else the one reached first,
+ * depth-first in the order of the declarations of the supertypes, see [kotlinSuperclassPositions],
+ * like the put(t: T) of the `PA<Integer>` of a Java superclass of `abstract class Y : JPA(), GenericPut<Int>`, taking `Int!`,
+ * which a Java `put(Integer)` below overrides then, unlike the one of `abstract class Y : GenericPut<Int>, JPA()`, taking `Int`.
+ */
+internal fun joinPick(join: Class<*>, first: Method, second: Method): Method {
+    val (firstReturn, secondReturn) = first.returnType to second.returnType
+    if (firstReturn != secondReturn) {
+        if (secondReturn.isAssignableFrom(firstReturn)) return first
+        if (firstReturn.isAssignableFrom(secondReturn)) return second
+    }
+    val visited = HashSet<Class<*>>()
+    fun reached(type: Class<*>): Method? {
+        if (!visited.add(type)) return null
+        if (type == first.declaringClass) return first
+        if (type == second.declaringClass) return second
+        val position = kotlinSuperclassPositions.get(type)
+        val interfaces = type.interfaces.toList()
+        val supertypes = type.superclass?.let { interfaces.take(position) + it + interfaces.drop(position) } ?: interfaces
+        return supertypes.firstNotNullOfOrNull { supertype ->
+            supertype.takeIf { first.declaringClass.isAssignableFrom(it) || second.declaringClass.isAssignableFrom(it) }?.let(::reached)
+        }
+    }
+    return reached(join) ?: first
 }
 
 /**
@@ -1149,7 +1221,7 @@ private class KotlinTypeArgument(val isNullable: Boolean, val isPrimitive: Boole
 
 /**
  * The type arguments which are classes, see [KotlinTypeArgument], a Kotlin class gives to its direct supertypes,
- * by their indices, by the JVM names of the supertypes, read once per class, see [typeArgumentGivers],
+ * and its own type parameters it passes on as nullable, like the `T?` of `KQ<T> : JMid<T?>`, by their indices, by the JVM names of the supertypes, read once per class, see [typeArgumentGivers],
  * none of a class whose metadata cannot be read.
  */
 private val kotlinTypeArguments = object : ClassValue<Map<String, Map<Int, KotlinTypeArgument>>>() {
@@ -1162,8 +1234,12 @@ private val kotlinTypeArguments = object : ClassValue<Map<String, Map<Int, Kotli
             val supertype = supertypes.firstOrNull { (it.classifier as? KmClassifier.Class)?.name == name }
             supertypeClass.name to supertype?.arguments.orEmpty().withIndex().mapNotNull { (index, argument) ->
                 val argumentType = argument.type
-                (argumentType?.classifier as? KmClassifier.Class)?.let { classifier ->
-                    index to KotlinTypeArgument(argumentType.isNullable, classifier.name in PRIMITIVE_CLASS_NAMES)
+                when (val classifier = argumentType?.classifier) {
+                    is KmClassifier.Class -> index to KotlinTypeArgument(argumentType.isNullable, classifier.name in PRIMITIVE_CLASS_NAMES)
+                    // a type parameter of its own passed on as nullable, like the `T?` of `interface KQ<T> : JMid<T?>`
+                    is KmClassifier.TypeParameter -> (index to KotlinTypeArgument(isNullable = true, isPrimitive = false))
+                        .takeIf { argumentType.isNullable }
+                    else -> null
                 }
             }.toMap()
         }
@@ -1232,7 +1308,10 @@ private fun typeArgumentGivers(
                     givers += TypeArgumentGiver.Java(isPlatform || isPassedNullable, isNullable || isPassedNullable, join)
                 }
                 else -> when (val argument = supertype.actualTypeArguments.getOrNull(index)) {
-                    is TypeVariable<*> -> (argument.genericDeclaration as? Class<*>)?.let { argumentClass ->
+                    // a type parameter passed on as nullable gives a nullable type, whatever it is given in turn
+                    is TypeVariable<*> -> kotlinTypeArguments.get(type)[typeClass.name]?.get(index)?.let { nullable ->
+                        givers += TypeArgumentGiver.Kotlin(nullable, join)
+                    } ?: (argument.genericDeclaration as? Class<*>)?.let { argumentClass ->
                         givers += typeArgumentGivers(javaClass, argumentClass, argumentClass.typeParameters.indexOf(argument), resolved)
                     }
                     else -> givers += TypeArgumentGiver.Kotlin(kotlinTypeArguments.get(type)[typeClass.name]?.get(index), join)

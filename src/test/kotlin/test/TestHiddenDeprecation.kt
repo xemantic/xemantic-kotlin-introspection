@@ -878,6 +878,16 @@ interface HiddenGenericPut<T> {
 
 abstract class PrimitiveJavaHiddenGenericPutJoin : com.xemantic.kotlin.introspection.test.other.JavaPrimitivePut(), HiddenGenericPut<Int>
 
+// the put(Integer) of the Java class overrides the hidden put(t: T) of HiddenGenericPut<Integer>, a synthetic method of no generic signature,
+// and the visible one of GenericPut<Integer>, both given a platform type, so that it takes Int!
+abstract class BoxedJavaPutOverHiddenAndGenericPutImpl : com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOverHiddenAndGenericPut()
+
+fun BoxedJavaPutOverHiddenAndGenericPutImpl.putNull(): String = put(null)
+
+// the same next to GenericPut<@NotNull Integer> too, which makes the put(Integer) take Int
+abstract class BoxedJavaPutOverHiddenOpenGenericPutAndNotNullIntegerPutImpl :
+    com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOverHiddenOpenGenericPutAndNotNullIntegerPut()
+
 abstract class HiddenOpenGenericPut<T> {
     @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
     open fun put(t: T): String = ""

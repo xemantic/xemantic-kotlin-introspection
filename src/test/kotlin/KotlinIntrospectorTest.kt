@@ -23289,6 +23289,52 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve Java member taking boxed type below Kotlin class joining Java member of platform type with Kotlin one given boxed type annotated not null as taking platform type`() {
+        // the Kotlin class joins the put(Integer) of JavaBoxedPutOverOpenGenericPut, declared first, taking Int!,
+        // and the put(t: T) of GenericPut<@NotNull Integer>, one member typed like the former, which the put(Integer) below overrides,
+        // so that put(null) compiles, and a concrete subclass too
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaPutBelowOpenGenericPutNotNullIntegerJoinImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaPutBelowOpenGenericPutNotNullIntegerJoinImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedPutBelowOpenGenericPutNotNullIntegerJoin
+            override fun put(t: Int?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking boxed type implementing Kotlin generic one given Int through generic Java interface and boxed type annotated not null as taking Int`() {
+        // the Int a Kotlin interface gives JavaGenericMidPut<T> is a platform type there, which tells no nullability,
+        // next to the @NotNull Integer of another path, so that put(Integer) takes Int, and put(null) does not compile,
+        // one member with the one of GenericPut
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaPutOfIntMidAndNotNullIntegerPutImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaPutOfIntMidAndNotNullIntegerPutImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.GenericPut
+            open fun put(t: Int): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking boxed type annotated not null implementing Kotlin generic one given nullable type parameter through generic Java interface as taking platform type`() {
+        // the T? a Kotlin interface passes on to JavaGenericMidPut<T> is nullable whatever T is given,
+        // disagreeing with the @NotNull Integer of another path, so that put(@NotNull Integer) takes Int!, and put(t = null) compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NotNullBoxedJavaPutOfNullableTypeParameterMidAndNotNullIntegerPutImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NotNullBoxedJavaPutOfNullableTypeParameterMidAndNotNullIntegerPutImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPutOfNullableTypeParameterMidAndNotNullIntegerPut
+            override fun put(t: Int?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking boxed type implementing Kotlin generic one given type variable annotated not null by generic Java interface as taking Int`() {
+        // JavaNotNullGenericMidPut<T> annotates its T not null in GenericPut<@NotNull T>, whatever type argument it is given,
+        // also @Nullable Integer, so that put(Integer) takes Int, and put(null) does not compile, one member with the one of GenericPut
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaPutOfNullableIntegerNotNullMidPutImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaPutOfNullableIntegerNotNullMidPutImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.GenericPut
+            open fun put(t: Int): String
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve Java member taking String overriding member of internal generic class given String annotated nullable and StringPut as taking platform type`() {
         // the nullabilities disagree, so that put(String) takes String!, an override of both, taking their name for kotlinc
         resolver.resolve("com.xemantic.kotlin.introspection.test.JavaStringPutOverInternalNullableStringPutImpl.put") sameAsKotlin """
@@ -23901,6 +23947,28 @@ class KotlinIntrospectorTest {
     @Test
     fun `should not resolve Java member taking primitive type merged with hidden one taking type argument of primitive type`() {
         assert(resolver.resolve("com.xemantic.kotlin.introspection.test.PrimitiveJavaHiddenGenericPutJoin.put") == null)
+    }
+
+    @Test
+    fun `should resolve Java member taking boxed type overriding hidden member and Kotlin generic one given boxed type as taking platform type`() {
+        // the hidden member is a synthetic method of no generic signature, its type parameter told by the Kotlin metadata,
+        // given Integer, a platform type, like the one of GenericPut, so that put(null) compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaPutOverHiddenAndGenericPutImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaPutOverHiddenAndGenericPutImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOverHiddenAndGenericPut
+            override fun put(t: Int?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking boxed type overriding hidden member and Kotlin generic ones given boxed type and boxed type annotated not null as taking Int`() {
+        // the platform types of the hidden member and of GenericPut<Integer> tell no nullability, the @NotNull Integer does,
+        // so that put(Integer) takes Int, and put(null) does not compile
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaPutOverHiddenOpenGenericPutAndNotNullIntegerPutImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaPutOverHiddenOpenGenericPutAndNotNullIntegerPutImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.GenericPut
+            open fun put(t: Int): String
+        """.trimIndent()
     }
 
     @Test
