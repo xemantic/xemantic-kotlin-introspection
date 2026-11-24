@@ -28,7 +28,10 @@ import com.xemantic.kotlin.introspection.test.other.JavaInvokedTaskOf
 import com.xemantic.kotlin.introspection.test.other.JavaInvokedVarargTask
 import com.xemantic.kotlin.introspection.test.other.JavaSyntheticShadowingBase
 import kotlin.reflect.KCallable
+import kotlin.reflect.KFunction
 import kotlin.reflect.KFunction1
+import kotlin.reflect.KSuspendFunction0
+import kotlin.reflect.KSuspendFunction1
 
 // members taking a type whose type arguments accept the ones of the parameter of the extension of the same name,
 // by their variance, called instead of it, like projectedShadowing.outProjected(listOf("")):
@@ -424,6 +427,56 @@ fun FunctionSupertypeShadowedSupertype.nullableAnyReturning(x: () -> Unit): Int 
 fun FunctionSupertypeShadowedSupertype.typeParameterReturning(x: () -> Unit): Int = 1
 
 fun FunctionSupertypeShadowedSupertype.anyBoundReturning(x: () -> Unit): Int = 1
+
+// members taking a supertype of the suspend function type, or of the suspend function reference type, of the extension,
+// called instead of it, see #376, like suspendFunctionSupertypeShadowing.function { "" }, or .reference(::describeSuspending),
+// also a lambda of a parameter, which .parameterFunction { i -> "" } fails to infer the type of, calling the member,
+// unlike a KFunction next to a suspend function type, which takes no lambda, so that .lambdaReference { "" } calls the extension,
+// and unlike a Function<Unit> next to a suspend function type returning Unit, which a reference to a suspend function
+// returning anything is coerced to, so that .unitFunction(::describeSuspending) calls the extension
+interface SuspendFunctionSupertypeShadowedSupertype
+
+class SuspendFunctionSupertypeShadowing : SuspendFunctionSupertypeShadowedSupertype {
+    fun function(x: Function<String>): Int = 0
+    fun wideFunction(x: Function<CharSequence>): Int = 0
+    fun parameterFunction(x: Function<String>): Int = 0
+    fun receiverFunction(x: Function<String>): Int = 0
+    fun anyFunction(x: Function<Any?>): Int = 0
+    fun reference(x: KFunction<String>): Int = 0
+    fun parameterReference(x: KFunction<String>): Int = 0
+    fun callable(x: KCallable<*>): Int = 0
+    fun typedCallable(x: KCallable<String>): Int = 0
+    fun referenceFunction(x: Function<String>): Int = 0
+    fun unitReferenceFunction(x: Function<Unit>): Int = 0
+    fun lambdaReference(x: KFunction<String>): Int = 0
+    fun unitFunction(x: Function<Unit>): Int = 0
+}
+
+fun SuspendFunctionSupertypeShadowedSupertype.function(x: suspend () -> String): Int = 1
+
+fun SuspendFunctionSupertypeShadowedSupertype.wideFunction(x: suspend () -> String): Int = 1
+
+fun SuspendFunctionSupertypeShadowedSupertype.parameterFunction(x: suspend (Int) -> String): Int = 1
+
+fun SuspendFunctionSupertypeShadowedSupertype.receiverFunction(x: suspend Int.() -> String): Int = 1
+
+fun SuspendFunctionSupertypeShadowedSupertype.anyFunction(x: suspend () -> Unit): Int = 1
+
+fun SuspendFunctionSupertypeShadowedSupertype.reference(x: KSuspendFunction0<String>): Int = 1
+
+fun SuspendFunctionSupertypeShadowedSupertype.parameterReference(x: KSuspendFunction1<Int, String>): Int = 1
+
+fun SuspendFunctionSupertypeShadowedSupertype.callable(x: KSuspendFunction0<String>): Int = 1
+
+fun SuspendFunctionSupertypeShadowedSupertype.typedCallable(x: KSuspendFunction0<String>): Int = 1
+
+fun SuspendFunctionSupertypeShadowedSupertype.referenceFunction(x: KSuspendFunction0<String>): Int = 1
+
+fun SuspendFunctionSupertypeShadowedSupertype.unitReferenceFunction(x: KSuspendFunction0<Unit>): Int = 1
+
+fun SuspendFunctionSupertypeShadowedSupertype.lambdaReference(x: suspend () -> String): Int = 1
+
+fun SuspendFunctionSupertypeShadowedSupertype.unitFunction(x: suspend () -> Unit): Int = 1
 
 // members accepting a type parameter of the extension bounded by another one, like its bounds, called instead of the extensions,
 // like boundedTypeParameterShadowing.boundedByOther(listOf("")), unlike one accepting less

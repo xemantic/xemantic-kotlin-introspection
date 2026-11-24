@@ -2301,6 +2301,35 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve class without extensions shadowed by members taking supertypes of suspend function types`() {
+        // suspendFunctionSupertypeShadowing.function { "" }, or .reference(::describeSuspending), call the members, see #376,
+        // as a suspend function type is a Function of its return type, and a suspend function reference type a KFunction,
+        // while .lambdaReference { "" } calls the extension, as a lambda is no KFunction,
+        // and .unitFunction(::describeSuspending), as the reference is coerced to return Unit, while it is no Function<Unit>
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SuspendFunctionSupertypeShadowing", pageSize = 30) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SuspendFunctionSupertypeShadowing [page 1/1]
+            class SuspendFunctionSupertypeShadowing : SuspendFunctionSupertypeShadowedSupertype {
+                fun function(x: Function<String>): Int
+                fun wideFunction(x: Function<CharSequence>): Int
+                fun parameterFunction(x: Function<String>): Int
+                fun receiverFunction(x: Function<String>): Int
+                fun anyFunction(x: Function<Any?>): Int
+                fun reference(x: KFunction<String>): Int
+                fun parameterReference(x: KFunction<String>): Int
+                fun callable(x: KCallable<*>): Int
+                fun typedCallable(x: KCallable<String>): Int
+                fun referenceFunction(x: Function<String>): Int
+                fun unitReferenceFunction(x: Function<Unit>): Int
+                fun lambdaReference(x: KFunction<String>): Int
+                fun unitFunction(x: Function<Unit>): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun SuspendFunctionSupertypeShadowedSupertype.lambdaReference(x: suspend () -> String): Int
+            fun SuspendFunctionSupertypeShadowedSupertype.unitFunction(x: suspend () -> Unit): Int
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve class without extensions of type parameters bounded by each other shadowed by members accepting their bounds`() {
         // boundedTypeParameterShadowing.boundedByOther(listOf("")) calls the member, while .narrower(listOfCharSequences) calls the extension
         resolver.resolve("com.xemantic.kotlin.introspection.test.BoundedTypeParameterShadowing") sameAsKotlin """
@@ -17407,6 +17436,92 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve class comparable to what is comparable to it without extensions on type parameter comparable to itself`() {
+        // kotlinc fails on x.deepSelf(), x.deepBounded(), and x.coerceAtLeast(x) with: Arguments depth is too high,
+        // while compareTo, of a Comparable of any type, is listed like for any comparable class
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.deep.DeepComparable"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.deep.DeepComparable [page 1/1]
+            interface DeepComparable : Comparable<Comparable<DeepComparable>>
+            // from com.xemantic.kotlin.introspection.test.deep
+            fun <T> T.deepAny()
+            // from kotlin
+            inline infix fun <T> Comparable<T>.compareTo(other: T): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve subclass of class comparable to what is comparable to it without extensions on type parameter comparable to itself`() {
+        // kotlinc fails on x.deepSelf(), and x.deepBounded(), with: Arguments depth is too high
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.deep.DeepComparableSub"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.deep.DeepComparableSub [page 1/1]
+            interface DeepComparableSub : DeepComparable
+            // from com.xemantic.kotlin.introspection.test.deep
+            fun <T> T.deepAny()
+            // from kotlin
+            inline infix fun <T> Comparable<T>.compareTo(other: T): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extension inferring intersection of class comparable to what is comparable to it`() {
+        // kotlinc fails on x.deepSinkOfComparable() with: Arguments depth is too high
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.deep.DeepStringSink"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.deep.DeepStringSink [page 1/1]
+            interface DeepStringSink : DeepSink<String, DeepComparable>
+            // from com.xemantic.kotlin.introspection.test.deep
+            fun <T> T.deepAny()
+            fun <T> DeepSink<T, T>.deepSinkOfAny()
+            fun <T : CharSequence> DeepSink<T, T>.deepSinkOfChars()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extensions inferring intersection of upper types of class comparable to what is comparable to it`() {
+        // kotlinc fails on x.deepSinkOfAny(), x.deepSinkOfChars(), and x.deepSinkOfComparable() with: Arguments depth is too high
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.deep.DeepComparableSink"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.deep.DeepComparableSink [page 1/1]
+            interface DeepComparableSink : DeepSink<DeepComparable, Comparable<DeepComparable>>
+            // from com.xemantic.kotlin.introspection.test.deep
+            fun <T> T.deepAny()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extension inferring common supertype of class comparable to what is comparable to it`() {
+        // kotlinc fails on x.deepSourceOfAny() with: Arguments depth is too high
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.deep.DeepComparableSource"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.deep.DeepComparableSource [page 1/1]
+            interface DeepComparableSource : DeepSource<DeepComparable, Comparable<DeepComparable>>
+            // from com.xemantic.kotlin.introspection.test.deep
+            fun <T> T.deepAny()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve generic class without witness of class comparable to what is comparable to it`() {
+        // x.deepSame() compiles for a DeepMap<String>, while the witness DeepComparable, of x.deepValues(), is no witness
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.deep.DeepMap"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.deep.DeepMap [page 1/1]
+            interface DeepMap<V : Comparable<V>> : Map<V, V>
+            // from com.xemantic.kotlin.introspection.test.deep
+            fun <T> T.deepAny()
+            fun <T : Comparable<T>> Map<T, T>.deepSame()
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve class comparable to what is comparable to it without recursing endlessly`() {
         // kotlinc fails on x.selfComparable() with: Arguments depth is too high
         resolver.resolve(
@@ -17632,6 +17747,75 @@ class KotlinIntrospectorTest {
             have("fun <T : suspend () -> String> GivenSuspendInvariant<T>.invariantOfSuspend()" in lines())
             have("fun <T : suspend () -> U, U> GivenSuspendInvariant<T>.invariantOfSuspendSupplier()" in lines())
         }
+    }
+
+    @Test
+    fun `should resolve class of invariant function type without extensions bounded by suspend function type`() {
+        // kotlinc: x.invariantOfSuspend() is inapplicable because of a receiver type mismatch, () -> String being no suspend () -> String
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.GivenSuspendInvariantSupplierClass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GivenSuspendInvariantSupplierClass [page 1/1]
+            class GivenSuspendInvariantSupplierClass : GivenSuspendInvariant<() -> String>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve generic class of invariant suspend function type with extension bounded by suspend function type of itself`() {
+        // x.invariantOfSuspendSelf() compiles for V given as interface X : suspend () -> X
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.GivenSuspendSelfInvariant"
+        ) should {
+            have("fun <T : suspend () -> T> GivenSuspendInvariant<T>.invariantOfSuspendSelf()" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve generic class of function type of type parameter without extensions bounded by other function types`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.GivenAnyConsumerSource"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GivenAnyConsumerSource [page 1/1]
+            interface GivenAnyConsumerSource<V> : GivenAnyFunctionSource<(V) -> Unit>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve generic class of supplier type of type parameter with extension bounded by supplier only`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.GivenAnySupplierSource"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GivenAnySupplierSource [page 1/1]
+            interface GivenAnySupplierSource<V> : GivenAnyFunctionSource<() -> V>
+            // from com.xemantic.kotlin.introspection.test
+            fun <T : () -> U, U : CharSequence> GivenAnyFunctionSource<T>.anySourceOfSupplier()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve generic class of suspend supplier type of type parameter with extensions bounded by suspend supplier only`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.GivenAnySuspendSupplierSource"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GivenAnySuspendSupplierSource [page 1/1]
+            interface GivenAnySuspendSupplierSource<V> : GivenAnyFunctionSource<suspend () -> V>
+            // from com.xemantic.kotlin.introspection.test
+            fun <T : Comparable<T>> GivenAnyFunctionSource<suspend () -> T>.anySourceOfSuspendComparable()
+            fun <T : suspend () -> U, U> GivenAnyFunctionSource<T>.anySourceOfSuspendSupplier()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve generic class of class of suspend supplier type with extensions bounded by suspend supplier`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.GivenAnySuspendTaskSource"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GivenAnySuspendTaskSource [page 1/1]
+            interface GivenAnySuspendTaskSource<V> : GivenAnyFunctionSource<GivenAnySuspendTask<V>>
+            // from com.xemantic.kotlin.introspection.test
+            fun <T : Comparable<T>> GivenAnyFunctionSource<suspend () -> T>.anySourceOfSuspendComparable()
+            fun <T : suspend () -> U, U> GivenAnyFunctionSource<T>.anySourceOfSuspendSupplier()
+        """.trimIndent()
     }
 
     @Test

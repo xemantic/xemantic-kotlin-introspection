@@ -1746,3 +1746,35 @@ fun <T : suspend () -> String> GivenSuspendInvariantPair<T, String>.pairOfSuspen
 class GivenSuspendInvariantClass : GivenSuspendInvariant<suspend () -> String>
 
 class GivenSuspendInvariantPairClass : GivenSuspendInvariantPair<suspend () -> String, String>
+
+// a function type argument of a type parameter in an invariant position satisfies no bound of a suspend function type, see #376
+class GivenSuspendInvariantSupplierClass : GivenSuspendInvariant<() -> String>
+
+// a function type of a type parameter of a class, standing for any type, see #376: whatever V is, a (V) -> Unit is no () -> U,
+// no suspend () -> U, nor Comparable, and a () -> V is no suspend () -> U, nor Comparable, but a () -> U of U : CharSequence,
+// for V String, while a class of a suspend function type supertype is a suspend () -> T of T : Comparable<T>, for V String
+interface GivenAnyFunctionSource<out T>
+
+fun <T : () -> U, U : CharSequence> GivenAnyFunctionSource<T>.anySourceOfSupplier() {}
+
+fun <A : Comparable<A>, B : A> GivenAnyFunctionSource<B>.anySourceUnderComparable() {}
+
+fun <T : suspend () -> U, U> GivenAnyFunctionSource<T>.anySourceOfSuspendSupplier() {}
+
+fun <T : Comparable<T>> GivenAnyFunctionSource<suspend () -> T>.anySourceOfSuspendComparable() {}
+
+interface GivenAnyConsumerSource<V> : GivenAnyFunctionSource<(V) -> Unit>
+
+interface GivenAnySupplierSource<V> : GivenAnyFunctionSource<() -> V>
+
+interface GivenAnySuspendSupplierSource<V> : GivenAnyFunctionSource<suspend () -> V>
+
+interface GivenAnySuspendTask<out V> : suspend () -> V
+
+interface GivenAnySuspendTaskSource<V> : GivenAnyFunctionSource<GivenAnySuspendTask<V>>
+
+// a suspend function type of a type parameter of a class, in an invariant position, satisfying a bound referring to itself,
+// see #376: x.invariantOfSuspendSelf() compiles for a GivenSuspendSelfInvariant<X> of interface X : suspend () -> X
+interface GivenSuspendSelfInvariant<V> : GivenSuspendInvariant<suspend () -> V>
+
+fun <T : suspend () -> T> GivenSuspendInvariant<T>.invariantOfSuspendSelf() {}
