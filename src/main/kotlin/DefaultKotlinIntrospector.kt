@@ -9181,25 +9181,18 @@ internal class DefaultKotlinIntrospector(
                 // given each of the witnesses, see witnessed, also next to a function type, see #376,
                 // the extension callable when kotlinc infers its type parameters for one of them, which is not Nothing, see #366
                 if (!isInferredByCall && isNotModelled && isModelled && isBoundedByEachOther && !isWitness && kmClass.typeParameters.isNotEmpty()) {
-                    // kotlinc failing on one of them, see TypeArgumentsTooDeep, tells nothing of the other ones,
-                    // while the call cannot be made when it fails on each one the inference does not reject, see #376
-                    var isFailedOn = false
-                    var isEachTold = true
                     val isWitnessedCallable = witnessed(listOf(receiver) + typeParameters.flatMap { it.upperBounds }, located, isFunctionTypeTold = true)
                         .any { witnessed ->
                             val witnessedReached = witnessed.types[classReceiverIndexKey(receiver)]
+                            // kotlinc failing on one of them, see TypeArgumentsTooDeep, tells nothing of the other ones
                             witnessed.nothingWitnessedIds.isEmpty() && witnessedReached != null && witnessedReached.none { it.refersToNothingClass() } &&
                                 try {
-                                    witnessed.matches(isCollecting = true, witnessedReached) {
-                                        isInferredByCall(referred, referredByReturnType) ?: false.also { isEachTold = false }
-                                    }
+                                    witnessed.matches(isCollecting = true, witnessedReached) { isInferredByCall(referred, referredByReturnType) == true }
                                 } catch (_: TypeArgumentsTooDeep) {
-                                    isFailedOn = true
                                     false
                                 }
                         }
                     if (isWitnessedCallable) return true
-                    if (isFailedOn && isEachTold) return false
                 }
                 // a function type matched leniently, like before #319, where the inference of type parameters
                 // bounded by each other is not modelled, like next to Nothing, or with a value parameter referring to one
