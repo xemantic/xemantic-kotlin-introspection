@@ -182,6 +182,11 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   taking a Kotlin class found by the package-given name, but telling a name of a relocation before, for the class itself fixes the latter
   and breaks package merges of the review harness (#355).
 
+- Pairing more JVM methods of a relocated class right is not a gain by itself: a package the JVM methods leave untold, as relocated to two packages,
+  keeps the lookups of packages merged into one, like `p/lib/` and `p/ext/` into `m/`, from false matches —
+  counting the prefix of a supertype for the prefix pairing (`prefixRelocatedPairs`), or telling a package by its other classes the JVM methods name,
+  fixed a few thousand listings of the #355 harness and broke a thousand of the merge layouts (#380), so measure such a rule on every layout.
+
 - A sweep judging an extension "callable only with `Nothing`" from a fixed list of type arguments misjudges it since `Nothing` does not count (#366, #362):
   most such rows compile with a declared self-referring type — probe them with declared types too, see `isDeclarableFor`.
 

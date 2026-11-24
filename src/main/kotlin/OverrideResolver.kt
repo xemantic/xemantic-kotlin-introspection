@@ -2485,7 +2485,17 @@ internal class OverrideResolver(
             declared.orEmpty().filter { it.isStatic && !it.isCompilerHelper }
                 .flatMapTo(HashSet()) { methodClassNames(it.name + it.descriptor) }
         }
-        val apartCandidates = subpackageNamed.filter { (metadataName, jvmName) ->
+        // and so might a class left in a subpackage of its own package, which the supertypes tell relocated elsewhere,
+        // like p/lib/Event named p/lib/zz/Event next to p/lib/JListener named s/lib/JListener,
+        // when no other class of its package is paired with that subpackage; told as before unless relocated alone
+        val leftNamed = signatureClassNames.filter { (metadataName, jvmName) ->
+            val directPackage = directPackages[packageOf(metadataName)] ?: return@filter false
+            metadataName !in subpackageNamed && packageOf(jvmName).let { it != directPackage && it.startsWith(packageOf(metadataName) + "/") } &&
+                signatureClassNames.none { (otherName, otherJvmName) ->
+                    otherName != metadataName && packageOf(otherName) == packageOf(metadataName) && packageOf(otherJvmName) == packageOf(jvmName)
+                }
+        }
+        val apartCandidates = (subpackageNamed + leftNamed).filter { (metadataName, jvmName) ->
             if (namedClasses.getValue(jvmName) > 1 || jvmName in staticClassNames) return@filter false
             val failureCount = transientFailures.count()
             val found = declaration(inPackage(directPackages.getValue(packageOf(metadataName)), metadataName.substringAfterLast('/')))
@@ -2495,7 +2505,7 @@ internal class OverrideResolver(
 
         fun told(apartCandidates: List<Pair<String, String>>): OwnerRelocation {
             val apartDependencies = apartCandidates + directApartDependencies
-            val signatureDependencies = signatureClassNames.filterKeys { it !in subpackageNamed }
+            val signatureDependencies = signatureClassNames.filterKeys { it !in subpackageNamed } - apartCandidates.map { it.first }.toSet()
             // nor is a class which a Kotlin supertype reached tells relocated from a package which the JVM methods of the class itself
             // tell relocated elsewhere, like a library referring to its own copy of another one, as they were not told before
             val signaturePackages = signatureDependencies.map { (metadataName, jvmName) -> packageOf(metadataName) to packageOf(jvmName) }
@@ -2518,8 +2528,19 @@ internal class OverrideResolver(
             val packagePairs = dependencies.map { (metadataName, jvmName) -> packageOf(metadataName) to packageOf(jvmName) }
             // a package relocated to more than one other package cannot be told, unless the other one is the root package,
             // whose classes are relocated one by one, see classes below, like lib/Event to Event, next to lib/Other to shaded/lib/Other
-            val packages = packagePairs.filter { (metadataPackage, jvmPackage) -> metadataPackage.isNotEmpty() && jvmPackage.isNotEmpty() }
-                .uniquePairs()
+            fun List<Pair<String, String>>.toldPackages() =
+                filter { (metadataPackage, jvmPackage) -> metadataPackage.isNotEmpty() && jvmPackage.isNotEmpty() }.uniquePairs()
+            val namesEachSupertype = jvmSupertypes.namesEach(owner.kmClass)
+            // unless the other ones are only the ones of direct supertypes, told one by one then, see splitDependencies below,
+            // like p/lib/JListener named s/lib/api/JListener next to the classes of p/lib/ the JVM methods name in s/lib/,
+            // at least two of them, as the JVM method of one might be paired wrong, like p/lib/JEv with s/lib/sub/JEv
+            val packages = packagePairs.toldPackages().let { told ->
+                if (!namesEachSupertype) return@let told
+                val notDirect = dependencies.filter { (metadataName, jvmName) -> directSupertypeDependencies[metadataName] != jvmName }
+                val notDirectCounts = notDirect.keys.groupingBy { packageOf(it) }.eachCount()
+                told + notDirect.map { (metadataName, jvmName) -> packageOf(metadataName) to packageOf(jvmName) }.toldPackages()
+                    .filterKeys { it !in told && (notDirectCounts[it] ?: 0) >= 2 }
+            }
             // the other classes of a package relocated to the root package are found there too, but not translated back,
             // as a class of the root package might not be relocated
             val rootPackages = packagePairs.filter { (metadataPackage, jvmPackage) -> metadataPackage.isNotEmpty() && jvmPackage.isEmpty() }
@@ -2528,8 +2549,8 @@ internal class OverrideResolver(
             // by the names the class file refers to them by, when it names each of its supertypes by the name of a class,
             // as one left out, or named like an array type, might be of the simple name of a class paired, like an interface added,
             // see JvmSupertypes.relocatedFrom
-            val splitDependencies = if (!jvmSupertypes.namesEach(owner.kmClass)) emptyMap() else directSupertypeDependencies.filter { (metadataName, jvmName) ->
-                dependencies[metadataName] == jvmName && packageOf(metadataName).let { it.isNotEmpty() && it !in packages } &&
+            val splitDependencies = if (!namesEachSupertype) emptyMap() else directSupertypeDependencies.filter { (metadataName, jvmName) ->
+                dependencies[metadataName] == jvmName && packageOf(metadataName).let { it.isNotEmpty() && packages[it] != packageOf(jvmName) } &&
                     packageOf(jvmName).isNotEmpty()
             }
             val classes = (rootDependencies + splitDependencies.toList()).map { (metadataName, jvmName) ->
@@ -2565,11 +2586,15 @@ internal class OverrideResolver(
         // only when every JVM method naming such a class is the one of a signature then: when the relocation tells too little
         // of its other classes, like of on(Ls/ext/Event;Ls/lib/ev/Event;)V, with nothing telling p/ext/ relocated to s/ext/,
         // or when a JVM method naming it is the one of no member, but for a compiler helper, the class is not told, as before
+        // a JVM method of a @JvmOverloads function, or constructor, is the one of a member too, see jvmOverloadSignatures
         val apartNames = apartCandidates.mapTo(HashSet()) { it.second }
         val signatureSet = signatures.toHashSet()
+        val overloadSignatures by lazy(LazyThreadSafetyMode.NONE) { owner.kmClass.jvmOverloadSignatures() }
         val isExplaining = declared.orEmpty().asSequence().filter { !it.isCompilerHelper }.map { it.name + it.descriptor }
             .filter { jvmMethod -> methodClassNames(jvmMethod).any { it in apartNames } }
-            .all { jvmMethod -> relocatedApart.relocation?.unlocatedDescriptor(jvmMethod) in signatureSet }
+            .all { jvmMethod ->
+                relocatedApart.relocation?.unlocatedDescriptor(jvmMethod).let { it in signatureSet || it in overloadSignatures }
+            }
         return if (isExplaining) relocatedApart else told(emptyList())
     }
 
@@ -3083,6 +3108,31 @@ internal class OverrideResolver(
         functions.mapNotNull { it.signature?.toString() } +
             properties.flatMap { listOfNotNull(it.getterSignature?.toString(), it.setterSignature?.toString()) } +
             constructors.mapNotNull { it.signature?.toString() }
+
+    /**
+     * The JVM methods the `@JvmOverloads` functions and constructors of this class would declare next to their JVM signatures,
+     * which the metadata does not tell, each dropping the trailing value parameters declaring a default value, from the last one,
+     * like `other(Lp/lib/Event;)V` of `other(Lp/lib/Event;I)V` of `fun other(e: Event, n: Int = 0)`,
+     * of any such function, as the metadata does not tell the annotation either.
+     */
+    private fun KmClass.jvmOverloadSignatures(): Set<String> {
+        val overloads = HashSet<String>()
+        fun add(signature: JvmMethodSignature?, defaults: List<Boolean>) {
+            if (signature == null || true !in defaults) return
+            val arguments = AsmType.getArgumentTypes(signature.descriptor).toMutableList()
+            // the value parameters are the last arguments, after the outer instance, or the receivers
+            val offset = arguments.size - defaults.size
+            if (offset < 0) return
+            val returnType = signature.descriptor.substringAfterLast(')')
+            defaults.indices.reversed().filter { defaults[it] }.forEach { index ->
+                arguments.removeAt(offset + index)
+                overloads += signature.name + arguments.joinToString("", "(", ")") { it.descriptor } + returnType
+            }
+        }
+        functions.filter { !it.isSuspend }.forEach { function -> add(function.signature, function.valueParameters.map { it.declaresDefaultValue }) }
+        constructors.forEach { constructor -> add(constructor.signature, constructor.valueParameters.map { it.declaresDefaultValue }) }
+        return overloads
+    }
 
     /**
      * The declaration of the class of the [metadataName], which a class, or one of its supertypes, refers to,
