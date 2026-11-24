@@ -1670,6 +1670,13 @@ internal class OverrideResolver(
     ) {
         // neither a synthetic method, like lambda${'$'}run${'$'}0 or access${'$'}getValue, nor a bridge, is in the metadata
         val isSynthetic: Boolean get() = access and (Opcodes.ACC_SYNTHETIC or Opcodes.ACC_BRIDGE) != 0
+
+        val isStatic: Boolean get() = access and Opcodes.ACC_STATIC != 0
+
+        // a synthetic method, like other${'$'}default of a default argument, or a private static one named with a ${'$'},
+        // like tr${'$'}lambda${'$'}0 of the body of a lambda, or tr${'$'}loc of a local function, which the compiler does not mark synthetic,
+        // is the one of no member, nor of a @JvmStatic function of the companion object, unlike a private one of a plain name
+        val isCompilerHelper: Boolean get() = isSynthetic || (isStatic && access and Opcodes.ACC_PRIVATE != 0 && '$' in name)
     }
 
     /**
@@ -2339,6 +2346,7 @@ internal class OverrideResolver(
      * see [CollectedOverridables.supertypeDependencies].
      * The direct supertypes the class file refers to by their metadata names are excluded from the relocation,
      * so that they are not looked up by a guessed relocated name first, like the one of the prefix of the [owner].
+     * A class might be told relocated alone into a subpackage of its relocated package, see `apartCandidates`.
      *
      * @param reader reads the class file of the [owner] once, for both scans, and for its JVM methods.
      */
@@ -2420,58 +2428,96 @@ internal class OverrideResolver(
         }
         // a class which the JVM methods name by the name of a class of a subpackage, as the package of a direct supertype is relocated,
         // like p/lib/Event named p/app/shaded/p/lib/sub/Event, the name of p/lib/sub/Event, next to p/lib/JListener
-        // named p/app/shaded/p/lib/JListener, is not told: it is paired with a JVM method of no member, whose classes are not
-        // Kotlin ones telling their names, and would leave p/lib/, relocated to two packages, not told at all;
+        // named p/app/shaded/p/lib/JListener, is not told with its package: it is paired with a JVM method of no member, whose classes
+        // are not Kotlin ones telling their names, and would leave p/lib/, relocated to two packages, not told at all;
         // a class named otherwise, like p/lib/Other named zz/Other, relocated apart from its package, is told as before
-        val signatureDependencies = signatureNames.names.notRelocatedByOwner().filter { (metadataName, jvmName) ->
-            val directPackage = directPackages[packageOf(metadataName)] ?: return@filter true
-            !jvmName.startsWith("$directPackage/") || packageOf(jvmName) == directPackage
+        val signatureClassNames = signatureNames.names.notRelocatedByOwner()
+        val subpackageNamed = signatureClassNames.filter { (metadataName, jvmName) ->
+            val directPackage = directPackages[packageOf(metadataName)] ?: return@filter false
+            jvmName.startsWith("$directPackage/") && packageOf(jvmName) != directPackage
         }
-        // nor is a class which a Kotlin supertype reached tells relocated from a package which the JVM methods of the class itself
-        // tell relocated elsewhere, like a library referring to its own copy of another one, as they were not told before
-        val signaturePackages = signatureDependencies.map { (metadataName, jvmName) -> packageOf(metadataName) to packageOf(jvmName) }
-            .filter { (metadataPackage, jvmPackage) -> metadataPackage.isNotEmpty() && jvmPackage.isNotEmpty() }
-            .uniquePairs()
-        val toldSupertypeDependencies = supertypeDependencies.filter { (metadataName, jvmName) ->
-            directSupertypeDependencies[metadataName] == jvmName ||
-                signaturePackages[packageOf(metadataName)].let { it == null || packageOf(jvmName).let { name -> name.isEmpty() || name == it } }
+        // unless no class is found by the name its package would give it, like p/app/shaded/p/lib/Event, or only a Kotlin class
+        // telling another name by its own metadata, relocated there, and the JVM methods name no other class so, nor a static one it:
+        // then the class might be relocated alone, apart from its package, into the subpackage, like p/lib/Event
+        // to p/app/shaded/p/lib/ev/Event, or be missing, which the JVM method cannot tell apart, and it is told alone,
+        // see relocatedApart, so that its member is not taken for a shrunk one, an override, next to its own JVM method
+        val namedClasses = signatureClassNames.entries.groupingBy { it.value }.eachCount()
+        // nor does a static method name it, which might be the one of a @JvmStatic function of the companion object, of no member,
+        // unless it is the one of a default argument, or of a lambda, see isCompilerHelper
+        val staticClassNames by lazy(LazyThreadSafetyMode.NONE) {
+            declared.orEmpty().filter { it.isStatic && !it.isCompilerHelper }
+                .flatMapTo(HashSet()) { methodClassNames(it.name + it.descriptor) }
         }
-        // a class paired with another one by the supertypes, and by the JVM methods, is told by neither
-        val dependencies = (toldSupertypeDependencies.toList() + signatureDependencies.toList() +
-            supertypeClassDependencies.toList()).uniquePairs()
-        if (dependencies.isEmpty()) return OwnerRelocation(own?.withDependencies(emptyMap(), excluded), classFile(declared))
-        // the root package, containing every other one, is relocated class by class
-        val rootDependencies = dependencies.toList().filter { (metadataName, jvmName) ->
-            packageOf(metadataName).isEmpty() || packageOf(jvmName).isEmpty()
-        }
-        val packagePairs = dependencies.map { (metadataName, jvmName) -> packageOf(metadataName) to packageOf(jvmName) }
-        // a package relocated to more than one other package cannot be told, unless the other one is the root package,
-        // whose classes are relocated one by one, see classes below, like lib/Event to Event, next to lib/Other to shaded/lib/Other
-        val packages = packagePairs.filter { (metadataPackage, jvmPackage) -> metadataPackage.isNotEmpty() && jvmPackage.isNotEmpty() }
-            .uniquePairs()
-        // the other classes of a package relocated to the root package are found there too, but not translated back,
-        // as a class of the root package might not be relocated
-        val rootPackages = packagePairs.filter { (metadataPackage, jvmPackage) -> metadataPackage.isNotEmpty() && jvmPackage.isEmpty() }
-            .mapTo(HashSet()) { it.first }
-        val classes = rootDependencies.map { (metadataName, jvmName) ->
-            Relocation.topLevelClassOf(metadataName) to Relocation.topLevelClassOf(jvmName)
-        }.uniquePairs()
-        // a supertype the class file does not tell is not looked up in a relocated package enclosing its own, where another class is,
-        // but where the relocation of the owner alone tells, or guesses, like by its prefix, relocated class by class then,
-        // or else by its metadata name, while the class declared there, which the class might inherit from otherwise,
-        // like through a Java supertype naming it by its JVM name, is not named back by the name of the supertype,
-        // nor are the other classes of its top-level class, which the relocation of the supertype relocates as a whole otherwise
-        val misplaced = jvmSupertypes.misplacedSupertypes(owner.kmClass, dependencies, packages)
-        val misplacedClasses = misplaced.keys.mapNotNull { metadataName ->
-            own?.located(metadataName)?.let {
-                Relocation.topLevelClassOf(internalNameOf(metadataName)) to Relocation.topLevelClassOf(internalNameOf(it))
+        val apartCandidates = subpackageNamed.filter { (metadataName, jvmName) ->
+            if (namedClasses.getValue(jvmName) > 1 || jvmName in staticClassNames) return@filter false
+            val failureCount = transientFailures.count()
+            val found = declaration(inPackage(directPackages.getValue(packageOf(metadataName)), metadataName.substringAfterLast('/')))
+            val isAnotherClass = !found.isFound || found.kotlin?.name.let { it != null && internalNameOf(it) != metadataName }
+            isAnotherClass && transientFailures.count() == failureCount
+        }.toList()
+
+        fun told(apartDependencies: List<Pair<String, String>>): OwnerRelocation {
+            val signatureDependencies = signatureClassNames.filterKeys { it !in subpackageNamed }
+            // nor is a class which a Kotlin supertype reached tells relocated from a package which the JVM methods of the class itself
+            // tell relocated elsewhere, like a library referring to its own copy of another one, as they were not told before
+            val signaturePackages = signatureDependencies.map { (metadataName, jvmName) -> packageOf(metadataName) to packageOf(jvmName) }
+                .filter { (metadataPackage, jvmPackage) -> metadataPackage.isNotEmpty() && jvmPackage.isNotEmpty() }
+                .uniquePairs()
+            val toldSupertypeDependencies = supertypeDependencies.filter { (metadataName, jvmName) ->
+                directSupertypeDependencies[metadataName] == jvmName ||
+                    signaturePackages[packageOf(metadataName)].let { it == null || packageOf(jvmName).let { name -> name.isEmpty() || name == it } }
             }
-        }.toMap()
-        val declaredTopLevelClasses = misplaced.values.mapTo(HashSet()) { Relocation.topLevelClassOf(internalNameOf(it)) }
-        val notRelocated = excluded + misplaced.keys.filter { own?.located(it) == null } + declaredTopLevelClasses
-        val relocation = own?.withDependencies(packages, notRelocated, classes + misplacedClasses, rootPackages, declaredTopLevelClasses)
-            ?: Relocation.ofDependencies(packages, notRelocated, classes, rootPackages, declaredTopLevelClasses)
-        return OwnerRelocation(relocation, classFile(declared), hasDependencies = true)
+            // a class paired with another one by the supertypes, and by the JVM methods, is told by neither
+            val dependencies = (toldSupertypeDependencies.toList() + signatureDependencies.toList() +
+                supertypeClassDependencies.toList()).uniquePairs()
+            if (dependencies.isEmpty() && apartDependencies.isEmpty()) {
+                return OwnerRelocation(own?.withDependencies(emptyMap(), excluded), classFile(declared))
+            }
+            // the root package, containing every other one, is relocated class by class, like a class relocated apart from its package
+            val rootDependencies = dependencies.toList().filter { (metadataName, jvmName) ->
+                packageOf(metadataName).isEmpty() || packageOf(jvmName).isEmpty()
+            } + apartDependencies
+            val packagePairs = dependencies.map { (metadataName, jvmName) -> packageOf(metadataName) to packageOf(jvmName) }
+            // a package relocated to more than one other package cannot be told, unless the other one is the root package,
+            // whose classes are relocated one by one, see classes below, like lib/Event to Event, next to lib/Other to shaded/lib/Other
+            val packages = packagePairs.filter { (metadataPackage, jvmPackage) -> metadataPackage.isNotEmpty() && jvmPackage.isNotEmpty() }
+                .uniquePairs()
+            // the other classes of a package relocated to the root package are found there too, but not translated back,
+            // as a class of the root package might not be relocated
+            val rootPackages = packagePairs.filter { (metadataPackage, jvmPackage) -> metadataPackage.isNotEmpty() && jvmPackage.isEmpty() }
+                .mapTo(HashSet()) { it.first }
+            val classes = rootDependencies.map { (metadataName, jvmName) ->
+                Relocation.topLevelClassOf(metadataName) to Relocation.topLevelClassOf(jvmName)
+            }.uniquePairs()
+            // a supertype the class file does not tell is not looked up in a relocated package enclosing its own, where another class is,
+            // but where the relocation of the owner alone tells, or guesses, like by its prefix, relocated class by class then,
+            // or else by its metadata name, while the class declared there, which the class might inherit from otherwise,
+            // like through a Java supertype naming it by its JVM name, is not named back by the name of the supertype,
+            // nor are the other classes of its top-level class, which the relocation of the supertype relocates as a whole otherwise
+            val misplaced = jvmSupertypes.misplacedSupertypes(owner.kmClass, dependencies, packages)
+            val misplacedClasses = misplaced.keys.mapNotNull { metadataName ->
+                own?.located(metadataName)?.let {
+                    Relocation.topLevelClassOf(internalNameOf(metadataName)) to Relocation.topLevelClassOf(internalNameOf(it))
+                }
+            }.toMap()
+            val declaredTopLevelClasses = misplaced.values.mapTo(HashSet()) { Relocation.topLevelClassOf(internalNameOf(it)) }
+            val notRelocated = excluded + misplaced.keys.filter { own?.located(it) == null } + declaredTopLevelClasses
+            val relocation = own?.withDependencies(packages, notRelocated, classes + misplacedClasses, rootPackages, declaredTopLevelClasses)
+                ?: Relocation.ofDependencies(packages, notRelocated, classes, rootPackages, declaredTopLevelClasses)
+            return OwnerRelocation(relocation, classFile(declared), hasDependencies = true)
+        }
+
+        val relocatedApart = told(apartCandidates)
+        if (apartCandidates.isEmpty()) return relocatedApart
+        // only when every JVM method naming such a class is the one of a signature then: when the relocation tells too little
+        // of its other classes, like of on(Ls/ext/Event;Ls/lib/ev/Event;)V, with nothing telling p/ext/ relocated to s/ext/,
+        // or when a JVM method naming it is the one of no member, but for a compiler helper, the class is not told, as before
+        val apartNames = apartCandidates.mapTo(HashSet()) { it.second }
+        val signatureSet = signatures.toHashSet()
+        val isExplaining = declared.orEmpty().asSequence().filter { !it.isCompilerHelper }.map { it.name + it.descriptor }
+            .filter { jvmMethod -> methodClassNames(jvmMethod).any { it in apartNames } }
+            .all { jvmMethod -> relocatedApart.relocation?.unlocatedDescriptor(jvmMethod) in signatureSet }
+        return if (isExplaining) relocatedApart else told(emptyList())
     }
 
     /**
@@ -4142,6 +4188,8 @@ private fun internalNameOf(name: String): String = name.removePrefix(".").replac
  * also of their subpackages, as a shading tool relocates a package with its subpackages,
  * and by the [classes] relocated from or to the root package, one by one, by the names of their top-level classes,
  * like `Listener` to `shaded/Listener`, as the root package, containing every other one, cannot be relocated as a whole,
+ * or relocated apart from their packages, like `p/lib/Event` to `p/app/shaded/p/lib/ev/Event`, next to `p/lib` relocated
+ * to `p/app/shaded/p/lib`, which tell the name of a class before its package does,
  * while the other classes of the [rootPackages], relocated to the root package, might be found there too,
  * when not found otherwise, see [locatedInRootPackage], but are not translated back.
  * When the relocation of the class itself prepends a [prefix] to its package, like `shaded/`,

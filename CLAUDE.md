@@ -162,6 +162,26 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   the verdict depends on who declares the type argument, not on the bound, so probe such a shape with Java-declared type arguments too —
   see `givenTypeVariableNames`.
 
+- Telling the relocation right is not enough where a package is relocated onto the name of another relocated one,
+  like `p/lib/sub/` to `p/lib/` next to `p/lib/` to `p/lib/old/`, so that a JVM method equals another signature by identity:
+  a type of a Java member is matched by both its JVM name and the name the relocation translates it back to (`unlocatedType`),
+  and a type argument substituted from the metadata is translated back once more,
+  so a rule pairing these JVM methods right turned missed overrides into false `final override`s (#355),
+  like of `fun more(e: p.lib.sub.Event)` next to `override fun more(e: p.lib.Event)` of a Java `more(p.lib.Event)` —
+  the matching has to change together with it.
+
+- An optimizer, like ProGuard (`method/marking/static`), makes the JVM method of a member static, keeping its descriptor and the metadata,
+  so a static method of a class is not necessarily a JVM-only one, like of a `@JvmStatic` function (#355).
+
+- A class file relocated twice keeps the metadata name of the first relocation, like `o/ext/Event` found as `s/p/ext/Event`,
+  while the classes compiled against it refer to it as `p/ext/Event`, so the name a Kotlin class tells is not always the one its users know (#355).
+
+- With the parameter classes missing, a class relocated alone into a subpackage of its relocated package (`p/lib/Event` to `s/lib/ev/Event`)
+  cannot be told from a JVM method of no member naming a class of that subpackage next to a shrunk override (`je(Ls/lib/sub/Event;)V`, added by a bytecode tool):
+  the class files are the same up to the names, see `apartCandidates` —
+  taking a Kotlin class found by the package-given name, but telling a name of a relocation before, for the class itself fixes the latter
+  and breaks package merges of the review harness (#355).
+
 - A sweep judging an extension "callable only with `Nothing`" from a fixed list of type arguments misjudges it since `Nothing` does not count (#366, #362):
   most such rows compile with a declared self-referring type — probe them with declared types too, see `isDeclarableFor`.
 
