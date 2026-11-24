@@ -1408,10 +1408,14 @@ internal class OverrideResolver(
         // a supertype of a Java class, named by its JVM name, named by the name the metadata of the Kotlin class found there tells,
         // like unlocatedName names it, found then by its JVM name, so that the members inherited from it are, see locatedName,
         // or else as the metadata would, see unlocated
+        // which is then the class the JVM links, also when it names itself so, like s1/sub/Listener.Callback,
+        // or when the relocation of the owner tells another name of its metadata name, like shaded/lib/sub/Listener.Callback,
+        // as the Java class names it by the name it is found by, see javaNamedSupertypes
+        val javaNamedSupertypes = HashSet<String>()
         fun metadataNamedSupertype(supertype: ClassType): ClassType {
             val unlocated = supertype.unlocated(relocation)
-            val metadataName = kotlinNameOf(supertype.name)?.takeIf { it != supertype.name } ?: return unlocated
-            reflectedSupertypeNames.putIfAbsent(metadataName, supertype.name)
+            val metadataName = kotlinNameOf(supertype.name) ?: return unlocated
+            if (reflectedSupertypeNames.putIfAbsent(metadataName, supertype.name) == null) javaNamedSupertypes += metadataName
             return unlocated.copy(name = metadataName)
         }
 
@@ -1436,7 +1440,7 @@ internal class OverrideResolver(
 
             val reflectedName = reflectedSupertypeNames[supertype.name]
             // unless the class file of the owner itself tells the name it is found by, or that it is not relocated
-            val told = if (reflectedName == null || relocation?.tells(supertype.name) != true) null else {
+            val told = if (reflectedName == null || supertype.name in javaNamedSupertypes || relocation?.tells(supertype.name) != true) null else {
                 foundDeclaration(relocation, supertype.name).takeIf { (name, declaration) ->
                     declaration.isFound && (name != supertype.name || located(relocation, supertype.name) == null)
                 }
@@ -2374,7 +2378,10 @@ internal class OverrideResolver(
         // and so are the ones of a package which the class itself tells relocated elsewhere, as a package relocated to two is not told
         val directSupertypeDependencies = jvmSupertypes.relocatedFrom(owner.kmClass)
         // and the ones next to a supertype of their package left out, telling only their own classes, see relocatedApartFrom
-        val directApartDependencies = jvmSupertypes.relocatedApartFrom(owner.kmClass).notRelocatedByOwner().toList()
+        // also when the prefix of the owner only guesses them, like shaded/lib/sub/Listener next to lib/sub/X left out
+        val directApartDependencies = jvmSupertypes.relocatedApartFrom(owner.kmClass).filter { (metadataName, jvmName) ->
+            own?.takeIf { it.tells(metadataName) }?.located(metadataName)?.let { packageOf(it) } != packageOf(jvmName)
+        }.toList()
         // by the packages relocated elsewhere than to the root package, whose classes are relocated one by one
         val directPackages = directSupertypeDependencies.map { (metadataName, jvmName) -> packageOf(metadataName) to packageOf(jvmName) }
             .filter { (metadataPackage, jvmPackage) -> metadataPackage.isNotEmpty() && jvmPackage.isNotEmpty() }
@@ -2385,11 +2392,17 @@ internal class OverrideResolver(
         }
         // while a direct supertype relocated like the prefix of the owner only guesses is told all the same, like lib/sub/Listener
         // named shaded/lib/sub/Listener by the class file of shaded/app/Owner, next to lib/Base named s1/Base,
-        // as the relocation of lib/ to s1/ would look it up in s1/sub/ otherwise, the more specific package
+        // as the relocation of lib/ to s1/ would look it up in s1/sub/ otherwise, the more specific package,
+        // unless another direct supertype of its package is told relocated elsewhere, like lib/Base in s1/ next to lib/Listener,
+        // which would tell its package relocated to two
+        fun isToldAlone(metadataName: String, jvmName: String) = directSupertypeDependencies.none { (otherName, otherJvmName) ->
+            packageOf(otherName) == packageOf(metadataName) && packageOf(otherJvmName) != packageOf(jvmName)
+        }
         val supertypeDependencies =
             (indirectSupertypeDependencies.notRelocatedElsewhereBy(directPackages) - directSupertypeDependencies.keys).notRelocatedByOwner() +
                 directSupertypeDependencies.filter { (metadataName, jvmName) ->
-                    own?.takeIf { it.tells(metadataName) }?.located(metadataName)?.let { packageOf(it) } != packageOf(jvmName)
+                    val told = if (isToldAlone(metadataName, jvmName)) own?.takeIf { it.tells(metadataName) } else own
+                    told?.located(metadataName)?.let { packageOf(it) } != packageOf(jvmName)
                 }
         val signatures = owner.kmClass.jvmSignatures()
         // neither a built-in type, nor a JDK class, nor a class the relocation of the owner already tells, is told,
@@ -2503,8 +2516,10 @@ internal class OverrideResolver(
             val rootPackages = packagePairs.filter { (metadataPackage, jvmPackage) -> metadataPackage.isNotEmpty() && jvmPackage.isEmpty() }
                 .mapTo(HashSet()) { it.first }
             // while the direct supertypes of such a package are told one by one, like lib/Base in s1/ next to lib/Listener in s2/,
-            // by the names the class file refers to them by
-            val splitDependencies = directSupertypeDependencies.filter { (metadataName, jvmName) ->
+            // by the names the class file refers to them by, when it names each of its supertypes by the name of a class,
+            // as one left out, or named like an array type, might be of the simple name of a class paired, like an interface added,
+            // see JvmSupertypes.relocatedFrom
+            val splitDependencies = if (!jvmSupertypes.namesEach) emptyMap() else directSupertypeDependencies.filter { (metadataName, jvmName) ->
                 dependencies[metadataName] == jvmName && packageOf(metadataName).let { it.isNotEmpty() && it !in packages } &&
                     packageOf(jvmName).isNotEmpty()
             }
@@ -2638,6 +2653,11 @@ internal class OverrideResolver(
         private val leftOut: Int = 0,
         private val isSuperclassLeftOut: Boolean = false
     ) {
+
+        /**
+         * Whether each of these supertypes is named, by the name of a class, see [isClassInternalName], none of them left out.
+         */
+        val namesEach: Boolean get() = leftOut == 0 && names.all { isClassInternalName(it) }
 
         /**
          * The names of the supertypes of the [kmClass] which these supertypes are relocated from, see [relocatedNames].
@@ -3751,10 +3771,11 @@ internal class OverrideResolver(
     /**
      * The type variables of a generic class signature, with their first bounds telling their erasures.
      *
-     * @throws IllegalArgumentException if a bound of a type variable, or a supertype, is no class, nor an interface,
-     *   like an array type, a primitive type, a type variable as a supertype, or a class of a name which is none,
+     * @throws IllegalArgumentException if a bound of a type variable, or a supertype, is no type of the class signature grammar,
+     *   like a primitive type, an array type or a type variable as a supertype, or a class of a name which is none,
      *   like one named like an array type, or of an empty name, see [isClassInternalName],
-     *   which a malformed class file might have, and which is then neither erased to, nor inherited from.
+     *   which a malformed class file might have, and which is then neither erased to, nor inherited from,
+     *   while an array type bounding a type variable, which the class signature grammar allows, unlike Java, is of an unknown erasure.
      */
     private class GenericClassSignature(val signature: String) {
 
@@ -3775,15 +3796,19 @@ internal class OverrideResolver(
             var current = typeVariable
             while (visited.add(current)) {
                 val (name, isTypeVariable) = firstBounds[current] ?: return "java/lang/Object"
-                if (!isTypeVariable) return name
+                if (!isTypeVariable) return name.takeIf { it != ARRAY_BOUND }
                 current = name
             }
             return null
         }
 
+        // the first bound of a type variable bounded by an array type, of an unknown erasure here
+        private val ARRAY_BOUND = "["
+
         // a supertype is no type variable, unlike a bound, declared before it is visited, see init
         private val supertypeValidator = object : ClassTypeValidator() {
             override fun visitTypeVariable(name: String) = throw IllegalArgumentException("Not a class: $name")
+            override fun visitArrayType(): SignatureVisitor = throw IllegalArgumentException("Not a class: an array")
         }
 
         init {
@@ -3802,6 +3827,10 @@ internal class OverrideResolver(
                         }
                         override fun visitInnerClassType(name: String) {
                             className += "$$name"
+                        }
+                        override fun visitArrayType(): SignatureVisitor {
+                            firstBounds.putIfAbsent(typeParameter, ARRAY_BOUND to false)
+                            return ignoringSignatureVisitor
                         }
                         override fun visitTypeArgument(wildcard: Char): SignatureVisitor = ignoringSignatureVisitor
                         override fun visitEnd() {
@@ -3827,11 +3856,10 @@ internal class OverrideResolver(
 
         /**
          * Rejects a type which is no class, nor an interface, of a signature, see [GenericClassSignature],
-         * but for a type variable, which a bound might be, unlike a supertype, see [supertypeValidator].
+         * but for a type variable, or an array type, which a bound might be, unlike a supertype, see [supertypeValidator].
          */
         private open class ClassTypeValidator : SignatureVisitor(Opcodes.ASM9) {
             override fun visitBaseType(descriptor: Char) = throw IllegalArgumentException("Not a class: $descriptor")
-            override fun visitArrayType(): SignatureVisitor = throw IllegalArgumentException("Not a class: an array")
             override fun visitClassType(name: String) {
                 if (!isClassInternalName(name)) throw IllegalArgumentException("Not a class: $name")
             }
