@@ -14141,13 +14141,24 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should resolve interface of map of internally constructed class keys without extension callable only on declared subclass`() {
-        // nor in another module one whose constructors are all internal, see #386
+    fun `should resolve interface of map of internally constructed class keys with extension callable on declared subclass`() {
+        // a class of another module extends WitnessInternallyConstructed through its public subclass, see #386
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.witness.WitnessInternallyConstructedKeyMap",
             pageSize = 10000
         ) should {
-            have(lines().none { ".witnessComparableKeysOfLists()" in it })
+            have(lines().any { ".witnessComparableKeysOfLists()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of box of internally constructed class with extension callable on declared subclass`() {
+        // like Y : WitnessInternallyConstructedSubclass(), List<Y>, Comparable<Y> for the WitnessBoxOfComparable<T> of T : Comparable<T>, see #386
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.witness.WitnessInternallyConstructedBox",
+            pageSize = 10000
+        ) should {
+            have(lines().any { ".witnessComparableBox()" in it })
         }
     }
 

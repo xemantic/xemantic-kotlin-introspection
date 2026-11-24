@@ -478,28 +478,15 @@ private fun KmType.enhanceSupertypeArguments(type: Class<*>, supertype: Class<*>
  * unlike to a class missing from the classpath, also one nested in a type argument, like the `Absent` of `W : List<Absent>`,
  * which the JDK reifies only when asked for, see #386.
  */
-internal fun resolvesGenericSignature(type: Class<*>): Boolean = resolvesTypes(
+internal fun resolvesGenericSignature(type: Class<*>): Boolean = resolvesTypes {
+    // read inside the try of resolvesTypes, as a supertype naming a missing class throws already here,
+    // like the Comparable<Absent> of interface M01<V> : Map<V, V>, Comparable<Absent>, see #386
     type.typeParameters.asList() + listOfNotNull(type.genericSuperclass) + type.genericInterfaces
-)
-
-/**
- * Whether the generic signatures of the methods of the class [type] of the given [name], or of all of them, when none is named so,
- * like the facade class of an extension, refer only to classes which can be loaded, see [resolvesGenericSignature].
- */
-internal fun resolvesGenericMethodSignatures(type: Class<*>, name: String): Boolean = try {
-    val methods = type.declaredMethods.filter { it.name == name }.ifEmpty { type.declaredMethods.asList() }
-    resolvesTypes(methods.flatMap { it.typeParameters.asList() + it.genericParameterTypes + it.genericReturnType })
-} catch (_: LinkageError) {
-    false
-} catch (_: TypeNotPresentException) {
-    false
-} catch (_: MalformedParameterizedTypeException) {
-    false
 }
 
 // whether the reified types, and the types they refer to, all the way down, refer only to classes which can be loaded,
 // each type variable walked through its bounds once
-private fun resolvesTypes(types: List<Type>): Boolean = try {
+private fun resolvesTypes(types: () -> List<Type>): Boolean = try {
     val visited = HashSet<TypeVariable<*>>()
     fun Type.walk() {
         when (this) {
@@ -513,7 +500,7 @@ private fun resolvesTypes(types: List<Type>): Boolean = try {
             is TypeVariable<*> -> if (visited.add(this)) bounds.forEach { it.walk() }
         }
     }
-    types.forEach { it.walk() }
+    types().forEach { it.walk() }
     true
 } catch (_: LinkageError) {
     false

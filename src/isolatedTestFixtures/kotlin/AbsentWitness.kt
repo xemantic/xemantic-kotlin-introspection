@@ -34,3 +34,9 @@ interface AbsentNestedBoundKeyMap<V, W : List<Absent>> : Map<V, V>
 interface AbsentFreeKeyMap<V> : Map<V, V>
 
 fun <T : Comparable<T>, A : Absent> Map<T, T>.absentBoundedSameComparables(absent: A) {}
+
+// a supertype of the class itself naming Absent, not one the receiver is matched against, see #386:
+// the class is listed without Absent, its witnesses withheld, as its generic signature cannot be reified
+interface AbsentComparableKeyMap<V> : Map<V, V>, Comparable<Absent>
+
+abstract class AbsentListKeyMap<V> : ArrayList<Absent>(), Map<V, V>

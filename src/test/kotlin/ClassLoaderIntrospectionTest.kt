@@ -1642,6 +1642,30 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should resolve map whose other supertype refers to a class missing from the classpath without witnesses`() {
+        // given
+        val introspector = introspectorWithoutAbsentClass()
+
+        // when
+        val interfaceSignature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.AbsentComparableKeyMap",
+            pageSize = 10000
+        )
+        val classSignature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.AbsentListKeyMap",
+            pageSize = 10000
+        )
+
+        // then - the Comparable<Absent>, and the ArrayList<Absent>, which the JDK cannot reify, withhold the witnesses, see #386
+        interfaceSignature should {
+            have(lines().none { ".absentSameComparables()" in it })
+        }
+        classSignature should {
+            have(lines().none { ".absentSameComparables()" in it })
+        }
+    }
+
+    @Test
     fun `should resolve class whose generic supertype refers to a class missing from the classpath`() {
         // given
         val introspector = introspectorWithoutAbsentClass()

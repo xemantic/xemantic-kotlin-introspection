@@ -168,9 +168,19 @@ fun <T : Comparable<T>> Map<List<T>, T>.witnessListKeysOfComparableValues() {}
 
 interface WitnessStringValueMap<V> : Map<V, String>
 
+// though constructed only internally, extended from another module through a public subclass of its own module,
+// like by abstract class Y : WitnessInternallyConstructedSubclass(), List<Y>, Comparable<Y>, see #386
 abstract class WitnessInternallyConstructed internal constructor()
 
+abstract class WitnessInternallyConstructedSubclass : WitnessInternallyConstructed()
+
 interface WitnessInternallyConstructedKeyMap<V : WitnessInternallyConstructed> : Map<V, V>
+
+interface WitnessInternallyConstructedBox<V : WitnessInternallyConstructed> : WitnessBoxOfComparable<V>
+
+interface WitnessBoxOfComparable<T>
+
+fun <T : Comparable<T>> WitnessBoxOfComparable<T>.witnessComparableBox() {}
 
 // also of a class referring to itself, where the receiver is not matched against such a supertype, see #386,
 // like the V of interface X : WitnessSelfBoundedKeyMap<X>, Comparable<X>, or the String of a Map<V, V>
