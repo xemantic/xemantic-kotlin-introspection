@@ -9514,9 +9514,22 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve member merged by Kotlin join picking Kotlin member taking no null once next to Kotlin member of less specific return type`() {
+        // apply(null) does not compile, apply("") returns String, and a concrete subclass implements nothing
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.CharSequenceApplierJavaStringApplierNullableFunctionApplierJoin.apply"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.CharSequenceApplierJavaStringApplierNullableFunctionApplierJoin.apply [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.StringApplier
+            open fun apply(x: String): String
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve member of JDK interface given nullable type merged by Kotlin join apart from member of body of Kotlin interface named again`() {
         // apply(null) compiles, returning String, as the Kotlin interface is no supertype of the join, which merges only its own members,
-        // and apply(x = null) compiles too, as the member of Function takes the name of the one of StringApplier, merged by the join
+        // and apply(x = null) compiles too, as the member of Function takes the name of the one of StringApplier, merged by the join,
+        // and the apply(String) of the Java class, merged by the join too, implements it, so that a concrete subclass implements nothing (#374)
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.InheritedDefaultStringApplierJavaStringApplierHalfNullableFunctionApplierJoin.apply"
         ) sameAsKotlin """
@@ -9524,7 +9537,46 @@ class KotlinIntrospectorTest {
             // inherited from com.xemantic.kotlin.introspection.test.DefaultStringApplier
             open fun apply(x: String): String
             // inherited from java.util.function.Function
-            fun apply(x: String?): String
+            open fun apply(x: String?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member merged by Kotlin interface join picking method of Java interface once with member of body of superclass`() {
+        // accept(null) does not compile, and a concrete subclass implements nothing
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.OpenStringAcceptorJavaStringAcceptorInterfaceNullableConsumerStringAcceptorJoin.accept"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OpenStringAcceptorJavaStringAcceptorInterfaceNullableConsumerStringAcceptorJoin.accept [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.OpenStringAcceptor
+            open fun accept(s: String)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of JDK interface given nullable type picked by Kotlin join apart from Kotlin member taking no null as one member`() {
+        // apply("") returns CharSequence, apply(null) compiles, returning String, and a concrete subclass has to implement
+        // only the apply(x: String) of CharSequenceApplier, as the one of StringApplier is merged by the join with the picked one
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.CharSequenceApplierJavaStringApplierHalfNullableFunctionApplierJoin.apply"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.CharSequenceApplierJavaStringApplierHalfNullableFunctionApplierJoin.apply [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.CharSequenceApplier
+            fun apply(x: String): CharSequence
+            // inherited from java.util.function.Function
+            open fun apply(x: String?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of JDK interface given nullable type picked by Kotlin join merged with nullable Kotlin member as one member`() {
+        // apply(null) compiles, returning String, and a concrete subclass implements nothing
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.NullableStringApplierJavaStringApplierHalfNullableFunctionApplierJoin.apply"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NullableStringApplierJavaStringApplierHalfNullableFunctionApplierJoin.apply [page 1/1]
+            // inherited from java.util.function.Function
+            open fun apply(x: String?): String
         """.trimIndent()
     }
 
