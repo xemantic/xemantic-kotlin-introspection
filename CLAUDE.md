@@ -250,6 +250,12 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   one rejected with the modifier (`overrides nothing`) might be rejected without it too, as an `accidental override` of the same JVM signature,
   while an overload of the same JVM signature might compile, like `where T : Comparable<T>, T : Any` next to `<T : Comparable<T>>`, see `boundsMatch`.
 
+- kotlinc keeps a private member of a generic supertype unsubstituted, so its private `setValue(T)` is no setter of the `getValue()` a subclass inherits,
+  while a private `setCount(Integer)` is, see `settersInDeclarationOrder` —
+  javac rejects a private `setValue(T)` next to a public one of the same substituted signature (`weaker access privileges`),
+  so a listing of the generic class itself cannot show the difference; a sweep row judged on a receiver like `X<String>`,
+  where a `setValue(String)` sets the `T` getter, is an artifact of the receiver, the hint stays `val` for the type parameter.
+
 - Read every error of a probe, not only the first one, and not only the type a mistyped `val x: Marker = …` names:
   `val r: Marker = Thread::name` reports the type `KMutableProperty1<Thread, String!>`, and, on the reference itself,
   `the feature "references to synthetic java properties" is unsupported`.
