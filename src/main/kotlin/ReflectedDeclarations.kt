@@ -456,6 +456,7 @@ internal fun parseKotlinMetadata(metadata: Metadata): KotlinClassMetadata? = try
 /**
  * Marks the type arguments of this supertype of the Java class [type], of the class [supertype], also the nested ones,
  * nullable, or not, as annotated, see [JavaClassNullability.supertypeArguments], like `Base<String?>` of `Base<@Nullable String>`,
+ * a type variable not nullable definitely, like `Base<V & Any>` of `Base<@NotNull V>`, see #382,
  * which the compiler substitutes for the type parameters of the supertype in the members inherited from it,
  * while the ones not annotated are told by the class giving them, see [givesPlatformTypeArguments].
  */
@@ -464,7 +465,7 @@ private fun KmType.enhanceSupertypeArguments(type: Class<*>, supertype: Class<*>
     // by the indices of the supertypes in the class file, the superclass at -1, see TypeReference.getSuperTypeIndex
     val index = if (type.superclass == supertype) -1 else type.interfaces.indexOf(supertype).takeIf { it >= 0 } ?: return
     javaNullabilities.get(type).supertypeArguments[index]?.forEach { (path, isNullable) ->
-        nestedType(path)?.markNullable(isNullable)
+        nestedType(path)?.markNullable(isNullable, isDefinitelyNonNull = !isNullable)
     }
 }
 
