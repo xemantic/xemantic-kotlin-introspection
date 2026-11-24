@@ -3045,6 +3045,17 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should hint operator extension invoke as operator next to constructor taking Java interface of generic method`() {
+        // GenericMethodConstructedCompanionHolder { } calls the extension, as a lambda is not converted to JavaGenericMethodTask
+        resolver.resolve("com.xemantic.kotlin.introspection.test.GenericMethodConstructedCompanionHolder.invoke") should {
+            have(
+                lines().last() == "/* called as GenericMethodConstructedCompanionHolder(…) */ " +
+                    "operator fun IntLambdaOperatorCompanionSupertype.invoke(task: (Int) -> Unit): Int"
+            )
+        }
+    }
+
+    @Test
     fun `should hint operator extension invoke as operator next to constructor taking interface which is no fun interface`() {
         // PlainInterfaceConstructedCompanionHolder { } calls the extension, as a lambda is not converted to PlainConstructedTask
         resolver.resolve("com.xemantic.kotlin.introspection.test.PlainInterfaceConstructedCompanionHolder.invoke") should {

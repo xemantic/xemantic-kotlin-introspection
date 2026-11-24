@@ -18,6 +18,7 @@
 
 package com.xemantic.kotlin.introspection.test
 
+import com.xemantic.kotlin.introspection.test.other.JavaGenericMethodTask
 import com.xemantic.kotlin.introspection.test.other.JavaInfixInvokedGetterBase
 import com.xemantic.kotlin.introspection.test.other.JavaInvokedGenericTask
 import com.xemantic.kotlin.introspection.test.other.JavaInvokedGetterBase
@@ -1149,6 +1150,18 @@ class KotlinSamConstructedCompanionHolder(val task: ConstructedTask) {
 class SamOtherwiseConstructedCompanionHolder(val task: Runnable) {
     companion object : StringLambdaOperatorCompanionSupertype {
         fun invoke(task: () -> String): Int = 0
+    }
+}
+
+// and one taking a Java interface whose abstract method is generic, to which no lambda is converted,
+// like GenericMethodConstructedCompanionHolder { }, calling the extension
+interface IntLambdaOperatorCompanionSupertype
+
+operator fun IntLambdaOperatorCompanionSupertype.invoke(task: (Int) -> Unit): Int = 1
+
+class GenericMethodConstructedCompanionHolder(val task: JavaGenericMethodTask) {
+    companion object : IntLambdaOperatorCompanionSupertype {
+        fun invoke(task: (Int) -> Unit): Int = 0
     }
 }
 

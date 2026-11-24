@@ -13875,7 +13875,7 @@ internal class DefaultKotlinIntrospector(
      * which Kotlin converts a lambda, a function reference, and a value of a function type to,
      * like `() -> Unit` of `Runnable`, or of `fun interface Task { fun run() }`, of no type parameters,
      * or `null` if it is not one, like an interface which is no fun interface, or its abstract method is not told:
-     * of a Java interface, taking only primitive types, and returning one, or nothing, whose types are no platform types,
+     * of a Java interface, of a method which is not generic, taking only primitive types, and returning one, or nothing, whose types are no platform types,
      * of a Kotlin fun interface, declaring it, extending `Any` only, without a receiver, context parameters, or type parameters.
      */
     private fun samFunctionType(type: KmType): KmType? {
@@ -13908,6 +13908,8 @@ internal class DefaultKotlinIntrospector(
                 Modifier.isAbstract(method.modifiers) &&
                     runCatching { Any::class.java.getMethod(method.name, *method.parameterTypes) }.isFailure
             }.singleOrNull() ?: return@reflectedValue null
+            // a generic method, to which Kotlin converts no lambda
+            if (method.typeParameters.isNotEmpty()) return@reflectedValue null
             fun Class<*>.primitiveType() = JAVA_PRIMITIVE_TYPE_NAMES[this.name]?.let { classType(it) }
             val parameters = method.parameterTypes.map { it.primitiveType() ?: return@reflectedValue null }
             functionType(parameters, method.returnType.primitiveType() ?: return@reflectedValue null)
@@ -16190,7 +16192,6 @@ private class TypeProjections(val projections: Map<Int, KmTypeProjection>) {
     val projected: Set<Int> = projections.filterValues { it.type == null || it.variance != KmVariance.INVARIANT }.keys
 }
 
-// the read-only collection types of the mutable ones, like kotlin/collections/List of kotlin/collections/MutableList, see collectionVariants
 // a property invoked through an infix invoke, called by an infix call too, see membersCalledByName
 private val INFIX_INVOKED_PROPERTY = KmFunction("invoke").also { it.isInfix = true }
 
@@ -16200,6 +16201,7 @@ private val JAVA_PRIMITIVE_TYPE_NAMES = mapOf(
     "float" to "kotlin/Float", "long" to "kotlin/Long", "double" to "kotlin/Double", "void" to UNIT_CLASS_NAME
 )
 
+// the read-only collection types of the mutable ones, like kotlin/collections/List of kotlin/collections/MutableList, see collectionVariants
 private val READ_ONLY_COLLECTION_TYPES: Map<String, String> = MUTABLE_COLLECTION_TYPES.entries.associate { (readOnly, mutable) -> mutable to readOnly }
 
 // the most variants of the type of a value parameter of a member compared with a member of a Java class, see collectionVariants,
