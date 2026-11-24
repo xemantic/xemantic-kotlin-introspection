@@ -190,6 +190,49 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should list extension on recursively bounded type parameter by witness for relocated class`() {
+        // given
+        val classFiles = arrayOf("RelocatedSameKeyMap.class", "RelocatedWitnessKt.class")
+        val root = isolatedTestFixturesCopy("relocatedWitness", *classFiles)
+        relocatedCopy(root, *classFiles)
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve(
+            "shaded.com.xemantic.kotlin.introspection.isolated.RelocatedSameKeyMap",
+            pageSize = 10000
+        )
+
+        // then - V of String makes a Map<V, V> a Map<T, T> of T : Comparable<T>, the class found by its located name,
+        // not taken as one which cannot be loaded, see #362
+        signature should {
+            have(lines().any { ".relocatedSameComparables()" in it })
+        }
+    }
+
+    @Test
+    fun `should list extension on recursively bounded type parameter by witness for class bounded by relocated dependency`() {
+        // given
+        // like an app shading its dependencies, rewriting the references of its own classes to them, but not the Kotlin metadata
+        val dependencies = arrayOf("RelocatedDependencyBound.class")
+        val root = isolatedTestFixturesCopy("relocatedWitnessDependency", *dependencies, "RelocatedDependencyBoundedMap.class")
+        relocatedCopy(root, *dependencies, dependents = listOf("RelocatedDependencyBoundedMap.class"))
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.RelocatedDependencyBoundedMap",
+            pageSize = 10000
+        )
+
+        // then - V of RelocatedDependencyBound makes a Map<V, V> a Map<T, T> of T : Comparable<T>,
+        // the bound not found by its metadata name, but resolved by the generic signature of the class, see #362
+        signature should {
+            have(lines().any { ".relocatedSameComparables()" in it })
+        }
+    }
+
+    @Test
     fun `should not take overload of relocated inner class with bounded type parameter of its relocated outer class for override`() {
         // given
         val classFiles = arrayOf("RelocatedBoundedOuter.class", "RelocatedBoundedOuter\$Comparing.class")
@@ -1501,6 +1544,42 @@ class ClassLoaderIntrospectionTest {
             javaClass.classLoader
         )
         return KotlinIntrospector(classLoader)
+    }
+
+    @Test
+    fun `should list extension on recursively bounded type parameter by witness when bound refers to class on the classpath`() {
+        // given
+        val root = isolatedTestFixturesCopy("withAbsent")
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.AbsentBoundedKeyMap",
+            pageSize = 10000
+        )
+
+        // then - V of String makes a Map<V, V> a Map<T, T> of T : Comparable<T>, W of Absent satisfying its bound
+        signature should {
+            have(lines().any { ".absentSameComparables()" in it })
+        }
+    }
+
+    @Test
+    fun `should withhold witnesses of type parameters when bound refers to class missing from the classpath`() {
+        // given
+        val introspector = introspectorWithoutAbsentClass()
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.AbsentBoundedKeyMap",
+            pageSize = 10000
+        )
+
+        // then - a class which cannot be loaded, like the Absent of the bound, is taken as annotating
+        // a type argument of its Java supertype, see #362, like one whose supertypes cannot be reflected
+        signature should {
+            have(lines().none { ".absentSameComparables()" in it })
+        }
     }
 
     @Test

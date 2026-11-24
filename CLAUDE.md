@@ -162,6 +162,9 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   the verdict depends on who declares the type argument, not on the bound, so probe such a shape with Java-declared type arguments too —
   see `givenTypeVariableNames`.
 
+- A sweep judging an extension "callable only with `Nothing`" from a fixed list of type arguments misjudges it since `Nothing` does not count (#366, #362):
+  most such rows compile with a declared self-referring type — probe them with declared types too, see `isDeclarableFor`.
+
 - Kotlin never passes named arguments to a Java method of its own, even one compiled with `-parameters`, so a Java method taking parameters never shadows an extension — see `isShadowingJavaMethod`;
   a Java method overriding a Kotlin member, or merged with one, takes the names of the Kotlin one though, like `k.over(x = 1)`, see the entry on `namedByKotlinMembers` below —
   its shadowing is not modelled: the extension next to such a Java override stays listed.

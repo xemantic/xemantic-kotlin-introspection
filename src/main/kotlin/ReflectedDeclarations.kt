@@ -467,6 +467,24 @@ private fun KmType.enhanceSupertypeArguments(type: Class<*>, supertype: Class<*>
 }
 
 /**
+ * Whether the generic signature of the class [type], the bounds of its type parameters, and its generic supertypes,
+ * refers only to classes which can be loaded, also to the ones relocated with it, like by shading, by their rewritten names,
+ * unlike to a class missing from the classpath.
+ */
+internal fun resolvesGenericSignature(type: Class<*>): Boolean = try {
+    type.typeParameters.forEach { it.bounds }
+    type.genericSuperclass
+    type.genericInterfaces
+    true
+} catch (_: LinkageError) {
+    false
+} catch (_: TypeNotPresentException) {
+    false
+} catch (_: MalformedParameterizedTypeException) {
+    false
+}
+
+/**
  * Whether the class [type], or a class its supertypes reach, also through their type arguments, and the supertypes of these,
  * like `NullableList` of `interface Holder<V> : Producer<NullableList<V>>` of `List<Holder<V>>`,
  * is a Java class annotating a type argument of its supertype as nullable, or not,

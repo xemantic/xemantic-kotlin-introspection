@@ -263,3 +263,13 @@ class TypedBoundedOuterOfBox<O : Number> {
     abstract inner class Inner<V> : TypedSelfBox<V>, TypedOther<O>
 
 }
+
+// a type parameter W bounding V, like of V : W, takes a type fitting all its own positions too, see #362,
+// like only String of TypedSelfBox<W?>, and TypedSource<W>, for TypedSelfBox<String?>, and TypedSource<String>,
+// which no String? of TypedSink<V> as TypedSink<String?> is a subtype of, while String? of TypedSource<String?> is
+
+interface TypedBoundedBySourced<V : W, W> : TypedSelfBox<W?>, TypedSource<W>, TypedSink<V>
+
+fun <P> P.nullableSelfBoxSourceAndNullableSink() where P : TypedSelfBox<String?>, P : TypedSource<String>, P : TypedSink<String?> {}
+
+fun <P> P.nullableSelfBoxNullableSourceAndNullableSink() where P : TypedSelfBox<String?>, P : TypedSource<String?>, P : TypedSink<String?> {}

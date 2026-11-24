@@ -396,10 +396,18 @@ com.example.AnnotationTestClass
   like `fun Producer<Int>.ext()` for `interface Texts<V : CharSequence> : Producer<V>`, of `interface Producer<out T>`,
   or `fun <T : Enum<T>> Map<T, String>.ext()` for `interface Keys<V> : Map<V, V>`,
   as no type but `Nothing` is a subtype of both the final `Int`, or `String`, and of `CharSequence`, or of an enum class.
+  Nor does a star projection, like `Pair<*, String>` of `interface Pair<K : Number, V : K> : Box<V>`,
+  which makes `fun Box<String>.ext()` callable, though no `Pair<K, String>` can exist.
   An extension of the package of the class on a `kotlin.*` or `java.*` supertype, bounded by itself, like `fun <T : Comparable<T>> Map<T, T>.ext()`,
   is listed for a generic class when it can be called for some type argument tried,
-  like `String`, `Int`, or a type the extension names, and still `Nothing` there:
-  for `class SameKeyMap<V> : HashMap<V, V>()`, of `SameKeyMap<String>`, but not for `interface Scores<V> : Map<V, Comparable<V>>`.
+  like `String`, `Int`, a type the extension names, or a type which can be declared, like `interface X : List<X>, Comparable<X>`:
+  for `class SameKeyMap<V> : HashMap<V, V>()`, of `SameKeyMap<String>`, but not for `interface Scores<V> : Map<V, Comparable<V>>`,
+  and `fun <T : Comparable<T>> Map<T, List<T>>.ext()` for `SameKeyMap`, of `SameKeyMap<X>`,
+  but not for `interface Names<V : CharSequence> : Map<V, V>`, as no type is both a `CharSequence` and a `List` of itself,
+  their `get(index: Int)` returning other types, unlike a `List<Char>`,
+  nor for a type parameter bounded by a final class, which is no `Comparable`.
+  Each combination of the types tried is tried only for a class of a few type parameters;
+  for more of them, only some of the combinations are.
   A JDK interface named as a supertype, like `abstract class Orders : java.util.List<Order>`,
   is the Java one, with the supertypes Java declares,
   so that `fun Collection<Order>.count()` is listed for it, but not `fun List<Order>.total()`, as the compiler tells,
