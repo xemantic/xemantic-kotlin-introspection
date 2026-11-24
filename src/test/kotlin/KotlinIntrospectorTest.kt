@@ -24015,6 +24015,20 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve Java member overriding hidden member and Kotlin generic ones of other names next to Kotlin default member given primitive type`() {
+        // the put(Integer), taking Int!, a JVM method of its own, stays a member apart from the put(t: T) of GenericDefaultPut<Int>,
+        // put(Object), though the Kotlin member standing for it, of GenericRenamedPut<Integer>, declared first,
+        // is of the signature of the latter, so that put(null) compiles, while put(q = 1) does not
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaPutOverHiddenOpenRenamedAndNullableGenericPutDefaultJoin.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaPutOverHiddenOpenRenamedAndNullableGenericPutDefaultJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.GenericDefaultPut
+            open fun put(t: Int): String
+            // inherited from com.xemantic.kotlin.introspection.test.GenericRenamedPut
+            open fun put(q: Int?): String // named arguments prohibited: ambiguous parameter names
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve Java member annotated not null overriding hidden member and Kotlin generic one given boxed type annotated nullable`() {
         // the Java method overrides a visible member too, visible then, taking Int!, as the nullabilities disagree
         resolver.resolve("com.xemantic.kotlin.introspection.test.NotNullBoxedJavaPutOverHiddenOpenAndNullableGenericPutImpl.put") sameAsKotlin """

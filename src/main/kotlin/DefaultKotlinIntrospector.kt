@@ -6745,11 +6745,15 @@ internal class DefaultKotlinIntrospector(
                         // unless a visible member listed is of its signature, or merged with it, like the put(t: T)
                         // of GenericDefaultPut<Int> of a Kotlin subclass of the Java class, or implemented by the same method,
                         // one member with it, like the put(q: T) of an interface given Integer next to GenericPut<@Nullable Integer>
+                        // told by any visible member the method implements, like the put(t: T) of GenericPut<@Nullable Integer>,
+                        // taking Int?, for the put(q: T) of GenericRenamedPut<Integer> declared before it, taking Int,
+                        // of the signature of the put(t: T) of GenericDefaultPut<Int>, though the method takes Int!, a member apart
                         picked?.isHidden != true ||
                             (picked.implementingJvmMethod != null && picked.implementingJvmMethod === candidate.implementingJvmMethod &&
-                                visible.none {
-                                    it.signature == candidate.signature || it.isMergedWith(candidate) || it.overrides(candidate) ||
-                                        it.implementingJvmMethod === candidate.implementingJvmMethod
+                                visible.none { it.implementingJvmMethod === candidate.implementingJvmMethod } &&
+                                candidates.any { alike ->
+                                    !alike.isHidden && alike.implementingJvmMethod === candidate.implementingJvmMethod &&
+                                        visible.none { it.signature == alike.signature || it.isMergedWith(alike) || it.overrides(alike) }
                                 })
                     }
                 }

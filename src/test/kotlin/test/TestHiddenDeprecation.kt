@@ -914,6 +914,13 @@ abstract class BoxedJavaPutOverHiddenAbstractAndNotNullGenericPutDefaultJoin :
 
 fun BoxedJavaPutOverHiddenAbstractAndNotNullGenericPutDefaultJoin.putNamed(): String = put(t = 1)
 
+// the put(Integer) of the Java class, taking Int!, a JVM method of its own next to the put(t: T) of GenericDefaultPut<Int>,
+// put(Object), two members, which a concrete subclass cannot join, "inherited platform declarations clash"
+abstract class BoxedJavaPutOverHiddenOpenRenamedAndNullableGenericPutDefaultJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOverHiddenOpenRenamedAndNullableGenericPut(), GenericDefaultPut<Int>
+
+fun BoxedJavaPutOverHiddenOpenRenamedAndNullableGenericPutDefaultJoin.putNull(): String = put(null)
+
 // one member implemented by the put(Integer) of the Java class, next to a hidden one
 abstract class BoxedJavaPutOverHiddenNullableAndRenamedGenericPutImpl :
     com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOverHiddenNullableAndRenamedGenericPut()
