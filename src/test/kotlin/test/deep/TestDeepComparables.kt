@@ -65,3 +65,11 @@ interface DeepMap<V : Comparable<V>> : Map<V, V>
 fun <T : Comparable<T>> Map<T, DeepComparable>.deepValues() {}
 
 fun <T : Comparable<T>> Map<T, T>.deepSame() {}
+
+// a witness kotlinc fails on, see #376: x.deepSecond() is inapplicable on a DeepSamePair<V> for every V but DeepComparable,
+// on which kotlinc fails with "Arguments depth is too high", so that no V makes it callable
+interface DeepPair<A, B>
+
+interface DeepSamePair<V> : DeepPair<V, V>
+
+fun <T : Comparable<T>> DeepPair<T, DeepComparable>.deepSecond() {}

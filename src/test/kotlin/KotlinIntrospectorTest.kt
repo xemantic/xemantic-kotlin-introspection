@@ -17415,6 +17415,20 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve generic class without extension callable only on witness kotlinc fails on`() {
+        // x.deepSecond() is inapplicable on DeepSamePair<V> for every V but DeepComparable, on which kotlinc fails with:
+        // Arguments depth is too high
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.deep.DeepSamePair"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.deep.DeepSamePair [page 1/1]
+            interface DeepSamePair<V> : DeepPair<V, V>
+            // from com.xemantic.kotlin.introspection.test.deep
+            fun <T> T.deepAny()
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve generic class without witness of class comparable to what is comparable to it`() {
         // x.deepSame() compiles for a DeepMap<String>, while the witness DeepComparable, of x.deepValues(), is no witness
         resolver.resolve(
