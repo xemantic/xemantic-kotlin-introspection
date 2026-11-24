@@ -12385,6 +12385,32 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should hint synthetic property as val when internal setter of generic superclass takes its type variable`() {
+        // kotlinc rejects x.p = 1 in another module: cannot access, it is internal
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertyInternalSetterDirect.p") should {
+            have("// also property: val p" in lines())
+        }
+    }
+
+    @Test
+    fun `should hint synthetic property as var when internal setter is reached through generic Kotlin subclass`() {
+        // kotlinc no longer sees the internal setP(p: T) through KotlinSyntheticPropertyInternalSetterMid<W>,
+        // and assigns x.p = 1 by the public setP(int) of JavaSyntheticPropertyInternalSetterTop
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertyInternalSetterThroughKotlin.p") should {
+            have("// also property: var p" in lines())
+            have("fun setP(arg0: Int)" in lines())
+        }
+    }
+
+    @Test
+    fun `should hint synthetic property as var when internal setter is reached through generic Java subclass`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertyInternalSetterThroughJava.p") should {
+            have("// also property: var p" in lines())
+            have("fun setP(arg0: Int)" in lines())
+        }
+    }
+
+    @Test
     fun `should hint synthetic property as val when Kotlin class declares private setter`() {
         // kotlinc takes the private setK(Int?) before the setK(int) of the Java superclass, and rejects x.k = 1: cannot access
         resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertyKotlinPrivateSetters.k") should {

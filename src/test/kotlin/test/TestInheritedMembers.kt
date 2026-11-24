@@ -1839,6 +1839,20 @@ interface KotlinSyntheticPropertyPrimitiveSetterW {
 
 abstract class SyntheticPropertyBoxedSetterTwin : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyBoxedSetterTwin()
 
+// The internal setP(p: T) of a generic Kotlin class, taken by kotlinc for the class given its type argument,
+// but not through a generic subclass, Kotlin or Java, passing its type parameter (#372)
+open class KotlinSyntheticPropertyInternalSetter<T> : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyInternalSetterGetter<T>() {
+    internal fun setP(p: T) {}
+}
+
+class SyntheticPropertyInternalSetterDirect : KotlinSyntheticPropertyInternalSetter<Int>()
+
+open class KotlinSyntheticPropertyInternalSetterMid<W> : KotlinSyntheticPropertyInternalSetter<W>()
+
+class SyntheticPropertyInternalSetterThroughKotlin : KotlinSyntheticPropertyInternalSetterMid<Int>()
+
+class SyntheticPropertyInternalSetterThroughJava : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyInternalSetterMid<Int>()
+
 // The private and internal setters of a Kotlin class, taken before the public ones of its Java superclass
 open class SyntheticPropertyKotlinPrivateSetters : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyPrimitiveSetters() {
     private fun setK(k: Int?) {}

@@ -2871,8 +2871,8 @@ internal class DefaultKotlinIntrospector(
             // the substitution of the type parameters of a supertype, as the class inherits it, or null if not reached
             val substitutions = IdentityHashMap<ClassDeclarations, Map<Int, KmType>?>()
             fun inheritedSubstitution(supertypeDeclarations: ClassDeclarations): Map<Int, KmType>? =
-                substitutions.getOrPut(supertypeDeclarations) {
-                    val target = supertypeDeclarations.clazz ?: return@getOrPut null
+                if (substitutions.containsKey(supertypeDeclarations)) substitutions[supertypeDeclarations] else run {
+                    val target = supertypeDeclarations.clazz ?: return@run null
                     val pending = ArrayDeque(members.kmClass.supertypes.map { it.substituted(members.inheritingTypes) })
                     val visited = HashSet<String>()
                     while (pending.isNotEmpty()) {
@@ -2882,11 +2882,11 @@ internal class DefaultKotlinIntrospector(
                         val superDeclarations = inheritedDeclarations(inheritedName(declarations, name)) ?: continue
                         val superKmClass = superDeclarations.kmClass ?: continue
                         val substitution = supertypeSubstitution(superKmClass, supertype, declarations)
-                        if (superDeclarations.clazz == target) return@getOrPut substitution
+                        if (superDeclarations.clazz == target) return@run substitution
                         pending += superKmClass.supertypes.map { it.substituted(substitution) }
                     }
                     null
-                }
+                }.also { substitutions[supertypeDeclarations] = it }
             fun SyntheticSetter.sets(): Boolean {
                 val setterFunction = member.function
                 if (!setterFunction.isAccessorShaped(parameterCount = 1)) return false
@@ -2938,6 +2938,24 @@ internal class DefaultKotlinIntrospector(
         fun KmType.refersToTypeParameter(): Boolean =
             classifier is KmClassifier.TypeParameter || arguments.any { it.type?.refersToTypeParameter() == true } ||
                 outerType?.refersToTypeParameter() == true
+        // whether the class is reached through a generic subclass of it, given type arguments, other than the class itself,
+        // like KM<W> of KM<W> : KG<W>, through which kotlinc 2.4.21 no longer sees an internal function of KG, whatever its types,
+        // unlike through a class which is not generic, like KMC : KG<Int>, or by the class itself, like X : KG<Int>, as probed
+        fun isReachedThroughGenericSubclass(clazz: Class<*>?): Boolean {
+            if (root == null || clazz == null) return false
+            return reflectedValue(default = false) {
+                val visited = HashSet<Class<*>>()
+                val pending = ArrayDeque(listOf(root))
+                while (pending.isNotEmpty()) {
+                    val type = pending.removeFirst()
+                    if (!visited.add(type)) continue
+                    val supertypes = listOfNotNull(type.superclass) + type.interfaces
+                    if (clazz in supertypes) return@reflectedValue type != root && type.typeParameters.isNotEmpty()
+                    pending += supertypes
+                }
+                false
+            }
+        }
         // the setters of the class of the declarations, the API ones, followed by the ones which are not part of the API,
         // all of them in the order of their declarations, if told
         fun ordered(classDeclarations: ClassDeclarations, api: List<SyntheticSetter>): List<SyntheticSetter> {
@@ -2946,7 +2964,9 @@ internal class DefaultKotlinIntrospector(
             val uncallable = kmClass.functions.filter { function ->
                 function.name == setterName && !scope.isApi(function.visibility) &&
                     !(isInherited && function.visibility == Visibility.PRIVATE && kmClass.typeParameters.isNotEmpty() &&
-                        function.valueParameters.any { it.type.refersToTypeParameter() })
+                        function.valueParameters.any { it.type.refersToTypeParameter() }) &&
+                    !(isInherited && function.visibility == Visibility.INTERNAL && classDeclarations !is JavaClass &&
+                        isReachedThroughGenericSubclass(classDeclarations.clazz))
             }.map { SyntheticSetter(Member.Function(it), candidate = null, uncallableDeclarations = classDeclarations) }
             if (uncallable.isEmpty() && classDeclarations !is JavaClass) return api
             val positions = IdentityHashMap<KmFunction, Int>()
