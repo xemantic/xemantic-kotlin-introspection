@@ -129,10 +129,21 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 - With a type argument given explicitly, like `x.ext<_, Nothing, _>()`, kotlinc reports the violated bound of an inferred type parameter
   as an error also next to an empty intersection, unlike when all of them are inferred, see `CallInference`.
 
+- When judging a sweep by calls with explicit type arguments, give explicitly only what the README convention takes as given:
+  a `W` of `W : U`, or an `E` of `T : List<E>`, is judged by `x.ext()` alone (#343),
+  though kotlinc says `cannot infer type for type parameter 'E'. Specify it explicitly.`
+  Never count a call compiling only with `Nothing` (#366): `x.ext<Nothing, _>()` of `<A : Comparable<A>, B : A> Sink<B>.ext()`
+  compiles on nearly any contravariant receiver.
+  The next entry is the one shape not reconciled with this rule.
+
 - A plain `x.ext()` rejected by kotlinc does not tell that the extension cannot be called:
   a type parameter which neither the receiver nor a bound refers to, like `U` of `fun <T : Comparable<T>?, U : T> Ct<T & Any>.ext()`,
   given explicitly, changes what the ones its bound refers to are inferred as — `x.ext()` fails on a `Ct<String>` with `inferred type is 'String?'`, while `x.ext<_, String>()` compiles.
-  A probe judging an extension not callable must give such type parameters explicitly too, but not the ones the receiver refers to.
+  A probe judging an extension not callable must give such type parameters explicitly too, but not the ones the receiver refers to —
+  so #334 lists this platform-type shape, against the sweep rule above, which #343 decided later.
+
+- A kotlinc crash, like `IllegalStateException: Arguments depth is too high` (see `matchesOnce`), ends the whole compilation:
+  a batch probe reports one such row per run, with no `error:` line, so keep the classes causing it out of a batch.
 
 - In a kotlinc probe `import java.util.function.*` does not bring `Function`: the default import of `kotlin.Function` wins over a star import,
   so `Function<String, String>` fails with `one type argument expected` — import `java.util.function.Function` explicitly.
