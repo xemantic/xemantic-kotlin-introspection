@@ -3838,7 +3838,7 @@ internal class DefaultKotlinIntrospector(
          */
         fun isMergedWith(other: InheritedCandidate): Boolean =
             other.className != className && (other.member is Member.Property) == (member is Member.Property) &&
-                (other.overridden.any { it in overridden } ||
+                (joinUnit != null && joinUnit === other.joinUnit || other.overridden.any { it in overridden } ||
                     (other.signature == signature && (!isNullablyJoined && !other.isNullablyJoined || !isNullabilityClash(other)) ||
                         (isJavaRivalry(other) || isNullablyJoined || other.isNullablyJoined) && isRival(other) && !isNullabilityClash(other)) &&
                     isMergedOnJvm(other) && !isOverloadOf(other) && !other.isOverloadOf(this))
@@ -4057,6 +4057,13 @@ internal class DefaultKotlinIntrospector(
          * also of the same [signature], see [isMergedWith].
          */
         var isNullablyJoined: Boolean = false
+
+        /**
+         * The token shared by the members a single Kotlin class merges, every path to the one given a nullable type argument
+         * running through it, see [inheritedCandidates], which are merged with each other, see [isMergedWith],
+         * as the class inherits them as one member, or null.
+         */
+        var joinUnit: Any? = null
 
         /**
          * Whether the [member] is kept apart from the one of the [other] candidate by a nullable type argument,
@@ -5161,6 +5168,8 @@ internal class DefaultKotlinIntrospector(
         val mergedWithAll = Collections.newSetFromMap(IdentityHashMap<InheritedCandidate, Boolean>())
         // the members merged with each candidate by the classes picking it, or another nullable member, see below
         val nullablyJoined = IdentityHashMap<InheritedCandidate, MutableList<InheritedCandidate>>()
+        // and by the single class merging them, whatever it picks, see InheritedCandidate.joinUnit
+        val joinedMembers = IdentityHashMap<InheritedCandidate, List<InheritedCandidate>>()
         // all the candidates walked for a merging class, as it inherits them itself, see picksNotNull below,
         // or null of a class whose candidates are told already, below, on a supertype cycle of malformed class files
         val joinCandidatesByName = HashMap<String, List<InheritedCandidate>?>()
@@ -5237,16 +5246,15 @@ internal class DefaultKotlinIntrospector(
                 val isNotNull = candidate.nullableArgumentPositions.zip(types).all { (position, type) ->
                     if (picked.declarations is JavaClass) position !in picked.nullableArgumentPositions else !type.isNullable
                 }
-                if (!isNotNull) {
-                    merged.forEach { member ->
-                        walked.filterTo(nullablyJoined.getOrPut(candidate) { ArrayList() }) {
-                            it !== candidate && it.className == member.className && it.key == member.key
-                        }
-                    }
+                val members = merged.flatMap { member ->
+                    walked.filter { it !== candidate && it.className == member.className && it.key == member.key }
                 }
+                if (!isNotNull) nullablyJoined.getOrPut(candidate) { ArrayList() } += members
+                if (classes.distinct().size == 1) joinedMembers[candidate] = members
                 return isNotNull
             }
             val picks = classes.map(::picksNotNull)
+            if (null in picks) joinedMembers -= candidate
             if (picks.isNotEmpty() && picks.all { it == true }) {
                 mergedWithAll += candidate
             } else {
@@ -5266,6 +5274,14 @@ internal class DefaultKotlinIntrospector(
                 member.mergedThroughClasses = classes
                 member.isNullablyJoined = true
             }
+        }
+        // which stay one member, whatever the members of the other classes they are merged with, as the class inherits
+        // the single member of the class merging them, like the apply(x: String?) of a Kotlin interface merged by
+        // `Join : JavaStringApplier(), Function<String?, String?>, StringApplier, NullableStringApplier`,
+        // also for `X : StringApplier, Join()`, though not merged with the apply(x: String) of StringApplier on its own
+        joinedMembers.forEach { (candidate, members) ->
+            val unit = (listOf(candidate) + members).firstNotNullOfOrNull { it.joinUnit } ?: Any()
+            (listOf(candidate) + members).forEach { it.joinUnit = unit }
         }
         walked.forEach { candidate -> candidate.isPlainCollectionRival = walked.any { it !== candidate && candidate.isPlainCollectionRivalOf(it) } }
         // as is the merging by the variants of the arrays and projected collections, next to a hidden member merged so with another one,

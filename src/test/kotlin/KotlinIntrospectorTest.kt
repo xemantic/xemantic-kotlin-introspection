@@ -9514,6 +9514,18 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve members merged by Kotlin join once below it also of nullable Kotlin member merged by the join`() {
+        // apply(null) does not compile, apply("") returns String, and a concrete subclass implements nothing
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.StringApplierJavaStringApplierNullableFunctionApplierNullableApplierJoin.apply"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.StringApplierJavaStringApplierNullableFunctionApplierNullableApplierJoin.apply [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.StringApplier
+            open fun apply(x: String): String
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve member merged by Kotlin join picking Kotlin member taking no null once next to Kotlin member of less specific return type`() {
         // apply(null) does not compile, apply("") returns String, and a concrete subclass implements nothing
         resolver.resolve(

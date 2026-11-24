@@ -1946,6 +1946,15 @@ abstract class InheritedStringApplierJavaStringApplierNullableFunctionApplierJoi
 abstract class CharSequenceApplierJavaStringApplierNullableFunctionApplierJoin :
     CharSequenceApplier, JavaStringApplierNullableFunctionApplierJoin()
 
+// the join merges also the apply(x: String?) of NullableStringApplier, which a subclass inherits as part of the one member,
+// though not merged with the apply(x: String) of StringApplier on its own (#374)
+abstract class JavaStringApplierNullableFunctionApplierNullableApplierJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaStringApplier(), java.util.function.Function<String?, String?>,
+    StringApplier, NullableStringApplier
+
+abstract class StringApplierJavaStringApplierNullableFunctionApplierNullableApplierJoin :
+    StringApplier, JavaStringApplierNullableFunctionApplierNullableApplierJoin()
+
 interface DefaultStringApplier {
     fun apply(x: String): String = x
 }
