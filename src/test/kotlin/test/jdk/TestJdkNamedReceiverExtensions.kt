@@ -55,10 +55,14 @@ fun JdkBox<out MutableCollection<out String>>.mutableOutJdkStrings() {}
 
 fun JdkBox<out Collection<String>>.readOnlyJdkStrings() {}
 
-// but for out Nothing, which kotlinc matches against a type parameter, like T of MutableCollection<T>, as it does out V,
-// which can be out Nothing
+// but for out Nothing, which kotlinc matches against a type parameter, like T of MutableCollection<T>,
+// unlike out V, which V of Nothing alone makes out Nothing, not counting as a type argument making an extension callable, see #366
 
 interface JdkProjectedNothingListBox : JdkBox<java.util.List<out Nothing>>
+
+// and out Nothing?, like out Nothing
+
+interface JdkProjectedNullableNothingListBox : JdkBox<java.util.List<out Nothing?>>
 
 interface JdkProjectedElementListBox<V> : JdkBox<java.util.List<out V>>
 

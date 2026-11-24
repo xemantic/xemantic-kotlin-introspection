@@ -12592,12 +12592,27 @@ class KotlinIntrospectorTest {
     }
 
     @Test
-    fun `should resolve interface of JDK list of out type parameter named directly with extension on supertype of type parameter`() {
-        // V of Nothing makes it a JdkBox<java.util.List<out Nothing>>
+    fun `should resolve interface of JDK list of out nullable Nothing named directly with extension on supertype of type parameter`() {
+        // kotlinc infers the T of MutableCollection<T> from MutableCollection<out Nothing?> too, which is no MutableCollection<String>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.jdk.JdkProjectedNullableNothingListBox"
+        ) should {
+            have(lines().any { ".mutableJdkElements()" in it })
+            have(lines().none { ".mutableJdkStrings()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of JDK list of out type parameter named directly without extension on supertype of type parameter`() {
+        // only V of Nothing makes it a JdkBox<java.util.List<out Nothing>>, which does not count, while the out of out V
+        // is kept, like of out String, by MutableCollection<out V>
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.jdk.JdkProjectedElementListBox"
         ) should {
-            have(lines().any { ".mutableJdkElements()" in it })
+            have(lines().none { ".mutableJdkElements()" in it })
+            have(lines().none { ".mutableJdkStrings()" in it })
+            have(lines().any { ".mutableOutJdkStrings()" in it })
+            have(lines().any { ".readOnlyJdkStrings()" in it })
         }
     }
 
@@ -12862,6 +12877,66 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve interface of pair of same type parameter without extension on pair of mutable and read-only lists`() {
+        // V is both MutableList<T>, and List<T>, which no type is, while V of MutableList<String> is both MutableList<T>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.unify.UnifiedSame",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".unifiedMutableAndReadOnlyLists()" in it })
+            have(lines().any { ".unifiedMutableLists()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of Java pair of same platform list with extension on pair of mutable and read-only lists`() {
+        // the (Mutable)List<V!>! of Java is either of them
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.unify.UnifiedJavaListPair",
+            pageSize = 10000
+        ) should {
+            have(lines().any { ".unifiedMutableAndReadOnlyLists()" in it })
+            have(lines().any { ".unifiedMutableLists()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of map of same type parameter without extension callable only with Nothing`() {
+        // V is a T : Enum<T>, and a subtype of the final String, which only Nothing is, while V of String is a T : Comparable<T>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.unify.UnifiedSameKeyMap",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".unifiedEnumKeysOfStrings()" in it })
+            have(lines().any { ".unifiedComparableKeysOfStrings()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of pair of same type parameter without extension on pair of Nothing`() {
+        // V is the Nothing of UnifiedPair<Nothing, T>, which does not count as a type argument making it callable
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.unify.UnifiedSame",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".unifiedNothingFirst()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of covariant supertype of bounded type parameter without extensions callable only with Nothing`() {
+        // V : CharSequence is no subtype of the final Int, nor of Nothing, but Nothing itself, while V of String is a String
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.unify.UnifiedCharSequenceProducer",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".unifiedInts()" in it })
+            have(lines().none { ".unifiedNothings()" in it })
+            have(lines().any { ".unifiedStrings()" in it })
+        }
+    }
+
+    @Test
     fun `should resolve interface of Java list of nullable type parameter without extension on recursively bounded type parameter`() {
         // List<@Nullable V> is a List<V?>, no List<T> of T : Comparable<T>
         resolver.resolve(
@@ -12945,7 +13020,7 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve class with extensions on type parameters bounded by its supertype`() {
-        // the extensions on an unbounded type parameter, like unboundedReceiver(), are not listed for any class
+        // the extensions on an unbounded type parameter of another package, like unboundedReceiver(), are not listed
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.BoundedReceiverOnlyA"
         ) sameAsKotlin """
@@ -12998,6 +13073,55 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.test.BoundedReceiverB [page 1/1]
             interface BoundedReceiverB
         """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve interface with extensions of its package on unbounded type parameter`() {
+        // like the extensions of its package on Any
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.unbounded.UnboundedStringPair",
+            pageSize = 10000
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.unbounded.UnboundedStringPair [page 1/1]
+            interface UnboundedStringPair : UnboundedPair<String, String>
+            // from com.xemantic.kotlin.introspection.test.unbounded
+            val <T> T.unboundedProperty: Int
+            fun <T> T.unboundedNextToClass()
+            fun UnboundedStringPair.unboundedNextToClass()
+            fun Any?.unboundedNextToNullableAny()
+            fun UnboundedStringPair?.unboundedNextToNullableClass()
+            fun Any?.unboundedNullableNextToNullableAny()
+            fun <T> T?.unboundedNullableReceiver()
+            fun <T> T.unboundedReceiver()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve extension of its package on unbounded type parameter next to one on nullable supertype`() {
+        // kotlinc calls the one on Any? instead, also on a nullable receiver
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.unbounded.UnboundedHolder.unboundedNextToNullableAny"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.unbounded.UnboundedHolder.unboundedNextToNullableAny [page 1/1]
+            // from com.xemantic.kotlin.introspection.test.unbounded
+            fun Any?.unboundedNextToNullableAny()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve extension of its package on unbounded type parameter as member of generic class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.unbounded.UnboundedHolder.unboundedReceiver"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.unbounded.UnboundedHolder.unboundedReceiver [page 1/1]
+            // from com.xemantic.kotlin.introspection.test.unbounded
+            fun <T> T.unboundedReceiver()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve extension of other package on unbounded type parameter as member of class`() {
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.BoundedReceiverOnlyA.unboundedReceiver") == null)
     }
 
     @Test

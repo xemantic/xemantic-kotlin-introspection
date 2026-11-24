@@ -6477,6 +6477,7 @@ internal class DefaultKotlinIntrospector(
      * not to flood its listing with the generic extensions of the standard library,
      * but the ones of the standard library on `Comparable` for a class comparable to itself, see [isComparableToItself],
      * and the ones of its package on any of its supertypes, like `fun List<Order>.total()` for `interface Orders : List<Order>`,
+     * and on an unbounded type parameter, like `fun <T> T.describe()`,
      * when the type arguments of the supertype are told, see [ClassSupertypes.types], on `Comparable` only for a comparable class,
      * also an enum class, see [isComparable], and for a class of the `kotlin.*` or `java.*` packages only on `Comparable`.
      * Either way, the ones on a type parameter with multiple bounds only when the class satisfies all of them,
@@ -6557,6 +6558,7 @@ internal class DefaultKotlinIntrospector(
             // when of the package of the class, like next to it, but not the ones of the other libraries,
             // like fun List<Order>.total() for interface Orders : List<Order>, also on Any,
             // which an interface extending only Java interfaces does not reach, like interface Task : Runnable,
+            // and on an unbounded type parameter, like fun <T> T.describe(), see #366,
             // and on Comparable, only for a comparable class, see isComparable,
             // also the ones of the standard library for a class comparable to itself,
             // unless the class is of these packages itself, whose extensions are the ones of the standard library,
@@ -6565,7 +6567,7 @@ internal class DefaultKotlinIntrospector(
             // while the ones with multiple bounds, satisfied by the class, are already listed
             val otherSupertypes = when {
                 isOfStandardPackage(classPackage) -> listOf(COMPARABLE_CLASS_NAME)
-                else -> (supertypes.names + ANY_RECEIVER_KEY).filter { it !in userSupertypes }
+                else -> (supertypes.names + ANY_RECEIVER_KEY + TYPE_PARAMETER_RECEIVER_KEY).filter { it !in userSupertypes }
             }.filter { it != COMPARABLE_CLASS_NAME || supertypes.isComparable }
             val isComparableToItself = supertypes.isComparableToItself
             val isEnum = kmClass.kind == ClassKind.ENUM_CLASS
@@ -7446,7 +7448,9 @@ internal class DefaultKotlinIntrospector(
                         else -> classifier.name != specificName
                     }
                 is KmClassifier.TypeParameter -> {
-                    val bounds = typeParameters.singleOrNull()?.takeIf { it.id == classifier.id }?.upperBounds.orEmpty()
+                    // an unbounded one, like of fun <T> T.f(), bounded by Any?, shadowed by one on a nullable type, see #366
+                    val bounds = typeParameters.singleOrNull()?.takeIf { it.id == classifier.id }?.upperBounds
+                        ?.ifEmpty { listOf(NULLABLE_ANY_TYPE) }.orEmpty()
                     val isOfClasses = bounds.isNotEmpty() && bounds.all { bound ->
                         val name = (bound.classifier as? KmClassifier.Class)?.name
                         bound.arguments.isEmpty() && name != null && isSubclass(specificName, name)
@@ -9107,7 +9111,9 @@ internal class DefaultKotlinIntrospector(
          * like `V` of `HashMap<V, V>` not for `Map<String, Order>`, as the invariant key makes it `String`, which is no `Order`,
          * but for `Map<String, CharSequence>`: the same type in all the invariant positions,
          * a subtype of the types of the covariant ones, and a supertype of the types of the contravariant ones,
-         * like `Nothing` of only covariant positions, or `Any?` of only contravariant ones,
+         * like `Any?` of only contravariant ones, but never `Nothing`, nor `Nothing?`, which does not count as a type argument
+         * making an extension callable, see #366, like for `Box<Int>` of `interface Box<out T>` for `V : CharSequence`,
+         * as no type other than `Nothing` is a subtype of the final `Int`, and of `CharSequence`, see [isEmptyIntersection],
          * as far as its uses there leave, see [ClassTypeParameterUse]: `V?` of `String?` in an invariant position is `String`,
          * or `String?`, `V & Any` of `String` is either as well, and so is `V!` of a Java supertype of `String?`,
          * while `V?` is no `String`, and `V & Any` no `String?`, see [classTypeParameterConstraintOf],
@@ -9174,13 +9180,18 @@ internal class DefaultKotlinIntrospector(
                             position.variance == KmVariance.OUT && !position.type.isNullable &&
                                 (position.use == ClassTypeParameterUse.NOT_NULLABLE || position.use == ClassTypeParameterUse.NOT_NULLABLE_PLATFORM)
                         } -> false
+                    // Nothing does not count as a type it takes, see #366, so that a type other than Nothing is a subtype
+                    // of the upper ones, and of the bounds of classes, like no Int of V : CharSequence, unless a lower one tells it
+                    candidates == null && lower.all { it.isNothingClass } &&
+                        (upper.any { it.isNothingClass } || isEmptyIntersection(upper + bounds.filter { it.classifier is KmClassifier.Class })) -> false
                     candidates == null -> lower.all { subtype ->
                         upper.all { isSubtypeAsTold(subtype, it) } &&
                             comparableBounds.all { bound -> isSubtypeAsTold(subtype, bound.substituted(mapOf(id to subtype))) } &&
                             satisfiesBounding(subtype)
                     }
                     else -> candidates.any { type ->
-                        (!isNotNullable || !type.isNullable) && upper.all { isSubtypeAsTold(type, it) } && lower.all { isSubtypeAsTold(it, type) } &&
+                        !type.isNothingClass &&
+                            (!isNotNullable || !type.isNullable) && upper.all { isSubtypeAsTold(type, it) } && lower.all { isSubtypeAsTold(it, type) } &&
                             // and the bounds referring only to itself, like Comparable<V> of V : Comparable<V>, of the type it takes
                             bounds.filter { bound -> !bound.refersOnlyTo { false } && bound.refersOnlyTo { it == id } }
                                 .all { bound -> isSubtypeAsTold(type, bound.substituted(mapOf(id to type))) } &&
@@ -9208,8 +9219,8 @@ internal class DefaultKotlinIntrospector(
          * The unification of the types of the extension, and of the supertypes of the class, which kotlinc takes as the same types,
          * see [isUnifiable], telling only of a contradiction which is certain, any other one leniently unified:
          * a type parameter, of the extension, or of the class, taking a type which refers to itself, like `T` of `W<T>`,
-         * which no type is, or two types of different classes, like `W<T>`, and `List<T>`, but for a platform type,
-         * or a class of Java, like `java.util.List`, which may be a built-in type, and a mutable collection the read-only one,
+         * which no type is, or two types of different classes, like `W<T>`, and `List<T>`, also `MutableList<T>`, and `List<T>`,
+         * but for a platform type, like `(Mutable)List<T>!`, or a class of Java, like `java.util.List`, which may be a built-in type,
          * or a nullable type the same as a not nullable one, like `T?`, and `T` of `T : Any`.
          * Their type arguments are unified as well, but for projections, and the nullability apart from the classes,
          * as `V` of `T?` is `T` either nullable, or not.
@@ -9261,11 +9272,12 @@ internal class DefaultKotlinIntrospector(
                 val otherKey = otherResolved.variableKey(isOtherResolvedExtension)
                 return when {
                     key != null && key == otherKey -> true
-                    key != null -> !occurs(key, otherResolved, isOtherResolvedExtension).also {
-                        bindings[key] = otherResolved to isOtherResolvedExtension
+                    // bound only when it does not occur in the type, not to store a cyclic binding
+                    key != null -> !occurs(key, otherResolved, isOtherResolvedExtension).also { isOccurring ->
+                        if (!isOccurring) bindings[key] = otherResolved to isOtherResolvedExtension
                     }
-                    otherKey != null -> !occurs(otherKey, resolved, isResolvedExtension).also {
-                        bindings[otherKey] = resolved to isResolvedExtension
+                    otherKey != null -> !occurs(otherKey, resolved, isResolvedExtension).also { isOccurring ->
+                        if (!isOccurring) bindings[otherKey] = resolved to isResolvedExtension
                     }
                     else -> unifyClasses(resolved, isResolvedExtension, otherResolved, isOtherResolvedExtension)
                 }
@@ -9273,8 +9285,9 @@ internal class DefaultKotlinIntrospector(
 
             // whether the types of classes can be the same, see Unifier
             private fun unifyClasses(type: KmType, isExtension: Boolean, other: KmType, isOtherExtension: Boolean): Boolean {
-                val name = (type.classifier as KmClassifier.Class).name.let { READ_ONLY_COLLECTION_TYPES[it] ?: it }
-                val otherName = (other.classifier as KmClassifier.Class).name.let { READ_ONLY_COLLECTION_TYPES[it] ?: it }
+                val name = (type.classifier as KmClassifier.Class).name
+                val otherName = (other.classifier as KmClassifier.Class).name
+                // a mutable collection is no read-only one, like MutableList<T> no List<T>, unless of a platform type, see #366
                 if (name != otherName) {
                     return type.flexibleTypeUpperBound != null || other.flexibleTypeUpperBound != null ||
                         name.startsWith("java/") || otherName.startsWith("java/")
@@ -9361,6 +9374,10 @@ internal class DefaultKotlinIntrospector(
              * also of the type parameters bounding it, and not nullable the subtypes of a not nullable one, like of `T : Any`.
              * The classes of platform types, which may be the mutable collections, and of Java, which may be built-in types,
              * tell nothing.
+             * The type parameters of the class take the types of the positions telling them, see [isClassTypeParameterTyped],
+             * and a type other than `Nothing`, or `Nothing?`, which does not count as a type argument making an extension callable,
+             * see #366: a subtype other than `Nothing`, or else a type of a class which is a subtype of all the classes of its supertypes,
+             * see [isEmptyIntersection].
              */
             fun isBoundedConsistently(): Boolean {
                 val variables = typeParameters.values.filter { it.id != receiverTypeParameterId }.map { it to true } +
@@ -9389,6 +9406,19 @@ internal class DefaultKotlinIntrospector(
                             bound.variableKey(isExtension) != null -> bounding += Triple(type, isExtension, bound)
                             bound.classifier is KmClassifier.Class -> bound.toldClassName()?.let { upper.getOrPut(root) { HashSet() } += it }
                         }
+                    }
+                }
+                // the types the type parameters of the class take in the positions which tell them, see isClassTypeParameterTyped,
+                // like String of V of Map<V, V> for Map<T, String>, a subtype of it
+                val matchedClassTypeParameterIds = HashSet<Int>()
+                classTypeParameterTypes.forEach { position ->
+                    val variable = typeParameterType(position.id).takeIf { it.variableKey(isExtension = false) != null } ?: return@forEach
+                    matchedClassTypeParameterIds += position.id
+                    if (!position.isTold) return@forEach
+                    val root = variable.root(isExtension = false)
+                    position.type.toldClassName()?.let { name ->
+                        if (position.variance != KmVariance.IN) upper.getOrPut(root) { HashSet() } += name
+                        if (position.variance != KmVariance.OUT) lower.getOrPut(root) { HashSet() } += name
                     }
                 }
                 constrainedBy.forEach { (id, type, variance) ->
@@ -9433,6 +9463,14 @@ internal class DefaultKotlinIntrospector(
                     names.all { name ->
                         name == NOTHING_CLASS_NAME || supertypeNames.all { supertypes.isSubclass(name, it) }
                     }
+                } && matchedClassTypeParameterIds.all { id ->
+                    // a type parameter of the class takes a type other than Nothing, which does not count, see #366:
+                    // a subtype told, or a type of a class which is a subtype of all the classes of the supertypes,
+                    // like no V of Map<V, V> for Map<T, String> of T : Enum<T>, a subtype of the final String
+                    val root = typeParameterType(id).root(isExtension = false)
+                    val supertypeNames = upper[root].orEmpty()
+                    NOTHING_CLASS_NAME !in supertypeNames &&
+                        (lower[root].orEmpty().any { it != NOTHING_CLASS_NAME } || !isEmptyIntersectionOfClasses(supertypeNames))
                 }
             }
 
@@ -9866,9 +9904,13 @@ internal class DefaultKotlinIntrospector(
          * like `Int`, and `CharSequence`, or `List`, or of two classes which are not interfaces, neither of them a subclass of the other,
          * like `Number`, and an open class, as far as their classes tell, the intersection kotlinc infers as `Nothing` then.
          */
-        private fun isEmptyIntersection(types: List<KmType>): Boolean {
+        private fun isEmptyIntersection(types: List<KmType>): Boolean =
+            isEmptyIntersectionOfClasses(types.mapNotNullTo(LinkedHashSet()) { (it.classifier as? KmClassifier.Class)?.name })
+
+        // whether no type is a subtype of all the classes of the given metadata names, see isEmptyIntersection
+        private fun isEmptyIntersectionOfClasses(classNames: Set<String>): Boolean {
             // Nothing is a subtype of any type
-            val names = types.mapNotNullTo(LinkedHashSet()) { (it.classifier as? KmClassifier.Class)?.name } - NOTHING_CLASS_NAME
+            val names = classNames - NOTHING_CLASS_NAME
             if (names.size < 2) return false
             fun isClass(name: String) = classHeader(name)?.kind
                 .let { it != null && it != ClassKind.INTERFACE && it != ClassKind.ANNOTATION_CLASS }
@@ -15007,8 +15049,8 @@ private val NO_PROJECTIONS = TypeProjections(emptyMap())
  * The type arguments of the [type] of the [kmClass], see [TypeProjections], a projection repeating the variance
  * of its type parameter no projection, unless they are taken as invariant, when [isInvariant], like of a Java class,
  * but for `out Nothing`, which kotlinc matches against a type parameter of an extension, like `T` of `MutableCollection<T>`,
- * and a projection of a type referring to a type parameter, like `out V`, which can be `Nothing`,
- * or `null` if they do not match, like of a raw Java type.
+ * unlike `out V`, which only `V` of `Nothing` makes `out Nothing`, not counting as a type argument making an extension callable,
+ * see #366, or `null` if they do not match, like of a raw Java type.
  */
 private fun projectionsOf(kmClass: KmClass, type: KmType, isInvariant: Boolean = false): TypeProjections? {
     if (kmClass.typeParameters.size != type.arguments.size) return null
@@ -15016,8 +15058,7 @@ private fun projectionsOf(kmClass: KmClass, type: KmType, isInvariant: Boolean =
         kmClass.typeParameters.zip(type.arguments).associate { (typeParameter, argument) ->
             val argumentType = argument.type
             val isRedundant = argument.variance != KmVariance.INVARIANT && argument.variance == typeParameter.variance &&
-                (!isInvariant || argumentType == null || !argumentType.refersOnlyTo { false } ||
-                    (argumentType.classifier as? KmClassifier.Class)?.name == "kotlin/Nothing")
+                (!isInvariant || argumentType == null || (argumentType.classifier as? KmClassifier.Class)?.name == "kotlin/Nothing")
             typeParameter.id to if (argumentType != null && isRedundant) {
                 KmTypeProjection(KmVariance.INVARIANT, argumentType)
             } else {
