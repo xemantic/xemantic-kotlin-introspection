@@ -541,6 +541,59 @@ class KotlinCharSequenceSorter : KotlinSortBase() {
     fun <T : CharSequence> sort(x: T) {}
 }
 
+// and so is the overload of an intermediate class kept apart from the function it overloads in a subclass inheriting both (#372)
+open class KotlinOpenCharSequenceSorter : KotlinSortBase() {
+    open fun <T : CharSequence> sort(x: T) {}
+}
+
+class KotlinCharSequenceSorterSub : KotlinOpenCharSequenceSorter()
+
+// A definitely not nullable type of a type parameter is another type than the type parameter itself (#372)
+open class KotlinPlainBase {
+    open fun <T> plain(x: T) {}
+}
+
+class KotlinDefinitelyNonNullOverload : KotlinPlainBase() {
+    fun <T> plain(x: T & Any) {}
+}
+
+open class KotlinOpenDefinitelyNonNullOverload : KotlinPlainBase() {
+    open fun <T> plain(x: T & Any) {}
+}
+
+class KotlinDefinitelyNonNullOverloadSub : KotlinOpenDefinitelyNonNullOverload()
+
+// and so is the type variable of a Java class annotated not null, given a Kotlin type parameter, Y & Any
+class JavaNonNullElementBoundsOverload<Y> : com.xemantic.kotlin.introspection.test.other.JavaNonNullElementBounds<Y>() {
+    fun <T : List<Y>> elements(x: T) {}
+}
+
+// A Java method taking a type variable of its class given a nullable type argument by Kotlin, which takes it nullable (#372)
+class JavaGenericBothOfNullable : com.xemantic.kotlin.introspection.test.other.JavaGenericBoth<CharSequence?>() {
+    fun <T : CharSequence?> both(a: CharSequence, b: T) {}
+}
+
+class JavaGenericBothOfNullableTypeParameter<Y> : com.xemantic.kotlin.introspection.test.other.JavaGenericBoth<Y?>() {
+    fun <T : Y?> both(a: Y, b: T) {}
+}
+
+// but a type variable annotated not null is of the type given, not nullable, also when given a nullable one
+class JavaGenericNotNullOfNullable : com.xemantic.kotlin.introspection.test.other.JavaGenericBoth<String?>() {
+    override fun notNull(x: String) {}
+}
+
+class JavaGenericNotNullOfNullableTypeParameter<Y> : com.xemantic.kotlin.introspection.test.other.JavaGenericBoth<Y?>() {
+    override fun notNull(x: Y & Any) {}
+}
+
+class JavaGenericBoundedDefinitelyNonNull<Y> : com.xemantic.kotlin.introspection.test.other.JavaGenericBoth<Y>() {
+    override fun <T : Y & Any> bounded(x: T) {}
+}
+
+class JavaNonNullElementBoundsOverride<Y> : com.xemantic.kotlin.introspection.test.other.JavaNonNullElementBounds<Y>() {
+    override fun <T : List<Y & Any>> elements(x: T) {}
+}
+
 // A Java method type variable bounded by a type variable of the class is erased to its type argument
 class JavaClassBoundSubclass : JavaClassBoundBase<CharSequence>() {
     override fun <T : CharSequence> bounded(x: T) {}

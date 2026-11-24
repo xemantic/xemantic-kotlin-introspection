@@ -6126,6 +6126,107 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve inherited function of another bound next to Kotlin function it overloads`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.KotlinCharSequenceSorterSub.sort"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.KotlinCharSequenceSorterSub.sort [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.KotlinOpenCharSequenceSorter
+            fun <T : CharSequence> sort(x: T)
+            // inherited from com.xemantic.kotlin.introspection.test.KotlinSortBase
+            fun <T : Comparable<T>> sort(x: T)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not mark function taking definitely not nullable type as override of one taking type parameter`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.KotlinDefinitelyNonNullOverload.plain"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.KotlinDefinitelyNonNullOverload.plain [page 1/1]
+            fun <T> plain(x: T & Any)
+            // inherited from com.xemantic.kotlin.introspection.test.KotlinPlainBase
+            fun <T> plain(x: T)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve inherited function taking definitely not nullable type next to one taking type parameter`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.KotlinDefinitelyNonNullOverloadSub.plain"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.KotlinDefinitelyNonNullOverloadSub.plain [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.KotlinOpenDefinitelyNonNullOverload
+            fun <T> plain(x: T & Any)
+            // inherited from com.xemantic.kotlin.introspection.test.KotlinPlainBase
+            fun <T> plain(x: T)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not mark function bounded by type parameter as override of Java one bounded by type variable annotated not null`() {
+        // kotlinc: 'elements' hides member of supertype, when marked override: overrides nothing, as the bound is List<Y & Any>
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaNonNullElementBoundsOverload.elements") should {
+            have("fun <T : List<Y>> elements(x: T)" in lines())
+            have(lines().any { it.startsWith("// inherited from ") })
+        }
+    }
+
+    @Test
+    fun `should not mark function taking not nullable type as override of Java one taking type variable given nullable type`() {
+        // kotlinc: overrides nothing, as both(E, T) of JavaGenericBoth<CharSequence?> takes CharSequence?
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaGenericBothOfNullable.both") should {
+            have("fun <T : CharSequence?> both(a: CharSequence, b: T)" in lines())
+            have(lines().any { it.startsWith("// inherited from ") })
+        }
+    }
+
+    @Test
+    fun `should not mark function taking type parameter as override of Java one taking type variable given it nullable`() {
+        // kotlinc: overrides nothing, as both(E, T) of JavaGenericBoth<Y?> takes Y?,
+        // though of the same JVM signature, both(Object, Object), which still leaves the Java method unlisted
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaGenericBothOfNullableTypeParameter.both") should {
+            have("fun <T : Y?> both(a: Y, b: T)" in lines())
+        }
+    }
+
+    @Test
+    fun `should mark function taking not nullable type as override of Java one taking type variable annotated not null given nullable type`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaGenericNotNullOfNullable.notNull") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaGenericNotNullOfNullable.notNull [page 1/1]
+            override fun notNull(x: String)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark function taking definitely not nullable type as override of Java one taking type variable annotated not null`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaGenericNotNullOfNullableTypeParameter.notNull") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaGenericNotNullOfNullableTypeParameter.notNull [page 1/1]
+            override fun notNull(x: Y & Any)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark function bounded by definitely not nullable type as override of Java one bounded by platform type variable`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaGenericBoundedDefinitelyNonNull.bounded"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaGenericBoundedDefinitelyNonNull.bounded [page 1/1]
+            override fun <T : Y & Any> bounded(x: T)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark function bounded by definitely not nullable type as override of Java one bounded by type variable annotated not null`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaNonNullElementBoundsOverride.elements"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaNonNullElementBoundsOverride.elements [page 1/1]
+            override fun <T : List<Y & Any>> elements(x: T)
+        """.trimIndent()
+    }
+
+    @Test
     fun `should mark overrides of Any members of data class implementing Java interface`() {
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.SerializableData"
@@ -9714,9 +9815,63 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve method of Java class annotated nullable merged with member of JDK interface given nullable type apart from Kotlin member`() {
+        // apply(null) compiles, returning String?, apply("") returns CharSequence, and a concrete subclass has to implement
+        // the apply(x: String) of CharSequenceApplier, which the apply(@Nullable String) of the Java class does not implement
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaNullableAnnotatedStringApplierNullableFunctionCharSequenceApplierJoin.apply"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaNullableAnnotatedStringApplierNullableFunctionCharSequenceApplierJoin.apply [page 1/1]
+            // inherited from java.util.function.Function
+            open fun apply(arg0: String?): String?
+            // inherited from com.xemantic.kotlin.introspection.test.CharSequenceApplier
+            fun apply(x: String): CharSequence
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member apart from method of Java class annotated nullable merged by Kotlin join next to nullable Kotlin member`() {
+        // the join picks no member taking no null, so that the apply(x: String) of CharSequenceApplier stays apart below it
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.NullableStringApplierJavaNullableAnnotatedStringApplierNullableFunctionCharSequenceApplierJoin.apply"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NullableStringApplierJavaNullableAnnotatedStringApplierNullableFunctionCharSequenceApplierJoin.apply [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.NullableStringApplier
+            open fun apply(x: String?): String?
+            // inherited from com.xemantic.kotlin.introspection.test.CharSequenceApplier
+            fun apply(x: String): CharSequence
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve members merged by Kotlin join once below it also of nullable Kotlin member merged by the join`() {
+        // apply(null) does not compile, apply("") returns String, and a concrete subclass implements nothing
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.StringApplierJavaStringApplierNullableFunctionApplierNullableApplierJoin.apply"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.StringApplierJavaStringApplierNullableFunctionApplierNullableApplierJoin.apply [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.StringApplier
+            open fun apply(x: String): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member merged by Kotlin join picking Kotlin member taking no null once next to Kotlin member of less specific return type`() {
+        // apply(null) does not compile, apply("") returns String, and a concrete subclass implements nothing
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.CharSequenceApplierJavaStringApplierNullableFunctionApplierJoin.apply"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.CharSequenceApplierJavaStringApplierNullableFunctionApplierJoin.apply [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.StringApplier
+            open fun apply(x: String): String
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve member of JDK interface given nullable type merged by Kotlin join apart from member of body of Kotlin interface named again`() {
         // apply(null) compiles, returning String, as the Kotlin interface is no supertype of the join, which merges only its own members,
-        // and apply(x = null) compiles too, as the member of Function takes the name of the one of StringApplier, merged by the join
+        // and apply(x = null) compiles too, as the member of Function takes the name of the one of StringApplier, merged by the join,
+        // and the apply(String) of the Java class, merged by the join too, implements it, so that a concrete subclass implements nothing (#374)
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.InheritedDefaultStringApplierJavaStringApplierHalfNullableFunctionApplierJoin.apply"
         ) sameAsKotlin """
@@ -9724,7 +9879,46 @@ class KotlinIntrospectorTest {
             // inherited from com.xemantic.kotlin.introspection.test.DefaultStringApplier
             open fun apply(x: String): String
             // inherited from java.util.function.Function
-            fun apply(x: String?): String
+            open fun apply(x: String?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member merged by Kotlin interface join picking method of Java interface once with member of body of superclass`() {
+        // accept(null) does not compile, and a concrete subclass implements nothing
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.OpenStringAcceptorJavaStringAcceptorInterfaceNullableConsumerStringAcceptorJoin.accept"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.OpenStringAcceptorJavaStringAcceptorInterfaceNullableConsumerStringAcceptorJoin.accept [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.OpenStringAcceptor
+            open fun accept(s: String)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of JDK interface given nullable type picked by Kotlin join apart from Kotlin member taking no null as one member`() {
+        // apply("") returns CharSequence, apply(null) compiles, returning String, and a concrete subclass has to implement
+        // only the apply(x: String) of CharSequenceApplier, as the one of StringApplier is merged by the join with the picked one
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.CharSequenceApplierJavaStringApplierHalfNullableFunctionApplierJoin.apply"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.CharSequenceApplierJavaStringApplierHalfNullableFunctionApplierJoin.apply [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.CharSequenceApplier
+            fun apply(x: String): CharSequence
+            // inherited from java.util.function.Function
+            open fun apply(x: String?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of JDK interface given nullable type picked by Kotlin join merged with nullable Kotlin member as one member`() {
+        // apply(null) compiles, returning String, and a concrete subclass implements nothing
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.NullableStringApplierJavaStringApplierHalfNullableFunctionApplierJoin.apply"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NullableStringApplierJavaStringApplierHalfNullableFunctionApplierJoin.apply [page 1/1]
+            // inherited from java.util.function.Function
+            open fun apply(x: String?): String
         """.trimIndent()
     }
 
@@ -12389,6 +12583,141 @@ class KotlinIntrospectorTest {
         // kotlinc rejects x.hidden = 1: cannot access 'hidden', it is private in JavaSyntheticPropertyHiddenOverKotlinSetter
         resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertyHiddenOverKotlinSetter.hidden") should {
             have("// also property: val hidden" in lines())
+        }
+    }
+
+    @Test
+    fun `should hint synthetic property as var when private setter of generic superclass takes its type variable`() {
+        // kotlinc keeps the private setValue(T) of the generic superclass unsubstituted, of no String,
+        // and assigns x.value = "" by the public setValue(String) of the class above it
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertyGenericPrivateSetter.value") should {
+            have("// also property: var value" in lines())
+            have("open fun setValue(arg0: String?)" in lines())
+        }
+    }
+
+    @Test
+    fun `should hint synthetic property as val when protected setter of generic superclass takes its type variable`() {
+        // kotlinc substitutes setP(T), unlike a private one, and rejects x.p = 1: cannot access, it is protected
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertyGenericHiddenSetter.p") should {
+            have("// also property: val p" in lines())
+            have(lines().none { " setP(" in it })
+        }
+    }
+
+    @Test
+    fun `should hint synthetic property as val when package-private setter of generic superclass takes its type variable`() {
+        // kotlinc substitutes setQ(T), unlike a private one, and rejects x.q = 1: cannot access, it is package-private
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertyGenericHiddenSetter.q") should {
+            have("// also property: val q" in lines())
+            have(lines().none { " setQ(" in it })
+        }
+    }
+
+    @Test
+    fun `should hint synthetic property as val when protected setter of generic superclass below Java class takes its type variable`() {
+        // kotlinc substitutes setP(T), unlike a private one, and rejects x.p = 1: cannot access, it is protected
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertyGenericHiddenSetterBelowJava.p") should {
+            have("// also property: val p" in lines())
+            have(lines().none { " setP(" in it })
+        }
+    }
+
+    @Test
+    fun `should hint synthetic property as val when private setter of generic superclass takes type argument of its getter`() {
+        // kotlinc takes the private setR(Integer), of the Int! of the substituted getR(): T, and rejects x.r = 1: cannot access
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertyGenericHiddenSetter.r") should {
+            have("// also property: val r" in lines())
+            have(lines().none { " setR(" in it })
+        }
+    }
+
+    @Test
+    fun `should hint synthetic property as val when package-private setter of generic superclass takes type variable given type of getter`() {
+        // kotlinc substitutes setS(T) to the Int! of getS(): Integer, and rejects x.s = 1: cannot access
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertyGenericHiddenSetter.s") should {
+            have("// also property: val s" in lines())
+            have(lines().none { " setS(" in it })
+        }
+    }
+
+    @Test
+    fun `should hint synthetic property as val when private setter of generic superclass takes no type variable`() {
+        // kotlinc takes the private setCount(Integer), unsubstituted too, and rejects x.count = 1: cannot access
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertyGenericPrivateSetter.count") should {
+            have("// also property: val count" in lines())
+            have(lines().none { " setCount(" in it })
+        }
+    }
+
+    @Test
+    fun `should hint synthetic property as val when private setter is declared below getter class`() {
+        // kotlinc rejects x.hidden = 1: cannot access, by the private setHidden(Integer) of JavaSyntheticPropertyHiddenSetterBelow
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertyHiddenSetterBelow.hidden") should {
+            have("// also property: val hidden" in lines())
+            have(lines().none { " setHidden(" in it })
+        }
+    }
+
+    @Test
+    fun `should hint synthetic property as val when package-private setter is declared above getter class`() {
+        // kotlinc rejects x.hidden = 1 outside the package: cannot access, by setHidden(Integer) of JavaSyntheticPropertyPackageSetterMid
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertyPackageSetterAbove.hidden") should {
+            have("// also property: val hidden" in lines())
+            have(lines().none { " setHidden(" in it })
+        }
+    }
+
+    @Test
+    fun `should tell JVM signature of synthetic property setter next to its JVM twin`() {
+        // x.w = 1 runs setW(Integer), while x.setW(1) runs the setW(int) implementing the Kotlin setW(w: Int)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertyBoxedSetterTwin.w") should {
+            have("// also property: var w" in lines())
+            have("open fun setW(arg0: Int) // setW(Integer) on the JVM" in lines())
+        }
+    }
+
+    @Test
+    fun `should hint synthetic property as val when internal setter of generic superclass takes its type variable`() {
+        // kotlinc rejects x.p = 1 in another module: cannot access, it is internal
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertyInternalSetterDirect.p") should {
+            have("// also property: val p" in lines())
+        }
+    }
+
+    @Test
+    fun `should hint synthetic property as var when internal setter is reached through generic Kotlin subclass`() {
+        // kotlinc no longer sees the internal setP(p: T) through KotlinSyntheticPropertyInternalSetterMid<W>,
+        // and assigns x.p = 1 by the public setP(int) of JavaSyntheticPropertyInternalSetterTop
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertyInternalSetterThroughKotlin.p") should {
+            have("// also property: var p" in lines())
+            have("fun setP(arg0: Int)" in lines())
+        }
+    }
+
+    @Test
+    fun `should hint synthetic property as var when internal setter is reached through generic Java subclass`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertyInternalSetterThroughJava.p") should {
+            have("// also property: var p" in lines())
+            have("fun setP(arg0: Int)" in lines())
+        }
+    }
+
+    @Test
+    fun `should hint synthetic property as val when Kotlin class declares private setter`() {
+        // kotlinc takes the private setK(Int?) before the setK(int) of the Java superclass, and rejects x.k = 1: cannot access
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertyKotlinPrivateSetters.k") should {
+            have("// also property: val k" in lines())
+            have(lines().none { " setK(" in it })
+        }
+    }
+
+    @Test
+    fun `should hint synthetic property as val when Kotlin class declares internal setter`() {
+        // kotlinc takes the internal setI(Int?) before the setI(int) of the Java superclass, and rejects x.i = 1 in another module
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertyKotlinPrivateSetters.i") should {
+            have("// also property: val i" in lines())
+            have(lines().none { " setI(" in it })
         }
     }
 
@@ -24426,6 +24755,17 @@ class KotlinIntrospectorTest {
         resolver.resolve("com.xemantic.kotlin.introspection.test.InternalExposedMembersExposing.f") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.InternalExposedMembersExposing.f [page 1/1]
             abstract fun f(): Int // declared by internal com.xemantic.kotlin.introspection.test.InternalExposedMembers
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve override of internal supertype exposed by class of another return type than Java member it overrides`() {
+        // kotlinc reads x.getV() as Int?, of the override, not as the Int! of the Java method
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InternalNullableGetterOverrideExposing.getV") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InternalNullableGetterOverrideExposing.getV [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedAccessors
+            // also property: var v
+            open fun getV(): Int?
         """.trimIndent()
     }
 
