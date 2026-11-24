@@ -206,8 +206,9 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   which a lambda, a callable reference, and a value of the function type call —
   so probe a parameter of a function type with an anonymous function too, see `acceptsTypeArguments`.
 
-- A lambda, or a function reference, is typed against the type of the parameter of each candidate, so a member accepting every value
-  of the type of an extension's parameter may still not take them, and kotlinc calls the extension — see `isConvertedTo`, `functionSupertypeOf`.
+- A lambda, or a function reference, is typed against the type of the parameter of each candidate,
+  so a member accepting every value of the type of an extension's parameter may still not take them,
+  and kotlinc calls the extension — see `isConvertedTo`, `functionSupertypeOf`.
   Probe a parameter of a function type, or of a functional interface, also with lambdas with and without explicit parameters,
   anonymous functions, with and without a receiver, references to functions of another return type, with a default parameter,
   and suspend ones, and a generic class also on projected and function-typed receivers.
