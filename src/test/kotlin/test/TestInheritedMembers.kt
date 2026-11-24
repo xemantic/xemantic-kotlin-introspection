@@ -1955,6 +1955,15 @@ abstract class JavaStringApplierNullableFunctionApplierNullableApplierJoin :
 abstract class StringApplierJavaStringApplierNullableFunctionApplierNullableApplierJoin :
     StringApplier, JavaStringApplierNullableFunctionApplierNullableApplierJoin()
 
+// the apply of the Java class, annotated nullable, is merged with the one of Function<String?, String?>, not with the apply(x: String)
+// of CharSequenceApplier, which stays apart, also below the join, next to a Kotlin member taking a nullable type (#374)
+abstract class JavaNullableAnnotatedStringApplierNullableFunctionCharSequenceApplierJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaNullableAnnotatedStringApplier(), java.util.function.Function<String?, String?>,
+    CharSequenceApplier
+
+abstract class NullableStringApplierJavaNullableAnnotatedStringApplierNullableFunctionCharSequenceApplierJoin :
+    NullableStringApplier, JavaNullableAnnotatedStringApplierNullableFunctionCharSequenceApplierJoin()
+
 interface DefaultStringApplier {
     fun apply(x: String): String = x
 }

@@ -9514,6 +9514,35 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve method of Java class annotated nullable merged with member of JDK interface given nullable type apart from Kotlin member`() {
+        // apply(null) compiles, returning String?, apply("") returns CharSequence, and a concrete subclass has to implement
+        // the apply(x: String) of CharSequenceApplier, which the apply(@Nullable String) of the Java class does not implement
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaNullableAnnotatedStringApplierNullableFunctionCharSequenceApplierJoin.apply"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaNullableAnnotatedStringApplierNullableFunctionCharSequenceApplierJoin.apply [page 1/1]
+            // inherited from java.util.function.Function
+            open fun apply(arg0: String?): String?
+            // inherited from com.xemantic.kotlin.introspection.test.CharSequenceApplier
+            fun apply(x: String): CharSequence
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member apart from method of Java class annotated nullable merged by Kotlin join next to nullable Kotlin member`() {
+        // the join picks no member taking no null, so that the apply(x: String) of CharSequenceApplier stays apart below it
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.NullableStringApplierJavaNullableAnnotatedStringApplierNullableFunctionCharSequenceApplierJoin.apply"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NullableStringApplierJavaNullableAnnotatedStringApplierNullableFunctionCharSequenceApplierJoin.apply [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.NullableStringApplier
+            open fun apply(x: String?): String?
+            // inherited from com.xemantic.kotlin.introspection.test.CharSequenceApplier
+            fun apply(x: String): CharSequence
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve members merged by Kotlin join once below it also of nullable Kotlin member merged by the join`() {
         // apply(null) does not compile, apply("") returns String, and a concrete subclass implements nothing
         resolver.resolve(
