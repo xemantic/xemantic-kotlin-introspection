@@ -23323,6 +23323,16 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve Kotlin member implemented by Java member as operator`() {
+        // the Kotlin member is listed in place of the get(String) implementing it, an operator for the compiler, so that x[""] compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.StringJavaGetImpl.get") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.StringJavaGetImpl.get [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.GenericGet
+            open operator fun get(t: String): String
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve Java member taking String implementing Kotlin generic one given String by Kotlin interface and String annotated nullable as taking platform type`() {
         // StringPut gives String along a path of its own, joining no other one, which disagrees with the @Nullable String
         // of the path next to it, so that put(String) takes String!, and put(t = null) compiles

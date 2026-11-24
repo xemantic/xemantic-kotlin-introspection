@@ -3753,7 +3753,15 @@ internal class DefaultKotlinIntrospector(
          * only when [isInheritedByOpenClass], as otherwise no member is rendered open, nor final.
          */
         fun renderedMember(isInheritedByOpenClass: Boolean): Member {
-            val member = effectiveMember
+            val member = effectiveMember.let { member ->
+                // the method of a Java class implementing the member is an operator for the compiler, like a get(String),
+                // which a call like x[""] takes then, also when the Kotlin member is not declared as one
+                val function = (member as? Member.Function)?.function
+                val isJavaOperator = (implementingCandidate?.effectiveMember as? Member.Function)?.function?.isOperator == true
+                if (function == null || function.isOperator || !isJavaOperator) member else {
+                    Member.Function(function.withModality(function.modality).also { it.isOperator = true }, (member as Member.Function).declaration)
+                }
+            }
             val modality = (implementationModality ?: interfaceModality)?.takeUnless { it == member.modality } ?: return member
             val isRendered = modality == Modality.ABSTRACT || kmClass.kind != ClassKind.INTERFACE || isInheritedByOpenClass
             return if (isRendered) member.withModality(modality) else member

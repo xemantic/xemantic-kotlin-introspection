@@ -1308,6 +1308,15 @@ abstract class StringJavaPutOfStringPutAndNullableStringImpl :
 
 fun StringJavaPutOfStringPutAndNullableStringImpl.putNull(): String = put(t = null)
 
+interface GenericGet<T> {
+    fun get(t: T): T
+}
+
+// the get(String) of the Java class is an operator for the compiler, though the get(t: T) of GenericGet is not
+abstract class StringJavaGetImpl : com.xemantic.kotlin.introspection.test.other.JavaStringGet()
+
+fun StringJavaGetImpl.getIndexed(): String = this[""]
+
 // a Kotlin interface giving Int, not nullable, to the generic JavaGenericMidPut<T>
 interface IntGenericMidPut : com.xemantic.kotlin.introspection.test.other.JavaGenericMidPut<Int>
 
