@@ -294,6 +294,11 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   a visible member rendered abstract in place of the hidden one kotlinc demands — confirm a changed abstract count
   by overriding each candidate signature in a concrete subclass of its own.
 
+- The class-file path of `bridgeSignatures` cannot be told from its reflection fallback by a test, like one of a class file too new for ASM:
+  the bridges are read only for a reflected `Method`, so the declared methods of the class reflect, telling the same bridges,
+  while a Java class whose methods do not reflect, like of a parameter class missing, is not described by kotlin-reflect either,
+  its member listed from the built-in type instead (#370).
+
 ## Anti-patterns to avoid
 
 - Do not add content to this file that is already discoverable by reading the source or build scripts — that inflates context without adding signal, reducing AI agent task success rates (see [arxiv 2602.11988](https://arxiv.org/abs/2602.11988)).
