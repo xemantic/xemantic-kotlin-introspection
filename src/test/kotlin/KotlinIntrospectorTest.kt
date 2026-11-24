@@ -17383,6 +17383,21 @@ class KotlinIntrospectorTest {
             interface DeepStringSink : DeepSink<String, DeepComparable>
             // from com.xemantic.kotlin.introspection.test.deep
             fun <T> T.deepAny()
+            fun <T> DeepSink<T, T>.deepSinkOfAny()
+            fun <T : CharSequence> DeepSink<T, T>.deepSinkOfChars()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extensions inferring intersection of upper types of class comparable to what is comparable to it`() {
+        // kotlinc fails on x.deepSinkOfAny(), x.deepSinkOfChars(), and x.deepSinkOfComparable() with: Arguments depth is too high
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.deep.DeepComparableSink"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.deep.DeepComparableSink [page 1/1]
+            interface DeepComparableSink : DeepSink<DeepComparable, Comparable<DeepComparable>>
+            // from com.xemantic.kotlin.introspection.test.deep
+            fun <T> T.deepAny()
         """.trimIndent()
     }
 

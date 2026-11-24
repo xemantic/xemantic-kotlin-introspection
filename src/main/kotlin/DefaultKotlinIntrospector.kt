@@ -9180,12 +9180,17 @@ internal class DefaultKotlinIntrospector(
                 // a type parameter of the class standing for any type, which the inference is not modelled for,
                 // given each of the witnesses, see witnessed, also next to a function type, see #376,
                 // the extension callable when kotlinc infers its type parameters for one of them, which is not Nothing, see #366
-                if (isNotModelled && isModelled && isBoundedByEachOther && !isWitness && kmClass.typeParameters.isNotEmpty()) {
+                if (!isInferredByCall && isNotModelled && isModelled && isBoundedByEachOther && !isWitness && kmClass.typeParameters.isNotEmpty()) {
                     val isWitnessedCallable = witnessed(listOf(receiver) + typeParameters.flatMap { it.upperBounds }, located, isFunctionTypeTold = true)
                         .any { witnessed ->
                             val witnessedReached = witnessed.types[classReceiverIndexKey(receiver)]
+                            // kotlinc failing on one of them, see TypeArgumentsTooDeep, tells nothing of the other ones
                             witnessed.nothingWitnessedIds.isEmpty() && witnessedReached != null && witnessedReached.none { it.refersToNothingClass() } &&
-                                witnessed.matches(isCollecting = true, witnessedReached) { isInferredByCall(referred, referredByReturnType) == true }
+                                try {
+                                    witnessed.matches(isCollecting = true, witnessedReached) { isInferredByCall(referred, referredByReturnType) == true }
+                                } catch (_: TypeArgumentsTooDeep) {
+                                    false
+                                }
                         }
                     if (isWitnessedCallable) return true
                 }
@@ -10022,6 +10027,7 @@ internal class DefaultKotlinIntrospector(
          * as kotlinc does, see #376: each one it is a supertype of, the class itself for the type parameter receiver,
          * a subtype of each one it is a subtype of, incorporated into the constraints,
          * and of each other one it is a supertype of, for their common supertype, see [ReceiverMatcher.CallInference],
+         * or, of none it is a supertype of, the ones it is a subtype of of each other, for their intersection,
          * only for kotlinc to fail on them, see [TypeArgumentsTooDeep], thrown then, like on whether `DeepComparable` is
          * a `Comparable<DeepComparable>`, of `interface DeepComparable : Comparable<Comparable<DeepComparable>>` for `T : Comparable<T>`,
          * asking the same again, endlessly, which matching the types one by one does not ask.
@@ -10047,6 +10053,16 @@ internal class DefaultKotlinIntrospector(
                     lower.drop(index + 1).forEach { other ->
                         typeMatcher.isToldSubtype(type, other)
                         typeMatcher.isToldSubtype(other, type)
+                    }
+                }
+                // and, of no type it is a supertype of, fixed as the intersection of the ones it is a subtype of,
+                // without the ones which are supertypes of another one (ResultTypeResolver.findSubType, intersectTypes)
+                if (lower.isEmpty()) {
+                    upper.forEachIndexed { index, type ->
+                        upper.drop(index + 1).forEach { other ->
+                            typeMatcher.isToldSubtype(type, other)
+                            typeMatcher.isToldSubtype(other, type)
+                        }
                     }
                 }
             }
@@ -12214,8 +12230,16 @@ internal class DefaultKotlinIntrospector(
                     // any of its types, which constrains nothing, and tells the same when it is a subtype,
                     // each of them told, like kotlinc tells each fork of the constraint system, see #376,
                     // failing on any of them, see TypeArgumentsTooDeep, like on String & DeepComparable for Comparable<String & DeepComparable>
-                    val isSubtypes = candidates.map { constrainsSubtype(it, supertype, derivedFrom, isFromDeclaredUpperBound) }
-                    if (isSubtypes.any { it }) return true
+                    val subtypeIndex = candidates.indexOfFirst { constrainsSubtype(it, supertype, derivedFrom, isFromDeclaredUpperBound) }
+                    if (subtypeIndex >= 0) {
+                        // the other ones told only for kotlinc to fail on them, constraining nothing
+                        candidates.drop(subtypeIndex + 1).forEach { candidate ->
+                            val saved = Saved()
+                            constrainsSubtype(candidate, supertype, derivedFrom, isFromDeclaredUpperBound)
+                            saved.restore()
+                        }
+                        return true
+                    }
                     val intersected = intersectedCovariantly(candidates, supertypeName, isTold = false) ?: return false
                     return constrainsSubtype(intersected, supertype, derivedFrom, isFromDeclaredUpperBound)
                 }

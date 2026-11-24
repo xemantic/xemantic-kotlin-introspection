@@ -41,6 +41,15 @@ fun <T : Comparable<T>> DeepSink<T, T>.deepSinkOfComparable() {}
 
 interface DeepStringSink : DeepSink<String, DeepComparable>
 
+// an intersection of upper types only, see #376: kotlinc infers T as DeepComparable & Comparable<DeepComparable>,
+// telling first whether one of them is a subtype of the other, endlessly, so that neither x.deepSinkOfAny() compiles,
+// nor x.deepSinkOfChars(), while both do on a DeepStringSink, though String & DeepComparable is an empty intersection
+fun <T> DeepSink<T, T>.deepSinkOfAny() {}
+
+fun <T : CharSequence> DeepSink<T, T>.deepSinkOfChars() {}
+
+interface DeepComparableSink : DeepSink<DeepComparable, Comparable<DeepComparable>>
+
 // two types the type parameter is inferred from, see #376: kotlinc tells their common supertype, asking whether
 // DeepComparable is a Comparable<DeepComparable>, endlessly
 interface DeepSource<out A, out B>

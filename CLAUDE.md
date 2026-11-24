@@ -145,9 +145,8 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 - A kotlinc crash, like `IllegalStateException: Arguments depth is too high` (see `matchesOnce`), ends the whole compilation:
   a batch probe reports one such row per run, with no `error:` line, so keep the classes causing it out of a batch.
 
-- kotlinc's constraint system tells every fork of a subtype check, unlike a plain one stopping at the first which holds:
-  `String & DeepComparable <: Comparable<String & DeepComparable>` crashes it with `Arguments depth is too high` while incorporating,
-  though the `String` part alone holds — so a crash is not told by the path the model takes, see `constrainsSubtypeOfIntersection`, `tellSubtypesInferredFrom` (#376).
+- Whether kotlinc crashes (`Arguments depth is too high`) is not told by the path the model takes to its verdict,
+  see `constrainsSubtypeOfIntersection`, `tellSubtypesInferredFrom` (#376).
 
 - In a kotlinc probe `import java.util.function.*` does not bring `Function`: the default import of `kotlin.Function` wins over a star import,
   so `Function<String, String>` fails with `one type argument expected` — import `java.util.function.Function` explicitly.
