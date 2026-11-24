@@ -1828,6 +1828,50 @@ open class KotlinSyntheticPropertyPrimitiveSetter {
 
 class SyntheticPropertyHiddenOverKotlinSetter : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyHiddenOverKotlinSetter()
 
+// The private setters of a generic Java superclass, kept unsubstituted: setValue(T) passed over for the public setValue(String)
+// of its superclass, unlike setCount(Integer), taken before the public setCount(int)
+abstract class SyntheticPropertyGenericPrivateSetter :
+    com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyGenericPrivateSetter<String>()
+
+// The protected and package-private setters of a generic Java superclass, substituted, taken before the public ones above (#372)
+class SyntheticPropertyGenericHiddenSetter :
+    com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyGenericHiddenSetterMid<Int>()
+
+class SyntheticPropertyGenericHiddenSetterBelowJava : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyGenericHiddenSetterLow()
+
+// The private setter of a Java class below the one declaring the getter, taken before the public one of the class above
+class SyntheticPropertyHiddenSetterBelow : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyHiddenSetterBelow()
+
+// The package-private setter of a Java class above the one declaring the getter, taken before the public one of its superclass
+class SyntheticPropertyPackageSetterAbove : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyPackageSetterGetter()
+
+// The setW(@NonNull Integer) of a Java class, taken for the synthetic property, next to its JVM twin, a Kotlin setW(w: Int)
+interface KotlinSyntheticPropertyPrimitiveSetterW {
+    fun setW(w: Int)
+}
+
+abstract class SyntheticPropertyBoxedSetterTwin : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyBoxedSetterTwin()
+
+// The internal setP(p: T) of a generic Kotlin class, taken by kotlinc for the class given its type argument,
+// but not through a generic subclass, Kotlin or Java, passing its type parameter (#372)
+open class KotlinSyntheticPropertyInternalSetter<T> : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyInternalSetterGetter<T>() {
+    internal fun setP(p: T) {}
+}
+
+class SyntheticPropertyInternalSetterDirect : KotlinSyntheticPropertyInternalSetter<Int>()
+
+open class KotlinSyntheticPropertyInternalSetterMid<W> : KotlinSyntheticPropertyInternalSetter<W>()
+
+class SyntheticPropertyInternalSetterThroughKotlin : KotlinSyntheticPropertyInternalSetterMid<Int>()
+
+class SyntheticPropertyInternalSetterThroughJava : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyInternalSetterMid<Int>()
+
+// The private and internal setters of a Kotlin class, taken before the public ones of its Java superclass
+open class SyntheticPropertyKotlinPrivateSetters : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyPrimitiveSetters() {
+    private fun setK(k: Int?) {}
+    internal fun setI(i: Int?) {}
+}
+
 // The protected setter declared first, taken before the public one, which a final class cannot call, unlike an open one
 class SyntheticPropertyFinalProtectedSetterFirst : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyProtectedSetterFirst()
 
@@ -2427,6 +2471,15 @@ internal interface InternalExposedMembers {
 abstract class InternalExposedMembersExposing : InternalExposedMembers
 
 abstract class InternalExposedMembersExposingSub : InternalExposedMembersExposing()
+
+// The getV(): Int? of an internal class overriding the getV() of a Java class returning a platform type,
+// which kotlinc reads x.getV() of the class exposing it by (#372)
+internal open class InternalNullableGetterOverride : com.xemantic.kotlin.introspection.test.other.JavaBoxedAccessors() {
+    override fun getV(): Int? = 0
+}
+
+@Suppress("EXPOSED_SUPER_CLASS")
+open class InternalNullableGetterOverrideExposing : InternalNullableGetterOverride()
 
 // and so a supertype deprecated as hidden, not part of the API either
 @Deprecated("replaced", level = DeprecationLevel.HIDDEN)

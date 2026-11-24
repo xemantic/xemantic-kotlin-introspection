@@ -264,6 +264,11 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   one rejected with the modifier (`overrides nothing`) might be rejected without it too, as an `accidental override` of the same JVM signature,
   while an overload of the same JVM signature might compile, like `where T : Comparable<T>, T : Any` next to `<T : Comparable<T>>`, see `boundsMatch`.
 
+- A synthetic property sweep row judged on a receiver like `X<String>` of a generic class, where a `setValue(String)` sets a `T getValue()`,
+  is an artifact of the receiver: the hint of the class listing stays `val` for the type parameter (#372), see `settersInDeclarationOrder` —
+  and javac rejects a private `setValue(T)` next to a public one of the same substituted signature (`weaker access privileges`),
+  so no fixture shows the private setter of a generic class passed over in a listing of the type parameter.
+
 - Read every error of a probe, not only the first one, and not only the type a mistyped `val x: Marker = …` names:
   `val r: Marker = Thread::name` reports the type `KMutableProperty1<Thread, String!>`, and, on the reference itself,
   `the feature "references to synthetic java properties" is unsupported`.
