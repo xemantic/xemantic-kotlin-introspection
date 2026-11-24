@@ -92,8 +92,6 @@ fun <T> T.boundedByBoth() where T : BoundedReceiverA, T : BoundedReceiverB {}
 
 val <T : BoundedReceiverA> T.boundedPropertyOfA: Int get() = 0
 
-fun <T> T.unboundedReceiver() {}
-
 // the context parameters and the deprecation of the extensions on a bounded type parameter, or on a function type,
 // rendered like of any other extension
 interface BoundedReceiverC
@@ -1503,7 +1501,7 @@ fun <W, V, T : Map<T, V>> InferredReceiverBiSink<V, T>.biSinkExplicit() {}
 
 class InferredReceiverStringStringBiSink : InferredReceiverBiSink<String, String>
 
-// a type parameter given explicitly, like W of x.f<_, _, Nothing>(), makes kotlinc check the types inferred for the other ones
+// a type parameter given explicitly, like W of x.f<_, _, String>(), makes kotlinc check the types inferred for the other ones
 // against their bounds, see #319, like CharSequence, inferred for T, no Comparable<CharSequence>,
 // but not a type inferred as an intersection, like CharSequence & Int, for T of T : List<U>
 fun <T : Comparable<T>, U : T, W> InferredReceiverBiSink<T, U>.biSinkComparableExplicit() {}
@@ -1528,8 +1526,9 @@ fun <T : Comparable<T>> InferredReceiverSink<(T) -> T>.sinkComparableFunction() 
 
 class InferredReceiverStringListSink : InferredReceiverSink<List<String>>
 
-// a function type next to a type parameter the receiver does not refer to, like W, is matched leniently, like before #319,
-// as kotlinc accepts x.f<_, _, String>() through empty intersections, like ((String) -> Unit) & String, see #319
+// a function type next to a type parameter the receiver does not refer to, but a bound, like W of T : List<W>,
+// or one whose bound refers to an inferred one, like W of W : U, is inferred, see #343, also where kotlinc accepts
+// x.f<_, _, String>(), or x.f<_, _, Nothing>(), through empty intersections, like ((String) -> Unit) & String
 fun <T : List<W>, U : T, W> InferredReceiverBiSink<T, U>.biSinkListOfExplicit() {}
 
 fun <T : Comparable<W>, W> InferredReceiverBiSink<T, T>.biSinkComparableToExplicit() {}
@@ -1541,3 +1540,209 @@ class InferredReceiverFunctionStringBiSink : InferredReceiverBiSink<(String) -> 
 class InferredReceiverFunctionsBiSink : InferredReceiverBiSink<() -> String, () -> String>
 
 class InferredReceiverFunctionCharSequenceBiSink : InferredReceiverBiSink<() -> String, CharSequence>
+
+// a function type next to a type parameter which only a bound tells, like A of B : A, or U of T : () -> U, see #343,
+// is inferred like kotlinc does: no Comparable, nor String, while T is inferred as the intersection of its upper bounds,
+// like (() -> Unit) & (() -> CharSequence), or String & (() -> CharSequence), which kotlinc only warns about
+interface InferredFunctionSink<in T>
+
+fun <A : Comparable<A>, B : A> InferredFunctionSink<B>.sinkUnderComparable() {}
+
+fun <T : () -> U, U : CharSequence> InferredFunctionSink<T>.sinkOfSupplier() {}
+
+class InferredFunctionSupplierSink : InferredFunctionSink<() -> Unit>
+
+class InferredFunctionStringSink : InferredFunctionSink<String>
+
+interface InferredFunctionSource<out T>
+
+fun <A : String, B : A> InferredFunctionSource<B>.sourceUnderString() {}
+
+fun <T : () -> U, U : CharSequence> InferredFunctionSource<T>.sourceOfSupplier() {}
+
+class InferredFunctionSupplierSource : InferredFunctionSource<() -> String>
+
+class InferredFunctionTransformSource : InferredFunctionSource<(String) -> String>
+
+// and so is a type parameter the receiver refers to through a bound, like U of T : List<U>, see #343,
+// which kotlinc cannot infer, though x.sinkOfList<_, Nothing>() compiles,
+// while S is inferred as (() -> () -> String) & (() -> CharSequence), an intersection of generic types
+fun <T : List<U>, U> InferredFunctionSink<T>.sinkOfList() {}
+
+fun <S : T, T : () -> U, U : CharSequence> InferredFunctionSink<S>.sinkUnderSupplier() {}
+
+class InferredFunctionSupplierOfSupplierSink : InferredFunctionSink<() -> () -> String>
+
+// a class comparable to what is comparable to it, see #343: whether it is comparable to itself, like T : Comparable<T> takes,
+// asks whether it is comparable to itself again, endlessly, where kotlinc gives up with "Arguments depth is too high",
+// so that x.selfComparable() does not compile
+interface NestedSelfComparable : Comparable<Comparable<NestedSelfComparable>>
+
+interface NestedSelfComparableSource<out T>
+
+fun <T : Comparable<T>> NestedSelfComparableSource<T>.selfComparable() {}
+
+fun <T> NestedSelfComparableSource<T>.anyComparable() {}
+
+class NestedSelfComparableHolder : NestedSelfComparableSource<NestedSelfComparable>
+
+// a type parameter nothing refers to, like W, is given explicitly, see #343, also next to a function type,
+// where the other ones are inferred like kotlinc does, as x.biSinkOfSupplierGiven<_, _, String>() compiles on any class,
+// T inferred as the intersection of its upper bounds, like String & (() -> CharSequence), while a function type is no Comparable,
+// and U of T : List<U>, U : T, inferred as List<String> & List<List<String>> for List<String>, is no List<U>
+interface GivenFunctionBiSink<in A, in B>
+
+fun <T : () -> U, U : CharSequence, W> GivenFunctionBiSink<T, T>.biSinkOfSupplierGiven() {}
+
+fun <A : Comparable<A>, B : A, W> GivenFunctionBiSink<B, A>.biSinkUnderComparableGiven() {}
+
+fun <T : List<U>, U : T> GivenFunctionBiSink<T, U>.biSinkOfListOfBounded() {}
+
+class GivenFunctionStringBiSink : GivenFunctionBiSink<String, String>
+
+class GivenFunctionSupplierBiSink : GivenFunctionBiSink<() -> String, () -> String>
+
+class GivenFunctionListBiSink : GivenFunctionBiSink<List<String>, Any>
+
+// a suspend function type is no function type of one more parameter, as its metadata tells it, see #343,
+// but a kotlin.Function of its return type, like any function type, also one a class is a subtype of,
+// and no Comparable, nor String, also next to a type parameter which nothing refers to, but whose bound refers to an inferred one,
+// like B of B : A, inferred as well
+interface GivenFunctionSource<out T>
+
+fun <A : Comparable<A>, B : A> GivenFunctionSource<A>.sourceOfComparableBounding() {}
+
+fun <A : String, B : A> GivenFunctionSource<B>.sourceUnderStringGiven() {}
+
+fun GivenFunctionSource<Function1<*, *>>.sourceOfFunctionOfOne() {}
+
+fun <T : suspend () -> U, U : CharSequence> GivenFunctionSource<T>.sourceOfSuspendSupplier() {}
+
+fun <T : Function<R>, R : Comparable<R>> GivenFunctionSource<T>.sourceOfFunctionOfComparable() {}
+
+fun GivenFunctionSource<Function<*>>.sourceOfFunction() {}
+
+interface GivenFunctionTask : () -> Unit
+
+class GivenFunctionRunSource : GivenFunctionSource<() -> Unit>
+
+class GivenFunctionSupplierSource : GivenFunctionSource<() -> String>
+
+class GivenFunctionSuspendRunSource : GivenFunctionSource<suspend () -> Unit>
+
+class GivenFunctionSuspendSupplierSource : GivenFunctionSource<suspend () -> String>
+
+class GivenFunctionTaskSource : GivenFunctionSource<GivenFunctionTask>
+
+interface GivenFunctionSink<in T>
+
+fun <A : Comparable<A>, B : A> GivenFunctionSink<B>.sinkUnderComparableGiven() {}
+
+class GivenFunctionSuspendRunSink : GivenFunctionSink<suspend () -> Unit>
+
+class GivenFunctionStringSink : GivenFunctionSink<String>
+
+// a class whose supertype refers to it within a type argument of a type argument, see #343: x.triSinkUnderSelfList() compiles,
+// A of A : List<A> inferred as NestedSelfList & List<NestedSelfList>, which is a List<A>, as kotlinc tells the types of an intersection
+// which are of the same covariant class to be one of their type arguments intersected, List<List<NestedSelfList> & NestedSelfList>,
+// while T of T : List<T> inferred also from () -> Unit is no List<() -> Unit>
+interface NestedSelfList : List<List<NestedSelfList>>
+
+interface GivenFunctionTriSink<in A, in B, in C>
+
+fun <A : List<A>, B : A, C : A> GivenFunctionTriSink<B, A, C>.triSinkUnderSelfList() {}
+
+class GivenFunctionNestedSelfListTriSink : GivenFunctionTriSink<suspend () -> Unit, NestedSelfList, GivenFunctionTask>
+
+fun <A : List<A>> GivenFunctionSink<A>.sinkOfSelfList() {}
+
+class GivenFunctionNestedSelfListSink : GivenFunctionSink<NestedSelfList>
+
+// a class of a suspend function type supertype is no other suspend function type, see #343, also as a type argument
+interface GivenFunctionSuspendTask : suspend () -> String
+
+fun GivenFunctionSource<suspend () -> Int>.sourceOfSuspendInt() {}
+
+fun GivenFunctionSource<GivenFunctionSuspendTask>.sourceOfSuspendTask() {}
+
+fun GivenFunctionSink<GivenFunctionSuspendTask>.sinkOfSuspendTask() {}
+
+class GivenFunctionSuspendTaskSource : GivenFunctionSource<GivenFunctionSuspendTask>
+
+// a type parameter given explicitly, like W, next to a bound of a suspend function type, see #343,
+// but not one whose bound refers to an inferred one, like W of W : B, inferred as well, also next to a function type:
+// x.biSinkOfListUnderGiven() does not compile, though x.biSinkOfListUnderGiven<_, _, Nothing>() does
+interface GivenBiSink<in A, in B>
+
+fun <T : suspend () -> U, U : CharSequence, W> GivenBiSink<T, U>.biSinkOfSuspendSupplierGiven() {}
+
+fun <T : List<T>> GivenBiSink<T, T>.biSinkOfSelfList() {}
+
+fun <A : List<B>, B : A, W : B> GivenBiSink<A, B>.biSinkOfListUnderGiven() {}
+
+class GivenSuspendSupplierBiSink : GivenBiSink<suspend () -> String, Comparable<String>>
+
+class GivenNestedSelfListBiSink : GivenBiSink<() -> Unit, NestedSelfList>
+
+class GivenListBiSink : GivenBiSink<List<String>, Any>
+
+// a class of a suspend function reference type is a suspend function type of the same type arguments, see #343,
+// and a projected type of a class of a suspend function type supertype is one of the return type projected,
+// neither of them a suspend () -> Int
+interface GivenFunctionSuspendReference : kotlin.reflect.KSuspendFunction0<String>
+
+class GivenFunctionSuspendReferenceSource : GivenFunctionSource<GivenFunctionSuspendReference>
+
+interface GivenFunctionSuspendBox<T> : suspend () -> T
+
+class GivenFunctionSuspendBoxSource : GivenFunctionSource<GivenFunctionSuspendBox<out CharSequence>>
+
+// without a function type, a type parameter nothing tells, whose bound refers to an inferred one, like W of W : B, see #343,
+// does not make the extension callable where the other ones are not inferred: a String is no List<String>, whatever W is given as,
+// and Nothing cannot be reified
+interface GivenUnderSink<in T>
+
+inline fun <A : List<A>, B : A, reified W : B> GivenUnderSink<B>.sinkUnderSelfListReified() {}
+
+fun <A : List<A>, B : A, W : List<B>> GivenUnderSink<B>.sinkUnderSelfListOfLists() {}
+
+fun <A : Comparable<A>, B : A, W : B> GivenUnderSink<B>.sinkUnderComparableBounding() {}
+
+class GivenUnderStringSink : GivenUnderSink<String>
+
+interface GivenUnderBiSink<in A, in B>
+
+fun <A : List<B>, B : A, W : A> GivenUnderBiSink<B, A>.biSinkOfListUnderBound() {}
+
+class GivenUnderAnyBiSink : GivenUnderBiSink<Any, Any>
+
+// a class of a function type supertype, where a reified type parameter whose bound refers to an inferred one,
+// like W of W : B, is inferred as well, see #343: x.reifiedSinkOfFunctionUnder() does not compile, B inferred as Any,
+// no Comparable<Any>, though x.reifiedSinkOfFunctionUnder<_, _, String>() does
+interface GivenReifiedBiSink<in A, in B>
+
+interface GivenReifiedTask : () -> String
+
+inline fun <A : Function<B>, B : Comparable<B>, reified W : B> GivenReifiedBiSink<A, B>.reifiedSinkOfFunctionUnder() {}
+
+inline fun <A : Function<B>, B : Comparable<B>, reified W : Comparable<B>> GivenReifiedBiSink<A, B>.reifiedSinkOfFunctionUnderComparable() {}
+
+class GivenReifiedTaskAnyBiSink : GivenReifiedBiSink<GivenReifiedTask, Any>
+
+// a suspend function type argument in an invariant position satisfies a bound of a suspend function type, see #343,
+// told by the class of the type, like SuspendFunction0, not by the function type of one more parameter it is stored as
+interface GivenSuspendInvariant<T>
+
+interface GivenSuspendInvariantPair<A, B>
+
+fun <T : suspend () -> String> GivenSuspendInvariant<T>.invariantOfSuspend() {}
+
+fun <T : suspend () -> U, U> GivenSuspendInvariant<T>.invariantOfSuspendSupplier() {}
+
+fun <T : suspend () -> U, U> GivenSuspendInvariantPair<T, U>.pairOfSuspendSupplier() {}
+
+fun <T : suspend () -> String> GivenSuspendInvariantPair<T, String>.pairOfSuspend() {}
+
+class GivenSuspendInvariantClass : GivenSuspendInvariant<suspend () -> String>
+
+class GivenSuspendInvariantPairClass : GivenSuspendInvariantPair<suspend () -> String, String>
