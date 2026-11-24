@@ -448,6 +448,21 @@ internal fun KmType.isFunctionTypeShapedLike(other: KmType): Boolean {
 }
 
 /**
+ * Whether every lambda of the [other] function type, of a receiver, and no other parameter, like `String.() -> Unit`,
+ * is a lambda of this one, of the same parameter, as a receiver, and of no context parameters, like `(String) -> Unit`,
+ * as it names no parameter, its receiver read as the implicit `it` then, like `{ it.length }`,
+ * also when the lambda refers to the receiver, like `{ length }`, typed against the parameter, failing to compile,
+ * unlike a function type of more parameters, like `String.(Int) -> Unit`, whose lambda naming none, like `{ }`,
+ * is not one of `(String, Int) -> Unit`, as verified with kotlinc 2.4.21, see #378.
+ */
+internal fun KmType.takesLambdasOfReceiverShaped(other: KmType): Boolean {
+    fun KmType.parameterCount() = arguments.size - if (isSuspend) 2 else 1
+    return annotations.contextParameterCount == 0 && annotations.none { it.className == "kotlin/ExtensionFunctionType" } &&
+        other.annotations.contextParameterCount == 0 && other.annotations.any { it.className == "kotlin/ExtensionFunctionType" } &&
+        parameterCount() == 1 && other.parameterCount() == 1
+}
+
+/**
  * The count of context parameters given by the `@ContextFunctionTypeParams` type annotation,
  * `0` without the annotation, or `null` if the annotation does not carry a valid count.
  */
