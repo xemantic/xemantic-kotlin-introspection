@@ -18,6 +18,8 @@
 
 package com.xemantic.kotlin.introspection.test.unify
 
+import com.xemantic.kotlin.introspection.test.other.JavaUnifiedListPair
+
 // A type parameter of a class matched against the types of an extension referring to its type parameters,
 // in invariant positions, takes one type in all of them, like V of UnifiedSame<V> : UnifiedPair<V, V>,
 // which is both T, and UnifiedWrap<T>, of UnifiedPair<T, UnifiedWrap<T>>, so that no T makes it callable
@@ -75,3 +77,39 @@ interface UnifiedNullablePair<V> : UnifiedPair<V?, V>
 fun <T : Comparable<T>, U : T> UnifiedPair<U, T>.unifiedBoundedComparable() {}
 
 fun <T, U : T> UnifiedPair<U, T>.unifiedBounded() {}
+
+// a mutable collection is no read-only one, like V of UnifiedSame<V> both MutableList<T>, and List<T>, see #366,
+// unlike a platform type of Java, (Mutable)List<V!>!, which is either
+
+fun <T> UnifiedPair<MutableList<T>, List<T>>.unifiedMutableAndReadOnlyLists() {}
+
+interface UnifiedJavaListPair<V> : JavaUnifiedListPair<V>
+
+fun <T> UnifiedPair<MutableList<T>, MutableList<T>>.unifiedMutableLists() {}
+
+// Nothing does not count as a type argument making an extension callable, see #366,
+// like V of UnifiedSameKeyMap<V> : Map<V, V>, a T : Enum<T>, and a subtype of the final String, which only Nothing is both of,
+// while V of String is a T : Comparable<T>
+
+interface UnifiedSameKeyMap<V> : Map<V, V>
+
+fun <T : Enum<T>> Map<T, String>.unifiedEnumKeysOfStrings() {}
+
+fun <T : Comparable<T>> Map<T, String>.unifiedComparableKeysOfStrings() {}
+
+// nor V of UnifiedSame<V> standing for the Nothing of UnifiedPair<Nothing, T>
+
+fun <T> UnifiedPair<Nothing, T>.unifiedNothingFirst() {}
+
+// nor V : CharSequence of a covariant position, a subtype of the final Int, or of Nothing, which only Nothing is,
+// while V of String is a UnifiedProducer<String>
+
+interface UnifiedProducer<out T>
+
+interface UnifiedCharSequenceProducer<V : CharSequence> : UnifiedProducer<V>
+
+fun UnifiedProducer<Int>.unifiedInts() {}
+
+fun UnifiedProducer<String>.unifiedStrings() {}
+
+fun UnifiedProducer<Nothing>.unifiedNothings() {}

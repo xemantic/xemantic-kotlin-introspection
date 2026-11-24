@@ -200,10 +200,38 @@ com.example.AnnotationTestClass
   which a Java class extending it does not override, is inherited from that Java class,
   or from the nearest public subclass of it, when the Java class is package-private,
   or the nearest public interface extending it, when a package-private Java interface extends an internal one,
+  or the public class implementing that one, rendered as within it,
   as `abstract`, when a concrete subclass has to implement it,
   like `abstract fun put(k: Int?): Int` next to the `open fun put(arg0: Int): Int` the Java class declares, a JVM method of its own,
   or else `open`, or final, like `fun h(): Int`,
-  and so through a Kotlin class exposing such a supertype, which only a suppressed `EXPOSED_SUPER_CLASS` error allows.
+  and so through a Kotlin class exposing such a supertype, which only a suppressed `EXPOSED_SUPER_CLASS` error allows,
+  while resolved on that Kotlin class itself, it is listed as a member of its own, with no header,
+  followed by a comment naming the class declaring it,
+  like `abstract fun f(): Int // declared by internal com.example.InternalBase`,
+  or `// declared by hidden …` of one deprecated as hidden,
+  so that every header names a class the user code can name.
+  Two members of the same signature as rendered, regardless of the names of their parameters,
+  which the compiler keeps apart, as JVM methods of their own,
+  like the `put(@NotNull Integer)` of a Java class next to the `put(key: Int)` of a Kotlin interface, `put(I)` on the JVM,
+  are both listed, the Java one followed by a comment telling its JVM signature, by the simple names of its parameter types,
+  like `open fun put(arg0: Int): String // put(Integer) on the JVM`,
+  also a JVM-only member of a built-in type, like `putIfAbsent(Object, Object)` of `MutableMap`,
+  and a Kotlin member standing for the method of a Java class implementing it, listed with its own names,
+  which a call can name, like `open fun put(t: Int): String // put(Integer) on the JVM`.
+  The members merged, of a Kotlin parameter named differently by some of them, like `put(t: T)` and `put(q: T)`,
+  are listed as the one picked, of its names, followed by `// named arguments prohibited: ambiguous parameter names`,
+  as kotlinc 2.4.21 lets no call name the parameter, "named argument is prohibited for parameter with an ambiguous name",
+  also a hidden member, or one of a supertype which is not part of the API, merged with them,
+  or the method of a Java class overriding them,
+  and, when the member is joined through several direct supertypes, the ones they override,
+  like the `f(a: Int)` which the `override fun f(b: Int)` of `RM : RA` overrides, for `RJ : RM, RB`,
+  unlike along a single path, like for `RJ3 : RM`, where `f(b = 1)` compiles,
+  deciding per parameter, so that only the ambiguous ones are named when the others agree,
+  like `fun put(k: Int, v: String): String // named arguments prohibited for k: ambiguous parameter names`,
+  of `put(k: K, v: V)` and `put(q: K, v: V)`, where `put(1, v = "")` compiles,
+  while a method of a Java class takes the names the Kotlin members agree on, and else the ones of the first of them,
+  like `override fun put(k: Int?, v: String?): String // named arguments prohibited for k: ambiguous parameter names`,
+  as the names of a Java method never count.
   The method of a Java class merged with a function of an internal interface keeps its own modality,
   as the class wins: final, or abstract, also next to a function of a body,
   and when the internal function overrides the one of a public interface, listed in its place.
@@ -359,13 +387,27 @@ com.example.AnnotationTestClass
   as `Int` is no `String`, nor is `fun Other<String>.ext()` for `inner class Inner : Other<O>` of `class Outer<O : Number>`.
   Matched against the type parameters of the extension, a type parameter of the class takes one type in all its invariant positions too,
   satisfying the bounds of both:
-  `fun <T> Pair<T, Box<T>>.ext()` is not listed for `interface Same<V> : Pair<V, V>`, as no `T` is a `Box<T>`,
-  nor `fun <T : Any> Pair<T?, T>.ext()`, as no `T : Any` is a `T?`,
+  `fun <T> Two<T, Box<T>>.ext()` is not listed for `interface Same<V> : Two<V, V>`, as no `T` is a `Box<T>`,
+  nor `fun <T : Any> Two<T?, T>.ext()`, as no `T : Any` is a `T?`,
+  nor `fun <T> Two<MutableList<T>, List<T>>.ext()`, as no mutable list is a read-only one, unless it is a platform type of Java,
   nor `fun <T, U : T> Map<T, U>.ext()` for `interface Codes<V : Enum<V>> : Map<V, String>`, as no enum class is a supertype of `String`.
+  `Nothing`, or `Nothing?`, does not count as a type argument of the class making an extension callable,
+  so that an extension callable only on `X<Nothing>` is not listed for `X`,
+  like `fun Producer<Int>.ext()` for `interface Texts<V : CharSequence> : Producer<V>`, of `interface Producer<out T>`,
+  or `fun <T : Enum<T>> Map<T, String>.ext()` for `interface Keys<V> : Map<V, V>`,
+  as no type but `Nothing` is a subtype of both the final `Int`, or `String`, and of `CharSequence`, or of an enum class.
+  Nor does a star projection, like `Pair<*, String>` of `interface Pair<K : Number, V : K> : Box<V>`,
+  which makes `fun Box<String>.ext()` callable, though no `Pair<K, String>` can exist.
   An extension of the package of the class on a `kotlin.*` or `java.*` supertype, bounded by itself, like `fun <T : Comparable<T>> Map<T, T>.ext()`,
   is listed for a generic class when it can be called for some type argument tried,
-  like `String`, `Int`, `Nothing`, or a type the extension names:
-  for `class SameKeyMap<V> : HashMap<V, V>()`, of `SameKeyMap<String>`, but not for `interface Scores<V> : Map<V, Comparable<V>>`.
+  like `String`, `Int`, a type the extension names, or a type which can be declared, like `interface X : List<X>, Comparable<X>`:
+  for `class SameKeyMap<V> : HashMap<V, V>()`, of `SameKeyMap<String>`, but not for `interface Scores<V> : Map<V, Comparable<V>>`,
+  and `fun <T : Comparable<T>> Map<T, List<T>>.ext()` for `SameKeyMap`, of `SameKeyMap<X>`,
+  but not for `interface Names<V : CharSequence> : Map<V, V>`, as no type is both a `CharSequence` and a `List` of itself,
+  their `get(index: Int)` returning other types, unlike a `List<Char>`,
+  nor for a type parameter bounded by a final class, which is no `Comparable`.
+  Each combination of the types tried is tried only for a class of a few type parameters;
+  for more of them, only some of the combinations are.
   A JDK interface named as a supertype, like `abstract class Orders : java.util.List<Order>`,
   is the Java one, with the supertypes Java declares,
   so that `fun Collection<Order>.count()` is listed for it, but not `fun List<Order>.total()`, as the compiler tells,
@@ -380,6 +422,10 @@ com.example.AnnotationTestClass
   A type parameter which only a type argument given explicitly tells, like `W` of `fun <T : Comparable<T>, W> Sink<T>.ext()`,
   is taken as given, like in `sink.ext<_, Unit>()`, where the compiler checks the types inferred for the other ones against their bounds,
   and a reified type parameter cannot be inferred as an intersection of types, nor as `Nothing`.
+  One whose bound refers to an inferred type parameter, like `W` of `fun <T : Comparable<T>, W : T> Sink<T>.ext()`, is inferred with them,
+  also next to a function type, and so is one which a bound of an inferred one refers to, like `E` of `T : List<E>`:
+  the extension is listed when `sink.ext()` compiles, not when only a call giving such a type parameter explicitly does,
+  like `sink.ext<_, Nothing>()`, or `sink.ext<_, String>()`.
   The inference of the Kotlin compiler is modelled for that, and where it is not,
   like for the projected type arguments, or for a type parameter the value parameters refer to,
   the extension is rather listed than left out.
@@ -489,8 +535,10 @@ com.example.AnnotationTestClass
   unless the member takes as many of them, whatever they are, like `fun <T> parse()`,
   while a call giving explicitly the type arguments which are otherwise inferred,
   like `foo.ext<Bar>()` of `fun <T : Bar> T.ext()`, which would reach the extension next to a member `fun ext()`, is not told.
-  The extensions on an unbounded type parameter, like `let` or `also`, are not listed for any type,
-  as they would be listed for every one.
+  The extensions on an unbounded type parameter, like `let` or `also`, are listed only for the classes of their own package,
+  like the extensions on `Any` there, like `fun <T> T.describe()` next to `class Order`,
+  but not for the classes of the other packages, nor for the ones of the `kotlin.*` and `java.*` packages,
+  as `let` would be listed for every one.
 * The types of the `kotlin.*` packages are rendered with simple names, as LLMs know them well,
   and so are the types of the package of the rendered class, or of the file facade, relative to it,
   like `Outer.Nested`, while the other types are fully qualified, to avoid ambiguity.
@@ -506,6 +554,17 @@ com.example.AnnotationTestClass
   or a sealed class with such a subclass —
   and never the ones deprecated with the `HIDDEN` level,
   or with `@DeprecatedSinceKotlin(hiddenSince = …)` not newer than the standard library of the class loader.
+  But an abstract one, hidden, or internal, which a concrete subclass still has to implement,
+  as kotlinc 2.4.21 tells, "does not implement abstract base class member", or "inherits invisible abstract member",
+  declared, or inherited, also through a Java class, and not implemented,
+  is noted on top of the body of a class which the user code can subclass,
+  like `// must implement hidden: fun hid(x: Int): Int`, or `// must implement internal: fun reset(): String`,
+  or `// must implement internal: var count: Int` of a property,
+  with the type arguments of the supertypes substituted, but without its deprecation, or its internal visibility,
+  also when a hidden abstract override declares a member with a body of an interface abstract again,
+  unless a visible member which a concrete subclass implements in its place is listed,
+  like an abstract one of its signature, or one merged with it, which the compiler picks instead,
+  as no call can name it, so that it is not resolved either.
   The exception is a property declared by a primary constructor parameter of a data class, or a value class,
   which cannot be declared without it,
   so it is rendered with its visibility, like `private val b: Int`,
