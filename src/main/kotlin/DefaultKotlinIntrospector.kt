@@ -11148,6 +11148,15 @@ internal class DefaultKotlinIntrospector(
                 isUntold = true
             }
             if (expectedVariance == actualVariance) return matches(expectedType, actualType, variance.compose(expectedVariance), isStrict)
+            // a type parameter of the extension, of an invariant type parameter, inferred from out Nothing in an invariant,
+            // or a covariant, position, like T of MutableList<T> for MutableList<out Nothing>, as kotlinc infers it, see #382,
+            // unlike T?, or from out String
+            if (declaredVariance == KmVariance.INVARIANT && expectedVariance == KmVariance.INVARIANT && actualVariance == KmVariance.OUT &&
+                variance != KmVariance.IN && actualType.isNothing && !expectedType.isNullable && !expectedType.isDefinitelyNonNull &&
+                (expectedType.classifier as? KmClassifier.TypeParameter)?.id?.let { it in typeParameters && it != receiverTypeParameterId } == true
+            ) {
+                return matches(expectedType, actualType, KmVariance.INVARIANT, isStrict)
+            }
             if (variance == KmVariance.INVARIANT) {
                 // a star projection of an invariant type parameter, the same as in Nothing, and as out Any?, either way
                 if (declaredVariance != KmVariance.INVARIANT) return false
@@ -16256,8 +16265,9 @@ private fun KmType.javaSignatureType(substitution: Map<Int, KmType>): KmType = c
         val argumentClassifier = argumentType.classifier
         // an erased type argument of a raw Kotlin supertype is the type kotlinc erases it to, see JAVA_ERASURE_MARKER,
         // while a type parameter of the class substituted for a type parameter of Java is a platform type too, like V!,
-        // but not the type arguments of a Kotlin type substituted, like V of List<V>!
-        if (!argumentType.isNullable && !argumentType.isJavaErasure && !type.isDefinitelyNonNull && (argumentClassifier is KmClassifier.Class ||
+        // but not the type arguments of a Kotlin type substituted, like V of List<V>!, nor one annotated, see JAVA_NOT_NULL_MARKER
+        if (!argumentType.isNullable && !argumentType.isJavaErasure && !type.isDefinitelyNonNull && !type.isJavaNotNull &&
+            (argumentClassifier is KmClassifier.Class ||
                 (classifier is KmClassifier.TypeParameter && argumentClassifier is KmClassifier.TypeParameter))
         ) {
             argumentType.flexibleTypeUpperBound = KmFlexibleTypeUpperBound(

@@ -13867,6 +13867,31 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve interface of Java pair of class type argument annotated not nullable without extension on pair of nullable first type`() {
+        // the UnifiedPair<String, V!> of UnifiedPair<@NotNull String, V> is no UnifiedPair<String?, String>, see #382
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.unify.UnifiedJavaNotNullStringPair",
+            pageSize = 10000
+        ) should {
+            have(lines().any { ".unifiedStringPair()" in it })
+            have(lines().none { ".unifiedNullableStringFirst()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of wrapped list of out Nothing with extensions inferring type parameter from it`() {
+        // kotlinc infers T of MutableList<T> from MutableList<out Nothing>, but not T? of MutableList<T?>, see #382
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.unify.UnifiedOutNothingWrap",
+            pageSize = 10000
+        ) should {
+            have(lines().any { ".unifiedWrappedMutableList()" in it })
+            have(lines().any { ".unifiedWrappedComparableMutableList()" in it })
+            have(lines().none { ".unifiedWrappedNullableMutableList()" in it })
+        }
+    }
+
+    @Test
     fun `should resolve interface of map of same type parameter without extension callable only with Nothing`() {
         // V is a T : Enum<T>, and a subtype of the final String, which only Nothing is, while V of String is a T : Comparable<T>
         resolver.resolve(

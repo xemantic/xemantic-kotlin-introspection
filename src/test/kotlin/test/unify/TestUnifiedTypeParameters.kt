@@ -20,6 +20,7 @@ package com.xemantic.kotlin.introspection.test.unify
 
 import com.xemantic.kotlin.introspection.test.other.JavaUnifiedListPair
 import com.xemantic.kotlin.introspection.test.other.JavaUnifiedNotNullFirstPair
+import com.xemantic.kotlin.introspection.test.other.JavaUnifiedNotNullStringPair
 import com.xemantic.kotlin.introspection.test.other.JavaUnifiedNullableFirstPair
 
 // A type parameter of a class matched against the types of an extension referring to its type parameters,
@@ -96,6 +97,10 @@ interface UnifiedJavaNullableFirstPair<V> : JavaUnifiedNullableFirstPair<V>
 
 interface UnifiedJavaNotNullFirstPair<V> : JavaUnifiedNotNullFirstPair<V>
 
+// also a type of a class, like the UnifiedPair<String, V!> of UnifiedPair<@NotNull String, V>
+
+interface UnifiedJavaNotNullStringPair<V> : JavaUnifiedNotNullStringPair<V>
+
 fun UnifiedPair<String, String>.unifiedStringPair() {}
 
 fun UnifiedPair<String?, String>.unifiedNullableStringFirst() {}
@@ -147,3 +152,14 @@ fun <T> UnifiedPair<java.util.List<T>, MutableList<T>>.unifiedJdkAndMutableLists
 fun <T> UnifiedPair<java.util.List<T>, List<T>>.unifiedJdkAndReadOnlyLists() {}
 
 fun <T> UnifiedPair<java.util.List<T>, java.util.List<T>>.unifiedJdkLists() {}
+
+// an invariant type parameter of the extension inferred from an out Nothing projection, like T of MutableList<T>
+// for MutableList<out Nothing>, as kotlinc infers it, unlike T? of MutableList<T?>, see #382
+
+interface UnifiedOutNothingWrap : UnifiedWrap<MutableList<out Nothing>>
+
+fun <T> UnifiedWrap<MutableList<T>>.unifiedWrappedMutableList() {}
+
+fun <T : Comparable<T>> UnifiedWrap<out MutableList<T>>.unifiedWrappedComparableMutableList() {}
+
+fun <T> UnifiedWrap<MutableList<T?>>.unifiedWrappedNullableMutableList() {}
