@@ -45,6 +45,29 @@ abstract class UnloadableInternalAbstractSub : UnloadableInternalAbstractBase() 
     override fun implemented(): String = ""
 }
 
+// a member of a body of a class which can be loaded, declared abstract again by a class which cannot be loaded,
+// so that a concrete subclass of another module "inherits invisible abstract member", as kotlinc 2.4.21 tells
+abstract class LoadableInternalOpenBase {
+    internal open fun ia(): String = ""
+}
+
+abstract class UnloadableInternalReabstracting : LoadableInternalOpenBase(), AbsentGreetingMarker {
+    internal abstract override fun ia(): String
+}
+
+abstract class UnloadableInternalReabstractingSub : UnloadableInternalReabstracting()
+
+// and the other way round, an abstract member given a body by a class which cannot be loaded, implemented then
+abstract class LoadableInternalAbstractBase {
+    internal abstract fun ia(): String
+}
+
+abstract class UnloadableInternalImplementing : LoadableInternalAbstractBase(), AbsentGreetingMarker {
+    internal override fun ia(): String = ""
+}
+
+abstract class UnloadableInternalImplementingSub : UnloadableInternalImplementing()
+
 // and of a class exposing an internal interface, which cannot be loaded
 internal interface UnloadableExposedFace {
     fun f(): Int

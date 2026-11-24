@@ -3204,6 +3204,45 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should tell internal member of body declared abstract again by class which cannot be loaded`() {
+        // given
+        val introspector = introspectorWithoutAbsentClass("AbsentGreetingMarker.class")
+
+        // when
+        val sub = introspector.resolve("com.xemantic.kotlin.introspection.isolated.UnloadableInternalReabstractingSub")
+
+        // then
+        // the abstract override of the class which cannot be loaded wins over the body of its loadable superclass (#390)
+        sub sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.UnloadableInternalReabstractingSub [page 1/1]
+            abstract class UnloadableInternalReabstractingSub : UnloadableInternalReabstracting {
+                // must implement internal: fun ia(): String
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not tell internal abstract member implemented by class which cannot be loaded`() {
+        // given
+        val introspector = introspectorWithoutAbsentClass("AbsentGreetingMarker.class")
+
+        // when
+        val implementing = introspector.resolve("com.xemantic.kotlin.introspection.isolated.UnloadableInternalImplementing")
+        val sub = introspector.resolve("com.xemantic.kotlin.introspection.isolated.UnloadableInternalImplementingSub")
+
+        // then
+        // the body of the class which cannot be loaded wins over the abstract member of its loadable superclass (#390)
+        implementing sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.UnloadableInternalImplementing [page 1/1]
+            abstract class UnloadableInternalImplementing : LoadableInternalAbstractBase, AbsentGreetingMarker
+        """.trimIndent()
+        sub sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.UnloadableInternalImplementingSub [page 1/1]
+            abstract class UnloadableInternalImplementingSub : UnloadableInternalImplementing
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve member of internal supertype exposed by class which cannot be loaded as its own`() {
         // given
         val introspector = introspectorWithoutAbsentClass("AbsentGreetingMarker.class")

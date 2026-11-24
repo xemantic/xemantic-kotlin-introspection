@@ -2466,6 +2466,39 @@ internal interface InternalJoinedProperties {
 abstract class JavaJoiningGettersInternalPropertiesSub :
     com.xemantic.kotlin.introspection.test.other.JavaJoiningGettersInternalProperties()
 
+// but not a private property, which joins nothing, kotlinc calling the getter, `x.getPd()`, also as the synthetic property `pd`
+interface PrivateJoinedProperty {
+    private val pd: Int get() = 1
+}
+
+abstract class JavaJoiningGettersPrivatePropertySub :
+    com.xemantic.kotlin.introspection.test.other.JavaJoiningGettersPrivateProperty()
+
+// nor a property joined so by a Kotlin class, whose getter kotlinc still calls, `x.getPd()`, next to the property
+interface PublicJoinedProperty {
+    val pd: Int get() = 1
+}
+
+abstract class KotlinJoiningGetters : com.xemantic.kotlin.introspection.test.other.JavaJoinedGetters(), PublicJoinedProperty
+
+// also of an internal interface, whose property the class exposes, open, as kotlinc 2.4.21 tells
+internal interface InternalKotlinJoinedProperty {
+    val pd: Int get() = 1
+}
+
+@Suppress("EXPOSED_SUPER_INTERFACE")
+abstract class KotlinJoiningGettersInternalProperty :
+    com.xemantic.kotlin.introspection.test.other.JavaJoinedGetters(), InternalKotlinJoinedProperty
+
+// nor with a package-private getter of another package, which leaves the property inaccessible,
+// "cannot access 'val pd': it is package-private" (#390)
+internal interface InternalPackagePrivateJoinedProperty {
+    val pd: Int get() = 1
+}
+
+abstract class JavaJoiningPackagePrivateGettersInternalPropertySub :
+    com.xemantic.kotlin.introspection.test.other.JavaJoiningPackagePrivateGettersInternalProperty()
+
 // The member of a package-private Java class, which an internal Kotlin class extends, public on the JVM, but not nameable,
 // inherited from the public Java class extending the latter (#390)
 @Suppress("EXPOSED_SUPER_CLASS")

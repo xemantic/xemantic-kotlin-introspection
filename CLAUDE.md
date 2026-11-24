@@ -299,14 +299,14 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   a visible member rendered abstract in place of the hidden one kotlinc demands — confirm a changed abstract count
   by overriding each candidate signature in a concrete subclass of its own.
 
-- A Java class joining the getter of its Java superclass with a property of a Kotlin interface, like `J extends JB implements IF`, has the property only for kotlinc:
-  `x.getPd()` is an unresolved reference, also of a public interface, see `javaJoinedGetterModality` —
-  while a `var` joined with a getter alone, or with accessors of two modalities, makes every Kotlin subclass fail with `inherited platform declarations clash`,
-  so such a shape is no fixture.
+- A `var` of a Kotlin interface which a Java class joins with a getter of its Java superclass alone, or with accessors of two modalities,
+  makes every Kotlin subclass fail with `inherited platform declarations clash`, so such a shape is no fixture —
+  and a sweep of the joins needs Kotlin joining classes, private properties, and accessors of other packages too, each of which kotlinc reads otherwise, see `javaJoinedGetterModality`.
 
 - kotlinc 2.4.21 compiles a concrete subclass, of another module, of a class with an internal abstract member when it declares a function of that signature without `override`,
   like `fun ia(): String = ""` — `override fun ia()` is rejected (`has no access … so it cannot override it`), and leaving it out too (`inherits invisible abstract member`),
-  though the JVM method `ia$pmod()`, of the mangled name, stays abstract.
+  though the JVM method `ia$pmod()`, of the mangled name, stays abstract: a call through the base type fails with
+  `AbstractMethodError: … does not define or inherit an implementation of … ia$pmod()`.
 
 ## Anti-patterns to avoid
 

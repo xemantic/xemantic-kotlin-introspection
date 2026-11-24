@@ -24309,6 +24309,42 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve getter of Java superclass next to private property of interface of Java class by its name`() {
+        // a private property joins nothing, kotlinc calls x.getPd() (#390)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaJoiningGettersPrivatePropertySub.getPd") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaJoiningGettersPrivatePropertySub.getPd [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaJoinedGetters
+            // also property: val pd
+            abstract fun getPd(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve getter of Java superclass next to property of interface joined by Kotlin class by its name`() {
+        // kotlinc calls x.getPd() of a Kotlin class joining them, unlike of a Java one (#390)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.KotlinJoiningGetters.getPd") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.KotlinJoiningGetters.getPd [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaJoinedGetters
+            abstract fun getPd(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve property of internal interface joined by Kotlin class with getter of Java superclass as its own`() {
+        // kotlinc reads both x.pd and x.getPd() (#390)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.KotlinJoiningGettersInternalProperty.pd") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.KotlinJoiningGettersInternalProperty.pd [page 1/1]
+            open val pd: Int // declared by internal com.xemantic.kotlin.introspection.test.InternalKotlinJoinedProperty
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not resolve property of internal interface joined by Java class with package-private getter of another package`() {
+        // kotlinc 2.4.21: "cannot access 'val pd': it is package-private" (#390)
+        assert(resolver.resolve("com.xemantic.kotlin.introspection.test.JavaJoiningPackagePrivateGettersInternalPropertySub.pd") == null)
+    }
+
+    @Test
     fun `should resolve member of package-private Java class extended by internal class as inherited from public Java subclass`() {
         // the internal class is public on the JVM, but the user code cannot name it (#390)
         resolver.resolve("com.xemantic.kotlin.introspection.test.JavaExtendingInternalOverPackagePrivateSub.f") sameAsKotlin """
