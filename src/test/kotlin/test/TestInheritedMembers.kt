@@ -498,6 +498,19 @@ interface StringAcceptor {
 // the compiler picks the accept(String) of the Java class, declared first, taking String!, so that accept(null) compiles
 abstract class StringJavaAcceptorJoin : com.xemantic.kotlin.introspection.test.other.JavaStringAcceptor(), StringAcceptor
 
+// K2 picks the accept(String) of the Java interface, declared first, taking String!, of the members of the same return type,
+// over the accept of Consumer<String?>, so that a subclass merges the three with the accept(s: String) of a body
+// of its superclass, and accept(null) does not compile there (#374)
+interface JavaStringAcceptorInterfaceNullableConsumerStringAcceptorJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaStringAcceptorInterface, java.util.function.Consumer<String?>, StringAcceptor
+
+abstract class OpenStringAcceptor {
+    open fun accept(s: String) {}
+}
+
+abstract class OpenStringAcceptorJavaStringAcceptorInterfaceNullableConsumerStringAcceptorJoin :
+    OpenStringAcceptor(), JavaStringAcceptorInterfaceNullableConsumerStringAcceptorJoin
+
 // and so does a subclass of the join, inheriting the member the join picks
 abstract class StringJavaAcceptorJoinSubclass : StringJavaAcceptorJoin()
 
@@ -1927,6 +1940,30 @@ abstract class InheritedJavaStringApplierHalfNullableFunctionApplierJoin :
 abstract class InheritedStringApplierJavaStringApplierNullableFunctionApplierJoin :
     StringApplier, JavaStringApplierNullableFunctionApplierJoin()
 
+// the join picks the apply(x: String) of the Kotlin interface, taking no null, which a subclass merges with the apply(x: String)
+// of another Kotlin interface, though of a less specific return type, unlike the apply of Function<String?, String>, picked by
+// InheritedJavaStringApplierHalfNullableFunctionApplierJoin (#374)
+abstract class CharSequenceApplierJavaStringApplierNullableFunctionApplierJoin :
+    CharSequenceApplier, JavaStringApplierNullableFunctionApplierJoin()
+
+// the join merges also the apply(x: String?) of NullableStringApplier, which a subclass inherits as part of the one member,
+// though not merged with the apply(x: String) of StringApplier on its own (#374)
+abstract class JavaStringApplierNullableFunctionApplierNullableApplierJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaStringApplier(), java.util.function.Function<String?, String?>,
+    StringApplier, NullableStringApplier
+
+abstract class StringApplierJavaStringApplierNullableFunctionApplierNullableApplierJoin :
+    StringApplier, JavaStringApplierNullableFunctionApplierNullableApplierJoin()
+
+// the apply of the Java class, annotated nullable, is merged with the one of Function<String?, String?>, not with the apply(x: String)
+// of CharSequenceApplier, which stays apart, also below the join, next to a Kotlin member taking a nullable type (#374)
+abstract class JavaNullableAnnotatedStringApplierNullableFunctionCharSequenceApplierJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaNullableAnnotatedStringApplier(), java.util.function.Function<String?, String?>,
+    CharSequenceApplier
+
+abstract class NullableStringApplierJavaNullableAnnotatedStringApplierNullableFunctionCharSequenceApplierJoin :
+    NullableStringApplier, JavaNullableAnnotatedStringApplierNullableFunctionCharSequenceApplierJoin()
+
 interface DefaultStringApplier {
     fun apply(x: String): String = x
 }
@@ -1935,6 +1972,16 @@ interface DefaultStringApplier {
 // from the apply(String?) of Function<String?, String>
 abstract class InheritedDefaultStringApplierJavaStringApplierHalfNullableFunctionApplierJoin :
     DefaultStringApplier, InheritedJavaStringApplierHalfNullableFunctionApplierJoin()
+
+// and so does the one of another Kotlin interface taking no null, of no body, while the apply(x: String) of StringApplier,
+// merged by the join, is no member of its own (#374)
+abstract class CharSequenceApplierJavaStringApplierHalfNullableFunctionApplierJoin :
+    CharSequenceApplier, InheritedJavaStringApplierHalfNullableFunctionApplierJoin()
+
+// unlike the apply(x: String?) of another Kotlin interface, merged with the member the join picks, also with the apply(x: String)
+// of StringApplier, merged by the join (#374)
+abstract class NullableStringApplierJavaStringApplierHalfNullableFunctionApplierJoin :
+    NullableStringApplier, InheritedJavaStringApplierHalfNullableFunctionApplierJoin()
 
 // the apply(String?) of Function<String?, String?> stays apart, as the Java class is declared after the Kotlin interface
 abstract class StringApplierJavaStringApplierNullableFunctionJoin :

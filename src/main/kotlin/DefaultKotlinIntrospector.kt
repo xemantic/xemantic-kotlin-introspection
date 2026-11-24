@@ -3834,13 +3834,16 @@ internal class DefaultKotlinIntrospector(
          * and by its mutable collection projected `out`, see [collectionVariants], when the type arguments within agree in nullability,
          * see [hasNestedNullabilityOf],
          * or overriding the same member, declared by another supertype,
-         * as the members of the same supertype are its overloads.
+         * as the members of the same supertype are its overloads,
+         * or merged by a single Kotlin class, which the inheriting class inherits as one member, see [joinUnit],
+         * also regardless of nullability when one of them is merged so with a member given a nullable type argument,
+         * which it is kept apart along with, see [isNullablyJoined].
          */
         fun isMergedWith(other: InheritedCandidate): Boolean =
             other.className != className && (other.member is Member.Property) == (member is Member.Property) &&
-                (other.overridden.any { it in overridden } ||
-                    (other.signature == signature ||
-                        isJavaRivalry(other) && isRival(other) && !isNullabilityClash(other)) &&
+                (joinUnit != null && joinUnit === other.joinUnit || other.overridden.any { it in overridden } ||
+                    (other.signature == signature && (!isNullablyJoined && !other.isNullablyJoined || !isNullabilityClash(other)) ||
+                        (isJavaRivalry(other) || isNullablyJoined || other.isNullablyJoined) && isRival(other) && !isNullabilityClash(other)) &&
                     isMergedOnJvm(other) && !isOverloadOf(other) && !other.isOverloadOf(this))
 
         // whether the member is a generic function of a Kotlin class which its type parameters tell an overload
@@ -3968,6 +3971,9 @@ internal class DefaultKotlinIntrospector(
             (member as? Member.Function)?.let { (declarations as? JavaClass)?.javaMethodOf(it.declaration) }?.let(::javaNullabilityOf)
         }
 
+        // whether the value parameter at the position of the member of a Java class, not of the JDK, is annotated nullable
+        fun isAnnotatedNullableAt(position: Int): Boolean = !isJdkMember && javaNullability?.types?.get(position) == true
+
         // whether the value parameter at the position of the member of a Java class is an array, no vararg, of platform elements,
         // which it declares itself, not annotated, like the String[] of Java, an Array<(out) String!>, see takeTypesOf
         fun isPlatformElementAt(position: Int): Boolean {
@@ -4037,9 +4043,10 @@ internal class DefaultKotlinIntrospector(
         // where the one of the other member is not nullable, nor a platform type, like the String of accept(s: String),
         // which the compiler keeps apart, see isMergedWith, so that the Java method never implements the Kotlin member
         // but the members of the classes a Kotlin class merges them with, see mergedThroughClasses
+        // but a parameter annotated nullable, see annotatedNullableArgumentPositions, only with a member of a Kotlin class
         private fun isNullabilityClash(other: InheritedCandidate, isProjecting: Boolean = isProjectedRivalry): Boolean =
-            (other.name !in mergedThroughClasses && nullableArgumentPositions.any { other.isNotNullAt(it) }) ||
-                (name !in other.mergedThroughClasses && other.nullableArgumentPositions.any { isNotNullAt(it) }) ||
+            (other.name !in mergedThroughClasses && clashingPositions(other).any { other.isNotNullAt(it) }) ||
+                (name !in other.mergedThroughClasses && other.clashingPositions(this).any { isNotNullAt(it) }) ||
                 (isProjecting && isElementNullabilityClash(other))
 
         /**
@@ -4049,6 +4056,32 @@ internal class DefaultKotlinIntrospector(
          * see [inheritedCandidates].
          */
         var mergedThroughClasses: Set<String> = emptySet()
+
+        /**
+         * The [nullableArgumentPositions] where the [member] of a Java class takes a parameter annotated nullable,
+         * like the `@Nullable String` of `apply`, a `String?`, kept apart from the members of Kotlin classes taking no null there,
+         * but merged with the methods of Java classes of the same JVM signature, whatever their annotations.
+         */
+        var annotatedNullableArgumentPositions: Set<Int> = emptySet()
+
+        // the positions the member is kept apart from the one of the other candidate by, see isNullabilityClash
+        private fun clashingPositions(other: InheritedCandidate): Set<Int> =
+            if (other.declarations is JavaClass) nullableArgumentPositions - annotatedNullableArgumentPositions else nullableArgumentPositions
+
+        /**
+         * Whether the [member], taking no null, is merged with a member given a nullable type argument by a Kotlin class
+         * picking the latter, see [inheritedCandidates], so that it takes its [nullableArgumentPositions]
+         * and [mergedThroughClasses], kept apart as one member from the members of other classes taking no null,
+         * also of the same [signature], see [isMergedWith].
+         */
+        var isNullablyJoined: Boolean = false
+
+        /**
+         * The token shared by the members a single Kotlin class merges, every path to the one given a nullable type argument
+         * running through it, see [inheritedCandidates], which are merged with each other, see [isMergedWith],
+         * as the class inherits them as one member, or null.
+         */
+        var joinUnit: Any? = null
 
         /**
          * Whether the [member] is kept apart from the one of the [other] candidate by a nullable type argument,
@@ -4797,6 +4830,11 @@ internal class DefaultKotlinIntrospector(
      *
      * @param walkedOut the list to add all the candidates walked to, also the ones not listed, like the hidden ones,
      *   see [mustImplementNotes], if any.
+     * @param joinsTold the names of the classes below, whose candidates are being told, as they merge the ones of the kmClass,
+     *   not to walk them again on a supertype cycle of malformed class files.
+     * @param joinCandidatesByName the candidates of the merging classes walked for the class below, if any, by their names,
+     *   shared by all the classes walked so, so that each one is walked once, also when reached through several joins,
+     *   like the ones of the diamonds of joins stacked above each other.
      */
     private fun inheritedCandidates(
         kmClass: KmClass,
@@ -4804,7 +4842,9 @@ internal class DefaultKotlinIntrospector(
         memberName: String,
         scope: ApiClass,
         hidingExtensions: MutableList<IndexedExtension>,
-        walkedOut: MutableList<InheritedCandidate>? = null
+        walkedOut: MutableList<InheritedCandidate>? = null,
+        joinsTold: Set<String> = emptySet(),
+        joinCandidatesByName: MutableMap<String, List<InheritedCandidate>?> = HashMap()
     ): List<InheritedCandidate> {
         if ('.' in memberName || kmClass.name == NOTHING_CLASS_NAME) return emptyList()
         // the type parameters in scope of the inheriting class, given as the type arguments of its supertypes,
@@ -4850,6 +4890,8 @@ internal class DefaultKotlinIntrospector(
         val referrers = HashMap<String, ClassDeclarations>()
         // the JVM classes of the supertypes walked, if loaded, by their names, see givesPlatformTypes below
         val walkedClasses = HashMap<String, Class<*>>()
+        // the declarations of the supertypes walked, by their names, see picksNotNull below
+        val walkedDeclarations = HashMap<String, ClassDeclarations>()
         // the Java classes of the user code nearest to the inheriting class, depth-first, the class itself, if it is one,
         // or the first ones reached through its Kotlin supertypes, which enhance the methods they inherit, see joined below
         val nearestJavaClasses by lazy(LazyThreadSafetyMode.NONE) {
@@ -4914,6 +4956,7 @@ internal class DefaultKotlinIntrospector(
             directSupertypes[name] = superSupertypes.classNames()
             declaredSupertypes[name] = superKmClass to superSupertypes
             superDeclarations.clazz?.let { walkedClasses[name] = it }
+            walkedDeclarations[name] = superDeclarations
             if (superDeclarations !is JavaClass) superSupertypes.classNames().forEach { referrers.putIfAbsent(it, superDeclarations) }
             superSupertypes.forEach { superSupertype ->
                 val superName = (superSupertype.classifier as? KmClassifier.Class)?.name ?: return@forEach
@@ -5039,6 +5082,19 @@ internal class DefaultKotlinIntrospector(
                     }
                 ).also { candidate ->
                     if (unlocated !== located) unlocatedCandidates += candidate
+                    // and so is a parameter of a Java class annotated nullable, like the @Nullable String of apply, a String?,
+                    // which the compiler keeps apart from the members taking no null like a nullable type argument
+                    if (superDeclarations is JavaClass && declared is Member.Function && !isReachedRaw) {
+                        val annotated = declared.declaration.valueParameters.indices.filter { index ->
+                            declared.declaration.valueParameters[index].varargElementType == null && candidate.isAnnotatedNullableAt(index) &&
+                                (member as? Member.Function)?.function?.valueParameters?.getOrNull(index)?.type?.isNullable == true
+                        }
+                        val annotatedOnly = annotated.filterTo(HashSet()) { it !in candidate.nullableArgumentPositions }
+                        if (annotatedOnly.isNotEmpty()) {
+                            candidate.nullableArgumentPositions = candidate.nullableArgumentPositions + annotatedOnly
+                            candidate.annotatedNullableArgumentPositions = annotatedOnly
+                        }
+                    }
                     if (superDeclarations is JavaClass && declared is Member.Function && !isReachedRaw) {
                         val given = givenByKotlin[name].orEmpty()
                         candidate.kotlinGivenPositions = declared.declaration.valueParameters.indices.filterTo(HashSet()) { index ->
@@ -5107,6 +5163,15 @@ internal class DefaultKotlinIntrospector(
             }
             if (signature == null || isOverriddenOnJvm) candidate.nullableArgumentPositions = emptySet()
         }
+        // the supertypes of the return types compared, see compareSpecificity, walked once per class,
+        // named by their metadata names, like the types of the members of a relocated Java class, see unlocated,
+        // but found by their located names, like the supertypes of the class, see inheritedName
+        val supertypeNames = HashMap<String, Set<String>>()
+        val supertypeNamesOf = { name: String ->
+            supertypeNames.getOrPut(name) {
+                supertypeNames(name, kmClassOf = { builtinClasses[it] ?: loadKmClass(inheritedName(declarations, it)) })
+            }
+        }
         // the classes reached from the class, by their order of contribution, depth-first, see contributionOrder
         val contributionOrders = HashMap<String, Map<String, Int>>()
         fun contributionOrderOf(root: String): Map<String, Int> = contributionOrders.getOrPut(root) {
@@ -5130,6 +5195,28 @@ internal class DefaultKotlinIntrospector(
         // unlike `Join : StringApplier, JavaStringApplier(), Function<String?, String?>`, or the members of the other supertypes of X,
         // told once for all the candidates, as the ones merged are not kept apart while told, see InheritedCandidate.mergedThroughClasses
         val mergedThrough = IdentityHashMap<InheritedCandidate, Set<String>>()
+        // unless each of them picks of the merged members one taking no null where the candidate takes the nullable type argument,
+        // like the apply(x: String) of StringApplier, returning a type more specific than String?, picked by the join above,
+        // which the compiler merges then with the members of the other classes too, like the apply(x: String) of a Kotlin
+        // interface declared next to the join, but not the apply(x: String?) of Function<String?, String>, picked by
+        // `Join : JavaStringApplier(), Function<String?, String>, StringApplier`, which stays apart from them
+        val mergedWithAll = Collections.newSetFromMap(IdentityHashMap<InheritedCandidate, Boolean>())
+        // the members merged with each candidate by the classes picking it, or another nullable member, see below
+        val nullablyJoined = IdentityHashMap<InheritedCandidate, MutableList<InheritedCandidate>>()
+        // and by the single class merging them, whatever it picks, see InheritedCandidate.joinUnit
+        val joinedMembers = IdentityHashMap<InheritedCandidate, List<InheritedCandidate>>()
+        // all the candidates walked for a merging class, as it inherits them itself, see picksNotNull below,
+        // or null of a class whose candidates are told already, below, on a supertype cycle of malformed class files
+        fun joinCandidates(name: String): List<InheritedCandidate>? = if (name in joinsTold) null else joinCandidatesByName.getOrPut(name) {
+            val joinKmClass = declaredSupertypes[name]?.first ?: return@getOrPut null
+            val joinDeclarations = walkedDeclarations[name] ?: return@getOrPut null
+            ArrayList<InheritedCandidate>().also { joinWalked ->
+                inheritedCandidates(
+                    joinKmClass, joinDeclarations, memberName, scope, hidingExtensions = mutableListOf(), joinWalked,
+                    joinsTold + kmClass.name + name, joinCandidatesByName
+                )
+            }
+        }
         walked.filter { it.nullableArgumentPositions.isNotEmpty() && it.member is Member.Function }.forEach { candidate ->
             fun mergesBelow(name: String): Boolean {
                 val order = contributionOrderOf(name)
@@ -5166,10 +5253,80 @@ internal class DefaultKotlinIntrospector(
             }
             // the members of the classes each of them reaches, as the members of the other ones are no part of the merged member,
             // like the apply(x: String) of a Kotlin interface of a body named next to the join
-            mergingClasses(kmClass.name)?.map { contributionOrderOf(it).keys }?.reduce { a, b -> a intersect b }
-                ?.let { mergedThrough[candidate] = it }
+            val classes = mergingClasses(kmClass.name) ?: return@forEach
+            // told by the candidates of the merging class itself: the member of the group of the candidate which K2 picks,
+            // of the most specific return type, a platform one less specific than the same type which is not, see compareReturnType,
+            // or else the one contributed first, the first one of the group, like the accept(String) of a Java interface
+            // declared first, taking String!, for `interface Join : JavaAcceptor, Consumer<String?>, Acceptor`,
+            // which takes no null where the candidate takes the nullable type argument: a Kotlin member of a type not nullable,
+            // or a member of a Java class taking a platform type there, or null when not told, like of a type parameter,
+            // which a subclass might give nullable, while the members merged with a nullable one picked, as walked here,
+            // are added to the nullablyJoined
+            fun picksNotNull(name: String): Boolean? {
+                val joinWalked = joinCandidates(name) ?: return null
+                val own = joinWalked.firstOrNull { it.className == candidate.className && it.key == candidate.key } ?: return null
+                val group = own.groupFirst ?: return null
+                val order = contributionOrderOf(name)
+                val merged = joinWalked.filter { it.groupFirst === group }
+                    .sortedWith(compareBy({ it !== group }, { order[it.name] ?: Int.MAX_VALUE }))
+                val picked = merged.firstOrNull { member ->
+                    merged.none { other -> other !== member && (other.compareReturnType(member, supertypeNamesOf) ?: 0) > 0 }
+                } ?: return null
+                val parameters = (picked.effectiveMember as? Member.Function)?.function?.valueParameters ?: return null
+                val types = candidate.nullableArgumentPositions.map { position ->
+                    parameters.getOrNull(position)?.type?.takeIf { it.classifier is KmClassifier.Class } ?: return null
+                }
+                val isNotNull = candidate.nullableArgumentPositions.zip(types).all { (position, type) ->
+                    if (picked.declarations is JavaClass) {
+                        position !in picked.nullableArgumentPositions && !picked.isAnnotatedNullableAt(position)
+                    } else {
+                        !type.isNullable
+                    }
+                }
+                val members = merged.flatMap { member ->
+                    walked.filter { it !== candidate && it.className == member.className && it.key == member.key }
+                }
+                if (!isNotNull) nullablyJoined.getOrPut(candidate) { ArrayList() } += members
+                if (classes.distinct().size == 1) joinedMembers[candidate] = members
+                return isNotNull
+            }
+            val picks = classes.map(::picksNotNull)
+            if (null in picks) {
+                joinedMembers -= candidate
+                nullablyJoined -= candidate
+            }
+            if (picks.isNotEmpty() && picks.all { it == true }) {
+                mergedWithAll += candidate
+            } else {
+                classes.map { contributionOrderOf(it).keys }.reduceOrNull { a, b -> a intersect b }?.let { mergedThrough[candidate] = it }
+            }
         }
         mergedThrough.forEach { (candidate, classes) -> candidate.mergedThroughClasses = classes }
+        mergedWithAll.forEach { it.nullableArgumentPositions = emptySet() }
+        // and the members merged with the nullable one picked take its nullable type argument, kept apart as one member
+        // from the members of the other classes, like the apply(x: String) of StringApplier, merged by the join picking
+        // the apply of Function<String?, String>, from the apply(x: String) of a Kotlin interface returning CharSequence,
+        // named next to the join, see InheritedCandidate.isNullablyJoined
+        nullablyJoined.forEach { (candidate, members) ->
+            val classes = mergedThrough[candidate] ?: return@forEach
+            members.filter { it !in mergedWithAll && it.nullableArgumentPositions.isEmpty() }.forEach { member ->
+                member.nullableArgumentPositions = candidate.nullableArgumentPositions
+                member.mergedThroughClasses = classes
+                member.isNullablyJoined = true
+            }
+        }
+        // which stay one member, whatever the members of the other classes they are merged with, as the class inherits
+        // the single member of the class merging them, like the apply(x: String?) of a Kotlin interface merged by
+        // `Join : JavaStringApplier(), Function<String?, String?>, StringApplier, NullableStringApplier`,
+        // also for `X : StringApplier, Join()`, though not merged with the apply(x: String) of StringApplier on its own
+        // the groups of several candidates sharing a member joined, as one
+        joinedMembers.forEach { (candidate, members) ->
+            val joined = listOf(candidate) + members
+            val units = joined.mapNotNullTo(Collections.newSetFromMap(IdentityHashMap())) { it.joinUnit }
+            val unit = Any()
+            walked.filter { it.joinUnit in units }.forEach { it.joinUnit = unit }
+            joined.forEach { it.joinUnit = unit }
+        }
         walked.forEach { candidate -> candidate.isPlainCollectionRival = walked.any { it !== candidate && candidate.isPlainCollectionRivalOf(it) } }
         // as is the merging by the variants of the arrays and projected collections, next to a hidden member merged so with another one,
         // see InheritedCandidate.isProjectedRivalry, but not a hidden one kept apart from the members by the nullability of the elements
@@ -5210,15 +5367,6 @@ internal class DefaultKotlinIntrospector(
                     }
                 }
                 candidate.isEnhancementLost = candidate.name !in keepingEnhancement
-            }
-        }
-        // the supertypes of the return types compared, see compareSpecificity, walked once per class,
-        // named by their metadata names, like the types of the members of a relocated Java class, see unlocated,
-        // but found by their located names, like the supertypes of the class, see inheritedName
-        val supertypeNames = HashMap<String, Set<String>>()
-        val supertypeNamesOf = { name: String ->
-            supertypeNames.getOrPut(name) {
-                supertypeNames(name, kmClassOf = { builtinClasses[it] ?: loadKmClass(inheritedName(declarations, it)) })
             }
         }
         // a Java method overriding a member of a Kotlin supertype, like get of java.util.ArrayList, is not inherited,

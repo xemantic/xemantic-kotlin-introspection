@@ -290,6 +290,11 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 - kotlinc's `named argument is prohibited for parameter with an ambiguous name` also counts names no listing shows:
   of hidden and internal members, and of the members a joined override renames — but not along a single path, see `ambiguousNamePositions`.
 
+- A call naming no parameter of the member, like `x.apply(arg0 = "")`, makes kotlinc list every member of the name as a candidate
+  (`none of the following candidates is applicable: fun apply(p0: String?): String … fun apply(x: String): CharSequence …`),
+  or name the parameter of the single one (`no value passed for parameter 'p0'`) — the probe telling how many members a class has,
+  where the null call, the return type and the empty concrete subclass cannot, like below a join of a half-nullable JDK interface (#374).
+
 - The sweep model counting the members rendered without a modifier as abstract can be right by accident:
   a visible member rendered abstract in place of the hidden one kotlinc demands — confirm a changed abstract count
   by overriding each candidate signature in a concrete subclass of its own.
