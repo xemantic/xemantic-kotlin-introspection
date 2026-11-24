@@ -469,6 +469,24 @@ private fun KmType.enhanceSupertypeArguments(type: Class<*>, supertype: Class<*>
 }
 
 /**
+ * Whether the generic signature of the class [type], the bounds of its type parameters, and its generic supertypes,
+ * refers only to classes which can be loaded, also to the ones relocated with it, like by shading, by their rewritten names,
+ * unlike to a class missing from the classpath.
+ */
+internal fun resolvesGenericSignature(type: Class<*>): Boolean = try {
+    type.typeParameters.forEach { it.bounds }
+    type.genericSuperclass
+    type.genericInterfaces
+    true
+} catch (_: LinkageError) {
+    false
+} catch (_: TypeNotPresentException) {
+    false
+} catch (_: MalformedParameterizedTypeException) {
+    false
+}
+
+/**
  * Whether the class [type], or a class its supertypes reach, also through their type arguments, and the supertypes of these,
  * like `NullableList` of `interface Holder<V> : Producer<NullableList<V>>` of `List<Holder<V>>`,
  * is a Java class annotating a type argument of its supertype as nullable, or not,
@@ -567,6 +585,19 @@ internal fun javaMethodOrder(type: Class<*>): Map<String, Int> = javaNullabiliti
  * the class [supertype], annotated nullable, like the `@Nullable Integer` of `Base<@Nullable Integer>`, no platform type,
  * see [givesPlatformTypeArguments], yet accepting `null` like one, unlike the one annotated not null.
  */
+/**
+ * Whether the Java class [type] annotates the nullability of the elements of the array it gives as the type argument at the [index]
+ * of its direct supertype named [supertypeName], by its JVM name, like `JavaAcceptor<@NotNull String[]>`, unlike a `String[]`,
+ * of platform elements, see [JavaClassNullability.supertypeArguments].
+ */
+internal fun annotatesGivenArrayElements(type: Class<*>, supertypeName: String, index: Int): Boolean = reflectedValue(default = false) {
+    if (type.isKotlinClass || type.isJdkClass) return@reflectedValue false
+    val supertypeIndex = if (type.superclass?.name == supertypeName) -1 else {
+        type.interfaces.indexOfFirst { it.name == supertypeName }.takeIf { it >= 0 } ?: return@reflectedValue false
+    }
+    javaNullabilities.get(type).supertypeArguments[supertypeIndex]?.containsKey("$index;[") == true
+}
+
 internal fun givesNullableTypeArgument(type: Class<*>, supertype: Class<*>, index: Int): Boolean = reflectedValue(default = false) {
     // not the ones of the superclass, at -1, for a class which is no direct supertype
     val supertypeIndex = if (type.superclass == supertype) -1 else type.interfaces.indexOf(supertype).takeIf { it >= 0 }
@@ -796,11 +827,26 @@ internal fun KFunction<*>.toKmFunction(typeParameters: ReflectedTypeParameters):
         val positions = reflectedValue(default = emptySet()) { platformPositions(javaMethod) }
         positions.forEach { function.valueParameters.getOrNull(it)?.type?.isNullable = true }
     }
+    // and when it describes one as nullable, which K2 takes as not nullable, see notNullGivenPositions
+    method.value?.takeIf { javaMethod ->
+        function.valueParameters.withIndex().any { (position, parameter) ->
+            parameter.type.isNullable && javaMethod.parameterTypes.getOrNull(position)?.isPrimitive == false
+        }
+    }?.let { javaMethod ->
+        val positions = reflectedValue(default = emptySet()) { notNullGivenPositions(javaMethod) }
+        positions.forEach { function.valueParameters.getOrNull(it)?.type?.isNullable = false }
+    }
     function.returnType = returnType.toKmType(scope)
     enhanceDefinitelyNotNull(function)
     enhanceNullableReturn(function)
     // the annotations win over the enhancements of the JDK methods overridden, like the @NotNull of a get() of a WeakReference
     method.value?.let { enhanceJavaNullability(it, function) }
+    // but a value parameter of nullabilities which disagree is a platform type, see clashingNullabilityPositions
+    method.value?.let { javaMethod ->
+        reflectedValue(default = emptySet()) { clashingNullabilityPositions(javaMethod) }.forEach {
+            function.valueParameters.getOrNull(it)?.type?.markNullable(isNullable = true)
+        }
+    }
     return function
 }
 
@@ -858,6 +904,110 @@ private fun platformPositions(method: Method): Set<Int> {
             val type = inherited.genericParameterTypes.getOrNull(position) as? TypeVariable<*>
             val typeClass = type?.genericDeclaration as? Class<*>
             typeClass != null && isJavaTypeArgument(declaringClass, typeClass, typeClass.typeParameters.indexOf(type))
+        }
+    }
+}
+
+/**
+ * The positions of the value parameters of the [method], of a Java class, not annotated, of reference types,
+ * which K2 takes as not nullable, though kotlin-reflect describes them as platform types, not reading the annotations
+ * retained in the class file only: the ones of a type parameter of the class of each Kotlin member it overrides,
+ * see [overriddenKotlinMethods], given by Java classes only, along every path, none annotated nullable,
+ * and one at least annotated not null, or marked by `@NullMarked`, see [TypeArgumentGiver.Java.isPlatform],
+ * or the one of the first path, when a Kotlin class joins all of them, see [TypeArgumentGiver.join], whose member takes it,
+ * when the [method] is not annotated there, nor do the Java methods it overrides tell a nullability, see [javaNullabilityOf],
+ * like the `Int` of the `put(t: T)` of `GenericPut<T>`, which a Java interface gives `@NotNull Integer`,
+ * for the `put(Integer)` of a Java class implementing it, also next to a path giving `Integer`, so that `put(null)` does not compile.
+ */
+private fun notNullGivenPositions(method: Method): Set<Int> {
+    val declaringClass = method.declaringClass
+    if (declaringClass.isJdkClass || declaringClass.isKotlinClass) return emptySet()
+    val parameterTypes = method.parameterTypes
+    val own = javaNullabilities.get(declaringClass).methods[method.name + AsmType.getMethodDescriptor(method)]?.nullability
+    val references = parameterTypes.indices.filter { position ->
+        !parameterTypes[position].isPrimitive && !(method.isVarArgs && position == parameterTypes.lastIndex) &&
+            own?.types?.get(position) == null &&
+            javaNullabilityOf(method).let { it == null || (position !in it.types && position !in it.platform) }
+    }
+    if (references.isEmpty()) return emptySet()
+    val overridden = overriddenKotlinMethods(method, methodsMatchedByKotlinTypes(method))
+    if (overridden.isEmpty()) return emptySet()
+    fun TypeArgumentGiver.isNotNull() = this is TypeArgumentGiver.Java && !isNullable && !isPlatform
+    return references.filterTo(HashSet()) { position ->
+        overridden.all { inherited ->
+            val type = inherited.genericParameterTypes.getOrNull(position) as? TypeVariable<*>
+            val typeClass = type?.genericDeclaration as? Class<*>
+            typeClass != null && typeArgumentGivers(declaringClass, typeClass, typeClass.typeParameters.indexOf(type)).let { givers ->
+                val join = givers.firstOrNull()?.join
+                givers.isNotEmpty() && givers.all { it is TypeArgumentGiver.Java && !it.isNullable && it.join == join } &&
+                    // a Kotlin class joining the paths has a member of its own, of the type arguments of its first path
+                    if (join == null) givers.any { it.isNotNull() } else givers.first().isNotNull()
+            }
+        }
+    }
+}
+
+/**
+ * The positions of the value parameters of the [method], of a Java class, of reference types, which K2 takes as platform types,
+ * as the nullabilities it combines disagree: of its own annotation, of the Java methods it overrides, see [javaNullabilityOf],
+ * and of the type arguments given for the type parameters of the classes of the Kotlin members it overrides,
+ * see [overriddenKotlinMethods], told by the annotations, or by the Kotlin classes giving them, see [givenNullabilities],
+ * like the `Int!` of a `put(@NotNull Integer)` overriding the `put(t: T)` of a Kotlin class given `@Nullable Integer`,
+ * so that `put(null)` compiles, though kotlin-reflect, not reading the annotations retained in the class file only,
+ * and the annotation of the [method] itself, tell `Int`.
+ */
+private fun clashingNullabilityPositions(method: Method): Set<Int> {
+    val declaringClass = method.declaringClass
+    if (declaringClass.isJdkClass || declaringClass.isKotlinClass) return emptySet()
+    val parameterTypes = method.parameterTypes
+    val references = parameterTypes.indices.filter { !parameterTypes[it].isPrimitive }
+    if (references.isEmpty()) return emptySet()
+    val overriddenKotlin = overriddenKotlinMethods(method, methodsMatchedByKotlinTypes(method))
+    if (overriddenKotlin.isEmpty()) return emptySet()
+    val own = javaNullabilities.get(declaringClass).methods[method.name + AsmType.getMethodDescriptor(method)]?.nullability
+    val overriddenJava = directlyOverriddenJavaMethods(method).mapNotNull { javaNullabilityOf(it) }
+    return references.filterTo(HashSet()) { position ->
+        val nullabilities = HashSet<Boolean>()
+        own?.types?.get(position)?.let { nullabilities += it }
+        overriddenJava.forEach { nullability ->
+            (nullability.types[position] ?: false.takeIf { nullability.isMarkedNotNull(position) })?.let { nullabilities += it }
+        }
+        overriddenKotlin.forEach { inherited ->
+            val type = inherited.genericParameterTypes.getOrNull(position) as? TypeVariable<*>
+            val typeClass = type?.genericDeclaration as? Class<*> ?: return@forEach
+            nullabilities += givenNullabilities(typeArgumentGivers(declaringClass, typeClass, typeClass.typeParameters.indexOf(type)))
+        }
+        nullabilities.size > 1
+    }
+}
+
+/**
+ * Whether the method of the Java class [type] of the [name] and the JVM [descriptor], declared by it,
+ * takes a platform type as the nullabilities it combines disagree, see [clashingNullabilityPositions],
+ * an override of the Kotlin members for K2 then, whose parameter names it takes.
+ */
+internal fun takesClashingNullability(type: Class<*>, name: String, descriptor: String): Boolean = reflectedValue(default = false) {
+    declaredMethodsByDescriptor.get(type)[name + descriptor]?.let { clashingNullabilityPositions(it).isNotEmpty() } == true
+}
+
+// the methods declared by a class, but the bridges, by their names and JVM descriptors, read once per class
+private val declaredMethodsByDescriptor = object : ClassValue<Map<String, Method>>() {
+    override fun computeValue(type: Class<*>): Map<String, Method> = reflectedValue(default = emptyMap()) {
+        type.declaredMethods.filter { !it.isBridge }.associateBy { it.name + AsmType.getMethodDescriptor(it) }
+    }
+}
+
+/**
+ * The nullabilities the [givers] of a type argument tell, see [typeArgumentGivers]: `true` of one annotated nullable,
+ * `false` of one annotated not null, or marked by `@NullMarked`, none of a platform type, and the one a Kotlin class gives,
+ * but only the one of the first path, when a Kotlin class joins the paths, see [TypeArgumentGiver.join], whose member takes it.
+ */
+private fun givenNullabilities(givers: List<TypeArgumentGiver>): Set<Boolean> {
+    val first = givers.firstOrNull() ?: return emptySet()
+    return (if (first.join != null) listOf(first) else givers).mapNotNullTo(HashSet()) { giver ->
+        when (giver) {
+            is TypeArgumentGiver.Java -> if (giver.isNullable) true else false.takeIf { !giver.isPlatform }
+            is TypeArgumentGiver.Kotlin -> giver.argument?.isNullable
         }
     }
 }
@@ -1005,9 +1155,10 @@ private class KotlinTypeArgument(val isNullable: Boolean, val isPrimitive: Boole
 private val kotlinTypeArguments = object : ClassValue<Map<String, Map<Int, KotlinTypeArgument>>>() {
     override fun computeValue(type: Class<*>): Map<String, Map<Int, KotlinTypeArgument>> = reflectedValue(default = emptyMap()) {
         val supertypes = readKmClass(type)?.supertypes.orEmpty()
-        // the supertypes of the metadata by the Kotlin ones of the JVM class, by the names their own metadata tells
-        (listOfNotNull(type.superclass) + type.interfaces).filter { it.isKotlinClass }.associate { supertypeClass ->
-            val name = readKmClass(supertypeClass)?.name
+        // the supertypes of the metadata by the ones of the JVM class, by the names their own metadata tells,
+        // or of a Java class, by its binary name, like the `JMid<Int?>` of `interface KN : JMid<Int?>`
+        (listOfNotNull(type.superclass) + type.interfaces).associate { supertypeClass ->
+            val name = readKmClass(supertypeClass)?.name ?: supertypeClass.name.replace('.', '/').replace('$', '.')
             val supertype = supertypes.firstOrNull { (it.classifier as? KmClassifier.Class)?.name == name }
             supertypeClass.name to supertype?.arguments.orEmpty().withIndex().mapNotNull { (index, argument) ->
                 val argumentType = argument.type
@@ -1067,7 +1218,18 @@ private fun typeArgumentGivers(
                 supertypeClass != typeClass -> walk(supertypeClass, join)
                 supertype !is ParameterizedType -> givers += TypeArgumentGiver.Java(isPlatform = true, join = join)
                 !type.isKotlinClass -> givesNullableTypeArgument(type, typeClass, index).let { isNullable ->
-                    givers += TypeArgumentGiver.Java(isNullable || givesPlatformTypeArguments(type, typeClass, index), isNullable, join)
+                    val isPlatform = isNullable || givesPlatformTypeArguments(type, typeClass, index)
+                    // a type variable of its own passed on, not annotated, like the T of `JMid<T> extends GenericPut<T>`,
+                    // as a platform type, or as given, by a class marked by @NullMarked, which a type argument annotated nullable,
+                    // or a nullable one of a Kotlin class, given for it makes nullable, like `JMid<@Nullable Integer>`,
+                    // while any other one stays as it is there
+                    val supertypeIndex = if (type.superclass == typeClass) -1 else type.interfaces.indexOf(typeClass)
+                    val isAnnotated = javaNullabilities.get(type).supertypeArguments[supertypeIndex]?.containsKey("$index;") == true
+                    val passed = (supertype.actualTypeArguments.getOrNull(index) as? TypeVariable<*>)?.takeIf { !isAnnotated }
+                    val owner = passed?.genericDeclaration as? Class<*>
+                    val isPassedNullable = owner != null && typeArgumentGivers(javaClass, owner, owner.typeParameters.indexOf(passed), resolved)
+                        .any { (it is TypeArgumentGiver.Java && it.isNullable) || (it is TypeArgumentGiver.Kotlin && it.argument?.isNullable == true) }
+                    givers += TypeArgumentGiver.Java(isPlatform || isPassedNullable, isNullable || isPassedNullable, join)
                 }
                 else -> when (val argument = supertype.actualTypeArguments.getOrNull(index)) {
                     is TypeVariable<*> -> (argument.genericDeclaration as? Class<*>)?.let { argumentClass ->
