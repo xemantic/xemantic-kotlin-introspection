@@ -2216,10 +2216,12 @@ internal class DefaultKotlinIntrospector(
                 inherited += inheritedGetters
             }
             if ("// also property: var $name" !in getter) continue
-            val type = getter.last().substringAfter("fun ${escapeIdentifier(getterName)}(): ", "").replace("?", "")
+            // but the trailing comment of an inherited member, like `// declared by internal …`, see inheritedMembers
+            val type = getter.last().substringBefore(" // ").substringAfter("fun ${escapeIdentifier(getterName)}(): ", "")
+                .replace("?", "")
             val setterName = syntheticPropertySetterName(getterName)
             // a setter of a single parameter, returning nothing, like `open fun setName(arg0: String?)`
-            fun List<String>.isSetter() = last().substringAfter("fun ${escapeIdentifier(setterName)}(", "").let { parameters ->
+            fun List<String>.isSetter() = last().substringBefore(" // ").substringAfter("fun ${escapeIdentifier(setterName)}(", "").let { parameters ->
                 parameters.endsWith(")") && parameters.removeSuffix(")").substringAfter(": ").replace("?", "") == type
             }
             declared += declaredNamed(setterName).filter { it.isSetter() }
@@ -2906,6 +2908,13 @@ internal class DefaultKotlinIntrospector(
         var implementingJvmMethod: JvmMethod? = null
 
         /**
+         * The candidate of the method of the Java class implementing the [member], see [implementingJvmMethod],
+         * whose JVM signature the listed [member] tells, when a JVM method of its own next to another member of its signature,
+         * see [jvmTwinSignatures].
+         */
+        var implementingCandidate: InheritedCandidate? = null
+
+        /**
          * The JVM method of a Java class merged with the listed [member], which stands for it, see [inheritedCandidates],
          * or implementing a member merged with it, see [implementingJvmMethod], like the `put(int)` of a Java class
          * merged with the `put(key: Int)` of an unrelated Kotlin interface, called in place of a `put(@NotNull Integer)`
@@ -3090,17 +3099,38 @@ internal class DefaultKotlinIntrospector(
          * like the `t` of `put(t: T)` of a Kotlin class for the `put(Integer)` of a Java subclass, so that `put(t = 1)` compiles,
          * see [inheritedCandidates], unless they differ in number, also of a vararg one,
          * like the `a` of `vararg a: String` for a `@NotNull String...`, so that `acceptAll(a = arrayOf(""))` compiles,
-         * but not next to a hidden member merged with another one by the variants of its array, see [isProjectedRivalry].
+         * but not next to a hidden member merged with another one by the variants of its array, see [isProjectedRivalry],
+         * telling whether it took them.
          */
-        fun takeNames(names: List<String>) {
-            val function = effectiveMember as? Member.Function ?: return
+        fun takeNames(names: List<String>): Boolean {
+            val function = effectiveMember as? Member.Function ?: return false
             val parameters = function.function.valueParameters
             // but next to a hidden member merged with another one by the variants of its array, see isProjectedRivalry
-            if (parameters.size != names.size || !isProjectedRivalry && parameters.any { it.varargElementType != null }) return
+            if (parameters.size != names.size || !isProjectedRivalry && parameters.any { it.varargElementType != null }) return false
             val named = function.function.withValueParameterTypes { it }
             named.valueParameters.forEachIndexed { index, parameter -> parameter.name = names[index] }
             javaTypedMember = Member.Function(named, function.declaration)
+            return true
         }
+
+        /**
+         * The positions of the value parameters of the listed [member] which the members merged with it name differently,
+         * the Kotlin ones, as the names of a Java method do not count, which kotlinc lets no call name,
+         * "named argument is prohibited for parameter with an ambiguous name", deciding per parameter,
+         * like the `t` of the `put(t: T)` of `GenericPut<Int>` merged with the `put(q: T)` of `GenericRenamedPut<Int>`,
+         * also the hidden ones, the ones of supertypes which are not part of the API, and the ones they override,
+         * when the member is joined through several direct supertypes, like the `f(a: Int)` which the `f(b: Int)` of `RM : RA`
+         * overrides, for `RJ : RM, RB`, but not along a single path, like for `RJ3 : RM`,
+         * see [inheritedCandidates], told by a comment, see [inheritedMembers].
+         */
+        var ambiguousNamePositions: Set<Int> = emptySet()
+
+        /**
+         * Whether the [member], of a Kotlin supertype which is not part of the API, is inherited through the inheriting class itself,
+         * a Kotlin class exposing it, which only a suppressed error allows, like `EXPOSED_SUPER_CLASS`,
+         * listed as a member of it then, telling the class declaring it, see [inheritedMembers].
+         */
+        var isExposedByInheriting: Boolean = false
 
         /**
          * The [reached] function, the [member] of the type arguments of another path to its class, see [inheritedCandidates],
@@ -3859,33 +3889,325 @@ internal class DefaultKotlinIntrospector(
             val supertypes = LinkedHashSet<Class<*>>()
             val pending = ArrayDeque<Class<*>>()
             declarations.clazz?.let(pending::add) ?: superclass.value?.let { if (supertypes.add(it)) pending += it }
-            reflectedValue(default = Unit) {
-                while (pending.isNotEmpty()) {
-                    val type = pending.removeFirst()
-                    (listOfNotNull(type.superclass) + type.interfaces).filter(supertypes::add).forEach(pending::addLast)
-                }
+            // a supertype which cannot be read skips its own branch only
+            while (pending.isNotEmpty()) {
+                val type = pending.removeFirst()
+                reflectedValue(default = emptyList()) { listOfNotNull(type.superclass) + type.interfaces }
+                    .filter(supertypes::add).forEach(pending::addLast)
             }
             supertypes
         }
+        val jvmTwinSignatures = jvmTwinSignatures(
+            inherited, typeParameterScopeOf(kmClass, declarations).mapIds(::inheritingTypeParameterId).names
+        )
         return inherited.map { candidate ->
             // a member of a supertype which is not part of the API is rendered as within the class it is inherited through,
             // see InheritedCandidate.inheritedThrough, a Java class, or a Kotlin class exposing it,
             // like the member of an internal interface as abstract, when the Java class implementing it is no interface
             val through = candidate.inheritedThrough?.let { inheritedDeclarations(inheritedName(declarations, it)) }
-            val renderedIn = through?.kmClass ?: candidate.kmClass
+            // or as a member of the inheriting class itself, when it exposes it, see InheritedCandidate.isExposedByInheriting,
+            // or as within the class named in its header in place of a Java interface which the user code cannot name,
+            // like the public Java class implementing a package-private one, extending an internal one, see inheritedFromName
+            val source = if (candidate.isExposedByInheriting) null else {
+                inheritedFromName(candidate, through, superclass, jvmSupertypes, declarations)
+            }
+            val namedClass = if (through !is JavaClass || through.kmClass.kind != ClassKind.INTERFACE || source == null) null else {
+                // the JVM class of that name, also a nested one, like `q.Outer.Impl` of `q/Outer.Impl`
+                source.takeIf { it != candidate.inheritedThrough?.replace('/', '.') }?.let { name ->
+                    jvmSupertypes.value.firstNotNullOfOrNull { type ->
+                        unlocatedName(declarations, kotlinClassName(type)).takeIf { it.replace('/', '.') == name }
+                    }
+                }
+                    ?.let { inheritedDeclarations(inheritedName(declarations, it))?.kmClass }
+                    ?.takeIf { it.kind != ClassKind.INTERFACE }
+            }
+            val renderedIn = if (candidate.isExposedByInheriting) kmClass else namedClass ?: through?.kmClass ?: candidate.kmClass
+            val lines = formatMember(
+                candidate.renderedMember(isOpenForOverrides), renderedIn, candidate.declarations, scope, contextPackage,
+                isOwnerOpenForOverrides = isOpenForOverrides,
+                inheritedBy = kmClass.kind,
+                typeParameters = candidate.typeParameters,
+                isJvmOnlyOverride = candidate.isJvmOnlyOverride,
+                isBoxedOverload = candidate.isBoxedOverload,
+                inheriting = kmClass to declarations
+            )
+            val notes = listOfNotNull(
+                jvmTwinSignatures[candidate]?.let { "$it on the JVM" },
+                if (!candidate.isExposedByInheriting) null else {
+                    // internal, or else not part of the API for another reason, like deprecated as hidden
+                    val kind = when {
+                        candidate.kmClass.visibility == Visibility.INTERNAL -> "internal "
+                        candidate.declarations.classDeprecation?.isHidden == true -> "hidden "
+                        else -> ""
+                    }
+                    "declared by $kind${escapeQualifiedName(candidate.className.replace('/', '.'))}"
+                },
+                ambiguousNamesNote(candidate)
+            )
             ListingItem.InheritedMember(
-                inheritedFromName(candidate, through, superclass, jvmSupertypes, declarations),
-                formatMember(
-                    candidate.renderedMember(isOpenForOverrides), renderedIn, candidate.declarations, scope, contextPackage,
-                    isOwnerOpenForOverrides = isOpenForOverrides,
-                    inheritedBy = kmClass.kind,
-                    typeParameters = candidate.typeParameters,
-                    isJvmOnlyOverride = candidate.isJvmOnlyOverride,
-                    isBoxedOverload = candidate.isBoxedOverload,
-                    inheriting = kmClass to declarations
-                )
+                source,
+                // on the line of the declaration, not of a setter of its own, like `    protected set`
+                if (notes.isEmpty()) lines else lines.indexOfLast { !it.startsWith(" ") }.coerceAtLeast(0).let { index ->
+                    lines.toMutableList().also { it[index] = it[index] + notes.joinToString("; ", prefix = " // ") }
+                }
             )
         }
+    }
+
+    /**
+     * The JVM signatures of the [inherited] members which are of the same signature as another one of them,
+     * as rendered, regardless of the names of their parameters, see [twinSignature], but of another JVM signature,
+     * by the members of a Java class, or JVM-only members, or the ones standing for the method of a Java class, see [javaTwin],
+     * like `put(Integer)` of the `put(arg0: Int)` of a Java `put(@NotNull Integer)` next to the `put(key: Int)`
+     * of a Kotlin interface, a JVM method of its own, `put(I)`, which the compiler keeps a member of its own,
+     * so that both are listed, the Java one telling its JVM signature, by the simple names of its parameter types,
+     * like `put(Integer) on the JVM`, see [inheritedMembers].
+     */
+    private fun jvmTwinSignatures(inherited: List<InheritedCandidate>, typeParameterNames: Map<Int, String>): Map<InheritedCandidate, String> {
+        if (inherited.size < 2) return emptyMap()
+        val twins = IdentityHashMap<InheritedCandidate, String>()
+        inherited.filter { it.member is Member.Function }.groupBy { it.effectiveMember.twinSignature(typeParameterNames) }.values.forEach { group ->
+            if (group.size < 2) return@forEach
+            group.forEach { candidate ->
+                // or of the method of a Java class implementing the member, which it stands for, see javaTwin
+                val java = candidate.javaTwin() ?: return@forEach
+                val method = java.jvmMethod ?: return@forEach
+                val types = java.jvmArgumentTypes() ?: return@forEach
+                if (group.none { it !== candidate && (it.javaTwin() ?: it).jvmArgumentTypes().let { other -> other != null && other != types } }) {
+                    return@forEach
+                }
+                val isVarargs = (java.member as? Member.Function)?.let { function ->
+                    (java.declarations as? JavaClass)?.javaMethodOf(function.declaration)?.let { reflectedValue(default = false) { it.isVarArgs } }
+                } == true
+                twins[candidate] = types.mapIndexed { index, type ->
+                    val name = type.className.substringAfterLast('.').replace('$', '.')
+                    if (isVarargs && index == types.lastIndex) name.removeSuffix("[]") + "..." else name
+                }.joinToString(", ", prefix = "${method.signature.name}(", postfix = ")")
+            }
+        }
+        return twins
+    }
+
+    /**
+     * The signature of this member as rendered, regardless of the names of its parameters, see [jvmTwinSignatures],
+     * also of the elements of a vararg, like the `String?` of `vararg a: String?`, an `Array<out String?>`,
+     * the type parameters of its class named by the [typeParameterNames], and its own ones by their positions,
+     * or `null` of a property.
+     */
+    @OptIn(ExperimentalContextParameters::class)
+    private fun Member.twinSignature(typeParameterNames: Map<Int, String>): String? {
+        val function = (this as? Member.Function)?.function ?: return null
+        val names = typeParameterNames + function.typeParameters.withIndex().associate { (index, it) -> it.id to "#$index" }
+        return function.contextParameters.joinToString(",", "context(", ")") { it.type.memberKeyType(names) } +
+            function.receiverParameterType?.memberKeyType(names).orEmpty() + "." + function.name +
+            function.valueParameters.joinToString(",", "(", ")") { parameter ->
+                parameter.varargElementType?.let { "kotlin/Array<out ${it.memberKeyType(names)}>" } ?: parameter.type.memberKeyType(names)
+            }
+    }
+
+    // the arguments of the JVM method of this candidate, of a Java one, or of a Kotlin member, see jvmTwinSignatures
+    private fun InheritedCandidate.jvmArgumentTypes(): List<AsmType>? =
+        ((jvmMethod?.signature ?: (member as? Member.Function)?.declaration?.signature) ?: return null)
+            .let { AsmType.getArgumentTypes(it.descriptor).toList() }
+
+    /**
+     * The candidate of the JVM method this one stands for, when of the same signature as another member, see [jvmTwinSignatures]:
+     * itself, a member of a Java class, or a JVM-only member, see [InheritedCandidate.jvmMethod],
+     * or the method of a Java class implementing this Kotlin member, a JVM method of its own,
+     * like the `put(Integer)` of a Java class implementing `GenericPut<@NotNull Integer>`, see [InheritedCandidate.implementingCandidate],
+     * next to the `put(t: T)` of body of a Kotlin interface given `Int`, which it does not implement, taking `Object` on the JVM,
+     * still listed as the Kotlin member, of its names, which kotlinc 2.4.21 lets a call name, like `put(t = 1)`,
+     * but not of a built-in type, like the `getOrDefault` of `Map`, which a JDK class implements, or `null` for a Kotlin member.
+     */
+    private fun InheritedCandidate.javaTwin(): InheritedCandidate? = when {
+        jvmMethod != null -> this
+        declarations is BuiltinClass -> null
+        else -> implementingCandidate?.takeIf { it.jvmMethod != null && it.declarations is JavaClass }
+    }
+
+    /**
+     * The comment telling the parameters of the [candidate] which no call can name, see [InheritedCandidate.ambiguousNamePositions],
+     * all of them, or some, named then, like `named arguments prohibited for k: ambiguous parameter names`, or `null` if none.
+     */
+    private fun ambiguousNamesNote(candidate: InheritedCandidate): String? {
+        val positions = candidate.ambiguousNamePositions.ifEmpty { return null }
+        val parameters = (candidate.effectiveMember as? Member.Function)?.function?.valueParameters ?: return null
+        return if (positions.size >= parameters.size) "named arguments prohibited: ambiguous parameter names" else {
+            positions.sorted().joinToString(", ", prefix = "named arguments prohibited for ", postfix = ": ambiguous parameter names") {
+                escapeIdentifier(parameters[it].name)
+            }
+        }
+    }
+
+    /**
+     * The comments telling the abstract members of the [kmClass], declared, or inherited, which a concrete subclass has to implement,
+     * though they are not listed, as no call can name them: the ones deprecated as hidden, like `// must implement hidden: hid(): Int`,
+     * and the internal ones, like `// must implement internal: reset(): Unit`, which kotlinc 2.4.21 requires of a subclass,
+     * "does not implement abstract base class member", or, of another module, "inherits invisible abstract member",
+     * rendered with the type arguments of the supertypes substituted, see [inheritedMembers],
+     * for a class which the user code can subclass, abstract, or an interface, see [isOpenForOverrides].
+     * A member is implemented by a JVM method of the class, or of its superclasses, which is not abstract,
+     * a default method of its interfaces, unless a class declares it again, or a member with a body
+     * of a Kotlin supertype below the one declaring it, like one of an interface compiled into its `DefaultImpls`,
+     * and a hidden one is implemented by a visible member of its JVM signature, inherited, or declared,
+     * which the compiler picks in its place, like an abstract one overriding it, which a concrete subclass implements then.
+     */
+    private fun mustImplementNotes(
+        kmClass: KmClass,
+        declarations: ClassDeclarations,
+        scope: ApiClass,
+        contextPackage: String
+    ): List<String> {
+        if (!isOpenForOverrides(kmClass, scope) ||
+            (kmClass.kind != ClassKind.INTERFACE && kmClass.modality != Modality.ABSTRACT) ||
+            declarations is JavaClass || declarations is BuiltinClass
+        ) {
+            return emptyList()
+        }
+        val clazz = declarations.clazz ?: return emptyList()
+        val inheritingTypeParameters = typeParameterScopeOf(kmClass, declarations)
+        val inheritingScope = inheritingTypeParameters.mapIds(::inheritingTypeParameterId)
+        val inheritingNames = inheritingScope.names
+        val inheriting = inheritingTypeParameters.names.keys.associateWith { typeParameterType(inheritingTypeParameterId(it)) }
+        // the abstract members found, hidden, or internal, rendered, with their JVM signatures, and their signatures as rendered,
+        // the class declaring them, and whether hidden
+        class Found(
+            val name: String,
+            val line: String,
+            val signature: JvmMethodSignature,
+            val renderedSignature: String,
+            val declaring: Class<*>?,
+            val isHidden: Boolean
+        )
+        val found = ArrayList<Found>()
+        // the JVM signatures of the members of a body of the Kotlin classes walked, by the classes declaring them
+        val bodies = ArrayList<Pair<Class<*>?, JvmMethodSignature>>()
+        fun scan(superKmClass: KmClass, superDeclarations: ClassDeclarations, member: (Member) -> Member, typeParameters: TypeParameterScope) {
+            if (superDeclarations is JavaClass || superDeclarations is BuiltinClass) return
+            val declaring = superDeclarations.clazz
+            fun add(declared: Member, signature: JvmMethodSignature?, isHidden: Boolean, isInternal: Boolean, isAbstract: Boolean) {
+                signature ?: return
+                if (!isAbstract) {
+                    bodies += declaring to signature
+                    return
+                }
+                if (!isHidden && !isInternal) return
+                val substituted = member(declared)
+                // of its own parts, without its deprecation, or its internal visibility, rendered as within an interface,
+                // not to tell its modality, and a var as a var, though its setter is not part of the API
+                val rendered = when (substituted) {
+                    is Member.Function -> formatFunction(
+                        substituted.function.withModality(Modality.ABSTRACT).also {
+                            if (it.visibility == Visibility.INTERNAL) it.visibility = Visibility.PUBLIC
+                        },
+                        inInterface = true, contextPackage = contextPackage, classTypeParameters = typeParameters
+                    )
+                    is Member.Property -> buildString {
+                        val property = substituted.property
+                        if (property.visibility == Visibility.PROTECTED) append("protected ")
+                        append(if (property.isVar) "var " else "val ")
+                        property.receiverParameterType?.let { append(formatReceiverType(it, contextPackage, typeParameters)).append('.') }
+                        append(escapeIdentifier(property.name)).append(": ")
+                        append(formatType(property.returnType, contextPackage, typeParameters))
+                    }
+                }
+                val name = (declared as? Member.Function)?.function?.name ?: (declared as Member.Property).property.name
+                val renderedSignature = substituted.twinSignature(inheritingNames) ?: substituted.signature(inheritingNames)
+                found += Found(name, rendered, signature, renderedSignature, declaring, isHidden)
+            }
+            superKmClass.functions.forEach { function ->
+                val isInternal = function.visibility == Visibility.INTERNAL
+                val isAbstract = function.modality == Modality.ABSTRACT
+                add(
+                    Member.Function(function), function.signature,
+                    isHidden = isAbstract && !isInternal && superDeclarations.isHidden(function), isInternal, isAbstract
+                )
+            }
+            superKmClass.properties.forEach { property ->
+                val isInternal = property.visibility == Visibility.INTERNAL
+                val isAbstract = property.modality == Modality.ABSTRACT
+                add(
+                    Member.Property(property), property.getterSignature,
+                    isHidden = isAbstract && !isInternal && superDeclarations.isHidden(property, scope), isInternal, isAbstract
+                )
+            }
+        }
+        // the own members referring to the type parameters of the class by their own ids, as the inherited ones by the inheriting ones
+        scan(kmClass, declarations, { it.withTypes { type -> type.substituted(inheriting) } }, inheritingScope)
+        val visited = hashSetOf(kmClass.name)
+        val pending = ArrayDeque(kmClass.supertypes.map { it.substituted(inheriting) })
+        while (pending.isNotEmpty()) {
+            val supertype = pending.removeFirst()
+            val name = (supertype.classifier as? KmClassifier.Class)?.name ?: continue
+            // but the standard library, and the JDK, which declare none, not to look the built-in types up through the class loader
+            if (!visited.add(name) || name.startsWith("kotlin/") || name.startsWith("java/") || name.startsWith("javax/")) continue
+            val superDeclarations = inheritedDeclarations(inheritedName(declarations, name)) ?: continue
+            val superKmClass = superDeclarations.kmClass ?: continue
+            val substitution = supertypeSubstitution(superKmClass, supertype, declarations)
+            val typeParameters = typeParameterScopeOf(superKmClass, superDeclarations) + inheritingScope
+            scan(superKmClass, superDeclarations, { it.substituted(substitution, inheritingNames) }, typeParameters)
+            pending += superKmClass.supertypes.map { it.substituted(substitution) }
+        }
+        if (found.isEmpty()) return emptyList()
+        // the interfaces of the class, all of them, for their default methods
+        val interfaces = reflectedValue(default = emptyList<Class<*>>()) {
+            val walked = LinkedHashSet<Class<*>>()
+            val walking = ArrayDeque(listOf(clazz))
+            while (walking.isNotEmpty()) {
+                val type = walking.removeFirst()
+                (listOfNotNull(type.superclass) + type.interfaces).forEach { if (walked.add(it)) walking += it }
+            }
+            walked.filter { it.isInterface }
+        }
+        fun JvmMethodSignature.isOf(name: String, descriptor: String) =
+            this.name == name && this.descriptor.substringBefore(')') == descriptor.substringBefore(')')
+        fun JvmMethodSignature.isOf(method: Method) = isOf(method.name, AsmType.getMethodDescriptor(method))
+        fun isImplemented(member: Found): Boolean = reflectedValue(default = true) {
+            generateSequence(clazz) { it.superclass }.forEach { type ->
+                type.declaredMethods.firstOrNull { member.signature.isOf(it) }?.let { return@reflectedValue !Modifier.isAbstract(it.modifiers) }
+            }
+            // of the most specific interfaces declaring it, as one declaring it abstract again wins over the default it overrides
+            val declaringFaces = interfaces.mapNotNull { type ->
+                type.declaredMethods.firstOrNull { member.signature.isOf(it) && !Modifier.isStatic(it.modifiers) }?.let { type to it }
+            }
+            declaringFaces.any { (type, method) ->
+                !Modifier.isAbstract(method.modifiers) && declaringFaces.none { (other, _) -> other != type && type.isAssignableFrom(other) }
+            } || bodies.any { (declaring, signature) ->
+                declaring != null && declaring != member.declaring && signature.isOf(member.signature.name, member.signature.descriptor) &&
+                    member.declaring?.isAssignableFrom(declaring) != false
+            }
+        }
+        // a hidden one is stood for by a visible member of its signature, as rendered, which the compiler picks in its place,
+        // a Kotlin one, or the method of a Java class of its JVM signature, or an abstract one, which an override implements
+        // with the hidden one, unlike an implemented Java one of another JVM signature, a member of its own,
+        // like a put(@NotNull Integer) next to a hidden put(key: Int), see jvmTwinSignatures
+        fun isStoodForBySignature(member: Found, listed: List<InheritedCandidate>): Boolean =
+            apiMembersNamed(kmClass, declarations, member.name, scope).any { own ->
+                (own.twinSignature(inheritingTypeParameters.names) ?: own.signature(inheritingTypeParameters.names)) == member.renderedSignature
+            } ||
+                listed.any { candidate ->
+                    (candidate.effectiveMember.let { it.twinSignature(inheritingNames) ?: it.signature(inheritingNames) }) == member.renderedSignature &&
+                        (candidate.jvmMethod?.signature?.isOf(member.signature.name, member.signature.descriptor) != false ||
+                            (candidate.implementationModality ?: candidate.interfaceModality ?: candidate.member.modality) == Modality.ABSTRACT)
+                }
+        // or merged with it, see InheritedCandidate.isMergedWith, like the go(T) of a Java interface given Array<String?>,
+        // taking Array<String?>!, with a hidden go(a: Array<String?>)
+        fun isStoodForByVisible(member: Found): Boolean {
+            val walked = ArrayList<InheritedCandidate>()
+            val listed = inheritedCandidates(kmClass, declarations, member.name, scope, hidingExtensions = mutableListOf(), walked)
+            val hidden = walked.filter { candidate ->
+                candidate.isHidden && candidate.declarations.clazz == member.declaring && when (val declared = candidate.member) {
+                    is Member.Function -> declared.declaration.signature == member.signature
+                    is Member.Property -> declared.declaration.getterSignature == member.signature
+                }
+            }
+            return listed.any { visible -> hidden.any { visible.isMergedWith(it) || it.isMergedWith(visible) || visible.overrides(it) } } ||
+                isStoodForBySignature(member, listed)
+        }
+        return found
+            .filter { member -> !isImplemented(member) && (!member.isHidden || !isStoodForByVisible(member)) }
+            .distinctBy { it.signature.name + it.signature.descriptor.substringBefore(')') }
+            .map { member -> "// must implement ${if (member.isHidden) "hidden" else "internal"}: ${member.line}" }
     }
 
     /**
@@ -3930,13 +4252,17 @@ internal class DefaultKotlinIntrospector(
     /**
      * The members named [memberName] which the [kmClass] inherits from its supertypes, and does not override,
      * as candidates rendered by [inheritedMembers], see there.
+     *
+     * @param walkedOut the list to add all the candidates walked to, also the ones not listed, like the hidden ones,
+     *   see [mustImplementNotes], if any.
      */
     private fun inheritedCandidates(
         kmClass: KmClass,
         declarations: ClassDeclarations,
         memberName: String,
         scope: ApiClass,
-        hidingExtensions: MutableList<IndexedExtension>
+        hidingExtensions: MutableList<IndexedExtension>,
+        walkedOut: MutableList<InheritedCandidate>? = null
     ): List<InheritedCandidate> {
         if ('.' in memberName || kmClass.name == NOTHING_CLASS_NAME) return emptyList()
         // the type parameters in scope of the inheriting class, given as the type arguments of its supertypes,
@@ -4191,6 +4517,7 @@ internal class DefaultKotlinIntrospector(
         if (kmClass.name != ANY_CLASS_NAME) collect(ANY_CLASS_NAME, classType(ANY_CLASS_NAME))
         // all the candidates walked, also the Java ones removed below, see withInheritedThroughApi
         val walked = candidates.toList()
+        walkedOut?.addAll(walked)
         // the order in which the supertypes of the kmClass contribute their members, see listed: depth-first,
         // in the order of declaration of the direct supertypes of each class, so that the first direct supertype
         // reaching a class tells its place, and, among the classes reached through the same one, its own direct supertype
@@ -4827,6 +5154,7 @@ internal class DefaultKotlinIntrospector(
                         it.implementationModality = implementationModality.value
                         it.implementingClass = javaClass.clazz
                         it.implementingJvmMethod = candidate.jvmMethod
+                        it.implementingCandidate = candidate
                     }
                     modality == Modality.ABSTRACT && it.kmClass.name == ANY_CLASS_NAME -> {}
                     it.interfaceModality == null -> it.interfaceModality = modality
@@ -5519,6 +5847,7 @@ internal class DefaultKotlinIntrospector(
                     replaced += merged
                 }
                 candidate.inheritedThrough = apiClass.takeUnless { it == kmClass.name }
+                candidate.isExposedByInheriting = apiClass == kmClass.name
                 throughApi += candidate
             }
             if (throughApi.isEmpty()) return listed
@@ -5566,12 +5895,63 @@ internal class DefaultKotlinIntrospector(
                 val names = kotlinMembers.mapTo(LinkedHashSet()) { kotlin ->
                     (kotlin.member as Member.Function).function.valueParameters.map { it.name }
                 }
-                // nor when another listed member takes the same types, not to list two members alike
-                val types = parameters.map { it.type }
-                val isTwin = any { other ->
-                    other !== java && (other.effectiveMember as? Member.Function)?.function?.valueParameters?.map { it.type } == types
+                // nor when another listed member takes the same types, not to list two members alike,
+                // a member of its own on the JVM, told by its JVM signature, see inheritedMembers
+                val signature = java.effectiveMember.twinSignature(inheritingNames)
+                val isTwin = any { other -> other !== java && other.effectiveMember.twinSignature(inheritingNames) == signature }
+                if (isNoOverride || isTwin) return@forEach
+                // while of names which disagree, the compiler lets a call name only the parameters they agree on,
+                // like the v of put(k: K, v: V) and put(q: K, v: V), the others named as by the first Kotlin member,
+                // see InheritedCandidate.ambiguousNamePositions
+                val sized = names.filter { it.size == parameters.size }
+                if (sized.size != names.size || sized.isEmpty()) return@forEach
+                val ambiguous = parameters.indices.filterTo(HashSet()) { index -> sized.mapTo(HashSet()) { it[index] }.size > 1 }
+                if (java.takeNames(sized.first())) java.ambiguousNamePositions = ambiguous
+            }
+            // a listed Kotlin member merged with the Kotlin members of other names, which kotlinc lets no call name either,
+            // like the put(t: T) of GenericPut<Int> and the put(q: T) of GenericRenamedPut<Int>, see InheritedCandidate.ambiguousNamePositions:
+            // the ones of its group, see listed, or merged with it, but not listed themselves, also the hidden ones,
+            // like the hidden f(h: Int) next to a visible f(v: Int), and the ones of a class which is not part of the API,
+            // unless overridden, and the ones overridden by the method of a Java class the listed one stands for,
+            // like the put(Integer) of a Java class implementing GenericPut<Integer> and GenericRenamedPut<Integer>
+            forEach { kotlin ->
+                val group = kotlin.groupFirst
+                val parameters = (kotlin.member as? Member.Function)?.function?.valueParameters
+                if (kotlin.declarations is JavaClass || kotlin.jvmMethod != null || parameters.isNullOrEmpty()) return@forEach
+                val implementing = setOfNotNull(kotlin.implementingJvmMethod?.key, kotlin.mergedJvmMethod?.key)
+                val javaImplementing = walked.filter { it.declarations is JavaClass && it.jvmMethod?.key in implementing }
+                // the members of a group are merged with its first one, which a member outside of the groups, a hidden one,
+                // or one which is not part of the API, joins when merged with all of them, as the compiler groups them,
+                // like the hidden put(key: Int) next to the put(t: T) of GenericPut<Int>, not next to the put(T) of a Java class
+                // given Integer, grouped with the latter, a member of its own then
+                val grouped = if (group == null) listOf(kotlin) else walked.filter { it.groupFirst === group }
+                fun isGroupedWith(other: InheritedCandidate) = if (group != null && other.groupFirst != null) other.groupFirst === group else {
+                    grouped.all { it === other || it.isMergedWith(other) || other.isMergedWith(it) }
                 }
-                if (!isNoOverride && !isTwin) names.singleOrNull()?.let(java::takeNames)
+                fun InheritedCandidate.isKotlinFunctionLike() = declarations !is JavaClass && jvmMethod == null &&
+                    (member as? Member.Function)?.function?.valueParameters?.size == parameters.size
+                val merged = walked.filter { other ->
+                    other !== kotlin && other.isKotlinFunctionLike() && other !in this &&
+                        (javaImplementing.any { java -> java.overrides(other) } ||
+                            walked.none { overriding -> overriding !== other && overriding.overrides(other) } && isGroupedWith(other))
+                }
+                // and the members they override, whose names kotlinc counts too, when the member is joined through
+                // several direct supertypes, like the f(a: Int) which the f(b: Int) of `RM : RA` overrides, of `RJ : RM, RB`,
+                // or of `RJ2 : RM, RA`, unlike along a single path, like of `RJ3 : RM`
+                val joined = Collections.newSetFromMap(IdentityHashMap<InheritedCandidate, Boolean>()).also { it += kotlin; it += merged }
+                do {
+                    val overridden = walked.filter { other ->
+                        other !in joined && other.isKotlinFunctionLike() && joined.any { it.overrides(other) }
+                    }
+                    joined += overridden
+                } while (overridden.isNotEmpty())
+                val isJoined = merged.isNotEmpty() || directSupertypes[kmClass.name].orEmpty().count { supertype ->
+                    joined.any { it.name == supertype || it.name.replace('/', '.') in supertypeNamesOf(supertype) }
+                } > 1
+                if (!isJoined || joined.size < 2) return@forEach
+                kotlin.ambiguousNamePositions = parameters.indices.filterTo(HashSet()) { index ->
+                    joined.any { (it.member as Member.Function).function.valueParameters[index].name != parameters[index].name }
+                }
             }
             return this
         }
@@ -11225,7 +11605,11 @@ internal class DefaultKotlinIntrospector(
         val nestedClasses = listedNestedClasses(kmClass, foundClass, apiClass)
 
         val members = buildList<ListingItem.ClassBodyItem> {
-            // The sealed subclasses first, then the other nested classes, only referenced,
+            // The abstract members a concrete subclass has to implement, which are not listed, as hidden, or internal, first
+            if (!isBuiltin) {
+                mustImplementNotes(kmClass, foundClass, apiClass, contextPackage).forEach { add(ListingItem.Declaration(listOf(it))) }
+            }
+            // The sealed subclasses, then the other nested classes, only referenced,
             // as they can be resolved by their own name
             sealedSubclasses.listed.forEach { listed ->
                 add(ListingItem.Declaration(listOf(formatListedClassHeader(listed, contextPackage))))
@@ -14026,9 +14410,11 @@ private sealed interface ListingItem {
     /**
      * A member inherited from a supertype found by a [MemberListing], which the class does not override,
      * listed under the `// inherited from` header of the supertype, the [source], repeated on every page,
-     * rendered on its [lines], see [Declaration].
+     * rendered on its [lines], see [Declaration],
+     * or with no header, as a member of the class itself, of no [source], when the class exposes the supertype declaring it,
+     * which is not part of the API, like an internal one, see [DefaultKotlinIntrospector.inheritedMembers].
      */
-    class InheritedMember(val source: String, val lines: List<String>) : MemberItem
+    class InheritedMember(val source: String?, val lines: List<String>) : MemberItem
 
 }
 
@@ -14200,8 +14586,11 @@ private class MemberListing(
             enclosingClass.lineOn(hasMembers, isOnClassName, isOnlyOnClassName)?.let { add(it) }
         }
         page.items.filterIsInstance<ListingItem.Declaration>().forEach { addAll(it.lines) }
-        page.items.filterIsInstance<ListingItem.InheritedMember>().groupBy { it.source }.forEach { (source, members) ->
-            add("// inherited from ${escapeQualifiedName(source)}")
+        // the members of a supertype the class exposes, as its own, see ListingItem.InheritedMember
+        val inherited = page.items.filterIsInstance<ListingItem.InheritedMember>()
+        inherited.filter { it.source == null }.forEach { addAll(it.lines) }
+        inherited.filter { it.source != null }.groupBy { it.source }.forEach { (source, members) ->
+            add("// inherited from ${escapeQualifiedName(source!!)}")
             members.forEach { addAll(it.lines) }
         }
         page.items.filterIsInstance<ListingItem.CompanionMember>().groupBy { it.header }.forEach { (header, members) ->

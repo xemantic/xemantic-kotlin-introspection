@@ -2267,3 +2267,138 @@ abstract class AnnotatedNotNullArrayTypedAllNullableJavaVarargJoin :
 
 abstract class InheritedJavaAnnotatedNotNullArrayTypedAllNullableVarargJoinSubclass :
     com.xemantic.kotlin.introspection.test.other.JavaAnnotatedNotNullArrayTypedAllNullableVarargJoinSubclass()
+
+// The members of unrelated interfaces merged, naming a parameter differently, which kotlinc lets no call name,
+// "named argument is prohibited for parameter with an ambiguous name", but the ones they agree on (#364)
+interface GenericRenamedPutJoin : GenericPut<Int>, GenericRenamedPut<Int>
+
+interface RenamedKeyPut2<K, V> {
+    fun put(q: K, v: V): String
+}
+
+interface AmbiguousKeyPut2Join : Put2<Int, String>, RenamedKeyPut2<Int, String>
+
+// also next to a hidden member merged with them, which the compiler does not pick, or one of an internal interface,
+// which a class exposing it lists as its own
+interface GenericHiddenPrimitivePutJoin : GenericPut<Int>, HiddenPrimitivePut
+
+internal interface InternalRenamedFace {
+    fun f(i: Int): Int
+}
+
+interface VisibleRenamedFace {
+    fun f(v: Int): Int
+}
+
+@Suppress("EXPOSED_SUPER_INTERFACE")
+interface InternalVisibleRenamedFaceJoin : InternalRenamedFace, VisibleRenamedFace
+
+// and so a Java method implementing them, which kotlinc names after them where they agree, so that put(1, v = "") compiles
+abstract class BoxedJavaAmbiguousKeyPut2Impl : com.xemantic.kotlin.introspection.test.other.JavaBoxedAmbiguousKeyPut2()
+
+// The put(Integer) of a Java class implementing GenericPut<@NotNull Integer>, a JVM method of its own next to the put(t: T)
+// of GenericDefaultPut<Int>, of the same Kotlin signature, which a concrete subclass cannot join,
+// "inherited platform declarations clash" of put(p0: Int) and put(t: Int) (#364)
+abstract class BoxedJavaNotNullIntegerPutIntDefaultPutJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaBoxedNotNullIntegerPut(), GenericDefaultPut<Int>
+
+// A Kotlin class exposing an internal supertype, which only a suppressed error allows, inherits its members as its own (#364)
+internal interface InternalExposedMembers {
+    fun f(): Int
+    fun g(): Int = 1
+}
+
+@Suppress("EXPOSED_SUPER_INTERFACE")
+abstract class InternalExposedMembersExposing : InternalExposedMembers
+
+abstract class InternalExposedMembersExposingSub : InternalExposedMembersExposing()
+
+// and so a supertype deprecated as hidden, not part of the API either
+@Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+interface HiddenExposedMembers {
+    fun f(): Int
+}
+
+@Suppress("DEPRECATION_ERROR")
+abstract class HiddenExposedMembersExposing : HiddenExposedMembers
+
+// The members of an internal interface reached through a package-private Java interface, which a public Java class implements,
+// inherited from the latter, as within it, so that a concrete subclass has to implement the abstract one (#364)
+internal interface InternalFaceBelowPackagePrivate {
+    fun f(): Int
+    fun g(): Int = 1
+}
+
+abstract class JavaImplementingPackagePrivateInternalFaceSub :
+    com.xemantic.kotlin.introspection.test.other.JavaImplementingPackagePrivateInternalFace()
+
+// An abstract member deprecated as hidden, or an internal one, which a concrete subclass has to implement,
+// though it cannot call it (#364)
+abstract class HiddenAbstractMemberBase {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    abstract fun hid(x: Int): Int
+    internal abstract fun ia(): String
+    abstract fun visible(): Int
+}
+
+abstract class HiddenAbstractMemberSub : HiddenAbstractMemberBase()
+
+// but not once implemented
+abstract class HiddenAbstractMemberImplemented : HiddenAbstractMemberBase() {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    override fun hid(x: Int): Int = x
+    override fun ia(): String = ""
+}
+
+interface HiddenAbstractArrayAcceptor {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    fun acceptAll(a: Array<String>)
+}
+
+// the hidden member which kotlinc picks of the ones merged with it, declared first, so that nothing is listed of the name
+abstract class HiddenAbstractArrayJavaArrayJoin :
+    HiddenAbstractArrayAcceptor, com.xemantic.kotlin.introspection.test.other.JavaStringArrayAcceptInterface
+
+// and a hidden abstract override of a member of a body of an interface, which no longer implements it (#364)
+interface VisibleDefaultFace {
+    fun vb(): Int = 1
+}
+
+interface HiddenReabstractedDefaultFace : VisibleDefaultFace {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    override fun vb(): Int
+}
+
+abstract class HiddenReabstractedDefaultSub : HiddenReabstractedDefaultFace
+
+// told of their own parts, without the deprecation, or the visibility, a var as a var (#364)
+abstract class InternalAbstractNotesBase {
+    @Deprecated("Use the suspend fun instead")
+    internal abstract fun dep(): String
+    internal abstract var count: Int
+}
+
+// A member overriding one of another parameter name, joined with the member it overrides, or one of its own name,
+// through other direct supertypes, which kotlinc lets no call name, as it counts the names of the members it overrides (#364)
+interface RenamingRootFace {
+    fun f(a: Int): Int
+}
+
+interface RenamingOtherFace {
+    fun f(b: Int): Int
+}
+
+@Suppress("PARAMETER_NAME_CHANGED_ON_OVERRIDE")
+interface RenamingOverrideFace : RenamingRootFace {
+    override fun f(b: Int): Int
+}
+
+interface RenamingOverrideRootJoin : RenamingOverrideFace, RenamingRootFace
+
+interface RenamingOverrideOtherJoin : RenamingOverrideFace, RenamingOtherFace
+
+// unlike along a single path
+interface RenamingOverrideSingleSub : RenamingOverrideFace
+
+abstract class JavaNestedImplementingPackagePrivateInternalFaceSub :
+    com.xemantic.kotlin.introspection.test.other.JavaNestedImplementingPackagePrivateInternalFace.Impl()

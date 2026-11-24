@@ -239,6 +239,13 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 - An empty concrete subclass of a class joining a hidden member may fail with `inherited platform declarations clash`, not `does not implement`,
   though the joining class itself compiles — such a probe tells nothing of the abstract members, probe them by calls.
 
+- kotlinc's `named argument is prohibited for parameter with an ambiguous name` also counts names no listing shows:
+  of hidden and internal members, and of the members a joined override renames — but not along a single path, see `ambiguousNamePositions`.
+
+- The sweep model counting the members rendered without a modifier as abstract can be right by accident:
+  a visible member rendered abstract in place of the hidden one kotlinc demands — confirm a changed abstract count
+  by overriding each candidate signature in a concrete subclass of its own.
+
 ## Anti-patterns to avoid
 
 - Do not add content to this file that is already discoverable by reading the source or build scripts — that inflates context without adding signal, reducing AI agent task success rates (see [arxiv 2602.11988](https://arxiv.org/abs/2602.11988)).
