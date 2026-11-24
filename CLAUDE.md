@@ -145,6 +145,10 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 - A kotlinc crash, like `IllegalStateException: Arguments depth is too high` (see `matchesOnce`), ends the whole compilation:
   a batch probe reports one such row per run, with no `error:` line, so keep the classes causing it out of a batch.
 
+- kotlinc's constraint system tells every fork of a subtype check, unlike a plain one stopping at the first which holds:
+  `String & DeepComparable <: Comparable<String & DeepComparable>` crashes it with `Arguments depth is too high` while incorporating,
+  though the `String` part alone holds — so a crash is not told by the path the model takes, see `constrainsSubtypeOfIntersection`, `tellSubtypesInferredFrom` (#376).
+
 - In a kotlinc probe `import java.util.function.*` does not bring `Function`: the default import of `kotlin.Function` wins over a star import,
   so `Function<String, String>` fails with `one type argument expected` — import `java.util.function.Function` explicitly.
 
@@ -183,7 +187,8 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   and breaks package merges of the review harness (#355).
 
 - A sweep judging an extension "callable only with `Nothing`" from a fixed list of type arguments misjudges it since `Nothing` does not count (#366, #362):
-  most such rows compile with a declared self-referring type — probe them with declared types too, see `isDeclarableFor`.
+  most such rows compile with a declared self-referring type — probe them with declared types too, see `isDeclarableFor`,
+  also of a suspend function type: `interface X : suspend () -> X` makes `<T : suspend () -> T> Inv<T>` callable on `G<X>` of `G<V> : Inv<suspend () -> V>` (#376).
 
 - Kotlin never passes named arguments to a Java method of its own, even one compiled with `-parameters`, so a Java method taking parameters never shadows an extension — see `isShadowingJavaMethod`;
   a Java method overriding a Kotlin member, or merged with one, takes the names of the Kotlin one though, like `k.over(x = 1)`, see the entry on `namedByKotlinMembers` below —
@@ -212,6 +217,9 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   Probe a parameter of a function type, or of a functional interface, also with lambdas with and without explicit parameters,
   anonymous functions, with and without a receiver, references to functions of another return type, with a default parameter,
   and suspend ones, and a generic class also on projected and function-typed receivers.
+
+- kotlinc's warning `this extension is shadowed by a member` tells no verdict: it is reported for `fun B.on(f: suspend () -> Unit)`
+  next to `fun on(f: Function<Unit>)`, though `b.on(::returningString)` of a suspend function calls the extension — probe the calls (#376).
 
 - A member / extension pair is told as never reaching the extension only as far as its probes go:
   `fun f(x: Comparable<String>)` next to `fun <T : CharSequence> S.f(x: Comparable<T>)` calls the member for a `Comparable<String>`
