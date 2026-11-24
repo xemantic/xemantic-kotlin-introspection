@@ -6466,10 +6466,11 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve Java member taking boxed type annotated not null next to Kotlin one taking primitive type`() {
+        // two members of the same Kotlin signature, the Java one told by its JVM signature (#364)
         resolver.resolve("com.xemantic.kotlin.introspection.test.NotNullBoxedJavaPutJoin.put") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.NotNullBoxedJavaPutJoin.put [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPut
-            open fun put(arg0: Int): String
+            open fun put(arg0: Int): String // put(Integer) on the JVM
             // inherited from com.xemantic.kotlin.introspection.test.PrimitivePut
             fun put(key: Int): String
         """.trimIndent()
@@ -6492,7 +6493,7 @@ class KotlinIntrospectorTest {
         resolver.resolve("com.xemantic.kotlin.introspection.test.GenericPrimitivePutJoin.put") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.GenericPrimitivePutJoin.put [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.GenericPut
-            fun put(t: Int): String
+            fun put(t: Int): String // named arguments prohibited: ambiguous parameter names
         """.trimIndent()
     }
 
@@ -6535,7 +6536,7 @@ class KotlinIntrospectorTest {
         resolver.resolve("com.xemantic.kotlin.introspection.test.NotNullBoxedJavaGenericPutJoin.put") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.NotNullBoxedJavaGenericPutJoin.put [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPut
-            open fun put(arg0: Int): String
+            open fun put(arg0: Int): String // put(Integer) on the JVM
             // inherited from com.xemantic.kotlin.introspection.test.GenericPut
             fun put(t: Int): String
         """.trimIndent()
@@ -6547,9 +6548,9 @@ class KotlinIntrospectorTest {
         resolver.resolve("com.xemantic.kotlin.introspection.test.NotNullBoxedJavaPrimitiveGenericPutJoin.put") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.NotNullBoxedJavaPrimitiveGenericPutJoin.put [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPut
-            open fun put(arg0: Int): String
+            open fun put(arg0: Int): String // put(Integer) on the JVM
             // inherited from com.xemantic.kotlin.introspection.test.PrimitivePut
-            fun put(key: Int): String
+            fun put(key: Int): String // named arguments prohibited: ambiguous parameter names
         """.trimIndent()
     }
 
@@ -6571,7 +6572,7 @@ class KotlinIntrospectorTest {
         resolver.resolve("com.xemantic.kotlin.introspection.test.PrimitiveKeyMapJoin.computeIfAbsent") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.PrimitiveKeyMapJoin.computeIfAbsent [page 1/1]
             // inherited from kotlin.collections.MutableMap
-            open fun computeIfAbsent(arg0: Int, arg1: java.util.function.Function<in Int, out String>): String
+            open fun computeIfAbsent(arg0: Int, arg1: java.util.function.Function<in Int, out String>): String // computeIfAbsent(Object, Function) on the JVM
             // inherited from com.xemantic.kotlin.introspection.test.PrimitiveKeyMapMembers
             fun computeIfAbsent(key: Int, mappingFunction: java.util.function.Function<in Int, out String>): String
         """.trimIndent()
@@ -6582,7 +6583,7 @@ class KotlinIntrospectorTest {
         resolver.resolve("com.xemantic.kotlin.introspection.test.PrimitiveKeyMapJoin.putIfAbsent") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.PrimitiveKeyMapJoin.putIfAbsent [page 1/1]
             // inherited from kotlin.collections.MutableMap
-            open fun putIfAbsent(arg0: Int, arg1: String): String?
+            open fun putIfAbsent(arg0: Int, arg1: String): String? // putIfAbsent(Object, Object) on the JVM
             // inherited from com.xemantic.kotlin.introspection.test.PrimitiveKeyMapMembers
             fun putIfAbsent(key: Int, value: String): String?
         """.trimIndent()
@@ -6668,7 +6669,7 @@ class KotlinIntrospectorTest {
             // inherited from com.xemantic.kotlin.introspection.test.PrimitiveKeyMapMembers
             fun computeIfAbsent(key: Int, mappingFunction: java.util.function.Function<in Int, out String>): String
             // inherited from kotlin.collections.MutableMap
-            open fun computeIfAbsent(arg0: Int, arg1: java.util.function.Function<in Int, out String>): String
+            open fun computeIfAbsent(arg0: Int, arg1: java.util.function.Function<in Int, out String>): String // computeIfAbsent(Object, Function) on the JVM
         """.trimIndent()
     }
 
@@ -7050,9 +7051,20 @@ class KotlinIntrospectorTest {
         resolver.resolve("com.xemantic.kotlin.introspection.test.PrimitiveJavaNotNullIntegerPutImpl.put") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.PrimitiveJavaNotNullIntegerPutImpl.put [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.other.JavaPrimitiveNotNullIntegerPut
-            open fun put(arg0: Int): String
+            open fun put(arg0: Int): String // put(int) on the JVM
             // inherited from com.xemantic.kotlin.introspection.test.GenericPut
             fun put(t: Int): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking boxed type implementing Kotlin generic one given boxed type annotated not null by Java interface`() {
+        // put(Integer) takes the Int of the member it overrides, though kotlin-reflect tells Int!,
+        // so that put(null) does not compile, unlike put(t = 1)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaNotNullIntegerPutImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaNotNullIntegerPutImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.GenericPut
+            open fun put(t: Int): String
         """.trimIndent()
     }
 
@@ -7113,7 +7125,7 @@ class KotlinIntrospectorTest {
         resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaMidPut2Impl.put") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.BoxedJavaMidPut2Impl.put [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedMidPut2
-            open fun put(arg0: Int?, arg1: String?): String
+            open fun put(arg0: Int?, arg1: String?): String // put(Integer, String) on the JVM
             // inherited from com.xemantic.kotlin.introspection.test.Put2
             fun put(k: Int?, v: String?): String
         """.trimIndent()
@@ -7207,7 +7219,7 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.IntegerJavaGenericPutImplementationPrimitivePutJoin.put [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.GenericPutImplementation
-            override fun put(t: Int?): String
+            override fun put(t: Int?): String // named arguments prohibited: ambiguous parameter names
         """.trimIndent()
     }
 
@@ -7227,7 +7239,7 @@ class KotlinIntrospectorTest {
         resolver.resolve("com.xemantic.kotlin.introspection.test.IntegerJavaPutInterfacePrimitivePutJoin.put") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.IntegerJavaPutInterfacePrimitivePutJoin.put [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.GenericPut
-            fun put(t: Int?): String
+            fun put(t: Int?): String // named arguments prohibited: ambiguous parameter names
         """.trimIndent()
     }
 
@@ -7236,7 +7248,7 @@ class KotlinIntrospectorTest {
         resolver.resolve("com.xemantic.kotlin.introspection.test.NamedMidOtherTakerJoin.take") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.NamedMidOtherTakerJoin.take [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.NamedRootTaker
-            fun take(root: String): String
+            fun take(root: String): String // named arguments prohibited: ambiguous parameter names
         """.trimIndent()
     }
 
@@ -7928,6 +7940,138 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve Java vararg merged with Java interface member declared before it in its form below Java subclass`() {
+        // like for the class joining them, which the Java class extends, the compiler calls the array of the Java interface
+        // declared first, though the Java vararg implements it on the JVM: acceptAll(arrayOf("")) compiles, acceptAll("") does not
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaNullableElementArrayTypedVarargJoinSubclass.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaNullableElementArrayTypedVarargJoinSubclass.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypedVarargAcceptor
+            open fun acceptAll(arg0: Array<String?>)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member taking array in form of Java vararg declared before it next to member kept apart from them`() {
+        // the acceptAll(values: Array<String>) is merged with the @NotNull String... declared first, whose form the compiler calls,
+        // though the acceptAll(T[]) given String? is kept apart from them: acceptAll("") and acceptAll(values = arrayOf("")) compile
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NotNullJavaVarargStringArrayNullableTypedArrayJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NotNullJavaVarargStringArrayNullableTypedArrayJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.StringArrayAcceptor
+            fun acceptAll(vararg values: String)
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypedArrayAcceptInterface
+            fun acceptAll(arg0: Array<String?>?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member given array of nullable elements next to hidden member taking array kept apart from it`() {
+        // the acceptAll(T) given Array<String?> is kept apart from the hidden acceptAll(a: Array<String>) by the elements:
+        // a concrete subclass has to implement it, acceptAll(null) and acceptAll(arrayOf("")) compile
+        resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenArrayNullableArrayTypedAllJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenArrayNullableArrayTypedAllJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypedAllAcceptorInterface
+            fun acceptAll(arg0: Array<String?>?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java collection of platform type arguments implementing Kotlin member taking projected collection of nullable ones`() {
+        // the Collection<Integer> of the Java class, a (Mutable)Collection<Int!>!, implements the MutableCollection<out Int?>:
+        // a concrete subclass compiles, and so do addAll2(null) and addAll2(c = mutableListOf(1)), though the Int! is rendered
+        // not nullable, while kotlinc accepts addAll2(mutableListOf<Int?>(null)) too, see #368
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaIntegerCollectionOutNullableMutableCollectionJoin.addAll2") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaIntegerCollectionOutNullableMutableCollectionJoin.addAll2 [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.OutNullableMutableIntCollectionAdder
+            open fun addAll2(c: Collection<Int>?): Boolean
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java array of platform elements implementing Kotlin member taking projected array of nullable ones`() {
+        // the String[] of the Java class, an Array<(out) String!>!, implements the acceptAll(T) given Array<out String?>:
+        // a concrete subclass compiles, and so do acceptAll(null) and acceptAll(a = arrayOf("")), though the String! is rendered
+        // not nullable, while kotlinc accepts acceptAll(arrayOf<String?>(null)) too, see #368
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaArrayOutNullableArrayTypedAllJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaArrayOutNullableArrayTypedAllJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaStringArrayAcceptor
+            open fun acceptAll(a: Array<String>?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java vararg in its form below Java subclass next to Java member given array kept apart from it`() {
+        // the acceptAll(T) given Array<String>?, of elements which are not nullable, is kept apart from the @Nullable T... given String,
+        // so that the form of the vararg stays below the Java subclass: acceptAll("", null) compiles —
+        // a guard of the form, while the abstract acceptAll(T), which kotlinc keeps too, is not listed, as for the class joining them
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaNotNullArrayTypedAllNullableVarargJoinSubclass.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaNotNullArrayTypedAllNullableVarargJoinSubclass.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNullableTypedVarargAcceptor
+            open fun acceptAll(vararg arg0: String?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java vararg in its form below Java subclass next to Java member given array through Java interface`() {
+        // the Array<String>? given through the T a Java interface passes on, of elements which are not nullable, keeps the
+        // acceptAll(T) apart from the @Nullable T... given String, like given directly: acceptAll("", null) compiles —
+        // a guard of the form, while the abstract acceptAll(T) is not listed, as for the class joining them
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaMidNotNullArrayTypedAllNullableVarargJoinSubclass.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaMidNotNullArrayTypedAllNullableVarargJoinSubclass.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNullableTypedVarargAcceptor
+            open fun acceptAll(vararg arg0: String?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java vararg in its form below Java subclass next to Java member given array of elements annotated not null`() {
+        // the @NotNull String[] a Java interface gives keeps the acceptAll(T) apart from the @Nullable T... given String,
+        // unlike a String[] of platform elements: acceptAll("", null) compiles —
+        // a guard of the form, while the abstract acceptAll(T) is not listed, as for the class joining them
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaAnnotatedNotNullArrayTypedAllNullableVarargJoinSubclass.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaAnnotatedNotNullArrayTypedAllNullableVarargJoinSubclass.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNullableTypedVarargAcceptor
+            open fun acceptAll(vararg arg0: String?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member given array kept apart from Java arrays and vararg merged with Java array below Java subclass`() {
+        // the @NotNull String... declared first groups the arrays with the String[] of the Java class, implementing them,
+        // apart from the acceptAll(T) given Array<out String?>, which a concrete subclass has to implement, like for the class
+        // joining them: acceptAll("") compiles, acceptAll("", null) does not
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InheritedJavaNotNullVarargOutNullableTypedAllJavaArrayJoinSubclass.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaNotNullVarargOutNullableTypedAllJavaArrayJoinSubclass.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaTypedAllAcceptorInterface
+            fun acceptAll(arg0: Array<out String?>?)
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaStringArrayAcceptor
+            open fun acceptAll(vararg arg0: String)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java vararg in form of Java array of platform elements declared before it merged with open Kotlin member`() {
+        // the String @NotNull [] declared first tells the form of the one member, which the open acceptAll(values: Array<out String?>)
+        // implements: acceptAll(arrayOf("")) and acceptAll(values = arrayOf("")) compile, acceptAll("") does not,
+        // though the String! is rendered not nullable, while kotlinc accepts acceptAll(arrayOf<String?>(null)) too
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NotNullArrayNotNullTypedVarargOpenOutNullableArrayJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NotNullArrayNotNullTypedVarargOpenOutNullableArrayJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNotNullTypedVarargAcceptorInterface
+            open fun acceptAll(values: Array<String>)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve open Kotlin member taking array of nullable elements in its own elements next to Java array of platform ones`() {
+        // the String @NotNull [] of the Java interface declared first, of platform elements, gives the array its nullability,
+        // while its elements agree with the String? of the open member: acceptAll(arrayOf<String?>(null)) compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NotNullArrayOpenNullableArrayJoin.acceptAll") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NotNullArrayOpenNullableArrayJoin.acceptAll [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.OpenNullableStringArrayAcceptor
+            open fun acceptAll(values: Array<String?>)
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve Java member merged with Kotlin member through Java class named by it`() {
         // the String[] of the Java class, of platform elements, is merged with both the acceptAll(T) given Array<String?>
         // and the acceptAll(values: Array<String>), which names the one member: acceptAll(values = arrayOf("")) compiles —
@@ -8002,6 +8146,30 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve Kotlin member taking platform type of Java member merged with it declared first by superclass of Java superclass implementing unrelated interface`() {
+        // java.lang.Runnable contributes no accept, so that the Java superclass joins nothing still
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaStringJavaAcceptorJoinRunnableSubclass.accept"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaStringJavaAcceptorJoinRunnableSubclass.accept [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.StringAcceptor
+            open fun accept(s: String?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member taking platform type of Java member merged with it declared first by superinterface of Java interface extending unrelated interface`() {
+        // java.io.Serializable contributes no accept, so that the Java interface joins nothing, inheriting the member the Kotlin join picks
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaStringAcceptorInterfaceJoinSerializable.accept"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaStringAcceptorInterfaceJoinSerializable.accept [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.StringAcceptor
+            fun accept(s: String?)
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve Kotlin member as declared when declared before Java member merged with it`() {
         resolver.resolve("com.xemantic.kotlin.introspection.test.StringAcceptorJavaJoin.accept") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.StringAcceptorJavaJoin.accept [page 1/1]
@@ -8063,7 +8231,7 @@ class KotlinIntrospectorTest {
         resolver.resolve("com.xemantic.kotlin.introspection.test.StringGenericJavaAcceptorJoin.accept") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.StringGenericJavaAcceptorJoin.accept [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.StringAcceptor
-            open fun accept(s: String?)
+            open fun accept(s: String?) // named arguments prohibited: ambiguous parameter names
         """.trimIndent()
     }
 
@@ -8073,7 +8241,7 @@ class KotlinIntrospectorTest {
         resolver.resolve("com.xemantic.kotlin.introspection.test.StringGenericJavaAcceptorJoin.put2") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.StringGenericJavaAcceptorJoin.put2 [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.StringTagPut
-            open fun put2(key: String?, tag: String): String
+            open fun put2(key: String?, tag: String): String // named arguments prohibited for key: ambiguous parameter names
         """.trimIndent()
     }
 
@@ -8201,7 +8369,7 @@ class KotlinIntrospectorTest {
         resolver.resolve("com.xemantic.kotlin.introspection.test.GenericUIntPutJoin.put") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.GenericUIntPutJoin.put [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.GenericPut
-            fun put(t: UInt): String
+            fun put(t: UInt): String // named arguments prohibited: ambiguous parameter names
         """.trimIndent()
     }
 
@@ -8210,7 +8378,7 @@ class KotlinIntrospectorTest {
         resolver.resolve("com.xemantic.kotlin.introspection.test.SuspendGenericPrimitivePutJoin.put") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.SuspendGenericPrimitivePutJoin.put [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.SuspendGenericPut
-            suspend fun put(t: Int): String
+            suspend fun put(t: Int): String // named arguments prohibited: ambiguous parameter names
         """.trimIndent()
     }
 
@@ -8760,6 +8928,305 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve implementation of Java class as member of its interface declared again by Java interface of nullable type argument`() {
+        // the second path to Function passes a Java interface too, given String?, so that its apply returns String?, no platform type,
+        // which K2 picks
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaFunctionImplementationNullableJavaInterfaceJoin.apply"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaFunctionImplementationNullableJavaInterfaceJoin.apply [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaSameTypeFunctionImplementation
+            override fun apply(arg0: String?): String?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve implementation of Java class as member of its interface declared again by Java interface giving one type argument itself`() {
+        // the Java interface gives String, a platform type, and passes the Int? given to it
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaFunctionImplementationHalfNullableJavaInterfaceJoin.apply"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaFunctionImplementationHalfNullableJavaInterfaceJoin.apply [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaFunctionImplementation2
+            override fun apply(arg0: String?): Int?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve implementation of Java class as member of its interface declared again next to Kotlin member of less specific return type`() {
+        // the apply of Function<String, String> returns String, more specific than the String? of the Kotlin member, and the String!
+        // of the Java class, so that apply(null) does not compile, while apply(x = "") does, named by the Kotlin member
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaFunctionImplementationDiamondWithNullableMember.apply"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaFunctionImplementationDiamondWithNullableMember.apply [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaSameTypeFunctionImplementation
+            override fun apply(x: String): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve implementation of Java class as member of its interface declared again next to generic Kotlin member of less specific return type`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaFunctionImplementationDiamondWithNullableGenericMember.apply"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaFunctionImplementationDiamondWithNullableGenericMember.apply [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.TypeApplier
+            open fun apply(x: String): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve implementation of Java class returning flexible collection type as member of its interface declared again of mutable one`() {
+        // the (Mutable)List<String!>! of the Java class is as specific as MutableList<String>, so that K2 picks the apply
+        // of the Function declared again, and neither apply(null), nor apply(listOf()), compiles
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaListFunctionImplementationMutableDiamond.apply"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaListFunctionImplementationMutableDiamond.apply [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaListFunctionImplementation
+            override fun apply(arg0: MutableList<String>): MutableList<String>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve implementation of Java class as member of its interface declared again of most specific return type`() {
+        // of the String? through the Java interface, and the String of Function<String, String>, declared last, K2 picks the latter
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaFunctionImplementationNullableJavaInterfaceDiamond.apply"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaFunctionImplementationNullableJavaInterfaceDiamond.apply [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaSameTypeFunctionImplementation
+            override fun apply(arg0: String): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of JDK interface reached first through Java interface as merged with Kotlin member taking nullable type`() {
+        // the apply contributed first takes String!, merged with both the others, of which K2 picks the one returning String
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaFunctionDiamondWithNullableMember.apply"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaFunctionDiamondWithNullableMember.apply [page 1/1]
+            // inherited from java.util.function.Function
+            fun apply(x: String): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member merged with method of Java class declared first and Kotlin member taking nullable type once`() {
+        // the apply of the Java class, taking String!, is merged with both the Kotlin members, when all are direct supertypes
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaFunctionImplementationApplierNullableMemberJoin.apply"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaFunctionImplementationApplierNullableMemberJoin.apply [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.TypeApplier
+            open fun apply(x: String): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve members of Kotlin interface merged by Java interface extending it and supertype of it again once`() {
+        // a Java interface joining them merges the apply(x: String?) and the apply of Function<String, String>,
+        // which the Kotlin interface it extends keeps apart
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaNullableStringApplierFunctionJoinAgain.apply"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaNullableStringApplierFunctionJoinAgain.apply [page 1/1]
+            // inherited from java.util.function.Function
+            fun apply(x: String): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve members merged pairwise apart by subclass of class joining them`() {
+        // the superclass contributes both the members it keeps apart, so that a concrete subclass still has to implement put(key: Int)
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.GenericBoxedJavaPrimitiveGenericPutJoinSubclass.put"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GenericBoxedJavaPrimitiveGenericPutJoinSubclass.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.PrimitivePut
+            fun put(key: Int): String
+            // inherited from com.xemantic.kotlin.introspection.test.GenericPut
+            open fun put(t: Int): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve method of Java class merged with Kotlin member declared first apart from Kotlin member taking nullable type`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.CharSequenceApplierJavaFunctionImplementationNullableMemberJoin.apply"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.CharSequenceApplierJavaFunctionImplementationNullableMemberJoin.apply [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaSameTypeFunctionImplementation
+            override fun apply(arg0: String?): String // apply(Object) on the JVM
+            // inherited from com.xemantic.kotlin.introspection.test.NullableStringApplier
+            fun apply(x: String?): String?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve method of Java class merged with Kotlin member declared first apart from Kotlin member taking nullable type by subclass`() {
+        // a concrete subclass still has to implement apply(x: String?): String?
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.CharSequenceApplierJavaFunctionImplementationNullableMemberJoinSubclass.apply"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.CharSequenceApplierJavaFunctionImplementationNullableMemberJoinSubclass.apply [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaSameTypeFunctionImplementation
+            override fun apply(arg0: String?): String // apply(Object) on the JVM
+            // inherited from com.xemantic.kotlin.introspection.test.NullableStringApplier
+            fun apply(x: String?): String?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member taking nullable type merged with member of JDK interface given nullable types apart from other member of Kotlin interface joining them`() {
+        // the apply of Function<String?, String?> takes String?, not merged with the apply(x: String): CharSequence,
+        // so that a concrete subclass implements both
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedNullableStringApplierNullableFunctionCharSequenceApplierJoin.apply"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedNullableStringApplierNullableFunctionCharSequenceApplierJoin.apply [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.NullableStringApplier
+            fun apply(x: String?): String?
+            // inherited from com.xemantic.kotlin.introspection.test.CharSequenceApplier
+            fun apply(x: String): CharSequence
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of JDK interface declared before Java interface joining it with Kotlin member taking nullable type once`() {
+        // the Java interface merges the apply(x: String?) with the apply of Function<String, String>, wherever the latter is reached first
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedStringFunctionJavaNullableStringApplierFunctionJoinAgain.apply"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedStringFunctionJavaNullableStringApplierFunctionJoinAgain.apply [page 1/1]
+            // inherited from java.util.function.Function
+            fun apply(x: String): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin interface member of body next to member of JDK interface apart from Kotlin member taking nullable type`() {
+        // a concrete subclass has to implement accept(s: String?) only
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedNullableStringAcceptorConsumerDefaultStringAcceptorJoin.accept"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedNullableStringAcceptorConsumerDefaultStringAcceptorJoin.accept [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.NullableStringAcceptor
+            fun accept(s: String?)
+            // inherited from com.xemantic.kotlin.introspection.test.DefaultStringAcceptor
+            open fun accept(s: String)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of JDK interface merged with method of Java class declared first as named by Kotlin member merged with it`() {
+        // apply(x = "") compiles, as the three are one member, though the apply of Function<String, String> alone
+        // is not merged with the apply(x: String?)
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaStringApplierFunctionNullableMemberJoin.apply"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaStringApplierFunctionNullableMemberJoin.apply [page 1/1]
+            // inherited from java.util.function.Function
+            open fun apply(x: String): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of JDK interface merged with Kotlin interface member of body and abstract method of Java class as abstract`() {
+        // no body of an interface implements the abstract method of a class, so that a concrete subclass has to implement accept
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedConsumerDefaultStringAcceptorJavaAbstractAcceptorJoin.accept"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedConsumerDefaultStringAcceptorJavaAbstractAcceptorJoin.accept [page 1/1]
+            // inherited from java.util.function.Consumer
+            fun accept(s: String)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member merged with method of Java class declared first and member of JDK interface given nullable types once two levels below`() {
+        // apply(null) does not compile, and a concrete subclass implements nothing
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedStringApplierJavaStringApplierNullableFunctionApplierJoinSubclass.apply"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedStringApplierJavaStringApplierNullableFunctionApplierJoinSubclass.apply [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.StringApplier
+            open fun apply(x: String): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member merged by Kotlin join of method of Java class declared first once next to Kotlin member named again`() {
+        // the join merges the apply of Function<String?, String?> with both, which its subclass inherits as one member,
+        // so that apply(null) does not compile, and a concrete subclass implements nothing
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedStringApplierJavaStringApplierNullableFunctionApplierJoin.apply"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedStringApplierJavaStringApplierNullableFunctionApplierJoin.apply [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.StringApplier
+            open fun apply(x: String): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of JDK interface given nullable type merged by Kotlin join apart from member of body of Kotlin interface named again`() {
+        // apply(null) compiles, returning String, as the Kotlin interface is no supertype of the join, which merges only its own members,
+        // and apply(x = null) compiles too, as the member of Function takes the name of the one of StringApplier, merged by the join
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedDefaultStringApplierJavaStringApplierHalfNullableFunctionApplierJoin.apply"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedDefaultStringApplierJavaStringApplierHalfNullableFunctionApplierJoin.apply [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.DefaultStringApplier
+            open fun apply(x: String): String
+            // inherited from java.util.function.Function
+            fun apply(x: String?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of JDK interface given nullable type apart from Kotlin member when Kotlin join declares method of Java class after it`() {
+        // the join keeps the apply of Function<String?, String?> apart, as the Kotlin interface is declared before the Java class,
+        // so that apply(null) compiles, returning String?, and a concrete subclass has to implement it, also below
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedStringApplierStringApplierJavaStringApplierNullableFunctionJoin.apply"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedStringApplierStringApplierJavaStringApplierNullableFunctionJoin.apply [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.StringApplier
+            open fun apply(x: String): String
+            // inherited from java.util.function.Function
+            fun apply(arg0: String?): String?
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member taking nullable type joined by Java interface with member of JDK interface apart from Kotlin interface member of body`() {
+        // accept(null) compiles, and a concrete subclass has to implement accept(s: String?)
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedDefaultStringAcceptorJavaConsumerNullableStringAcceptorJoin.accept"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedDefaultStringAcceptorJavaConsumerNullableStringAcceptorJoin.accept [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.DefaultStringAcceptor
+            open fun accept(s: String)
+            // inherited from com.xemantic.kotlin.introspection.test.NullableStringAcceptor
+            fun accept(s: String?)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of JDK interface taking nullable type merged with method of Java class declared first and Kotlin member`() {
+        // apply(null) compiles, as K2 picks the apply of Function<String?, String>, declared before the Kotlin member
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaStringApplierHalfNullableFunctionApplierJoin.apply"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaStringApplierHalfNullableFunctionApplierJoin.apply [page 1/1]
+            // inherited from java.util.function.Function
+            open fun apply(x: String?): String
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve implementation of Java class returning no platform type declared before its interface as taking platform type`() {
         // the accept of the Java class returns Unit, so that K2 picks it, of the first direct supertype, and accept(null) compiles
         resolver.resolve(
@@ -8826,6 +9293,99 @@ class KotlinIntrospectorTest {
             // inherited from com.xemantic.kotlin.introspection.test.other.JavaToArrayLinkedHashSetSubclass
             override fun toArray(): Array<Any>
             override fun <T> toArray(arg0: Array<T>?): Array<T>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java override of collection method hidden by Kotlin by its erasure of Java class whose members cannot be described`() {
+        // the toArray(T[]) the compiler generates in the Kotlin class does not override it for the compiler: toArray(null) compiles
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaRawToArrayLinkedHashSetSubclass.toArray"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaRawToArrayLinkedHashSetSubclass.toArray [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaRawToArrayLinkedHashSetSubclass
+            override fun toArray(arg0: Array<Any>?): Array<Any>
+            // inherited from java.util.HashSet
+            override fun toArray(): Array<Any>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java override of collection method hidden by Kotlin by its erasure of Java subclass of JDK class`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaRawToArrayArrayListSubclass.toArray"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaRawToArrayArrayListSubclass.toArray [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaRawToArrayArrayListSubclass
+            override fun toArray(arg0: Array<Any>?): Array<Any>
+            // inherited from java.util.ArrayList
+            override fun toArray(): Array<Any>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java override of collection method hidden by Kotlin by its erasure next to declared override of another one`() {
+        // the class declares toArray(), not the toArray(T[]) the compiler generates in it
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaRawToArrayArrayListSubclassOverridingToArray.toArray"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaRawToArrayArrayListSubclassOverridingToArray.toArray [page 1/1]
+            override fun toArray(): Array<Any?>
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaRawToArrayArrayListSubclass
+            override fun toArray(arg0: Array<Any>?): Array<Any>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java override of default collection method hidden by Kotlin as override`() {
+        // no JDK class declares toArray(IntFunction) again, unlike the other two, yet it overrides the one of java.util.Collection
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.InheritedJavaGeneratedToArrayLinkedHashSetSubclass.toArray"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InheritedJavaGeneratedToArrayLinkedHashSetSubclass.toArray [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaGeneratedToArrayLinkedHashSetSubclass
+            override fun <T> toArray(arg0: java.util.function.IntFunction<Array<T>>?): Array<T>
+            // inherited from java.util.HashSet
+            override fun toArray(): Array<Any>
+            override fun <T> toArray(arg0: Array<T>?): Array<T>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve collection method hidden by Kotlin of class naming Java list as supertype`() {
+        // the toArray of java.util.List, seen as a Java interface, but toArray(IntFunction), which java.util.Collection declares,
+        // seen as the built-in type through it: x.toArray(IntFunction { … }) does not compile
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaListSubclass.toArray"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaListSubclass.toArray [page 1/1]
+            // inherited from java.util.List
+            fun toArray(): Array<Any>
+            fun <T> toArray(arg0: Array<T>?): Array<T>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve collection method hidden by Kotlin of class naming Java list of nullable elements as supertype`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.nullable.NullableJdkList.toArray"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.nullable.NullableJdkList.toArray [page 1/1]
+            // inherited from java.util.List
+            fun toArray(): Array<Any>
+            fun <T> toArray(arg0: Array<T>?): Array<T>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve collection method hidden by Kotlin of class naming Java list of class of package as supertype`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.CollectionOrderJdkList.toArray"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.CollectionOrderJdkList.toArray [page 1/1]
+            // inherited from java.util.List
+            fun toArray(): Array<Any>
+            fun <T> toArray(arg0: Array<T>?): Array<T>
         """.trimIndent()
     }
 
@@ -20577,6 +21137,7 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.HiddenDeprecationInterface [page 1/1]
             interface HiddenDeprecationInterface {
+                // must implement hidden: val hiddenAbstract: Int
                 val visible: Int
             }
         """.trimIndent()
@@ -20594,6 +21155,7 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsHiddenProperties [page 1/1]
             interface DefaultImplsHiddenProperties {
+                // must implement hidden: val hiddenAbstract: Int
                 val visible: Int
             }
         """.trimIndent()
@@ -21545,6 +22107,17 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve Java member taking boxed type annotated not null overriding member of internal generic class given boxed type annotated nullable`() {
+        // the nullabilities disagree, so that put(Integer) takes Int!, and put(t = null) compiles,
+        // though kotlin-reflect, and the annotation of the method, tell Int
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NotNullBoxedJavaPutOverInternalNullableIntegerImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NotNullBoxedJavaPutOverInternalNullableIntegerImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPutOverInternalNullableInteger
+            override fun put(t: Int?): String
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve Java member taking boxed type overriding member of internal generic class given boxed type annotated nullable`() {
         // the @Nullable Integer the Java class gives is no platform type, but Int?, so that put(null) compiles
         resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaPutOverInternalNullableIntegerImpl.put") sameAsKotlin """
@@ -21687,7 +22260,7 @@ class KotlinIntrospectorTest {
         resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaPutIntegerPutInterfaceIntPutJoin.put") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.BoxedJavaPutIntegerPutInterfaceIntPutJoin.put [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedPut
-            open fun put(arg0: Int?): String
+            open fun put(arg0: Int?): String // put(Integer) on the JVM
             // inherited from com.xemantic.kotlin.introspection.test.GenericPut
             fun put(t: Int?): String
         """.trimIndent()
@@ -21710,6 +22283,36 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.test.BoxedJavaPutOfNotNullAndNullableIntegerPutImpl.put [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOfNotNullAndNullableIntegerPut
             override fun put(t: Int?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking boxed type implementing Kotlin generic one given boxed type annotated not null and nullable through generic Java interface as taking platform type`() {
+        // the @Nullable Integer passes through the T of JavaGenericMidPut<T>, so that put(Integer) takes Int!, and put(t = null) compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaPutOfNotNullAndNullableMidIntegerPutImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaPutOfNotNullAndNullableMidIntegerPutImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOfNotNullAndNullableMidIntegerPut
+            override fun put(t: Int?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking boxed type implementing Kotlin generic one given boxed type annotated not null and nullable through null-marked generic Java interface as taking platform type`() {
+        // the @NullMarked JavaNullMarkedGenericMidPut<T> passes the @Nullable Integer on as given, so that put(Integer) takes Int!
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaPutOfNotNullAndNullableNullMarkedMidIntegerPutImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaPutOfNotNullAndNullableNullMarkedMidIntegerPutImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOfNotNullAndNullableNullMarkedMidIntegerPut
+            override fun put(t: Int?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking String overriding member of internal generic class given String annotated nullable and StringPut as taking platform type`() {
+        // the nullabilities disagree, so that put(String) takes String!, an override of both, taking their name for kotlinc
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaStringPutOverInternalNullableStringPutImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaStringPutOverInternalNullableStringPutImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaStringPutOverInternalNullableStringPut
+            override fun put(t: String?): String
         """.trimIndent()
     }
 
@@ -21807,8 +22410,7 @@ class KotlinIntrospectorTest {
         // inherited from the internal class declaring it, as the class inheriting it is the one exposing it
         resolver.resolve("com.xemantic.kotlin.introspection.test.KotlinNotImplementingInternal.f") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.KotlinNotImplementingInternal.f [page 1/1]
-            // inherited from com.xemantic.kotlin.introspection.test.HiddenMergedInternalAbstract
-            abstract fun f(): Int
+            abstract fun f(): Int // declared by internal com.xemantic.kotlin.introspection.test.HiddenMergedInternalAbstract
         """.trimIndent()
     }
 
@@ -22068,7 +22670,7 @@ class KotlinIntrospectorTest {
         resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenOverloadGenericPutImplementationJoin.put") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.HiddenOverloadGenericPutImplementationJoin.put [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.GenericPutImplementation
-            override fun put(t: Int?): String
+            override fun put(t: Int?): String // named arguments prohibited: ambiguous parameter names
         """.trimIndent()
     }
 
@@ -22092,7 +22694,7 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.HiddenGenericPutImplementationJoin.put [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.PrimitivePut
-            open fun put(key: Int): String
+            open fun put(key: Int): String // named arguments prohibited: ambiguous parameter names
         """.trimIndent()
     }
 
@@ -22105,7 +22707,7 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.HiddenPrimitiveJavaPutOverrideJoin.put [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.GenericPut
-            open fun put(t: Int): String
+            open fun put(t: Int): String // named arguments prohibited: ambiguous parameter names
         """.trimIndent()
     }
 
@@ -22261,7 +22863,7 @@ class KotlinIntrospectorTest {
         resolver.resolve("com.xemantic.kotlin.introspection.test.PrimitiveAndNotNullBoxedJavaGenericHiddenPutJoin.put") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.PrimitiveAndNotNullBoxedJavaGenericHiddenPutJoin.put [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.GenericPut
-            open fun put(t: Int): String
+            open fun put(t: Int): String // named arguments prohibited: ambiguous parameter names
         """.trimIndent()
     }
 
@@ -22317,6 +22919,257 @@ class KotlinIntrospectorTest {
     @Test
     fun `should not resolve Java member taking primitive type merged with hidden one taking type argument of primitive type`() {
         assert(resolver.resolve("com.xemantic.kotlin.introspection.test.PrimitiveJavaHiddenGenericPutJoin.put") == null)
+    }
+
+    @Test
+    fun `should resolve Java member annotated not null overriding hidden member and Kotlin generic one given boxed type annotated nullable`() {
+        // the Java method overrides a visible member too, visible then, taking Int!, as the nullabilities disagree
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NotNullBoxedJavaPutOverHiddenOpenAndNullableGenericPutImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NotNullBoxedJavaPutOverHiddenOpenAndNullableGenericPutImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.GenericPut
+            open fun put(t: Int?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member implementing hidden member and Kotlin generic ones of other parameter names once`() {
+        // one member for kotlinc, so that an empty concrete subclass compiles, and put(null) too,
+        // while the names disagree, which kotlinc lets no call name (#364)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaPutOverHiddenNullableAndRenamedGenericPutImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaPutOverHiddenNullableAndRenamedGenericPutImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.GenericPut
+            open fun put(t: Int?): String // named arguments prohibited: ambiguous parameter names
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve members of unrelated interfaces merged with parameter of other names as prohibiting named arguments`() {
+        // kotlinc 2.4.21: "named argument is prohibited for parameter with an ambiguous name", for put(t = 1) and put(q = 1) (#364)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.GenericRenamedPutJoin.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GenericRenamedPutJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.GenericPut
+            fun put(t: Int): String // named arguments prohibited: ambiguous parameter names
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve members of unrelated interfaces merged with some parameters of other names as prohibiting only their names`() {
+        // kotlinc decides per parameter: put(1, v = "") compiles, put(k = 1, v = "") and put(q = 1, v = "") do not
+        resolver.resolve("com.xemantic.kotlin.introspection.test.AmbiguousKeyPut2Join.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.AmbiguousKeyPut2Join.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.Put2
+            fun put(k: Int, v: String): String // named arguments prohibited for k: ambiguous parameter names
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member merged with hidden one of other parameter name as prohibiting named arguments`() {
+        // the hidden put(key: Int), which the compiler does not pick, still names the parameter otherwise
+        resolver.resolve("com.xemantic.kotlin.introspection.test.GenericHiddenPrimitivePutJoin.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GenericHiddenPrimitivePutJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.GenericPut
+            fun put(t: Int): String // named arguments prohibited: ambiguous parameter names
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of internal interface exposed by interface merged with member of other parameter name`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InternalVisibleRenamedFaceJoin.f") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InternalVisibleRenamedFaceJoin.f [page 1/1]
+            fun f(i: Int): Int // declared by internal com.xemantic.kotlin.introspection.test.InternalRenamedFace; named arguments prohibited: ambiguous parameter names
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member implementing Kotlin members of some parameters of other names by their names`() {
+        // the Java method takes the names the Kotlin members agree on, so that put(1, v = "") compiles,
+        // and the one of the first Kotlin member where they disagree, which no call can name
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaAmbiguousKeyPut2Impl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaAmbiguousKeyPut2Impl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedAmbiguousKeyPut2
+            override fun put(k: Int?, v: String?): String // named arguments prohibited for k: ambiguous parameter names
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member implemented by Java member next to Kotlin member of its signature by its JVM signature`() {
+        // two members for kotlinc, the put(Integer) of the Java class, implementing the put(t: T) of GenericPut,
+        // listed as the latter, and the put(t: T) of GenericDefaultPut, a JVM method of its own, put(Object) (#364)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaNotNullIntegerPutIntDefaultPutJoin.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaNotNullIntegerPutIntDefaultPutJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.GenericDefaultPut
+            open fun put(t: Int): String
+            // inherited from com.xemantic.kotlin.introspection.test.GenericPut
+            open fun put(t: Int): String // put(Integer) on the JVM
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve abstract member of internal interface reached through package-private Java interface as within Java class`() {
+        // listed as inherited from the public Java class implementing the package-private interface, so as within a class,
+        // kotlinc 2.4.21: "does not implement abstract member: fun f(): Int" (#364)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaImplementingPackagePrivateInternalFaceSub.f") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaImplementingPackagePrivateInternalFaceSub.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaImplementingPackagePrivateInternalFace
+            abstract fun f(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of body of internal interface reached through package-private Java interface as open`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaImplementingPackagePrivateInternalFaceSub.g") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaImplementingPackagePrivateInternalFaceSub.g [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaImplementingPackagePrivateInternalFace
+            open fun g(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member overriding one of other parameter name joined with it by other path as prohibiting named arguments`() {
+        // kotlinc counts the names of the members the joined ones override, f(a: Int) of RenamingRootFace (#364)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.RenamingOverrideRootJoin.f") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.RenamingOverrideRootJoin.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.RenamingOverrideFace
+            override fun f(b: Int): Int // named arguments prohibited: ambiguous parameter names
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member overriding one of other parameter name joined with member of its name as prohibiting named arguments`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.RenamingOverrideOtherJoin.f") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.RenamingOverrideOtherJoin.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.RenamingOverrideFace
+            override fun f(b: Int): Int // named arguments prohibited: ambiguous parameter names
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member overriding one of other parameter name inherited along single path by its name`() {
+        // f(b = 1) compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.RenamingOverrideSingleSub.f") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.RenamingOverrideSingleSub.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.RenamingOverrideFace
+            override fun f(b: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should tell hidden abstract override of member of body of interface which concrete subclass has to implement`() {
+        // kotlinc 2.4.21: "does not implement abstract member: fun vb(): Int", the default of VisibleDefaultFace is overridden (#364)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenReabstractedDefaultSub") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenReabstractedDefaultSub [page 1/1]
+            abstract class HiddenReabstractedDefaultSub : HiddenReabstractedDefaultFace {
+                // must implement hidden: fun vb(): Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should tell deprecated internal abstract members which concrete subclass has to implement of their own parts`() {
+        // the note tells neither the deprecation, nor the visibility, and a var as a var (#364)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InternalAbstractNotesBase") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InternalAbstractNotesBase [page 1/1]
+            abstract class InternalAbstractNotesBase {
+                // must implement internal: fun dep(): String
+                // must implement internal: var count: Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve abstract member of internal interface reached through package-private Java interface as within nested Java class`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaNestedImplementingPackagePrivateInternalFaceSub.f") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaNestedImplementingPackagePrivateInternalFaceSub.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNestedImplementingPackagePrivateInternalFace.Impl
+            abstract fun f(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve members of internal supertype exposed by class as its own`() {
+        // so that the header names no class which the user code cannot name (#364)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InternalExposedMembersExposing.f") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InternalExposedMembersExposing.f [page 1/1]
+            abstract fun f(): Int // declared by internal com.xemantic.kotlin.introspection.test.InternalExposedMembers
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of body of internal supertype exposed by class as its own open one`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InternalExposedMembersExposing.g") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InternalExposedMembersExposing.g [page 1/1]
+            open fun g(): Int // declared by internal com.xemantic.kotlin.introspection.test.InternalExposedMembers
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve members of supertype deprecated as hidden exposed by class as its own`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenExposedMembersExposing.f") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenExposedMembersExposing.f [page 1/1]
+            abstract fun f(): Int // declared by hidden com.xemantic.kotlin.introspection.test.HiddenExposedMembers
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of internal supertype exposed by superclass as inherited from it`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InternalExposedMembersExposingSub.f") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InternalExposedMembersExposingSub.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.InternalExposedMembersExposing
+            abstract fun f(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should tell hidden and internal abstract members of class which concrete subclass has to implement`() {
+        // kotlinc 2.4.21 demands both, "does not implement abstract base class member", while no call can name them (#364)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenAbstractMemberBase") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenAbstractMemberBase [page 1/1]
+            abstract class HiddenAbstractMemberBase {
+                // must implement hidden: fun hid(x: Int): Int
+                // must implement internal: fun ia(): String
+                abstract fun visible(): Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should tell inherited hidden and internal abstract members which concrete subclass has to implement`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenAbstractMemberSub") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenAbstractMemberSub [page 1/1]
+            abstract class HiddenAbstractMemberSub : HiddenAbstractMemberBase {
+                // must implement hidden: fun hid(x: Int): Int
+                // must implement internal: fun ia(): String
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not tell hidden and internal abstract members once implemented`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenAbstractMemberImplemented") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenAbstractMemberImplemented [page 1/1]
+            abstract class HiddenAbstractMemberImplemented : HiddenAbstractMemberBase
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should tell hidden abstract member picked over Java member merged with it which concrete subclass has to implement`() {
+        // nothing is listed of acceptAll, while kotlinc demands the hidden member be implemented (#368)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenAbstractArrayJavaArrayJoin") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenAbstractArrayJavaArrayJoin [page 1/1]
+            abstract class HiddenAbstractArrayJavaArrayJoin : HiddenAbstractArrayAcceptor, com.xemantic.kotlin.introspection.test.other.JavaStringArrayAcceptInterface {
+                // must implement hidden: fun acceptAll(a: Array<String>)
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member overriding hidden member and Kotlin generic one merged by Kotlin class with default member once`() {
+        // the Kotlin class merges the put(t: T) of GenericPut<@NotNull Integer> with the one of GenericDefaultPut<Int>
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaPutOverHiddenAbstractAndNotNullGenericPutDefaultJoin.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaPutOverHiddenAbstractAndNotNullGenericPutDefaultJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.GenericDefaultPut
+            open fun put(t: Int): String
+        """.trimIndent()
     }
 
     @Test
