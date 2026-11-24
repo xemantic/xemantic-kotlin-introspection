@@ -498,6 +498,19 @@ interface StringAcceptor {
 // the compiler picks the accept(String) of the Java class, declared first, taking String!, so that accept(null) compiles
 abstract class StringJavaAcceptorJoin : com.xemantic.kotlin.introspection.test.other.JavaStringAcceptor(), StringAcceptor
 
+// K2 picks the accept(String) of the Java interface, declared first, taking String!, of the members of the same return type,
+// over the accept of Consumer<String?>, so that a subclass merges the three with the accept(s: String) of a body
+// of its superclass, and accept(null) does not compile there (#374)
+interface JavaStringAcceptorInterfaceNullableConsumerStringAcceptorJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaStringAcceptorInterface, java.util.function.Consumer<String?>, StringAcceptor
+
+abstract class OpenStringAcceptor {
+    open fun accept(s: String) {}
+}
+
+abstract class OpenStringAcceptorJavaStringAcceptorInterfaceNullableConsumerStringAcceptorJoin :
+    OpenStringAcceptor(), JavaStringAcceptorInterfaceNullableConsumerStringAcceptorJoin
+
 // and so does a subclass of the join, inheriting the member the join picks
 abstract class StringJavaAcceptorJoinSubclass : StringJavaAcceptorJoin()
 
@@ -1815,6 +1828,50 @@ open class KotlinSyntheticPropertyPrimitiveSetter {
 
 class SyntheticPropertyHiddenOverKotlinSetter : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyHiddenOverKotlinSetter()
 
+// The private setters of a generic Java superclass, kept unsubstituted: setValue(T) passed over for the public setValue(String)
+// of its superclass, unlike setCount(Integer), taken before the public setCount(int)
+abstract class SyntheticPropertyGenericPrivateSetter :
+    com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyGenericPrivateSetter<String>()
+
+// The protected and package-private setters of a generic Java superclass, substituted, taken before the public ones above (#372)
+class SyntheticPropertyGenericHiddenSetter :
+    com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyGenericHiddenSetterMid<Int>()
+
+class SyntheticPropertyGenericHiddenSetterBelowJava : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyGenericHiddenSetterLow()
+
+// The private setter of a Java class below the one declaring the getter, taken before the public one of the class above
+class SyntheticPropertyHiddenSetterBelow : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyHiddenSetterBelow()
+
+// The package-private setter of a Java class above the one declaring the getter, taken before the public one of its superclass
+class SyntheticPropertyPackageSetterAbove : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyPackageSetterGetter()
+
+// The setW(@NonNull Integer) of a Java class, taken for the synthetic property, next to its JVM twin, a Kotlin setW(w: Int)
+interface KotlinSyntheticPropertyPrimitiveSetterW {
+    fun setW(w: Int)
+}
+
+abstract class SyntheticPropertyBoxedSetterTwin : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyBoxedSetterTwin()
+
+// The internal setP(p: T) of a generic Kotlin class, taken by kotlinc for the class given its type argument,
+// but not through a generic subclass, Kotlin or Java, passing its type parameter (#372)
+open class KotlinSyntheticPropertyInternalSetter<T> : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyInternalSetterGetter<T>() {
+    internal fun setP(p: T) {}
+}
+
+class SyntheticPropertyInternalSetterDirect : KotlinSyntheticPropertyInternalSetter<Int>()
+
+open class KotlinSyntheticPropertyInternalSetterMid<W> : KotlinSyntheticPropertyInternalSetter<W>()
+
+class SyntheticPropertyInternalSetterThroughKotlin : KotlinSyntheticPropertyInternalSetterMid<Int>()
+
+class SyntheticPropertyInternalSetterThroughJava : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyInternalSetterMid<Int>()
+
+// The private and internal setters of a Kotlin class, taken before the public ones of its Java superclass
+open class SyntheticPropertyKotlinPrivateSetters : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyPrimitiveSetters() {
+    private fun setK(k: Int?) {}
+    internal fun setI(i: Int?) {}
+}
+
 // The protected setter declared first, taken before the public one, which a final class cannot call, unlike an open one
 class SyntheticPropertyFinalProtectedSetterFirst : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyProtectedSetterFirst()
 
@@ -1927,6 +1984,30 @@ abstract class InheritedJavaStringApplierHalfNullableFunctionApplierJoin :
 abstract class InheritedStringApplierJavaStringApplierNullableFunctionApplierJoin :
     StringApplier, JavaStringApplierNullableFunctionApplierJoin()
 
+// the join picks the apply(x: String) of the Kotlin interface, taking no null, which a subclass merges with the apply(x: String)
+// of another Kotlin interface, though of a less specific return type, unlike the apply of Function<String?, String>, picked by
+// InheritedJavaStringApplierHalfNullableFunctionApplierJoin (#374)
+abstract class CharSequenceApplierJavaStringApplierNullableFunctionApplierJoin :
+    CharSequenceApplier, JavaStringApplierNullableFunctionApplierJoin()
+
+// the join merges also the apply(x: String?) of NullableStringApplier, which a subclass inherits as part of the one member,
+// though not merged with the apply(x: String) of StringApplier on its own (#374)
+abstract class JavaStringApplierNullableFunctionApplierNullableApplierJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaStringApplier(), java.util.function.Function<String?, String?>,
+    StringApplier, NullableStringApplier
+
+abstract class StringApplierJavaStringApplierNullableFunctionApplierNullableApplierJoin :
+    StringApplier, JavaStringApplierNullableFunctionApplierNullableApplierJoin()
+
+// the apply of the Java class, annotated nullable, is merged with the one of Function<String?, String?>, not with the apply(x: String)
+// of CharSequenceApplier, which stays apart, also below the join, next to a Kotlin member taking a nullable type (#374)
+abstract class JavaNullableAnnotatedStringApplierNullableFunctionCharSequenceApplierJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaNullableAnnotatedStringApplier(), java.util.function.Function<String?, String?>,
+    CharSequenceApplier
+
+abstract class NullableStringApplierJavaNullableAnnotatedStringApplierNullableFunctionCharSequenceApplierJoin :
+    NullableStringApplier, JavaNullableAnnotatedStringApplierNullableFunctionCharSequenceApplierJoin()
+
 interface DefaultStringApplier {
     fun apply(x: String): String = x
 }
@@ -1935,6 +2016,16 @@ interface DefaultStringApplier {
 // from the apply(String?) of Function<String?, String>
 abstract class InheritedDefaultStringApplierJavaStringApplierHalfNullableFunctionApplierJoin :
     DefaultStringApplier, InheritedJavaStringApplierHalfNullableFunctionApplierJoin()
+
+// and so does the one of another Kotlin interface taking no null, of no body, while the apply(x: String) of StringApplier,
+// merged by the join, is no member of its own (#374)
+abstract class CharSequenceApplierJavaStringApplierHalfNullableFunctionApplierJoin :
+    CharSequenceApplier, InheritedJavaStringApplierHalfNullableFunctionApplierJoin()
+
+// unlike the apply(x: String?) of another Kotlin interface, merged with the member the join picks, also with the apply(x: String)
+// of StringApplier, merged by the join (#374)
+abstract class NullableStringApplierJavaStringApplierHalfNullableFunctionApplierJoin :
+    NullableStringApplier, InheritedJavaStringApplierHalfNullableFunctionApplierJoin()
 
 // the apply(String?) of Function<String?, String?> stays apart, as the Java class is declared after the Kotlin interface
 abstract class StringApplierJavaStringApplierNullableFunctionJoin :
@@ -2380,6 +2471,15 @@ internal interface InternalExposedMembers {
 abstract class InternalExposedMembersExposing : InternalExposedMembers
 
 abstract class InternalExposedMembersExposingSub : InternalExposedMembersExposing()
+
+// The getV(): Int? of an internal class overriding the getV() of a Java class returning a platform type,
+// which kotlinc reads x.getV() of the class exposing it by (#372)
+internal open class InternalNullableGetterOverride : com.xemantic.kotlin.introspection.test.other.JavaBoxedAccessors() {
+    override fun getV(): Int? = 0
+}
+
+@Suppress("EXPOSED_SUPER_CLASS")
+open class InternalNullableGetterOverrideExposing : InternalNullableGetterOverride()
 
 // and so a supertype deprecated as hidden, not part of the API either
 @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
