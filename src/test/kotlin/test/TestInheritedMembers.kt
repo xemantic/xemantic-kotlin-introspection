@@ -2313,6 +2313,15 @@ abstract class InternalExposedMembersExposing : InternalExposedMembers
 
 abstract class InternalExposedMembersExposingSub : InternalExposedMembersExposing()
 
+// and so a supertype deprecated as hidden, not part of the API either
+@Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+interface HiddenExposedMembers {
+    fun f(): Int
+}
+
+@Suppress("DEPRECATION_ERROR")
+abstract class HiddenExposedMembersExposing : HiddenExposedMembers
+
 // The members of an internal interface reached through a package-private Java interface, which a public Java class implements,
 // inherited from the latter, as within it, so that a concrete subclass has to implement the abstract one (#364)
 internal interface InternalFaceBelowPackagePrivate {
@@ -2349,3 +2358,47 @@ interface HiddenAbstractArrayAcceptor {
 // the hidden member which kotlinc picks of the ones merged with it, declared first, so that nothing is listed of the name
 abstract class HiddenAbstractArrayJavaArrayJoin :
     HiddenAbstractArrayAcceptor, com.xemantic.kotlin.introspection.test.other.JavaStringArrayAcceptInterface
+
+// and a hidden abstract override of a member of a body of an interface, which no longer implements it (#364)
+interface VisibleDefaultFace {
+    fun vb(): Int = 1
+}
+
+interface HiddenReabstractedDefaultFace : VisibleDefaultFace {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    override fun vb(): Int
+}
+
+abstract class HiddenReabstractedDefaultSub : HiddenReabstractedDefaultFace
+
+// told of their own parts, without the deprecation, or the visibility, a var as a var (#364)
+abstract class InternalAbstractNotesBase {
+    @Deprecated("Use the suspend fun instead")
+    internal abstract fun dep(): String
+    internal abstract var count: Int
+}
+
+// A member overriding one of another parameter name, joined with the member it overrides, or one of its own name,
+// through other direct supertypes, which kotlinc lets no call name, as it counts the names of the members it overrides (#364)
+interface RenamingRootFace {
+    fun f(a: Int): Int
+}
+
+interface RenamingOtherFace {
+    fun f(b: Int): Int
+}
+
+@Suppress("PARAMETER_NAME_CHANGED_ON_OVERRIDE")
+interface RenamingOverrideFace : RenamingRootFace {
+    override fun f(b: Int): Int
+}
+
+interface RenamingOverrideRootJoin : RenamingOverrideFace, RenamingRootFace
+
+interface RenamingOverrideOtherJoin : RenamingOverrideFace, RenamingOtherFace
+
+// unlike along a single path
+interface RenamingOverrideSingleSub : RenamingOverrideFace
+
+abstract class JavaNestedImplementingPackagePrivateInternalFaceSub :
+    com.xemantic.kotlin.introspection.test.other.JavaNestedImplementingPackagePrivateInternalFace.Impl()

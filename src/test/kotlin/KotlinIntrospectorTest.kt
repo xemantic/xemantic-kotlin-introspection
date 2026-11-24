@@ -22501,6 +22501,67 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve member overriding one of other parameter name joined with it by other path as prohibiting named arguments`() {
+        // kotlinc counts the names of the members the joined ones override, f(a: Int) of RenamingRootFace (#364)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.RenamingOverrideRootJoin.f") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.RenamingOverrideRootJoin.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.RenamingOverrideFace
+            override fun f(b: Int): Int // named arguments prohibited: ambiguous parameter names
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member overriding one of other parameter name joined with member of its name as prohibiting named arguments`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.RenamingOverrideOtherJoin.f") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.RenamingOverrideOtherJoin.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.RenamingOverrideFace
+            override fun f(b: Int): Int // named arguments prohibited: ambiguous parameter names
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member overriding one of other parameter name inherited along single path by its name`() {
+        // f(b = 1) compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.RenamingOverrideSingleSub.f") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.RenamingOverrideSingleSub.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.RenamingOverrideFace
+            override fun f(b: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should tell hidden abstract override of member of body of interface which concrete subclass has to implement`() {
+        // kotlinc 2.4.21: "does not implement abstract member: fun vb(): Int", the default of VisibleDefaultFace is overridden (#364)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenReabstractedDefaultSub") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenReabstractedDefaultSub [page 1/1]
+            abstract class HiddenReabstractedDefaultSub : HiddenReabstractedDefaultFace {
+                // must implement hidden: fun vb(): Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should tell deprecated internal abstract members which concrete subclass has to implement of their own parts`() {
+        // the note tells neither the deprecation, nor the visibility, and a var as a var (#364)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InternalAbstractNotesBase") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InternalAbstractNotesBase [page 1/1]
+            abstract class InternalAbstractNotesBase {
+                // must implement internal: fun dep(): String
+                // must implement internal: var count: Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve abstract member of internal interface reached through package-private Java interface as within nested Java class`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaNestedImplementingPackagePrivateInternalFaceSub.f") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaNestedImplementingPackagePrivateInternalFaceSub.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNestedImplementingPackagePrivateInternalFace.Impl
+            abstract fun f(): Int
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve members of internal supertype exposed by class as its own`() {
         // so that the header names no class which the user code cannot name (#364)
         resolver.resolve("com.xemantic.kotlin.introspection.test.InternalExposedMembersExposing.f") sameAsKotlin """
@@ -22514,6 +22575,14 @@ class KotlinIntrospectorTest {
         resolver.resolve("com.xemantic.kotlin.introspection.test.InternalExposedMembersExposing.g") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.InternalExposedMembersExposing.g [page 1/1]
             open fun g(): Int // declared by internal com.xemantic.kotlin.introspection.test.InternalExposedMembers
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve members of supertype deprecated as hidden exposed by class as its own`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenExposedMembersExposing.f") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenExposedMembersExposing.f [page 1/1]
+            abstract fun f(): Int // declared by hidden com.xemantic.kotlin.introspection.test.HiddenExposedMembers
         """.trimIndent()
     }
 
@@ -22532,8 +22601,8 @@ class KotlinIntrospectorTest {
         resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenAbstractMemberBase") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.HiddenAbstractMemberBase [page 1/1]
             abstract class HiddenAbstractMemberBase {
-                // must implement hidden: hid(x: Int): Int
-                // must implement internal: ia(): String
+                // must implement hidden: fun hid(x: Int): Int
+                // must implement internal: fun ia(): String
                 abstract fun visible(): Int
             }
         """.trimIndent()
@@ -22544,8 +22613,8 @@ class KotlinIntrospectorTest {
         resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenAbstractMemberSub") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.HiddenAbstractMemberSub [page 1/1]
             abstract class HiddenAbstractMemberSub : HiddenAbstractMemberBase {
-                // must implement hidden: hid(x: Int): Int
-                // must implement internal: ia(): String
+                // must implement hidden: fun hid(x: Int): Int
+                // must implement internal: fun ia(): String
             }
         """.trimIndent()
     }
@@ -22564,7 +22633,7 @@ class KotlinIntrospectorTest {
         resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenAbstractArrayJavaArrayJoin") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.HiddenAbstractArrayJavaArrayJoin [page 1/1]
             abstract class HiddenAbstractArrayJavaArrayJoin : HiddenAbstractArrayAcceptor, com.xemantic.kotlin.introspection.test.other.JavaStringArrayAcceptInterface {
-                // must implement hidden: acceptAll(a: Array<String>)
+                // must implement hidden: fun acceptAll(a: Array<String>)
             }
         """.trimIndent()
     }
