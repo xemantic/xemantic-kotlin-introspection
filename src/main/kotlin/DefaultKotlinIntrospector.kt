@@ -5375,7 +5375,13 @@ internal class DefaultKotlinIntrospector(
                 }
                 // but an array, also of a vararg, a platform type, like the String[] of Java an Array<(out) String!>!,
                 // which the compiler merges with the Array<out String> a Kotlin class gives, see takeNames
-                val isNoOverride = parameters.any { it.type.isNullable && (it.type.classifier as? KmClassifier.Class)?.name != ARRAY_CLASS_NAME } &&
+                // unless it takes a platform type as the nullabilities it combines disagree, an override of them,
+                // see takesClashingNullability
+                val isClashing = java.jvmMethod?.signature?.let { signature ->
+                    takesClashingNullability(java.declarations.clazz, signature.name, signature.descriptor)
+                } == true
+                val isNoOverride = !isClashing &&
+                    parameters.any { it.type.isNullable && (it.type.classifier as? KmClassifier.Class)?.name != ARRAY_CLASS_NAME } &&
                     kotlinMembers.any { kotlin ->
                         kotlin.classTypeParameterPositions.isNotEmpty() &&
                             (reaches(setOf(kotlin.name)).firstOrNull()?.isPlatform != true || isJoinedByKotlinClassBelow(kotlin))
@@ -5442,7 +5448,25 @@ internal class DefaultKotlinIntrospector(
                     hidden.isHidden && survivors.any { it.rivalrySignatures.matches(hidden.rivalrySignatures) }
                 }
             )
-                .filter { candidate -> contribution(kmClass.name, candidate).singleOrNull()?.isHidden != true }
+                .let { listed ->
+                    val picks = listed.associateWith { contribution(kmClass.name, it).singleOrNull() }
+                    val visible = listed.filter { picks[it]?.isHidden != true }
+                    listed.filter { candidate ->
+                        val picked = picks[candidate]
+                        // but a hidden member which the method of a Java class implements next to the visible candidate,
+                        // an override of both, visible then, like the put(Integer) of a Java class extending
+                        // HiddenOpenGenericPut<Integer>, and implementing GenericPut<@Nullable Integer>,
+                        // unless a visible member listed is of its signature, or merged with it, like the put(t: T)
+                        // of GenericDefaultPut<Int> of a Kotlin subclass of the Java class, or implemented by the same method,
+                        // one member with it, like the put(q: T) of an interface given Integer next to GenericPut<@Nullable Integer>
+                        picked?.isHidden != true ||
+                            (picked.implementingJvmMethod != null && picked.implementingJvmMethod === candidate.implementingJvmMethod &&
+                                visible.none {
+                                    it.signature == candidate.signature || it.isMergedWith(candidate) || it.overrides(candidate) ||
+                                        it.implementingJvmMethod === candidate.implementingJvmMethod
+                                })
+                    }
+                }
                 .withoutCalledInstead(),
             isPickedOverHidden = { candidate -> contribution(kmClass.name, candidate).singleOrNull() === candidate }
         ).namedByKotlinMembers()

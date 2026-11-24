@@ -669,6 +669,13 @@ abstract class BoxedJavaIntegerAndIntPutImpl : com.xemantic.kotlin.introspection
 
 abstract class PrimitiveJavaNotNullIntegerPutImpl : com.xemantic.kotlin.introspection.test.other.JavaPrimitiveNotNullIntegerPut()
 
+// the put(Integer) of the Java class overrides the put(t: T) of GenericPut, given Integer annotated not null, taking Int
+abstract class BoxedJavaNotNullIntegerPutImpl : com.xemantic.kotlin.introspection.test.other.JavaBoxedNotNullIntegerPut()
+
+class BoxedJavaNotNullIntegerPutConcrete : BoxedJavaNotNullIntegerPutImpl()
+
+fun BoxedJavaNotNullIntegerPutImpl.putNamed(): String = put(t = 1)
+
 // the put(Integer) of JavaBoxedPut is merged with the put(t: T) of GenericPut, given Integer annotated not null, taking Int
 abstract class BoxedJavaNotNullIntegerPutInterfaceJoin : com.xemantic.kotlin.introspection.test.other.JavaBoxedPut(), com.xemantic.kotlin.introspection.test.other.JavaNotNullIntegerPutInterface
 
@@ -1124,6 +1131,21 @@ abstract class BoxedJavaPutOverInternalNullableIntegerImpl : com.xemantic.kotlin
 
 fun BoxedJavaPutOverInternalNullableIntegerImpl.putNull(): String = put(null)
 
+// the @NotNull of put(Integer) and the @Nullable Integer given for the T of put(t: T) disagree, a platform type then
+abstract class NotNullBoxedJavaPutOverInternalNullableIntegerImpl :
+    com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPutOverInternalNullableInteger()
+
+fun NotNullBoxedJavaPutOverInternalNullableIntegerImpl.putNull(): String = put(t = null)
+
+// the @Nullable String given for the T of the internal put(t: T) and the String of StringPut disagree, a platform type then,
+// while put(String) overrides both, taking their parameter name
+abstract class JavaStringPutOverInternalNullableStringPutImpl :
+    com.xemantic.kotlin.introspection.test.other.JavaStringPutOverInternalNullableStringPut()
+
+class JavaStringPutOverInternalNullableStringPutConcrete : JavaStringPutOverInternalNullableStringPutImpl()
+
+fun JavaStringPutOverInternalNullableStringPutImpl.putNull(): String = put(t = null)
+
 abstract class JavaNullableIntegerPutBaseBeforeIntegerPutJoin :
     com.xemantic.kotlin.introspection.test.other.JavaNullableIntegerPutBase(), com.xemantic.kotlin.introspection.test.other.JavaIntegerPutInterface
 
@@ -1250,6 +1272,22 @@ class JavaOpenIntegerPutWithNullableGenericPutAndDefaultConcrete : JavaOpenInteg
 abstract class BoxedJavaPutOfNotNullAndNullableIntegerPutImpl : com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOfNotNullAndNullableIntegerPut()
 
 fun BoxedJavaPutOfNotNullAndNullableIntegerPutImpl.putNull(): String = put(t = null)
+
+// the same, the @Nullable Integer given through the generic JavaGenericMidPut<T>
+abstract class BoxedJavaPutOfNotNullAndNullableMidIntegerPutImpl :
+    com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOfNotNullAndNullableMidIntegerPut()
+
+fun BoxedJavaPutOfNotNullAndNullableMidIntegerPutImpl.putNull(): String = put(t = null)
+
+// the same, through JavaNullMarkedGenericMidPut<T>, marked by @NullMarked, which passes its T on as given
+abstract class BoxedJavaPutOfNotNullAndNullableNullMarkedMidIntegerPutImpl :
+    com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOfNotNullAndNullableNullMarkedMidIntegerPut()
+
+fun BoxedJavaPutOfNotNullAndNullableNullMarkedMidIntegerPutImpl.putNull(): String = put(t = null)
+
+interface GenericRenamedPut<T> {
+    fun put(q: T): String
+}
 
 // while the abstract method of a Java interface taking the primitive type is a member of its own, left to a concrete subclass
 abstract class JavaInternalOpenIntegerPutWithAbstractPrimitiveImpl : com.xemantic.kotlin.introspection.test.other.JavaInternalOpenIntegerPutWithAbstractPrimitive()
