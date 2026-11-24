@@ -25,6 +25,8 @@ import org.objectweb.asm.MethodVisitor
 import org.objectweb.asm.Opcodes
 import org.objectweb.asm.TypePath
 import org.objectweb.asm.TypeReference
+import org.objectweb.asm.signature.SignatureReader
+import org.objectweb.asm.signature.SignatureVisitor
 import org.objectweb.asm.Type as AsmType
 import java.lang.reflect.Field
 import java.lang.reflect.GenericArrayType
@@ -541,6 +543,42 @@ internal fun givesPlatformTypeArguments(type: Class<*>, supertype: Class<*>, ind
     supertype.isJdkClass || supertype.isKotlinClass || nullMarking(supertype) != true ||
         javaNullabilities.get(supertype).nullableBounds.let { if (index == null) it.isNotEmpty() else index in it }
 }
+
+/**
+ * Whether the type parameter at the [index] of the Java class [declaring] is given a platform type by the class giving it
+ * on the way from the [inheriting] class, the first one reached, the superclasses before the interfaces:
+ * a Java class giving it so, see [givesPlatformTypeArguments], like the `String!` of an `extends MBox<String>` not marked,
+ * for the `T` of a `T extends @Nullable Object` of a marked `MBox`, or a class passing it a type variable of its own,
+ * given a platform type in turn, also a Kotlin class, like `KBox<U> : MBox<U>()`, whose type arguments are as declared otherwise.
+ */
+internal fun isGivenPlatformTypeArgument(inheriting: Class<*>, declaring: Class<*>, index: Int): Boolean = reflectedValue(default = false) {
+    if (index < 0 || inheriting == declaring) return@reflectedValue false
+    val pending = ArrayDeque(listOf(inheriting))
+    val visited = HashSet<Class<*>>()
+    while (pending.isNotEmpty()) {
+        val giver = pending.removeFirst()
+        if (!visited.add(giver)) continue
+        for (supertype in listOfNotNull(giver.genericSuperclass) + giver.genericInterfaces) {
+            val raw = ((supertype as? ParameterizedType)?.rawType ?: supertype) as? Class<*> ?: continue
+            if (raw != declaring) {
+                if (declaring.isAssignableFrom(raw)) pending += raw
+                continue
+            }
+            // a Kotlin class gives its type arguments as declared, but passes its own type parameter on
+            if (!giver.isKotlinClass && givesPlatformTypeArguments(giver, declaring, index)) return@reflectedValue true
+            val argument = (supertype as? ParameterizedType)?.actualTypeArguments?.getOrNull(index) as? TypeVariable<*>
+                ?: return@reflectedValue false
+            return@reflectedValue isGivenPlatformTypeArgument(inheriting, giver, giver.typeParameters.indexOf(argument))
+        }
+    }
+    false
+}
+
+/**
+ * The methods of the Java [type] by the order of their declarations, each by its name and its JVM descriptor,
+ * as its class file tells them, unlike the reflection, or none, if it cannot be read.
+ */
+internal fun javaMethodOrder(type: Class<*>): Map<String, Int> = javaNullabilities.get(type).methodOrder
 
 /**
  * Whether the Java class [type] gives the type argument of the type parameter at the [index] of its direct supertype,
@@ -1958,6 +1996,15 @@ internal val MUTABLE_COLLECTION_TYPES: Map<String, String> = listOf(
     ("kotlin/collections/Map.Entry" to "kotlin/collections/MutableMap.MutableEntry")
 
 /**
+ * The indices of the covariant type parameters of the read-only collection types, by their class names,
+ * like the `E` of `List<out E>`, or the `V` of `Map<K, out V>`, where a platform type of Java takes what the nullable type takes,
+ * like the `(Mutable)List<String!>` of a Java `List<String>` a `List<String?>`.
+ */
+internal val COVARIANT_COLLECTION_ARGUMENTS: Map<String, Set<Int>> =
+    listOf("Iterable", "Collection", "List", "Set", "Iterator", "ListIterator").associate { "kotlin/collections/$it" to setOf(0) } +
+        ("kotlin/collections/Map" to setOf(1)) + ("kotlin/collections/Map.Entry" to setOf(0, 1))
+
+/**
  * Whether the type of the read-only collection [kClass], like `Collection<out E>`, described by kotlin-reflect,
  * takes an `in` projection, the [arguments], of a type parameter it declares `out`, like `Collection<in E>`,
  * which conflicts with its variance, so that it stands for a Java type seen as a flexible collection type,
@@ -2311,7 +2358,10 @@ internal class JavaNullability(
  * winning over the enhancements of the JDK methods it overrides, see [enhanceNullableReturn].
  * A type variable annotated not nullable is definitely not nullable, like `T & Any`, not nullable whatever is given for it,
  * while one not annotated of a method marked by `@NullMarked` stays as given, like `T`, see [nullMarking],
- * but a type variable of the method itself, when only the method is marked, not its class, see [givenTypeVariableNames].
+ * but a type variable of the method itself, when only the method is marked, not its class, see [givenTypeVariableNames],
+ * a platform type, like `T!`, nullable as the type of a value parameter, like in a method not marked,
+ * and also where the mark tells the other types exactly: as the element of a vararg, and as a type argument
+ * of a covariant type parameter of a read-only collection type, see [markPlatformTypeVariables].
  * The bounds of its type parameters are marked alike, see [enhanceJavaBounds].
  */
 private fun enhanceJavaNullability(method: Method, function: KmFunction) {
@@ -2334,9 +2384,69 @@ private fun enhanceJavaNullability(method: Method, function: KmFunction) {
         }
     }
     enhance(RETURN_TYPE, function.returnType, method.returnType, varargElementType = null)
+    // the type variables of the method, which only its own mark tells nothing of, platform types
+    val platformTypeVariables = if (!nullability.isNullMarked || method.typeParameters.isEmpty()) emptySet() else {
+        reflectedValue(default = emptySet()) {
+            if (nullMarking(method.declaringClass) == true) emptySet() else {
+                method.typeParameters.mapTo(HashSet()) { it.name } - givenTypeVariableNames(method)
+            }
+        }
+    }
     function.valueParameters.forEachIndexed { position, parameter ->
         val javaType = method.parameterTypes.getOrNull(position) ?: return@forEachIndexed
         enhance(position, parameter.type, javaType, parameter.varargElementType)
+        if (platformTypeVariables.isNotEmpty()) {
+            reflectedValue(default = Unit) {
+                val genericType = method.genericParameterTypes.getOrNull(position) ?: return@reflectedValue
+                val annotated = nullability.nested[position].orEmpty().keys.mapTo(HashSet()) { it.replace("*", "") }
+                markPlatformTypeVariables(parameter, genericType, platformTypeVariables, annotated)
+            }
+        }
+    }
+}
+
+/**
+ * Marks the type variables of a Java method which are platform types, the [platformTypeVariables], by their names,
+ * see [enhanceJavaNullability], nullable where they are nested in the [genericType] of the value [parameter],
+ * and nullable is what kotlinc takes there, unless [annotated], by the type paths of the class file, see [nestedType]:
+ * as the element of a vararg, like the `U?` of `vararg values: U?` of `U...`, so that `each<String>(null)` compiles,
+ * and as a type argument of a covariant type parameter of a read-only collection type, see [COVARIANT_COLLECTION_ARGUMENTS],
+ * like the `List<U?>` of `List<U>`, so that `all<String>(listOf(null))` compiles, also nested in one, or the bound of `? extends U`,
+ * unlike any other type argument, like the `U` of `Comparator<U>`, or of an array `U[]`, where the platform type takes
+ * both `U` and `U?`, which neither rendering tells, and which stays as in a method not marked.
+ */
+private fun markPlatformTypeVariables(
+    parameter: KmValueParameter,
+    genericType: Type,
+    platformTypeVariables: Set<String>,
+    annotated: Set<String>
+) {
+    fun Type.isPlatformTypeVariable() = this is TypeVariable<*> && genericDeclaration is Method && name in platformTypeVariables
+    fun mark(type: KmType, javaType: Type, path: String) {
+        when (javaType) {
+            is TypeVariable<*> -> if (javaType.isPlatformTypeVariable() && path.isNotEmpty() && path !in annotated && !type.isDefinitelyNonNull) {
+                type.isNullable = true
+            }
+            is ParameterizedType -> {
+                val covariant = COVARIANT_COLLECTION_ARGUMENTS[(type.classifier as? KmClassifier.Class)?.name].orEmpty()
+                javaType.actualTypeArguments.forEachIndexed { index, argument ->
+                    val projection = type.arguments.getOrNull(index)
+                    val argumentType = projection?.type
+                    if (index !in covariant || argumentType == null || projection.variance == KmVariance.IN) return@forEachIndexed
+                    val bound = if (argument !is WildcardType) argument else {
+                        argument.upperBounds.firstOrNull()?.takeIf { argument.lowerBounds.isEmpty() } ?: return@forEachIndexed
+                    }
+                    mark(argumentType, bound, "$path$index;")
+                }
+            }
+        }
+    }
+    mark(parameter.type, genericType, path = "")
+    val elementType = parameter.varargElementType
+    if (elementType != null && ARRAY_ELEMENT !in annotated && !elementType.isDefinitelyNonNull &&
+        (genericType as? GenericArrayType)?.genericComponentType?.isPlatformTypeVariable() == true
+    ) {
+        elementType.isNullable = true
     }
 }
 
@@ -2369,6 +2479,65 @@ private fun enhanceJavaBounds(method: Method, function: KmFunction, nullability:
                 else -> bound.markNullable(isNullable)
             }
         }
+    }
+}
+
+/**
+ * The nullability of the bounds of the type parameters of a Java method, as the compiler reads them for an override, see [javaBounds]:
+ * of each bound of each type parameter, as [annotated], nullable, `true`, or not, `false`, or `null` if it is not,
+ * of the annotated types [nested] in each, by their type paths, see [nestedType], but the bound of a wildcard,
+ * and whether the class of the method [isMarked] by `@NullMarked`, so that the types not annotated are not nullable,
+ * while they are platform types otherwise, of either nullability, also the ones nested in an annotated bound,
+ * like the `T` of `T extends @NonNull Comparable<T>`.
+ */
+internal class JavaBounds(val annotated: List<List<Boolean?>>, val nested: List<List<Map<String, Boolean>>>, val isMarked: Boolean)
+
+/**
+ * The nullability of the bounds of the type parameters of the Java [method], see [JavaBounds], like [enhanceJavaBounds] reads it,
+ * none told of a method of a JDK class, or of a Kotlin one.
+ */
+internal fun javaBounds(method: Method): JavaBounds = reflectedValue(default = JavaBounds(emptyList(), emptyList(), isMarked = false)) {
+    val declaring = method.declaringClass
+    val isTold = !declaring.isJdkClass && !declaring.isKotlinClass
+    val key = method.name + AsmType.getMethodDescriptor(method)
+    val classNullability = if (isTold) javaNullabilities.get(declaring) else null
+    val annotatedBounds = classNullability?.methods?.get(key)?.nullability?.bounds.orEmpty()
+    val nestedBounds = classNullability?.nestedBounds?.get(key).orEmpty()
+    // the class file numbers the bounds from 1 when the first one is an interface, see enhanceJavaBounds
+    val offsets = method.typeParameters.map { typeVariable ->
+        val first = typeVariable.bounds.firstOrNull()
+        val firstClass = (first as? ParameterizedType)?.rawType ?: first
+        if ((firstClass as? Class<*>)?.isInterface == true) 1 else 0
+    }
+    JavaBounds(
+        annotated = method.typeParameters.mapIndexed { index, typeVariable ->
+            typeVariable.bounds.indices.map { annotatedBounds[index]?.get(it + offsets[index]) }
+        },
+        nested = method.typeParameters.mapIndexed { index, typeVariable ->
+            typeVariable.bounds.indices.map { nestedBounds[index to it + offsets[index]].orEmpty() }
+        },
+        isMarked = isTold && nullMarking(declaring) == true
+    )
+}
+
+/**
+ * The nullability of the value parameter at the [position] of the Java [method], of a type variable of the method,
+ * or an array of it, as an override declares it: nullable, `true`, as annotated, or as given, `false`,
+ * like the `T` of `two(x: T)`, when annotated not nullable, or marked by `@NullMarked`, by the method itself too,
+ * see [javaNullabilityOf], like the array, and its elements, then, unless annotated,
+ * or `null` of a platform type, which an override declares as `T`, or as `T?`, also when the compiler takes
+ * the type variable as given for a call, like one of an annotated bound, see [givenTypeVariableNames].
+ */
+internal fun javaTypeVariableParameterNullability(method: Method, position: Int): Boolean? = reflectedValue(default = null) {
+    val declaring = method.declaringClass
+    if (declaring.isJdkClass || declaring.isKotlinClass) return@reflectedValue null
+    val nullability = javaNullabilityOf(method) ?: return@reflectedValue null
+    val isArray = method.parameterTypes.getOrNull(position)?.isArray == true
+    when {
+        isArray -> false.takeIf {
+            nullability.isNullMarked && nullability.types[position] != true && nullability.nested[position].isNullOrEmpty()
+        }
+        else -> nullability.types[position] ?: false.takeIf { nullability.isNullMarked }
     }
 }
 
@@ -2428,6 +2597,33 @@ internal fun javaNullabilityOf(method: Method): JavaNullability? = reflectedValu
     // the types of a Kotlin class are told by its metadata, its JVM parameters including its context parameters, and its receiver
     if (declaring.isJdkClass || declaring.isAnnotationPresent(Metadata::class.java)) return@reflectedValue null
     effectiveJavaNullabilities.get(declaring).of(method)
+}
+
+/**
+ * Whether the nullability of a type of the Java [method] is told, of the type of the value [parameter] at the position,
+ * or of its return type, when `null`, also of the types nested in it, by their type paths of the class file, see [nestedType],
+ * but the bound of a wildcard, which the path of the type already tells, the empty one of the type itself:
+ * a primitive type, a type its annotations tell, see [javaNullabilityOf], also the ones of the methods it overrides,
+ * or one marked by `@NullMarked`, unlike a platform type of Java, which is of either nullability,
+ * like the `String!` of both `String` and `String?`.
+ */
+internal fun javaNullabilityTold(method: Method, parameter: Int?): (path: String) -> Boolean {
+    val position = parameter ?: RETURN_TYPE
+    val nullability = javaNullabilityOf(method)
+    val isPrimitive = reflectedValue(default = false) {
+        (if (parameter == null) method.returnType else method.parameterTypes.getOrNull(parameter))?.isPrimitive == true
+    }
+    val nested by lazy(LazyThreadSafetyMode.NONE) {
+        nullability?.nested?.get(position).orEmpty().keys.mapTo(HashSet()) { it.replace("*", "") }
+    }
+    return { path ->
+        when {
+            path.isEmpty() -> isPrimitive ||
+                (nullability != null && (nullability.types[position] != null || nullability.isMarkedNotNull(position)))
+            nullability == null -> false
+            else -> nullability.isNullMarked || path in nested
+        }
+    }
 }
 
 /**
@@ -2812,7 +3008,13 @@ private val packageNullMarkings: MutableMap<Package, Optional<Boolean>> = Collec
  * and the indices of the type arguments of its supertypes annotated nullable, the [nullableArguments],
  * by the indices of the supertypes in the class file, the superclass at `-1`, like `Base<@Nullable String>`,
  * and the nullability of all the annotated type arguments of its supertypes, also the nested ones, the [supertypeArguments],
- * by the indices of the supertypes, and their type paths, see [nestedType], like `0;0;` of `Base<List<@Nullable String>>`.
+ * by the indices of the supertypes, and their type paths, see [nestedType], like `0;0;` of `Base<List<@Nullable String>>`,
+ * and all of its methods by the order of their declarations, the [methodOrder], see [javaMethodOrder],
+ * and the nullability of the annotated types nested in the bounds of the type parameters of its methods, the [nestedBounds],
+ * by the names and JVM descriptors of the methods, the indices of the type parameter, and of its bound, in the class file,
+ * and their type paths, like `0;` of `T extends List<@NonNull E>`, see [javaBounds],
+ * and the type paths of the wildcards bounded by `Object` in the types of its methods, the [objectWildcards],
+ * by the names and JVM descriptors of the methods, and the positions of the types, see [javaObjectWildcardPaths].
  */
 private class JavaClassNullability(
     val isNullMarked: Boolean?,
@@ -2820,7 +3022,10 @@ private class JavaClassNullability(
     val bridges: Map<String, String>? = null,
     val nullableBounds: Set<Int> = emptySet(),
     val nullableArguments: Map<Int, Set<Int>> = emptyMap(),
-    val supertypeArguments: Map<Int, Map<String, Boolean>> = emptyMap()
+    val supertypeArguments: Map<Int, Map<String, Boolean>> = emptyMap(),
+    val methodOrder: Map<String, Int> = emptyMap(),
+    val nestedBounds: Map<String, Map<Pair<Int, Int>, Map<String, Boolean>>> = emptyMap(),
+    val objectWildcards: Map<String, Map<Int, Set<String>>> = emptyMap()
 )
 
 /**
@@ -2861,6 +3066,9 @@ private fun readJavaNullabilities(classLoader: ClassLoader?, binaryName: String)
     val nullableBounds = HashSet<Int>()
     val nullableArguments = HashMap<Int, MutableSet<Int>>()
     val supertypeArguments = HashMap<Int, MutableMap<String, Boolean>>()
+    val methodOrder = HashMap<String, Int>()
+    val nestedBounds = HashMap<String, MutableMap<Pair<Int, Int>, MutableMap<String, Boolean>>>()
+    val objectWildcards = HashMap<String, Map<Int, Set<String>>>()
     var hasBridges = false
     // also of a class file too new for ASM, like of a class of a JDK newer than it knows
     val reader = classReader(bytes)
@@ -2910,6 +3118,10 @@ private fun readJavaNullabilities(classLoader: ClassLoader?, binaryName: String)
 
             init {
                 if (access and Opcodes.ACC_BRIDGE != 0) hasBridges = true
+                methodOrder.putIfAbsent(name + descriptor, methodOrder.size)
+                if (signature != null && "+Ljava/lang/Object;" in signature) {
+                    objectWildcardPaths(signature).takeIf { it.isNotEmpty() }?.let { objectWildcards[name + descriptor] = it }
+                }
             }
 
             // the nullability told by the annotation, of the javax.annotation.Nonnull told when its `when` is read
@@ -2952,8 +3164,14 @@ private fun readJavaNullabilities(classLoader: ClassLoader?, binaryName: String)
             override fun visitTypeAnnotation(typeRef: Int, typePath: TypePath?, annotation: String, visible: Boolean): AnnotationVisitor? {
                 val reference = TypeReference(typeRef)
                 if (reference.sort == TypeReference.METHOD_TYPE_PARAMETER_BOUND) {
-                    if (typePath != null) return null
-                    return record(reference.typeParameterIndex to reference.typeParameterBoundIndex, annotation, bounds)
+                    val bound = reference.typeParameterIndex to reference.typeParameterBoundIndex
+                    if (typePath == null) return record(bound, annotation, bounds)
+                    // nested in the bound, but javax.annotation.Nonnull, told by its `when`
+                    if (annotation != JSR305_NONNULL) {
+                        val paths = nestedBounds.getOrPut(name + descriptor) { HashMap() }.getOrPut(bound) { HashMap() }
+                        record(typePath.toString().replace("*", ""), annotation, paths)
+                    }
+                    return null
                 }
                 val position = when (reference.sort) {
                     TypeReference.METHOD_RETURN -> RETURN_TYPE
@@ -2989,7 +3207,66 @@ private fun readJavaNullabilities(classLoader: ClassLoader?, binaryName: String)
         }
     }, ClassReader.SKIP_CODE or ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES)
     val bridges = if (!hasBridges) emptyMap() else reflectedValue(default = null) { readJavaBridges(reader) }
-    return JavaClassNullability(isClassNullMarked, nullabilities, bridges, nullableBounds, nullableArguments, supertypeArguments)
+    return JavaClassNullability(
+        isClassNullMarked, nullabilities, bridges, nullableBounds, nullableArguments, supertypeArguments, methodOrder, nestedBounds,
+        objectWildcards
+    )
+}
+
+/**
+ * The type paths of the wildcards bounded by `Object`, like `? extends Object`, in the types of the method of the [signature],
+ * by their positions, see [RETURN_TYPE], like `0;` of `List<? extends Object>`, of the type arguments, and `[` of the elements
+ * of arrays, see [nestedType], which the reflection tells apart from the star projection `?` no more than kotlin-reflect.
+ */
+private fun objectWildcardPaths(signature: String): Map<Int, Set<String>> {
+    val paths = HashMap<Int, MutableSet<String>>()
+    val ignored = object : SignatureVisitor(Opcodes.ASM9) {}
+    open class TypeCollector(val position: Int, val path: String) : SignatureVisitor(Opcodes.ASM9) {
+        private var argument = 0
+        // the type arguments of an outer class, not told by the type path, see nestedType
+        private var isInner = false
+        override fun visitArrayType(): SignatureVisitor = TypeCollector(position, path + ARRAY_ELEMENT)
+        override fun visitInnerClassType(name: String) {
+            isInner = true
+        }
+        override fun visitTypeArgument() {
+            argument++
+        }
+        override fun visitTypeArgument(wildcard: Char): SignatureVisitor {
+            if (isInner) return ignored
+            val argumentPath = "$path$argument;"
+            argument++
+            return if (wildcard != SignatureVisitor.EXTENDS) TypeCollector(position, argumentPath) else {
+                object : TypeCollector(position, argumentPath) {
+                    override fun visitClassType(name: String) {
+                        if (name == "java/lang/Object") paths.getOrPut(position) { HashSet() } += argumentPath
+                    }
+                }
+            }
+        }
+    }
+    var parameter = 0
+    SignatureReader(signature).accept(object : SignatureVisitor(Opcodes.ASM9) {
+        override fun visitClassBound(): SignatureVisitor = ignored
+        override fun visitInterfaceBound(): SignatureVisitor = ignored
+        override fun visitExceptionType(): SignatureVisitor = ignored
+        override fun visitParameterType(): SignatureVisitor = TypeCollector(parameter++, "")
+        override fun visitReturnType(): SignatureVisitor = TypeCollector(RETURN_TYPE, "")
+    })
+    return paths
+}
+
+/**
+ * The type paths of the wildcards bounded by `Object` of the type of the value [parameter] at the position, or of the return type,
+ * when `null`, of the Java [method], see [objectWildcardPaths], which stand for `out Any` when not nullable,
+ * like by `@NullMarked`, unlike a star projection, the `out Any?`, but the ones annotated nullable, like `? extends @Nullable Object`.
+ */
+internal fun javaObjectWildcardPaths(method: Method, parameter: Int?): Set<String> = reflectedValue(default = emptySet()) {
+    val position = parameter ?: RETURN_TYPE
+    val paths = javaNullabilities.get(method.declaringClass).objectWildcards[method.name + AsmType.getMethodDescriptor(method)]
+        ?.get(position) ?: return@reflectedValue emptySet()
+    val nullable = javaNullabilityOf(method)?.nested?.get(position).orEmpty().filterValues { it }.keys.mapTo(HashSet()) { it.replace("*", "") }
+    paths - nullable
 }
 
 /**

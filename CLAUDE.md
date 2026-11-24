@@ -221,6 +221,18 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 - The Gradle test build rejects `abstract class X : J(), JDb` (`J implements GenericPut<Integer>`, `JDb` a default `put(Integer)`) with `must override 'put' because it inherits multiple interface methods`,
   while kotlinc compiles it against the compiled Java classes, so it is no fixture.
 
+- Probe the setter of a synthetic property by an assignment, from outside the class, and from a subclass:
+  `'val' cannot be reassigned` tells a setter not taken, `cannot access` one taken, but not visible —
+  and which of two setters of the type is taken only their visibility tells, see `settersInDeclarationOrder`.
+
+- When probing whether a generic function overrides, compile it both with the `override` modifier and without:
+  one rejected with the modifier (`overrides nothing`) might be rejected without it too, as an `accidental override` of the same JVM signature,
+  while an overload of the same JVM signature might compile, like `where T : Comparable<T>, T : Any` next to `<T : Comparable<T>>`, see `boundsMatch`.
+
+- Read every error of a probe, not only the first one, and not only the type a mistyped `val x: Marker = …` names:
+  `val r: Marker = Thread::name` reports the type `KMutableProperty1<Thread, String!>`, and, on the reference itself,
+  `the feature "references to synthetic java properties" is unsupported`.
+
 - kotlinc merges the members the direct supertypes contribute around the first one, so their order tells the listing:
   `X : JImpl<String>(), Function<String, String>, K` (`K` an `apply(x: String?)`) has one `apply`, as the `String!` of `JImpl` is merged with both,
   while `X : Function<String, String>, K, JImpl<String>()` has two, as K2 enhances the JDK method to take `String` —

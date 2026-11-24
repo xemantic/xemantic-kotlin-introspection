@@ -152,6 +152,45 @@ class OverrideResolverTest {
     }
 
     /**
+     * Like `fun <T> sort(x: T) where T : …`, of the type parameter of the [id], bounded by the [bounds].
+     */
+    private fun boundedFunction(id: Int, vararg bounds: KmType) = function("sort").apply {
+        typeParameters += KmTypeParameter("T", id, KmVariance.INVARIANT).apply { upperBounds += bounds }
+        valueParameters += KmValueParameter("x").apply { type = KmType().apply { classifier = KmClassifier.TypeParameter(id) } }
+    }
+
+    @Test
+    fun `should tell override of generic function by bounds of its type parameters in any order`() {
+        // given
+        // like `open class Base { open fun <T> sort(x: T) where T : CharSequence, T : Comparable<T> }`
+        fun comparable(id: Int) = type("kotlin/Comparable").apply {
+            arguments += KmTypeProjection(KmVariance.INVARIANT, KmType().apply { classifier = KmClassifier.TypeParameter(id) })
+        }
+        val base = kmClass("test/Base").apply { functions += boundedFunction(0, type("kotlin/CharSequence"), comparable(0)) }
+        // like `class Owner<X : CharSequence> : Base()`
+        val owner = kmClass("test/Owner", supertype = "test/Base").apply {
+            typeParameters += KmTypeParameter("X", 0, KmVariance.INVARIANT).apply { upperBounds += type("kotlin/CharSequence") }
+        }
+        val resolver = overrideResolver(classes = mapOf("test/Base" to base))
+
+        // when
+        val reordered = resolver.isOverride(OverrideResolver.Owner(owner), boundedFunction(1, comparable(1), type("kotlin/CharSequence")))
+        val otherBound = resolver.isOverride(OverrideResolver.Owner(owner), boundedFunction(1, type("kotlin/CharSequence")))
+        val oneMoreBound = resolver.isOverride(
+            OverrideResolver.Owner(owner), boundedFunction(1, type("kotlin/CharSequence"), comparable(1), type("kotlin/Any"))
+        )
+        val classTypeParameterBound = resolver.isOverride(
+            OverrideResolver.Owner(owner), boundedFunction(1, KmType().apply { classifier = KmClassifier.TypeParameter(0) })
+        )
+
+        // then
+        assert(reordered)
+        assert(!otherBound)
+        assert(!oneMoreBound)
+        assert(!classTypeParameterBound)
+    }
+
+    /**
      * A function taking a value of the type parameter of the [id], like `accept(value: T)`.
      */
     private fun typeParameterFunction(name: String, id: Int) = function(name).apply {

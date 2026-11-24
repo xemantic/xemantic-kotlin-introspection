@@ -1693,6 +1693,9 @@ abstract class InheritedJavaNullUnmarkedMidBottom : com.xemantic.kotlin.introspe
 // The methods marked by @NullMarked of a Java class not marked, and their override
 abstract class InheritedJavaMethodNullMarked : com.xemantic.kotlin.introspection.test.other.JavaMethodNullMarked<String>()
 
+// The methods marked by @NullMarked of a Java class not marked, inherited through a Java subclass marked by it
+abstract class InheritedJavaMethodNullMarkedSub : com.xemantic.kotlin.introspection.test.other.JavaMethodNullMarkedSub()
+
 abstract class InheritedJavaMethodNullMarkedOverriding : com.xemantic.kotlin.introspection.test.other.JavaMethodNullMarkedOverriding()
 
 // A Java subclass of java.util.HashSet implementing JavaSizeFace, whose size() implements the one of the interface
@@ -1762,6 +1765,61 @@ class SyntheticPropertyDiamondOverride : com.xemantic.kotlin.introspection.test.
 
 class SyntheticPropertyJavaDiamondSub : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyDiamond()
 
+// The getters of a Java superclass next to setters which kotlinc takes, or does not take, for the setter of the synthetic property
+open class SyntheticPropertySetters : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertySetters()
+
+// A getter overridden by a Java superclass returning a subtype, which the setter of the getter overridden still sets
+open class SyntheticPropertyCovariant : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyCovariant()
+
+// Kotlin overrides of the getters, and the setters, of a Java superclass, of their own nullability:
+// getNick() returns the String which setNick(String) takes, getName() a String? which setName(String) does not take,
+// while setBar(String?) still sets the String of getBar(), as it overrides the setter of the getter overridden
+open class SyntheticPropertyKotlinSetters : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertySetters() {
+    override fun getNick(): String = ""
+    override fun getName(): String? = null
+    override fun setName(name: String) {}
+    override fun getBar(): String = ""
+    override fun setBar(bar: String?): com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertySetters = this
+}
+
+// The accessors of the type variable of a Java class marked by @NullMarked, given by a Java class not marked,
+// and its accessors of a star projection, and of Object
+abstract class SyntheticPropertyMarkedBoxOfString :
+    com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyMarkedBoxOfString()
+
+// A Kotlin class passing its type parameter to the type variable of a Java class marked by @NullMarked,
+// given a platform type by a Java class not marked in turn
+abstract class KotlinSyntheticPropertyMarkedBox<U> : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyMarkedBox<U>()
+
+abstract class SyntheticPropertyKotlinBoxOfString :
+    com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyKotlinBoxOfString()
+
+// The public setter of an interface, taken before the protected one of the superclass
+abstract class SyntheticPropertyFaceFirst : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyFaceFirst()
+
+// The public setter of a farther interface, taken before the protected one of the nearer superclass
+abstract class SyntheticPropertyFarFaceFirst : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyFarFaceFirst()
+
+// The private setter of the Java class declaring the getter, taken before the public one of its superclass
+class SyntheticPropertyHiddenSetterMid : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyHiddenSetterMid()
+
+// The private setter of the Java class declaring the getter, taken before the public one of its Kotlin superclass
+open class KotlinSyntheticPropertyPrimitiveSetter {
+    open fun setHidden(hidden: Int) {}
+}
+
+class SyntheticPropertyHiddenOverKotlinSetter : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyHiddenOverKotlinSetter()
+
+// The protected setter declared first, taken before the public one, which a final class cannot call, unlike an open one
+class SyntheticPropertyFinalProtectedSetterFirst : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyProtectedSetterFirst()
+
+open class SyntheticPropertyOpenProtectedSetterFirst : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyProtectedSetterFirst()
+
+abstract class NullMarkedObjectWildcards : com.xemantic.kotlin.introspection.test.other.JavaNullMarkedObjectWildcards()
+
+// A final class, which cannot call the protected setPr(String) of its Java superclass
+class SyntheticPropertyFinal : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyBase()
+
 // The members of a Java class marked by @NullMarked, inherited through Java classes not overriding them,
 // giving its type variables type arguments, their own type variables, or none
 abstract class InheritedJavaNullMarkedArguments : com.xemantic.kotlin.introspection.test.other.JavaNullMarkedArguments()
@@ -1804,6 +1862,11 @@ abstract class InheritedJavaTypeVariables : com.xemantic.kotlin.introspection.te
 // An overload of the sort(T) of a Java superclass, of the same signature as rendered, but of another bound of its type parameter
 class NotNullCharSequenceSorter : com.xemantic.kotlin.introspection.test.other.JavaNotNullSortBase() {
     fun <T : CharSequence> sort(x: T) {}
+}
+
+// An overload of the same signature as rendered, bounded by a type parameter of its class
+class NotNullClassBoundedSorter<X : CharSequence> : com.xemantic.kotlin.introspection.test.other.JavaNotNullSortBase() {
+    fun <T : X> sort(x: T) {}
 }
 
 // The generic methods of a Java class, see JavaMethodTypeVariables

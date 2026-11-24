@@ -36,6 +36,11 @@ import com.xemantic.kotlin.introspection.test.other.JavaRawComparable
 import com.xemantic.kotlin.introspection.test.other.JavaRawInnerMid
 import com.xemantic.kotlin.introspection.test.other.JavaRawKotlinMid
 import com.xemantic.kotlin.introspection.test.other.JavaSortBase
+import com.xemantic.kotlin.introspection.test.other.JavaAnnotatedBoundsBase
+import com.xemantic.kotlin.introspection.test.other.JavaGenericBoundsBase
+import com.xemantic.kotlin.introspection.test.other.JavaMethodNullMarkedBoundsBase
+import com.xemantic.kotlin.introspection.test.other.JavaNullMarkedTwoBoundsBase
+import com.xemantic.kotlin.introspection.test.other.JavaTwoBoundsBase
 import com.xemantic.kotlin.introspection.test.other.JavaVoidBase
 import com.xemantic.kotlin.introspection.test.other.PackagePrivateBase
 
@@ -448,6 +453,91 @@ class JavaSorter : JavaSortBase() {
 }
 
 class CharSequenceSorter : JavaSortBase() {
+    fun <T : CharSequence> sort(x: T) {}
+}
+
+// A function bounded by a type parameter of its class is an overload of the sort(T) of the Java superclass, bounded by Comparable<T>,
+// whatever the bound of the type parameter of the class
+class ClassBoundedSorter<X : CharSequence> : JavaSortBase() {
+    fun <T : X> sort(x: T) {}
+}
+
+// A function of one more bound, like Any, is an overload too, though erased to the same JVM type
+class AnyBoundedSorter : JavaSortBase() {
+    fun <T> sort(x: T) where T : Comparable<T>, T : Any {}
+}
+
+// The overload of one more bound, and the Java method, inherited both by a subclass, which can override either
+open class OpenAnyBoundedSorter : JavaSortBase() {
+    fun <T> sort(x: T) where T : Comparable<T>, T : Any {}
+}
+
+class AnyBoundedSorterSubclass : OpenAnyBoundedSorter()
+
+// An annotation of a bound of a Java method tells the bound itself: the type variable the method takes,
+// and the ones nested in the bound, are still declared of either nullability, an annotated collection of either mutability
+class AnnotatedBoundOverride : JavaAnnotatedBoundsBase<String?>() {
+    override fun <T : CharSequence> notNull(x: T?) {}
+    override fun <T : Comparable<T?>> nested(x: T) {}
+    override fun <T : String?> nullable(x: T) {}
+    override fun <T : List<String>> listed(x: T) {}
+    override fun <T : List<List<String>>> listedList(x: T) {}
+    override fun <T : Map<String, List<String?>>> mapped(x: T) {}
+}
+
+// A method marked by @NullMarked takes its type variable as given, also in an array of a marked class
+class MethodNullMarkedNullableParameterOverload : JavaMethodNullMarkedBoundsBase() {
+    fun <T> two(x: T?) where T : Comparable<T>, T : CharSequence {}
+}
+
+class NullMarkedNullableArrayOverload : JavaNullMarkedTwoBoundsBase() {
+    fun <T> arr(xs: Array<T?>) where T : Comparable<T>, T : CharSequence {}
+}
+
+// An override declares the bounds of the type variable of the Java method in any order, erased to the first one
+class ReorderedBoundsOverride : JavaTwoBoundsBase() {
+    override fun <T> two(x: T) where T : Comparable<T>, T : CharSequence {}
+    override fun <T> obj(x: T) where T : Comparable<T>, T : Any {}
+    override fun <T> arr(xs: Array<T>) where T : Comparable<T>, T : CharSequence {}
+    override fun <T> va(vararg xs: T) where T : Comparable<T>, T : CharSequence {}
+}
+
+// An override declares a bound which is a platform type of Java of either nullability, like the type argument
+// given for the type variable of the Java superclass bounding the one of its method, also as a type argument of the bound
+class NullableBoundOverride : JavaGenericBoundsBase<CharSequence>() {
+    override fun <T : CharSequence?> bounded(x: T) {}
+    override fun <T : Comparable<CharSequence?>> compared(x: T) {}
+    override fun <T : MutableList<out CharSequence?>?> listed(x: T) {}
+}
+
+class TypeParameterNullableBoundOverride<Y> : JavaGenericBoundsBase<Y>() {
+    override fun <T : Y?> bounded(x: T) {}
+}
+
+// The functions next to the methods of a Java superclass marked by @NullMarked, whose types are not nullable:
+// overloads when taking the type parameter as nullable, or declaring its bounds nullable, or one more bound, and an override otherwise
+class NullMarkedNullableParameterOverload : JavaNullMarkedTwoBoundsBase() {
+    fun <T> two(x: T?) where T : Comparable<T>, T : CharSequence {}
+}
+
+class NullMarkedNullableBoundsOverload : JavaNullMarkedTwoBoundsBase() {
+    fun <T> two(x: T) where T : Comparable<T>?, T : CharSequence? {}
+}
+
+class NullMarkedAnyBoundedSorter : JavaNullMarkedTwoBoundsBase() {
+    fun <T> sort(x: T) where T : Comparable<T>, T : Any {}
+}
+
+class NullMarkedReorderedBoundsOverride : JavaNullMarkedTwoBoundsBase() {
+    override fun <T> two(x: T) where T : Comparable<T>, T : CharSequence {}
+}
+
+// The functions of a Kotlin superclass are overridden by the bounds of their type parameters as well
+open class KotlinSortBase {
+    open fun <T : Comparable<T>> sort(x: T) {}
+}
+
+class KotlinCharSequenceSorter : KotlinSortBase() {
     fun <T : CharSequence> sort(x: T) {}
 }
 
