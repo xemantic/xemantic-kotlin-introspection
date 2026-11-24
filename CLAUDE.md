@@ -165,9 +165,9 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 - A sweep judging an extension "callable only with `Nothing`" from a fixed list of type arguments misjudges it since `Nothing` does not count (#366, #362):
   most such rows compile with a declared self-referring type — probe them with declared types too, see `isDeclarableFor`.
 
-- Kotlin never passes named arguments to a Java method, even one compiled with `-parameters`, so a Java method taking parameters never shadows an extension — see `isShadowingJavaMethod`.
-  A Java method overriding a Kotlin function takes them though, by the names of the Kotlin one, like `k.over(x = 1)`,
-  which is not modelled: the extension next to it stays listed.
+- Kotlin never passes named arguments to a Java method of its own, even one compiled with `-parameters`, so a Java method taking parameters never shadows an extension — see `isShadowingJavaMethod`;
+  a Java method overriding a Kotlin member, or merged with one, takes the names of the Kotlin one though, like `k.over(x = 1)`, see the entry on `namedByKotlinMembers` below —
+  its shadowing is not modelled: the extension next to such a Java override stays listed.
 
 - kotlinc 2.4.21 infers the `T` of an invariant `X<T>` from an `out Nothing` projection, also nested in an invariant position,
   like `fun <T> Inv<MutableCollection<T>>.f()` on `Inv<MutableCollection<out Nothing>>`, but not from `out String`, nor does it accept `Inv<MutableCollection<String>>` there —
@@ -206,14 +206,38 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   while a named-argument probe of a member merged only of Java methods fails, see `namedByKotlinMembers` —
   a merge dropping the only Kotlin row for an `arg0` one is a regression a sweep must probe by a named call.
 
-- The `inheritedCandidates` rules deciding which merged member is listed are not transitive: a rule overriding the rank order
-  let three members beat each other in a circle, and `resolve` returned `null` — keep the guard of `listed`, and sweep three-way joins.
+- The `inheritedCandidates` rules deciding which merged member is listed are not transitive:
+  a rule overriding the rank order let three members beat each other in a circle, and `resolve` returned `null` —
+  keep the guard of `listed`, and sweep three-way joins.
 
 - A Java `put(Integer)` overriding a member given `@NotNull Integer` along one path and `@Nullable Integer` along another takes a platform type,
   while the member itself, not overridden, takes the type of its first path, see `isJavaTypeArgument`, `givenPositions`.
 
-- The Gradle test build rejects `abstract class X : J(), JDb` (`J implements GenericPut<Integer>`, `JDb` a default `put(Integer)`)
-  with `must override 'put' because it inherits multiple interface methods`, while kotlinc compiles it against the compiled Java classes, so it is no fixture.
+- A type argument annotated nullable given through a generic Java class passing its type variable on,
+  like `JMid<@Nullable Integer>` of `JMid<T> extends GenericPut<T>`, also one marked by `@NullMarked`, or a Kotlin `KN : JMid<Int?>`,
+  still disagrees with a `@NotNull Integer` of another path, so that the Java override takes a platform type —
+  a walk of the givers stopping at the Java class misses it, see `typeArgumentGivers`.
+
+- The Gradle test build rejects `abstract class X : J(), JDb` (`J implements GenericPut<Integer>`, `JDb` a default `put(Integer)`) with `must override 'put' because it inherits multiple interface methods`,
+  while kotlinc compiles it against the compiled Java classes, so it is no fixture.
+
+- kotlinc merges the members the direct supertypes contribute around the first one, so their order tells the listing:
+  `X : JImpl<String>(), Function<String, String>, K` (`K` an `apply(x: String?)`) has one `apply`, as the `String!` of `JImpl` is merged with both,
+  while `X : Function<String, String>, K, JImpl<String>()` has two, as K2 enhances the JDK method to take `String` —
+  and a Kotlin class joining some of them below contributes every member it keeps apart, each by the one it picks,
+  a merged member as one only next to the members of its own supertypes — another Kotlin member of the same signature named below the join parts it again —
+  while a Java class joining them from different supertypes merges them all.
+  `inheritedCandidates` groups the candidates of all the supertypes at once, one per class, telling the joins below only in narrow cases
+  (`contributionOrder`, `mergedThroughClasses`): broader rules (grouping by the joining classes, types of JDK interfaces merged by their nullability)
+  regressed neighbouring shapes in #339.
+  A sweep of joins needs every order of the supertypes, the joins named through Kotlin and Java classes next to other supertypes,
+  Kotlin classes one to three levels below the joins, and members with bodies: each of these regressed on its own.
+
+- When probing kotlinc, `val r: Marker = x::apply` names the type of one overload, with no ambiguity, when the class has two,
+  the message of an empty concrete subclass tells one abstract member from several (`member:` / `members:`), but not which —
+  an override of only one of them does,
+  and an `override fun <T> toArray(g: IntFunction<Array<T>>)` compiles also on a class where `x.toArray(g)` does not resolve,
+  as Kotlin hides the member of `java.util.Collection` only from calls.
 
 - `reflectedValue` swallows what a conversion of a reflected member throws, dropping the whole member silently,
   like every Java method overriding a Kotlin member taking a mutable collection was, see `reflectedClassName` —
@@ -229,6 +253,13 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 
 - An empty concrete subclass of a class joining a hidden member may fail with `inherited platform declarations clash`, not `does not implement`,
   though the joining class itself compiles — such a probe tells nothing of the abstract members, probe them by calls.
+
+- kotlinc's `named argument is prohibited for parameter with an ambiguous name` also counts names no listing shows:
+  of hidden and internal members, and of the members a joined override renames — but not along a single path, see `ambiguousNamePositions`.
+
+- The sweep model counting the members rendered without a modifier as abstract can be right by accident:
+  a visible member rendered abstract in place of the hidden one kotlinc demands — confirm a changed abstract count
+  by overriding each candidate signature in a concrete subclass of its own.
 
 ## Anti-patterns to avoid
 

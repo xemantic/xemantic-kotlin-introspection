@@ -878,6 +878,40 @@ interface HiddenGenericPut<T> {
 
 abstract class PrimitiveJavaHiddenGenericPutJoin : com.xemantic.kotlin.introspection.test.other.JavaPrimitivePut(), HiddenGenericPut<Int>
 
+abstract class HiddenOpenGenericPut<T> {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    open fun put(t: T): String = ""
+}
+
+// the put(@NotNull Integer) of the Java class overrides the hidden put(t: T) of HiddenOpenGenericPut<Integer>,
+// and the put(t: T) of GenericPut<@Nullable Integer>, visible then, taking Int!, as the nullabilities disagree
+abstract class NotNullBoxedJavaPutOverHiddenOpenAndNullableGenericPutImpl :
+    com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPutOverHiddenOpenAndNullableGenericPut()
+
+class NotNullBoxedJavaPutOverHiddenOpenAndNullableGenericPutConcrete : NotNullBoxedJavaPutOverHiddenOpenAndNullableGenericPutImpl()
+
+fun NotNullBoxedJavaPutOverHiddenOpenAndNullableGenericPutImpl.putNull(): String = put(t = null)
+
+abstract class HiddenAbstractGenericPut<T> {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    abstract fun put(t: T): String
+}
+
+// the put(Integer) of the Java class implements the hidden put(t: T) of HiddenAbstractGenericPut<Integer>,
+// and the one of GenericPut<@NotNull Integer>, which the Kotlin class merges with the put(t: T) of GenericDefaultPut<Int>
+abstract class BoxedJavaPutOverHiddenAbstractAndNotNullGenericPutDefaultJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOverHiddenAbstractAndNotNullGenericPut(), GenericDefaultPut<Int>
+
+fun BoxedJavaPutOverHiddenAbstractAndNotNullGenericPutDefaultJoin.putNamed(): String = put(t = 1)
+
+// one member implemented by the put(Integer) of the Java class, next to a hidden one
+abstract class BoxedJavaPutOverHiddenNullableAndRenamedGenericPutImpl :
+    com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOverHiddenNullableAndRenamedGenericPut()
+
+class BoxedJavaPutOverHiddenNullableAndRenamedGenericPutConcrete : BoxedJavaPutOverHiddenNullableAndRenamedGenericPutImpl()
+
+fun BoxedJavaPutOverHiddenNullableAndRenamedGenericPutImpl.putNull(): String = put(null)
+
 // the computeIfAbsent of java.util.HashMap keeps the enhancement of the one of java.util.Map, so that join.computeIfAbsent(…) compiles,
 // while the one of a Java override does not, losing to the hidden member, so that javaJoin.computeIfAbsent(…) does not,
 // nor the one of java.util.HashMap inherited through a Java class not declaring it again

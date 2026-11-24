@@ -184,10 +184,10 @@ com.example.AnnotationTestClass
   for which the Kotlin member is inherited instead, declared with the names of its parameters, which the JDK does not tell,
   unless the Java method makes it more visible, like the public `clone()` of the protected one of `kotlin.Cloneable`,
   or returns a more specific type,
-  or takes types the Kotlin member does not, like the platform types of the `compute` of `java.util.Hashtable`,
-  which, as no pure implementation of `MutableMap`, lets `compute(null, …)` compile —
+  or takes types the Kotlin member does not, like the platform types of the `put` of `java.util.Hashtable`,
+  which, as no pure implementation of `MutableMap`, lets `put(null, …)` compile —
   the `// inherited from` header names the declaration whose types are rendered,
-  so `java.util.Hashtable` for its `compute`, but `kotlin.collections.MutableMap` for the one of `java.util.TreeMap`, though the JDK class declares it too,
+  so `java.util.Hashtable` for its `put`, but `kotlin.collections.MutableMap` for the one of `java.util.TreeMap`, though the JDK class declares it too,
   as naming the JDK class everywhere would trade the parameter names, like `key` and `value`, for `arg0` and `arg1`,
   and the ones overriding a JDK method which the built-in type does not have, like the `sort(Comparator)` of `java.util.List`,
   as Kotlin calls the `MutableList<T>.sort(comparator)` extension instead.
@@ -200,10 +200,38 @@ com.example.AnnotationTestClass
   which a Java class extending it does not override, is inherited from that Java class,
   or from the nearest public subclass of it, when the Java class is package-private,
   or the nearest public interface extending it, when a package-private Java interface extends an internal one,
+  or the public class implementing that one, rendered as within it,
   as `abstract`, when a concrete subclass has to implement it,
   like `abstract fun put(k: Int?): Int` next to the `open fun put(arg0: Int): Int` the Java class declares, a JVM method of its own,
   or else `open`, or final, like `fun h(): Int`,
-  and so through a Kotlin class exposing such a supertype, which only a suppressed `EXPOSED_SUPER_CLASS` error allows.
+  and so through a Kotlin class exposing such a supertype, which only a suppressed `EXPOSED_SUPER_CLASS` error allows,
+  while resolved on that Kotlin class itself, it is listed as a member of its own, with no header,
+  followed by a comment naming the class declaring it,
+  like `abstract fun f(): Int // declared by internal com.example.InternalBase`,
+  or `// declared by hidden …` of one deprecated as hidden,
+  so that every header names a class the user code can name.
+  Two members of the same signature as rendered, regardless of the names of their parameters,
+  which the compiler keeps apart, as JVM methods of their own,
+  like the `put(@NotNull Integer)` of a Java class next to the `put(key: Int)` of a Kotlin interface, `put(I)` on the JVM,
+  are both listed, the Java one followed by a comment telling its JVM signature, by the simple names of its parameter types,
+  like `open fun put(arg0: Int): String // put(Integer) on the JVM`,
+  also a JVM-only member of a built-in type, like `putIfAbsent(Object, Object)` of `MutableMap`,
+  and a Kotlin member standing for the method of a Java class implementing it, listed with its own names,
+  which a call can name, like `open fun put(t: Int): String // put(Integer) on the JVM`.
+  The members merged, of a Kotlin parameter named differently by some of them, like `put(t: T)` and `put(q: T)`,
+  are listed as the one picked, of its names, followed by `// named arguments prohibited: ambiguous parameter names`,
+  as kotlinc 2.4.21 lets no call name the parameter, "named argument is prohibited for parameter with an ambiguous name",
+  also a hidden member, or one of a supertype which is not part of the API, merged with them,
+  or the method of a Java class overriding them,
+  and, when the member is joined through several direct supertypes, the ones they override,
+  like the `f(a: Int)` which the `override fun f(b: Int)` of `RM : RA` overrides, for `RJ : RM, RB`,
+  unlike along a single path, like for `RJ3 : RM`, where `f(b = 1)` compiles,
+  deciding per parameter, so that only the ambiguous ones are named when the others agree,
+  like `fun put(k: Int, v: String): String // named arguments prohibited for k: ambiguous parameter names`,
+  of `put(k: K, v: V)` and `put(q: K, v: V)`, where `put(1, v = "")` compiles,
+  while a method of a Java class takes the names the Kotlin members agree on, and else the ones of the first of them,
+  like `override fun put(k: Int?, v: String?): String // named arguments prohibited for k: ambiguous parameter names`,
+  as the names of a Java method never count.
   The method of a Java class merged with a function of an internal interface keeps its own modality,
   as the class wins: final, or abstract, also next to a function of a body,
   and when the internal function overrides the one of a public interface, listed in its place.
@@ -526,6 +554,17 @@ com.example.AnnotationTestClass
   or a sealed class with such a subclass —
   and never the ones deprecated with the `HIDDEN` level,
   or with `@DeprecatedSinceKotlin(hiddenSince = …)` not newer than the standard library of the class loader.
+  But an abstract one, hidden, or internal, which a concrete subclass still has to implement,
+  as kotlinc 2.4.21 tells, "does not implement abstract base class member", or "inherits invisible abstract member",
+  declared, or inherited, also through a Java class, and not implemented,
+  is noted on top of the body of a class which the user code can subclass,
+  like `// must implement hidden: fun hid(x: Int): Int`, or `// must implement internal: fun reset(): String`,
+  or `// must implement internal: var count: Int` of a property,
+  with the type arguments of the supertypes substituted, but without its deprecation, or its internal visibility,
+  also when a hidden abstract override declares a member with a body of an interface abstract again,
+  unless a visible member which a concrete subclass implements in its place is listed,
+  like an abstract one of its signature, or one merged with it, which the compiler picks instead,
+  as no call can name it, so that it is not resolved either.
   The exception is a property declared by a primary constructor parameter of a data class, or a value class,
   which cannot be declared without it,
   so it is rendered with its visibility, like `private val b: Int`,

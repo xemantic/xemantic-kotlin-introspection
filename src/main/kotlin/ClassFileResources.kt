@@ -73,7 +73,7 @@ internal fun classReader(bytes: ByteArray): ClassReader = try {
  * named by a `Utf8` one, unlike a malformed one, whose superclass or interface index ASM reads all the same:
  * the entry 0, or a `Class` entry of the name index 0, as no name, and an entry of another kind, like a `Utf8` one,
  * or a `Class` entry whose name index is of an entry of another kind, as an unrelated name.
- * The superclass of the entry 0 is none, which only `java/lang/Object`, and a module descriptor, have,
+ * The superclass of the entry 0 is none, which only `java/lang/Object`, and a module descriptor, see [isModuleDescriptor], have,
  * so it is a malformed one of any other class, which the JVM rejects, the members of its superclass unknown.
  */
 internal fun ClassReader.namesSupertypesByClassEntries(): Boolean {
@@ -85,8 +85,8 @@ internal fun ClassReader.namesSupertypesByClassEntries(): Boolean {
     // the access flags are followed by this class, the superclass, the interface count, and the interfaces
     val superclass = readUnsignedShort(header + 4)
     val hasSuperclass = if (superclass != 0) isClassEntry(superclass) else {
-        readUnsignedShort(header) and Opcodes.ACC_MODULE != 0 ||
-            (isClassEntry(readUnsignedShort(header + 2)) && className == OBJECT_INTERNAL_NAME)
+        isClassEntry(readUnsignedShort(header + 2)) &&
+            className.let { it == OBJECT_INTERNAL_NAME || isModuleDescriptor(readUnsignedShort(header), it) }
     }
     return hasSuperclass && (0 until readUnsignedShort(header + 6)).all { isClassEntry(readUnsignedShort(header + 8 + 2 * it)) }
 }
@@ -95,6 +95,15 @@ internal fun ClassReader.namesSupertypesByClassEntries(): Boolean {
  * The JVM internal name of the only class of no superclass.
  */
 internal const val OBJECT_INTERNAL_NAME = "java/lang/Object"
+
+/**
+ * Whether a class file of the [access] flags, of a class of the JVM internal [name], is a module descriptor,
+ * which has no superclass, flagged as a module, and named `module-info`, not only flagged, like a malformed class file.
+ */
+internal fun isModuleDescriptor(access: Int, name: String?): Boolean =
+    access and Opcodes.ACC_MODULE != 0 && name == MODULE_DESCRIPTOR_NAME
+
+private const val MODULE_DESCRIPTOR_NAME = "module-info"
 
 private const val CONSTANT_UTF8_TAG = 1
 
