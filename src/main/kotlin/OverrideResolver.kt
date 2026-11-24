@@ -3818,7 +3818,7 @@ private fun keyTypeParameters(owner: KmClass, memberTypeParameters: List<KmTypeP
  * its classifier, a type parameter by its name, with its type arguments and its nullability,
  * as overloads might differ only by them, like `f(x: Int)` and `f(x: Int?)`.
  */
-private fun KmType.memberKeyType(typeParameters: Map<Int, String>): String = buildString {
+internal fun KmType.memberKeyType(typeParameters: Map<Int, String>): String = buildString {
     append(
         when (val classifier = classifier) {
             is KmClassifier.Class -> classifier.name

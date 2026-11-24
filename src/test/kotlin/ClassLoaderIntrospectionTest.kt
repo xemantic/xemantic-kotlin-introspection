@@ -2620,6 +2620,7 @@ class ClassLoaderIntrospectionTest {
         signature sameAsKotlin """
             // com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsHiddenProperties [page 1/1]
             interface DefaultImplsHiddenProperties {
+                // must implement hidden: val hiddenAbstract: Int
                 val visible: Int
             }
         """.trimIndent()

@@ -6466,10 +6466,11 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve Java member taking boxed type annotated not null next to Kotlin one taking primitive type`() {
+        // two members of the same Kotlin signature, the Java one told by its JVM signature (#364)
         resolver.resolve("com.xemantic.kotlin.introspection.test.NotNullBoxedJavaPutJoin.put") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.NotNullBoxedJavaPutJoin.put [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPut
-            open fun put(arg0: Int): String
+            open fun put(arg0: Int): String // put(Integer) on the JVM
             // inherited from com.xemantic.kotlin.introspection.test.PrimitivePut
             fun put(key: Int): String
         """.trimIndent()
@@ -6492,7 +6493,7 @@ class KotlinIntrospectorTest {
         resolver.resolve("com.xemantic.kotlin.introspection.test.GenericPrimitivePutJoin.put") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.GenericPrimitivePutJoin.put [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.GenericPut
-            fun put(t: Int): String
+            fun put(t: Int): String // named arguments prohibited: ambiguous parameter names
         """.trimIndent()
     }
 
@@ -6535,7 +6536,7 @@ class KotlinIntrospectorTest {
         resolver.resolve("com.xemantic.kotlin.introspection.test.NotNullBoxedJavaGenericPutJoin.put") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.NotNullBoxedJavaGenericPutJoin.put [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPut
-            open fun put(arg0: Int): String
+            open fun put(arg0: Int): String // put(Integer) on the JVM
             // inherited from com.xemantic.kotlin.introspection.test.GenericPut
             fun put(t: Int): String
         """.trimIndent()
@@ -6547,9 +6548,9 @@ class KotlinIntrospectorTest {
         resolver.resolve("com.xemantic.kotlin.introspection.test.NotNullBoxedJavaPrimitiveGenericPutJoin.put") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.NotNullBoxedJavaPrimitiveGenericPutJoin.put [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPut
-            open fun put(arg0: Int): String
+            open fun put(arg0: Int): String // put(Integer) on the JVM
             // inherited from com.xemantic.kotlin.introspection.test.PrimitivePut
-            fun put(key: Int): String
+            fun put(key: Int): String // named arguments prohibited: ambiguous parameter names
         """.trimIndent()
     }
 
@@ -6571,7 +6572,7 @@ class KotlinIntrospectorTest {
         resolver.resolve("com.xemantic.kotlin.introspection.test.PrimitiveKeyMapJoin.computeIfAbsent") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.PrimitiveKeyMapJoin.computeIfAbsent [page 1/1]
             // inherited from kotlin.collections.MutableMap
-            open fun computeIfAbsent(arg0: Int, arg1: java.util.function.Function<in Int, out String>): String
+            open fun computeIfAbsent(arg0: Int, arg1: java.util.function.Function<in Int, out String>): String // computeIfAbsent(Object, Function) on the JVM
             // inherited from com.xemantic.kotlin.introspection.test.PrimitiveKeyMapMembers
             fun computeIfAbsent(key: Int, mappingFunction: java.util.function.Function<in Int, out String>): String
         """.trimIndent()
@@ -6582,7 +6583,7 @@ class KotlinIntrospectorTest {
         resolver.resolve("com.xemantic.kotlin.introspection.test.PrimitiveKeyMapJoin.putIfAbsent") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.PrimitiveKeyMapJoin.putIfAbsent [page 1/1]
             // inherited from kotlin.collections.MutableMap
-            open fun putIfAbsent(arg0: Int, arg1: String): String?
+            open fun putIfAbsent(arg0: Int, arg1: String): String? // putIfAbsent(Object, Object) on the JVM
             // inherited from com.xemantic.kotlin.introspection.test.PrimitiveKeyMapMembers
             fun putIfAbsent(key: Int, value: String): String?
         """.trimIndent()
@@ -6668,7 +6669,7 @@ class KotlinIntrospectorTest {
             // inherited from com.xemantic.kotlin.introspection.test.PrimitiveKeyMapMembers
             fun computeIfAbsent(key: Int, mappingFunction: java.util.function.Function<in Int, out String>): String
             // inherited from kotlin.collections.MutableMap
-            open fun computeIfAbsent(arg0: Int, arg1: java.util.function.Function<in Int, out String>): String
+            open fun computeIfAbsent(arg0: Int, arg1: java.util.function.Function<in Int, out String>): String // computeIfAbsent(Object, Function) on the JVM
         """.trimIndent()
     }
 
@@ -7050,7 +7051,7 @@ class KotlinIntrospectorTest {
         resolver.resolve("com.xemantic.kotlin.introspection.test.PrimitiveJavaNotNullIntegerPutImpl.put") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.PrimitiveJavaNotNullIntegerPutImpl.put [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.other.JavaPrimitiveNotNullIntegerPut
-            open fun put(arg0: Int): String
+            open fun put(arg0: Int): String // put(int) on the JVM
             // inherited from com.xemantic.kotlin.introspection.test.GenericPut
             fun put(t: Int): String
         """.trimIndent()
@@ -7124,7 +7125,7 @@ class KotlinIntrospectorTest {
         resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaMidPut2Impl.put") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.BoxedJavaMidPut2Impl.put [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedMidPut2
-            open fun put(arg0: Int?, arg1: String?): String
+            open fun put(arg0: Int?, arg1: String?): String // put(Integer, String) on the JVM
             // inherited from com.xemantic.kotlin.introspection.test.Put2
             fun put(k: Int?, v: String?): String
         """.trimIndent()
@@ -7218,7 +7219,7 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.IntegerJavaGenericPutImplementationPrimitivePutJoin.put [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.GenericPutImplementation
-            override fun put(t: Int?): String
+            override fun put(t: Int?): String // named arguments prohibited: ambiguous parameter names
         """.trimIndent()
     }
 
@@ -7238,7 +7239,7 @@ class KotlinIntrospectorTest {
         resolver.resolve("com.xemantic.kotlin.introspection.test.IntegerJavaPutInterfacePrimitivePutJoin.put") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.IntegerJavaPutInterfacePrimitivePutJoin.put [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.GenericPut
-            fun put(t: Int?): String
+            fun put(t: Int?): String // named arguments prohibited: ambiguous parameter names
         """.trimIndent()
     }
 
@@ -7247,7 +7248,7 @@ class KotlinIntrospectorTest {
         resolver.resolve("com.xemantic.kotlin.introspection.test.NamedMidOtherTakerJoin.take") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.NamedMidOtherTakerJoin.take [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.NamedRootTaker
-            fun take(root: String): String
+            fun take(root: String): String // named arguments prohibited: ambiguous parameter names
         """.trimIndent()
     }
 
@@ -8230,7 +8231,7 @@ class KotlinIntrospectorTest {
         resolver.resolve("com.xemantic.kotlin.introspection.test.StringGenericJavaAcceptorJoin.accept") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.StringGenericJavaAcceptorJoin.accept [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.StringAcceptor
-            open fun accept(s: String?)
+            open fun accept(s: String?) // named arguments prohibited: ambiguous parameter names
         """.trimIndent()
     }
 
@@ -8240,7 +8241,7 @@ class KotlinIntrospectorTest {
         resolver.resolve("com.xemantic.kotlin.introspection.test.StringGenericJavaAcceptorJoin.put2") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.StringGenericJavaAcceptorJoin.put2 [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.StringTagPut
-            open fun put2(key: String?, tag: String): String
+            open fun put2(key: String?, tag: String): String // named arguments prohibited for key: ambiguous parameter names
         """.trimIndent()
     }
 
@@ -8368,7 +8369,7 @@ class KotlinIntrospectorTest {
         resolver.resolve("com.xemantic.kotlin.introspection.test.GenericUIntPutJoin.put") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.GenericUIntPutJoin.put [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.GenericPut
-            fun put(t: UInt): String
+            fun put(t: UInt): String // named arguments prohibited: ambiguous parameter names
         """.trimIndent()
     }
 
@@ -8377,7 +8378,7 @@ class KotlinIntrospectorTest {
         resolver.resolve("com.xemantic.kotlin.introspection.test.SuspendGenericPrimitivePutJoin.put") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.SuspendGenericPrimitivePutJoin.put [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.SuspendGenericPut
-            suspend fun put(t: Int): String
+            suspend fun put(t: Int): String // named arguments prohibited: ambiguous parameter names
         """.trimIndent()
     }
 
@@ -9058,7 +9059,7 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.CharSequenceApplierJavaFunctionImplementationNullableMemberJoin.apply [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.other.JavaSameTypeFunctionImplementation
-            override fun apply(arg0: String?): String
+            override fun apply(arg0: String?): String // apply(Object) on the JVM
             // inherited from com.xemantic.kotlin.introspection.test.NullableStringApplier
             fun apply(x: String?): String?
         """.trimIndent()
@@ -9072,7 +9073,7 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.CharSequenceApplierJavaFunctionImplementationNullableMemberJoinSubclass.apply [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.other.JavaSameTypeFunctionImplementation
-            override fun apply(arg0: String?): String
+            override fun apply(arg0: String?): String // apply(Object) on the JVM
             // inherited from com.xemantic.kotlin.introspection.test.NullableStringApplier
             fun apply(x: String?): String?
         """.trimIndent()
@@ -20612,6 +20613,7 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.HiddenDeprecationInterface [page 1/1]
             interface HiddenDeprecationInterface {
+                // must implement hidden: val hiddenAbstract: Int
                 val visible: Int
             }
         """.trimIndent()
@@ -20629,6 +20631,7 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.defaultimpls.DefaultImplsHiddenProperties [page 1/1]
             interface DefaultImplsHiddenProperties {
+                // must implement hidden: val hiddenAbstract: Int
                 val visible: Int
             }
         """.trimIndent()
@@ -21733,7 +21736,7 @@ class KotlinIntrospectorTest {
         resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaPutIntegerPutInterfaceIntPutJoin.put") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.BoxedJavaPutIntegerPutInterfaceIntPutJoin.put [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedPut
-            open fun put(arg0: Int?): String
+            open fun put(arg0: Int?): String // put(Integer) on the JVM
             // inherited from com.xemantic.kotlin.introspection.test.GenericPut
             fun put(t: Int?): String
         """.trimIndent()
@@ -21883,8 +21886,7 @@ class KotlinIntrospectorTest {
         // inherited from the internal class declaring it, as the class inheriting it is the one exposing it
         resolver.resolve("com.xemantic.kotlin.introspection.test.KotlinNotImplementingInternal.f") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.KotlinNotImplementingInternal.f [page 1/1]
-            // inherited from com.xemantic.kotlin.introspection.test.HiddenMergedInternalAbstract
-            abstract fun f(): Int
+            abstract fun f(): Int // declared by internal com.xemantic.kotlin.introspection.test.HiddenMergedInternalAbstract
         """.trimIndent()
     }
 
@@ -22144,7 +22146,7 @@ class KotlinIntrospectorTest {
         resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenOverloadGenericPutImplementationJoin.put") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.HiddenOverloadGenericPutImplementationJoin.put [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.GenericPutImplementation
-            override fun put(t: Int?): String
+            override fun put(t: Int?): String // named arguments prohibited: ambiguous parameter names
         """.trimIndent()
     }
 
@@ -22168,7 +22170,7 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.HiddenGenericPutImplementationJoin.put [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.PrimitivePut
-            open fun put(key: Int): String
+            open fun put(key: Int): String // named arguments prohibited: ambiguous parameter names
         """.trimIndent()
     }
 
@@ -22181,7 +22183,7 @@ class KotlinIntrospectorTest {
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.HiddenPrimitiveJavaPutOverrideJoin.put [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.GenericPut
-            open fun put(t: Int): String
+            open fun put(t: Int): String // named arguments prohibited: ambiguous parameter names
         """.trimIndent()
     }
 
@@ -22337,7 +22339,7 @@ class KotlinIntrospectorTest {
         resolver.resolve("com.xemantic.kotlin.introspection.test.PrimitiveAndNotNullBoxedJavaGenericHiddenPutJoin.put") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.PrimitiveAndNotNullBoxedJavaGenericHiddenPutJoin.put [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.GenericPut
-            open fun put(t: Int): String
+            open fun put(t: Int): String // named arguments prohibited: ambiguous parameter names
         """.trimIndent()
     }
 
@@ -22412,7 +22414,158 @@ class KotlinIntrospectorTest {
         resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaPutOverHiddenNullableAndRenamedGenericPutImpl.put") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.BoxedJavaPutOverHiddenNullableAndRenamedGenericPutImpl.put [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.GenericPut
-            open fun put(t: Int?): String
+            open fun put(t: Int?): String // named arguments prohibited: ambiguous parameter names
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve members of unrelated interfaces merged with parameter of other names as prohibiting named arguments`() {
+        // kotlinc 2.4.21: "named argument is prohibited for parameter with an ambiguous name", for put(t = 1) and put(q = 1) (#364)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.GenericRenamedPutJoin.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GenericRenamedPutJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.GenericPut
+            fun put(t: Int): String // named arguments prohibited: ambiguous parameter names
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve members of unrelated interfaces merged with some parameters of other names as prohibiting only their names`() {
+        // kotlinc decides per parameter: put(1, v = "") compiles, put(k = 1, v = "") and put(q = 1, v = "") do not
+        resolver.resolve("com.xemantic.kotlin.introspection.test.AmbiguousKeyPut2Join.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.AmbiguousKeyPut2Join.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.Put2
+            fun put(k: Int, v: String): String // named arguments prohibited for k: ambiguous parameter names
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member merged with hidden one of other parameter name as prohibiting named arguments`() {
+        // the hidden put(key: Int), which the compiler does not pick, still names the parameter otherwise
+        resolver.resolve("com.xemantic.kotlin.introspection.test.GenericHiddenPrimitivePutJoin.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GenericHiddenPrimitivePutJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.GenericPut
+            fun put(t: Int): String // named arguments prohibited: ambiguous parameter names
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of internal interface exposed by interface merged with member of other parameter name`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InternalVisibleRenamedFaceJoin.f") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InternalVisibleRenamedFaceJoin.f [page 1/1]
+            fun f(i: Int): Int // declared by internal com.xemantic.kotlin.introspection.test.InternalRenamedFace; named arguments prohibited: ambiguous parameter names
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member implementing Kotlin members of some parameters of other names by their names`() {
+        // the Java method takes the names the Kotlin members agree on, so that put(1, v = "") compiles,
+        // and the one of the first Kotlin member where they disagree, which no call can name
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaAmbiguousKeyPut2Impl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaAmbiguousKeyPut2Impl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedAmbiguousKeyPut2
+            override fun put(k: Int?, v: String?): String // named arguments prohibited for k: ambiguous parameter names
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Kotlin member implemented by Java member next to Kotlin member of its signature by its JVM signature`() {
+        // two members for kotlinc, the put(Integer) of the Java class, implementing the put(t: T) of GenericPut,
+        // listed as the latter, and the put(t: T) of GenericDefaultPut, a JVM method of its own, put(Object) (#364)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaNotNullIntegerPutIntDefaultPutJoin.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaNotNullIntegerPutIntDefaultPutJoin.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.GenericDefaultPut
+            open fun put(t: Int): String
+            // inherited from com.xemantic.kotlin.introspection.test.GenericPut
+            open fun put(t: Int): String // put(Integer) on the JVM
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve abstract member of internal interface reached through package-private Java interface as within Java class`() {
+        // listed as inherited from the public Java class implementing the package-private interface, so as within a class,
+        // kotlinc 2.4.21: "does not implement abstract member: fun f(): Int" (#364)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaImplementingPackagePrivateInternalFaceSub.f") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaImplementingPackagePrivateInternalFaceSub.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaImplementingPackagePrivateInternalFace
+            abstract fun f(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of body of internal interface reached through package-private Java interface as open`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaImplementingPackagePrivateInternalFaceSub.g") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaImplementingPackagePrivateInternalFaceSub.g [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaImplementingPackagePrivateInternalFace
+            open fun g(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve members of internal supertype exposed by class as its own`() {
+        // so that the header names no class which the user code cannot name (#364)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InternalExposedMembersExposing.f") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InternalExposedMembersExposing.f [page 1/1]
+            abstract fun f(): Int // declared by internal com.xemantic.kotlin.introspection.test.InternalExposedMembers
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of body of internal supertype exposed by class as its own open one`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InternalExposedMembersExposing.g") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InternalExposedMembersExposing.g [page 1/1]
+            open fun g(): Int // declared by internal com.xemantic.kotlin.introspection.test.InternalExposedMembers
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve member of internal supertype exposed by superclass as inherited from it`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InternalExposedMembersExposingSub.f") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InternalExposedMembersExposingSub.f [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.InternalExposedMembersExposing
+            abstract fun f(): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should tell hidden and internal abstract members of class which concrete subclass has to implement`() {
+        // kotlinc 2.4.21 demands both, "does not implement abstract base class member", while no call can name them (#364)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenAbstractMemberBase") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenAbstractMemberBase [page 1/1]
+            abstract class HiddenAbstractMemberBase {
+                // must implement hidden: hid(x: Int): Int
+                // must implement internal: ia(): String
+                abstract fun visible(): Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should tell inherited hidden and internal abstract members which concrete subclass has to implement`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenAbstractMemberSub") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenAbstractMemberSub [page 1/1]
+            abstract class HiddenAbstractMemberSub : HiddenAbstractMemberBase {
+                // must implement hidden: hid(x: Int): Int
+                // must implement internal: ia(): String
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not tell hidden and internal abstract members once implemented`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenAbstractMemberImplemented") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenAbstractMemberImplemented [page 1/1]
+            abstract class HiddenAbstractMemberImplemented : HiddenAbstractMemberBase
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should tell hidden abstract member picked over Java member merged with it which concrete subclass has to implement`() {
+        // nothing is listed of acceptAll, while kotlinc demands the hidden member be implemented (#368)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.HiddenAbstractArrayJavaArrayJoin") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.HiddenAbstractArrayJavaArrayJoin [page 1/1]
+            abstract class HiddenAbstractArrayJavaArrayJoin : HiddenAbstractArrayAcceptor, com.xemantic.kotlin.introspection.test.other.JavaStringArrayAcceptInterface {
+                // must implement hidden: acceptAll(a: Array<String>)
+            }
         """.trimIndent()
     }
 
