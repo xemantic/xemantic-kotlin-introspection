@@ -1583,6 +1583,65 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should list extension on recursively bounded type parameter by witness when nested type argument of bound refers to class on the classpath`() {
+        // given
+        val root = isolatedTestFixturesCopy("withAbsent")
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val nestedBound = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.AbsentNestedBoundKeyMap",
+            pageSize = 10000
+        )
+        val extensionBound = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.AbsentFreeKeyMap",
+            pageSize = 10000
+        )
+
+        // then
+        nestedBound should {
+            have(lines().any { ".absentSameComparables()" in it })
+        }
+        extensionBound should {
+            have(lines().any { ".absentBoundedSameComparables(" in it })
+        }
+    }
+
+    @Test
+    fun `should withhold witnesses of type parameters when nested type argument of bound refers to class missing from the classpath`() {
+        // given
+        val introspector = introspectorWithoutAbsentClass()
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.AbsentNestedBoundKeyMap",
+            pageSize = 10000
+        )
+
+        // then - the List<Absent> of the bound, whose type argument the JDK reifies only when asked for, see #386
+        signature should {
+            have(lines().none { ".absentSameComparables()" in it })
+        }
+    }
+
+    @Test
+    fun `should withhold witnesses of type parameters when bound of extension refers to class missing from the classpath`() {
+        // given
+        val introspector = introspectorWithoutAbsentClass()
+
+        // when
+        val signature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.AbsentFreeKeyMap",
+            pageSize = 10000
+        )
+
+        // then - kotlinc cannot access the Absent of the bound of A, see #386
+        signature should {
+            have(lines().none { ".absentBoundedSameComparables(" in it })
+        }
+    }
+
+    @Test
     fun `should resolve class whose generic supertype refers to a class missing from the classpath`() {
         // given
         val introspector = introspectorWithoutAbsentClass()

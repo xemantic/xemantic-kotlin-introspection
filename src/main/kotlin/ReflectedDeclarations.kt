@@ -475,12 +475,45 @@ private fun KmType.enhanceSupertypeArguments(type: Class<*>, supertype: Class<*>
 /**
  * Whether the generic signature of the class [type], the bounds of its type parameters, and its generic supertypes,
  * refers only to classes which can be loaded, also to the ones relocated with it, like by shading, by their rewritten names,
- * unlike to a class missing from the classpath.
+ * unlike to a class missing from the classpath, also one nested in a type argument, like the `Absent` of `W : List<Absent>`,
+ * which the JDK reifies only when asked for, see #386.
  */
-internal fun resolvesGenericSignature(type: Class<*>): Boolean = try {
-    type.typeParameters.forEach { it.bounds }
-    type.genericSuperclass
-    type.genericInterfaces
+internal fun resolvesGenericSignature(type: Class<*>): Boolean = resolvesTypes(
+    type.typeParameters.asList() + listOfNotNull(type.genericSuperclass) + type.genericInterfaces
+)
+
+/**
+ * Whether the generic signatures of the methods of the class [type] of the given [name], or of all of them, when none is named so,
+ * like the facade class of an extension, refer only to classes which can be loaded, see [resolvesGenericSignature].
+ */
+internal fun resolvesGenericMethodSignatures(type: Class<*>, name: String): Boolean = try {
+    val methods = type.declaredMethods.filter { it.name == name }.ifEmpty { type.declaredMethods.asList() }
+    resolvesTypes(methods.flatMap { it.typeParameters.asList() + it.genericParameterTypes + it.genericReturnType })
+} catch (_: LinkageError) {
+    false
+} catch (_: TypeNotPresentException) {
+    false
+} catch (_: MalformedParameterizedTypeException) {
+    false
+}
+
+// whether the reified types, and the types they refer to, all the way down, refer only to classes which can be loaded,
+// each type variable walked through its bounds once
+private fun resolvesTypes(types: List<Type>): Boolean = try {
+    val visited = HashSet<TypeVariable<*>>()
+    fun Type.walk() {
+        when (this) {
+            is ParameterizedType -> {
+                rawType
+                actualTypeArguments.forEach { it.walk() }
+                ownerType?.walk()
+            }
+            is GenericArrayType -> genericComponentType.walk()
+            is WildcardType -> (upperBounds + lowerBounds).forEach { it.walk() }
+            is TypeVariable<*> -> if (visited.add(this)) bounds.forEach { it.walk() }
+        }
+    }
+    types.forEach { it.walk() }
     true
 } catch (_: LinkageError) {
     false

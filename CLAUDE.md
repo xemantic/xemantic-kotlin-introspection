@@ -193,6 +193,10 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   a Java method overriding a Kotlin member, or merged with one, takes the names of the Kotlin one though, like `k.over(x = 1)`, see the entry on `namedByKotlinMembers` below —
   its shadowing is not modelled: the extension next to such a Java override stays listed.
 
+- A pool of declared types judging such rows needs their nullable forms too, and in every position of a class of several type parameters:
+  `C01<K, V : K> : Box<K>` with `fun <T : List<T>?> Box<T?>.f()` compiles only as `C01<SL1?, SL1>` (`interface SL1 : List<SL1>`),
+  and 36 rows of the #334 sweep judged callable only with `Nothing` compile with such types, or a self-referring `interface Y : A29<Y>, Comparable<Y>` (#386).
+
 - kotlinc 2.4.21 infers the `T` of an invariant `X<T>` from an `out Nothing` projection, also nested in an invariant position,
   like `fun <T> Inv<MutableCollection<T>>.f()` on `Inv<MutableCollection<out Nothing>>`, but not from `out String`, nor does it accept `Inv<MutableCollection<String>>` there —
   as `Nothing` does not count as a type argument making an extension callable (#366), the `out` of `java.util.List<out V>` is kept, see `projectionsOf`.

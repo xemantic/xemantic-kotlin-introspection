@@ -24,3 +24,13 @@ package com.xemantic.kotlin.introspection.isolated
 interface AbsentBoundedKeyMap<V, W : Absent> : Map<V, V>
 
 fun <T : Comparable<T>> Map<T, T>.absentSameComparables() {}
+
+// Absent only nested in a type argument of a bound, which the JDK reifies only when asked for, see #386,
+// withholds the witnesses as well, like String of V, and List<Absent> of W
+interface AbsentNestedBoundKeyMap<V, W : List<Absent>> : Map<V, V>
+
+// Absent only in a bound of the extension, the class itself not referring to it, see #386:
+// when Absent is missing, kotlinc rejects the call, as it cannot access the class
+interface AbsentFreeKeyMap<V> : Map<V, V>
+
+fun <T : Comparable<T>, A : Absent> Map<T, T>.absentBoundedSameComparables(absent: A) {}

@@ -13700,6 +13700,129 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve interface of box of list with extension callable on declared self-referring type through bound of extension`() {
+        // V of interface X : List<X?> makes a WitnessBox<List<V?>> a WitnessBox<T & Any> of T : List<T?>?
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.witness.WitnessListBox",
+            pageSize = 10000
+        ) should {
+            have(lines().any { ".witnessSelfListBoxes()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of box of list of final class elements without extension requiring list elements through bound of extension`() {
+        // V would be an Int, and a List<V?>, by the T : List<T?>? which the List<V?> stands for, see #386
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.witness.WitnessIntListBox",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".witnessSelfListBoxes()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of box of list of char sequence elements without extension requiring list elements through bound of extension`() {
+        // V would be a CharSequence, and a List<V?>, clashing on get(index: Int), see #386
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.witness.WitnessCharSequenceListBox",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".witnessSelfListBoxes()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of map of keys comparable to strings without extension requiring keys comparable to themselves`() {
+        // V would be a Comparable<String>, and a Comparable<V> of a List<V>, which kotlinc rejects, see #376, #386,
+        // while V of String makes a Map<V, V> a Map<T, T>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.witness.WitnessStringComparableKeyMap",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".witnessComparableKeysOfLists()" in it })
+            have(lines().any { ".witnessSameComparables()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of map of sealed class keys without extension callable only on declared subclass`() {
+        // V would be a WitnessSealed, a Comparable<V>, and a List<V>, which no type extending a sealed class of another module can be, see #386
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.witness.WitnessSealedKeyMap",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".witnessComparableKeysOfLists()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of map of sealed class keys with extension callable on declared subclass of open sealed subclass`() {
+        // V of abstract class Y : WitnessSealedWithOpenSubclass.Open(), List<Y>, Comparable<Y> makes a Map<V, V> a Map<T, List<T>>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.witness.WitnessOpenSealedKeyMap",
+            pageSize = 10000
+        ) should {
+            have(lines().any { ".witnessComparableKeysOfLists()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of map of string values with extension callable on witness built from receiver`() {
+        // V of List<String>, the List<T> of the receiver with the String of the class in place of T, see #386
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.witness.WitnessStringValueMap",
+            pageSize = 10000
+        ) should {
+            have(lines().any { ".witnessListKeysOfComparableValues()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of map of privately constructed class keys without extension callable only on declared subclass`() {
+        // no type can extend a class whose constructors are all private, see #386
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.witness.WitnessPrivatelyConstructedKeyMap",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".witnessComparableKeysOfLists()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve self-bounded interface of map with extension callable on declared self-referring type`() {
+        // V of interface X : WitnessSelfBoundedKeyMap<X>, Comparable<X> makes a Map<V, V> a Map<T, T> of T : Comparable<T>, see #386
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.witness.WitnessSelfBoundedKeyMap",
+            pageSize = 10000
+        ) should {
+            have(lines().any { ".witnessSameComparables()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of map comparable to itself with extension on recursively bounded type parameter`() {
+        // V of String makes a Map<V, V> a Map<T, T>, the Comparable<WitnessComparableToItselfMap<V>> not matched, see #386
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.witness.WitnessComparableToItselfMap",
+            pageSize = 10000
+        ) should {
+            have(lines().any { ".witnessSameComparables()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of map of internally constructed class keys without extension callable only on declared subclass`() {
+        // nor in another module one whose constructors are all internal, see #386
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.witness.WitnessInternallyConstructedKeyMap",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".witnessComparableKeysOfLists()" in it })
+        }
+    }
+
+    @Test
     fun `should resolve interface of map of two of three type parameters with extensions on recursively bounded type parameter`() {
         // K of String, and V of List<String>, make a Map<K, V> a Map<T, List<T>> of T : Comparable<T>, whatever A is
         resolver.resolve(
