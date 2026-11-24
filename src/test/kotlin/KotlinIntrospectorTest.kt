@@ -23289,6 +23289,16 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve Java member taking boxed type overriding Kotlin generic one given type variable annotated not null by generic Java superclass as taking Int`() {
+        // the same through the superclass, whose annotations of the supertype arguments the class file tells at the index -1
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaPutOfNullableIntegerNotNullMidBaseImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaPutOfNullableIntegerNotNullMidBaseImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.OpenGenericPut
+            open fun put(t: Int): String
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve Java member taking boxed type below Kotlin class joining Java member of platform type with Kotlin one given boxed type annotated not null as taking platform type`() {
         // the Kotlin class joins the put(Integer) of JavaBoxedPutOverOpenGenericPut, declared first, taking Int!,
         // and the put(t: T) of GenericPut<@NotNull Integer>, one member typed like the former, which the put(Integer) below overrides,
@@ -23297,6 +23307,29 @@ class KotlinIntrospectorTest {
             // com.xemantic.kotlin.introspection.test.BoxedJavaPutBelowOpenGenericPutNotNullIntegerJoinImpl.put [page 1/1]
             // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedPutBelowOpenGenericPutNotNullIntegerJoin
             override fun put(t: Int?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking boxed type below Kotlin class joining Java member of platform type with Kotlin one given primitive type once`() {
+        // the Kotlin class joins the put(t: T) of OpenGenericPut<Integer>, given by a Java class, declared first, taking Int!,
+        // and the put(t: T) of GenericPut<Int>, one member typed like the former, which the put(Integer) below overrides,
+        // taking its names, so that a concrete subclass compiles, and put(t = null) too
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaPutBelowOpenGenericPutIntPutJoinImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaPutBelowOpenGenericPutIntPutJoinImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedPutBelowOpenGenericPutIntPutJoin
+            override fun put(t: Int?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking String implementing Kotlin generic one given String by Kotlin interface and String annotated nullable as taking platform type`() {
+        // StringPut gives String along a path of its own, joining no other one, which disagrees with the @Nullable String
+        // of the path next to it, so that put(String) takes String!, and put(t = null) compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.StringJavaPutOfStringPutAndNullableStringImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.StringJavaPutOfStringPutAndNullableStringImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaStringPutOfStringPutAndNullableString
+            override fun put(t: String?): String
         """.trimIndent()
     }
 

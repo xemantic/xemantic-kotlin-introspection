@@ -1303,6 +1303,11 @@ abstract class BoxedJavaPutOfNotNullAndNullableNullMarkedMidIntegerPutImpl :
 
 fun BoxedJavaPutOfNotNullAndNullableNullMarkedMidIntegerPutImpl.putNull(): String = put(t = null)
 
+abstract class StringJavaPutOfStringPutAndNullableStringImpl :
+    com.xemantic.kotlin.introspection.test.other.JavaStringPutOfStringPutAndNullableString()
+
+fun StringJavaPutOfStringPutAndNullableStringImpl.putNull(): String = put(t = null)
+
 // a Kotlin interface giving Int, not nullable, to the generic JavaGenericMidPut<T>
 interface IntGenericMidPut : com.xemantic.kotlin.introspection.test.other.JavaGenericMidPut<Int>
 
@@ -1322,6 +1327,10 @@ fun NotNullBoxedJavaPutOfNullableTypeParameterMidAndNotNullIntegerPutImpl.putNul
 abstract class BoxedJavaPutOfNullableIntegerNotNullMidPutImpl :
     com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOfNullableIntegerNotNullMidPut()
 
+// the same through the superclass
+abstract class BoxedJavaPutOfNullableIntegerNotNullMidBaseImpl :
+    com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOfNullableIntegerNotNullMidBase()
+
 // one member of the put(Integer) of JavaBoxedPutOverOpenGenericPut, taking Int!, and of the put(t: T) of GenericPut<@NotNull Integer>,
 // typed like the former, declared first
 abstract class BoxedJavaPutOverOpenGenericPutNotNullIntegerJoin :
@@ -1334,6 +1343,18 @@ abstract class BoxedJavaPutBelowOpenGenericPutNotNullIntegerJoinImpl :
 class BoxedJavaPutBelowOpenGenericPutNotNullIntegerJoinConcrete : BoxedJavaPutBelowOpenGenericPutNotNullIntegerJoinImpl()
 
 fun BoxedJavaPutBelowOpenGenericPutNotNullIntegerJoinImpl.putNull(): String = put(null)
+
+// the put(t: T) of OpenGenericPut<Integer>, given by a Java class, taking Int!, joined with the put(t: T) of GenericPut<Int>,
+// given the primitive type by the Kotlin class itself, one member typed like the former, declared first
+abstract class BoxedJavaPutOverOpenGenericPutIntPutJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaIntegerOpenGenericPut(), GenericPut<Int>
+
+abstract class BoxedJavaPutBelowOpenGenericPutIntPutJoinImpl :
+    com.xemantic.kotlin.introspection.test.other.JavaBoxedPutBelowOpenGenericPutIntPutJoin()
+
+class BoxedJavaPutBelowOpenGenericPutIntPutJoinConcrete : BoxedJavaPutBelowOpenGenericPutIntPutJoinImpl()
+
+fun BoxedJavaPutBelowOpenGenericPutIntPutJoinImpl.putNull(): String = put(t = null)
 
 interface GenericRenamedPut<T> {
     fun put(q: T): String

@@ -242,6 +242,15 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 - The Gradle test build rejects `abstract class X : J(), JDb` (`J implements GenericPut<Integer>`, `JDb` a default `put(Integer)`) with `must override 'put' because it inherits multiple interface methods`,
   while kotlinc compiles it against the compiled Java classes, so it is no fixture.
 
+- A member deprecated as `HIDDEN` compiles to a synthetic JVM method with no generic signature,
+  so its `genericParameterTypes` are erased, like `Object` for a `put(t: T)` — tell its type parameters by the Kotlin metadata, see `typeVariableParameterOf`.
+
+- A Kotlin class joining a member given `Integer` by Java (`Int!`) with one given `Int` by Kotlin, like `Y : JavaBase(), GenericPut<Int>`,
+  has one member typed like the one of the more specific return type, or else declared first,
+  which a Java `put(Integer)` below overrides when it takes `Int!` — but only when no Java class above declares the method itself,
+  like a `put(Integer)` of `JavaBase`, which keeps the one given `Int` a member apart, see `isJoinPickedOver`,
+  while a Java interface declaring it does not.
+
 - Probe the setter of a synthetic property by an assignment, from outside the class, and from a subclass:
   `'val' cannot be reassigned` tells a setter not taken, `cannot access` one taken, but not visible —
   and which of two setters of the type is taken only their visibility tells, see `settersInDeclarationOrder`.

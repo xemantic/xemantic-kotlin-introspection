@@ -564,7 +564,7 @@ internal class OverrideResolver(
         val overridables = overridables(owner)
         val candidates = overridables.functions[function.name] ?: return null
         val signature = overridables.signature(function, jvmDescriptor)
-        val matching = overridables.ofPrimitives(candidates.filter { it.matches(signature) }, signature)
+        val matching = overridables.ofPrimitives(candidates.filter { it.matches(signature) }, signature, owner, function.name)
         val overridden = matching.asSequence().filter { overridables.isVisible(it, owner.kmClass, function.modality) }
             .ifEmpty {
                 val evidence = matching.ifEmpty { overridables.shrinkableJava(function.name) }
@@ -743,7 +743,7 @@ internal class OverrideResolver(
         val overridables = overridables(owner)
         val candidates = overridables.functions[function.name] ?: return emptySet()
         val signature = overridables.signature(function, jvmDescriptor)
-        val overridden = overridables.ofPrimitives(candidates.filter { it.key != null && it.matches(signature) }, signature)
+        val overridden = overridables.ofPrimitives(candidates.filter { it.key != null && it.matches(signature) }, signature, owner, function.name)
             .filter { overridables.isVisible(it, owner.kmClass, function.modality) }
         // an unknown type matches any type, so a sibling overload, which is not overridden, might be matched too,
         // like for the inheritedDefaultValues, the ones matching on the known types are taken, if there are any
@@ -769,7 +769,7 @@ internal class OverrideResolver(
         val overridables = overridables(owner)
         val candidates = overridables.functions[function.name] ?: return emptySet()
         val signature = overridables.signature(function, jvmDescriptor)
-        return overridables.ofPrimitives(candidates.filter { it.matches(signature) }, signature)
+        return overridables.ofPrimitives(candidates.filter { it.matches(signature) }, signature, owner, function.name)
             .filter { it.javaKey != null && overridables.isVisible(it, owner.kmClass, function.modality) }
             .mapTo(HashSet()) { it.javaKey!! }
     }
@@ -778,16 +778,87 @@ internal class OverrideResolver(
      * The [matching] members of the primitive types of a Java method on the JVM, see [primitivesMatch],
      * but the ones a Kotlin subclass declares again, of other primitive types, which the Java method does not override,
      * and which hides them from it, like the `put(t: T)` of `GenericPut<Integer>`, taking `Object`, of `put(Integer)`,
-     * when `IntPut : GenericPut<Int>` declares it again as `override fun put(t: Int)`, taking `int`.
+     * when `IntPut : GenericPut<Int>` declares it again as `override fun put(t: Int)`, taking `int`,
+     * and the ones of other primitive types which a Kotlin class above the [owner] joins with one of them, of the [name],
+     * into one member taking the types of the latter, see [joinPick], like the `put(t: T)` of `GenericPut<Int>`
+     * of `abstract class Y : JavaBase(), GenericPut<Int>`, whose Java superclass gives `Integer` to another one,
+     * declared first, so that a `put(Integer)` of a Java subclass of `Y` overrides the joined member.
      */
-    private fun Overridables.ofPrimitives(matching: List<Overridable>, signature: FunctionSignature): List<Overridable> {
+    private fun Overridables.ofPrimitives(
+        matching: List<Overridable>,
+        signature: FunctionSignature,
+        owner: Owner,
+        name: String
+    ): List<Overridable> {
         val (kept, other) = matching.partition { it.primitivesMatch(signature) }
         if (other.isEmpty()) return kept
-        val redeclaring = other.mapNotNull { it.key?.substringBefore('#') }
-        return kept.filter { overridable ->
-            val name = overridable.key?.substringBefore('#') ?: return@filter true
-            redeclaring.none { isSubclass(it, name) }
+        // given a primitive type where the Java method takes a boxed one, like Int of put(Integer), not the other way round
+        fun Overridable.isPrimitiveForBoxed(): Boolean {
+            val javaPrimitives = signature.jvmPrimitives ?: return false
+            val own = primitives?.takeIf { it.size <= javaPrimitives.size } ?: return false
+            return own.indices.all { own[it] || !javaPrimitives[javaPrimitives.size - own.size + it] }
         }
+        val (joined, notJoined) = if (kept.isEmpty()) emptyList<Overridable>() to other else {
+            other.partition { overridable ->
+                overridable.isPrimitiveForBoxed() && kept.any { isJoinPickedOver(owner, name, it, overridable) }
+            }
+        }
+        val redeclaring = notJoined.mapNotNull { it.key?.substringBefore('#') }
+        return kept.filter { overridable ->
+            val className = overridable.key?.substringBefore('#') ?: return@filter true
+            redeclaring.none { isSubclass(it, className) }
+        } + joined
+    }
+
+    /**
+     * Whether a Java class above the Kotlin class [join], not an interface, declares a method of the name and the number of parameters
+     * of the [method],
+     * like the `put(Integer)` of `JavaBase` of `abstract class Y : JavaBase(), GenericPut<Int>`, which implements the members
+     * it overrides there, a member apart from the one given a primitive type, see [isJoinPickedOver].
+     */
+    private fun inheritsJavaMethod(join: Class<*>, method: Method): Boolean {
+        val visited = HashSet<Class<*>>()
+        val pending = ArrayDeque(listOfNotNull(join.superclass) + join.interfaces)
+        while (pending.isNotEmpty()) {
+            val type = pending.removeFirst()
+            if (!visited.add(type) || type.isJdkClass) continue
+            if (!type.isInterface && !type.isAnnotationPresent(Metadata::class.java) && type.declaredMethods.any {
+                    it.name == method.name && it.parameterCount == method.parameterCount && !it.isBridge && !it.isSynthetic
+                }
+            ) {
+                return true
+            }
+            pending += listOfNotNull(type.superclass) + type.interfaces
+        }
+        return false
+    }
+
+    /**
+     * Whether a Kotlin class above the [owner], the nearest one inheriting both, joins the members [picked] and [other],
+     * of the [name], into one member taking the types of [picked], see [joinPick], as their JVM methods tell.
+     */
+    private fun isJoinPickedOver(owner: Owner, name: String, picked: Overridable, other: Overridable): Boolean = reflectedValue(default = false) {
+        fun classOf(overridable: Overridable) = (overridable.key ?: overridable.javaKey)?.substringBefore('#')?.let(loadClassByMetadataName)
+        val pickedClass = classOf(picked) ?: return@reflectedValue false
+        val otherClass = classOf(other) ?: return@reflectedValue false
+        val ownerClass = loadClassByMetadataName(owner.kmClass.name) ?: return@reflectedValue false
+        fun methodOf(type: Class<*>, overridable: Overridable) = type.declaredMethods.firstOrNull {
+            it.name == name && !it.isBridge && it.parameterCount == overridable.parameters.size + listOfNotNull(overridable.receiver).size
+        }
+        val pickedMethod = methodOf(pickedClass, picked) ?: return@reflectedValue false
+        val otherMethod = methodOf(otherClass, other) ?: return@reflectedValue false
+        val visited = HashSet<Class<*>>()
+        val pending = ArrayDeque(listOfNotNull(ownerClass.superclass) + ownerClass.interfaces)
+        while (pending.isNotEmpty()) {
+            val type = pending.removeFirst()
+            if (!visited.add(type)) continue
+            if (type.isAnnotationPresent(Metadata::class.java) && pickedClass.isAssignableFrom(type) && otherClass.isAssignableFrom(type)) {
+                return@reflectedValue type != pickedClass && type != otherClass && joinPick(type, pickedMethod, otherMethod) == pickedMethod &&
+                    !inheritsJavaMethod(type, pickedMethod)
+            }
+            pending += listOfNotNull(type.superclass) + type.interfaces
+        }
+        false
     }
 
     /**

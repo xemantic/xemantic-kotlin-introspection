@@ -5520,7 +5520,7 @@ internal class DefaultKotlinIntrospector(
         // like the put(t: T) of an internal class given Integer by Java, returning CharSequence, joined with the one
         // of GenericDefaultPut<Int>, returning String, which the put(int) of a Java subclass of the join implements,
         // unlike its put(Integer), a member of its own, while the member picked itself is told by its own first path
-        fun isJoinedByKotlinClassBelow(candidate: InheritedCandidate): Boolean =
+        fun isJoinedByKotlinClassBelow(candidate: InheritedCandidate, isPickedPlatform: Boolean = false): Boolean =
             declarations !is BuiltinClass && candidate.declarations !is JavaClass && candidate.declarations !is BuiltinClass &&
                 candidate.member is Member.Function && kotlinJoins.any { reached ->
                     if (candidate.name !in reached) return@any false
@@ -5532,7 +5532,7 @@ internal class DefaultKotlinIntrospector(
                     val picked = joined.reduce { picked, other ->
                         if ((other.compareReturnType(picked, supertypeNamesOf) ?: 0) > 0) other else picked
                     }
-                    picked !== candidate && reached[picked.name] == false
+                    picked !== candidate && reached[picked.name] == isPickedPlatform
                 }
         // the classes of the targets reached from the inheriting class, depth-first in the order of declaration
         // of the direct supertypes, by the first path to each, by the positions among the direct supertypes,
@@ -6608,7 +6608,10 @@ internal class DefaultKotlinIntrospector(
                     parameters.any { it.type.isNullable && (it.type.classifier as? KmClassifier.Class)?.name != ARRAY_CLASS_NAME } &&
                     kotlinMembers.any { kotlin ->
                         kotlin.classTypeParameterPositions.isNotEmpty() &&
-                            (reaches(setOf(kotlin.name)).firstOrNull()?.isPlatform != true || isJoinedByKotlinClassBelow(kotlin))
+                            (reaches(setOf(kotlin.name)).firstOrNull()?.isPlatform != true || isJoinedByKotlinClassBelow(kotlin)) &&
+                            // unless joined into a member given its type arguments by Java, which the method overrides then,
+                            // like the put(t: T) of GenericPut<Int> of `Y : JavaBase(), GenericPut<Int>`, see ofPrimitives
+                            !isJoinedByKotlinClassBelow(kotlin, isPickedPlatform = true)
                     }
                 val names = kotlinMembers.mapTo(LinkedHashSet()) { kotlin ->
                     (kotlin.member as Member.Function).function.valueParameters.map { it.name }

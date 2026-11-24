@@ -1042,11 +1042,12 @@ private val declaredMethodsByDescriptor = object : ClassValue<Map<String, Method
 /**
  * The nullabilities the [givers] of a type argument tell, see [typeArgumentGivers]: `true` of one annotated nullable,
  * `false` of one annotated not null, or marked by `@NullMarked`, none of a platform type, and the one a Kotlin class gives,
- * but only the one of the first path, when a Kotlin class joins the paths, see [TypeArgumentGiver.join], whose member takes it.
+ * but only the one of the first path of a Kotlin class joining paths, see [TypeArgumentGiver.join], whose member takes it.
  */
 private fun givenNullabilities(givers: List<TypeArgumentGiver>): Set<Boolean> {
-    val first = givers.firstOrNull() ?: return emptySet()
-    return (if (first.join != null) listOf(first) else givers).mapNotNullTo(HashSet()) { giver ->
+    // one per Kotlin class joining paths, of its first one, and every path through no such class,
+    // also next to a Kotlin class on a path of its own, like the StrPut of a Java class implementing StrPut and GP<@Nullable String>
+    return givers.distinctBy { it.join ?: it }.mapNotNullTo(HashSet()) { giver ->
         when (giver) {
             is TypeArgumentGiver.Java -> if (giver.isNullable) true else false.takeIf { !giver.isPlatform }
             is TypeArgumentGiver.Kotlin -> giver.argument?.isNullable
