@@ -2556,6 +2556,16 @@ internal fun javaTypeVariableParameterNullability(method: Method, position: Int)
     }
 }
 
+/**
+ * The nullability the annotation of the parameter at the [position] of the Java [method] tells, of a user class,
+ * like `false` of a `@NonNull E`, or `null` if not annotated, whatever the mark of its class, unlike [javaTypeVariableParameterNullability].
+ */
+internal fun javaParameterAnnotatedNullability(method: Method, position: Int): Boolean? = reflectedValue(default = null) {
+    val declaring = method.declaringClass
+    if (declaring.isJdkClass || declaring.isKotlinClass) return@reflectedValue null
+    javaNullabilityOf(method)?.types?.get(position)
+}
+
 // a nullable type is never definitely not nullable, like the V & Any of the Map methods, see enhanceDefinitelyNotNull,
 // and only a type parameter is, when told so
 private fun KmType.markNullable(isNullable: Boolean, isDefinitelyNonNull: Boolean = false) {

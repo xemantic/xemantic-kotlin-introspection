@@ -185,6 +185,13 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   taking a Kotlin class found by the package-given name, but telling a name of a relocation before, for the class itself fixes the latter
   and breaks package merges of the review harness (#355).
 
+- Pairing more JVM methods of a relocated class right is not a gain by itself: a package the JVM methods leave untold, as relocated to two packages,
+  keeps the lookups of packages merged into one, like `p/lib/` and `p/ext/` into `m/`, from false matches —
+  counting the prefix of a supertype for the prefix pairing (`prefixRelocatedPairs`), or telling a package by its other classes the JVM methods name,
+  fixed a few thousand listings of the #355 harness and broke a thousand of the merge layouts (#380), so measure such a rule on every layout.
+  Likewise, a rule telling a package which was left untold locates there every class of it no JVM method pairs, like a shrunk member's,
+  which turns into a false `override` — see `pairedPackages`.
+
 - A sweep judging an extension "callable only with `Nothing`" from a fixed list of type arguments misjudges it since `Nothing` does not count (#366, #362):
   most such rows compile with a declared self-referring type — probe them with declared types too, see `isDeclarableFor`,
   also of a suspend function type: `interface X : suspend () -> X` makes `<T : suspend () -> T> Inv<T>` callable on `G<X>` of `G<V> : Inv<suspend () -> V>` (#376).
@@ -257,6 +264,11 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   one rejected with the modifier (`overrides nothing`) might be rejected without it too, as an `accidental override` of the same JVM signature,
   while an overload of the same JVM signature might compile, like `where T : Comparable<T>, T : Any` next to `<T : Comparable<T>>`, see `boundsMatch`.
 
+- A synthetic property sweep row judged on a receiver like `X<String>` of a generic class, where a `setValue(String)` sets a `T getValue()`,
+  is an artifact of the receiver: the hint of the class listing stays `val` for the type parameter (#372), see `settersInDeclarationOrder` —
+  and javac rejects a private `setValue(T)` next to a public one of the same substituted signature (`weaker access privileges`),
+  so no fixture shows the private setter of a generic class passed over in a listing of the type parameter.
+
 - Read every error of a probe, not only the first one, and not only the type a mistyped `val x: Marker = …` names:
   `val r: Marker = Thread::name` reports the type `KMutableProperty1<Thread, String!>`, and, on the reference itself,
   `the feature "references to synthetic java properties" is unsupported`.
@@ -297,9 +309,19 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 - kotlinc's `named argument is prohibited for parameter with an ambiguous name` also counts names no listing shows:
   of hidden and internal members, and of the members a joined override renames — but not along a single path, see `ambiguousNamePositions`.
 
+- A call naming no parameter of the member, like `x.apply(arg0 = "")`, makes kotlinc list every member of the name as a candidate
+  (`none of the following candidates is applicable: fun apply(p0: String?): String … fun apply(x: String): CharSequence …`),
+  or name the parameter of the single one (`no value passed for parameter 'p0'`) — the probe telling how many members a class has,
+  where the null call, the return type and the empty concrete subclass cannot, like below a join of a half-nullable JDK interface (#374).
+
 - The sweep model counting the members rendered without a modifier as abstract can be right by accident:
   a visible member rendered abstract in place of the hidden one kotlinc demands — confirm a changed abstract count
   by overriding each candidate signature in a concrete subclass of its own.
+
+- The class-file path of `bridgeSignatures` cannot be told from its reflection fallback by a test, like one of a class file too new for ASM:
+  the bridges are read only for a reflected `Method`, so the declared methods of the class reflect, telling the same bridges,
+  while a Java class whose methods do not reflect, like of a parameter class missing, is not described by kotlin-reflect either,
+  its member listed from the built-in type instead (#370).
 
 - Between two extensions of the same name, kotlinc calls one on a class over one on a type parameter whenever neither is more specific,
   like `C?.f()` over `<T : S> T.f()`, or `I.f()` over `<T : S> T.f()`, on a `C : S, I`, while a type parameter is more specific than a class
