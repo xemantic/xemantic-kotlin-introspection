@@ -18,15 +18,20 @@
 
 package com.xemantic.kotlin.introspection.test.other;
 
+import org.jspecify.annotations.NonNull;
+
 /**
  * A generic Java class of a method taking its type variable, which a Kotlin class given a nullable type argument
  * overrides only by a function taking the nullable type, and of a method bounded by its type variable, a platform type,
- * which a Kotlin class given its type parameter overrides also by one bounded by the definitely not nullable type.
+ * which a Kotlin class given its type parameter overrides also by one bounded by the definitely not nullable type,
+ * and of a method taking its type variable annotated not null, which a function not nullable overrides, whatever given.
  */
 public class JavaGenericBoth<E> {
 
     public <T extends E> void both(E a, T b) {}
 
     public <T extends E> void bounded(T x) {}
+
+    public void notNull(@NonNull E x) {}
 
 }

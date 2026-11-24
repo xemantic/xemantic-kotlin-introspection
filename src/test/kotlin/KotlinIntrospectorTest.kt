@@ -5951,6 +5951,19 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve inherited function taking definitely not nullable type next to one taking type parameter`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.KotlinDefinitelyNonNullOverloadSub.plain"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.KotlinDefinitelyNonNullOverloadSub.plain [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.KotlinOpenDefinitelyNonNullOverload
+            fun <T> plain(x: T & Any)
+            // inherited from com.xemantic.kotlin.introspection.test.KotlinPlainBase
+            fun <T> plain(x: T)
+        """.trimIndent()
+    }
+
+    @Test
     fun `should not mark function bounded by type parameter as override of Java one bounded by type variable annotated not null`() {
         // kotlinc: 'elements' hides member of supertype, when marked override: overrides nothing, as the bound is List<Y & Any>
         resolver.resolve("com.xemantic.kotlin.introspection.test.JavaNonNullElementBoundsOverload.elements") should {
@@ -5975,6 +5988,22 @@ class KotlinIntrospectorTest {
         resolver.resolve("com.xemantic.kotlin.introspection.test.JavaGenericBothOfNullableTypeParameter.both") should {
             have("fun <T : Y?> both(a: Y, b: T)" in lines())
         }
+    }
+
+    @Test
+    fun `should mark function taking not nullable type as override of Java one taking type variable annotated not null given nullable type`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaGenericNotNullOfNullable.notNull") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaGenericNotNullOfNullable.notNull [page 1/1]
+            override fun notNull(x: String)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark function taking definitely not nullable type as override of Java one taking type variable annotated not null`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaGenericNotNullOfNullableTypeParameter.notNull") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaGenericNotNullOfNullableTypeParameter.notNull [page 1/1]
+            override fun notNull(x: Y & Any)
+        """.trimIndent()
     }
 
     @Test
@@ -12271,6 +12300,51 @@ class KotlinIntrospectorTest {
         resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertyGenericPrivateSetter.value") should {
             have("// also property: var value" in lines())
             have("open fun setValue(arg0: String?)" in lines())
+        }
+    }
+
+    @Test
+    fun `should hint synthetic property as val when protected setter of generic superclass takes its type variable`() {
+        // kotlinc substitutes setP(T), unlike a private one, and rejects x.p = 1: cannot access, it is protected
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertyGenericHiddenSetter.p") should {
+            have("// also property: val p" in lines())
+            have(lines().none { " setP(" in it })
+        }
+    }
+
+    @Test
+    fun `should hint synthetic property as val when package-private setter of generic superclass takes its type variable`() {
+        // kotlinc substitutes setQ(T), unlike a private one, and rejects x.q = 1: cannot access, it is package-private
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertyGenericHiddenSetter.q") should {
+            have("// also property: val q" in lines())
+            have(lines().none { " setQ(" in it })
+        }
+    }
+
+    @Test
+    fun `should hint synthetic property as val when protected setter of generic superclass below Java class takes its type variable`() {
+        // kotlinc substitutes setP(T), unlike a private one, and rejects x.p = 1: cannot access, it is protected
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertyGenericHiddenSetterBelowJava.p") should {
+            have("// also property: val p" in lines())
+            have(lines().none { " setP(" in it })
+        }
+    }
+
+    @Test
+    fun `should hint synthetic property as val when private setter of generic superclass takes type argument of its getter`() {
+        // kotlinc takes the private setR(Integer), of the Int! of the substituted getR(): T, and rejects x.r = 1: cannot access
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertyGenericHiddenSetter.r") should {
+            have("// also property: val r" in lines())
+            have(lines().none { " setR(" in it })
+        }
+    }
+
+    @Test
+    fun `should hint synthetic property as val when package-private setter of generic superclass takes type variable given type of getter`() {
+        // kotlinc substitutes setS(T) to the Int! of getS(): Integer, and rejects x.s = 1: cannot access
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertyGenericHiddenSetter.s") should {
+            have("// also property: val s" in lines())
+            have(lines().none { " setS(" in it })
         }
     }
 

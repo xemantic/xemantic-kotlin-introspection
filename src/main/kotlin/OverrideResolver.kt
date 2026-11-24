@@ -851,7 +851,7 @@ internal class OverrideResolver(
     )
 
     private fun Overridables.signature(property: KmProperty): PropertySignature {
-        val typeParameters = memberTypeParameters(property.typeParameters)
+        val typeParameters = memberTypeParameters(property.typeParameters, substitution)
         return PropertySignature(
             contexts = property.contextParameters.map { kotlinType(it.type, substitution, typeParameters) },
             receiver = property.receiverParameterType?.let { kotlinType(it, substitution, typeParameters) },
@@ -1520,7 +1520,7 @@ internal class OverrideResolver(
                 }
                 kmClass.properties.filter { it.visibility.isOverridable }.forEach { property ->
                     val memberVisibility = visibility(property.visibility, property.getterSignature)
-                    val typeParameters = memberTypeParameters(property.typeParameters)
+                    val typeParameters = memberTypeParameters(property.typeParameters, substitution)
                     properties.getOrPut(property.name) { mutableListOf() } += Overridable(
                         contexts = property.contextParameters.map {
                             kotlinType(it.type, substitution, typeParameters)
@@ -2297,12 +2297,6 @@ internal class OverrideResolver(
     }
 
     /**
-     * Whether the type of a Java method parameter, [overridden], has the same erasure as the [overriding] one,
-     * a Java primitive type matching only a non-nullable class type, as a nullable one is boxed on the JVM.
-     * A type parameter never matches a primitive type: one with a nullable bound, like `T : Int?`, is boxed,
-     * and one with a non-nullable bound, like `T : Int`, would be an accidental override rejected by the compiler.
-     */
-    /**
      * Whether the type of a Java method parameter, [overridden], is a type variable of its class given a nullable type by Kotlin,
      * like the `CharSequence?` of the `E` of `JavaBox<CharSequence?>`, or the `Y?` of `JavaBox<Y?>`, no platform type,
      * which an [overriding] parameter not nullable does not override, as verified with kotlinc 2.4.21,
@@ -2321,6 +2315,12 @@ internal class OverrideResolver(
         }
     }
 
+    /**
+     * Whether the type of a Java method parameter, [overridden], has the same erasure as the [overriding] one,
+     * a Java primitive type matching only a non-nullable class type, as a nullable one is boxed on the JVM.
+     * A type parameter never matches a primitive type: one with a nullable bound, like `T : Int?`, is boxed,
+     * and one with a non-nullable bound, like `T : Int`, would be an accidental override rejected by the compiler.
+     */
     private fun erasuresMatch(overridden: MemberType, overriding: MemberType): Boolean {
         if (overridden is ClassType && overridden.isJavaPrimitive &&
             (overriding is TypeParameterType || (overriding is ClassType && overriding.nullable == true))
@@ -3310,10 +3310,13 @@ internal class OverrideResolver(
             // a type variable of the method, or an array of it, of the nullability it tells, see functionTypeParametersMatch
             parameters = method.genericParameterTypes.mapIndexed { position, parameterType ->
                 val type = javaType(parameterType, substitution, method)
-                if (type.isOfFunctionTypeParameter()) {
-                    type.withNullability(javaTypeVariableParameterNullability(method, position))
-                } else {
-                    type
+                when {
+                    type.isOfFunctionTypeParameter() -> type.withNullability(javaTypeVariableParameterNullability(method, position))
+                    // a type variable of the class annotated not null is of the type given, not nullable, see isNullableGivenByKotlin,
+                    // like the String of the @NonNull E of a Base<String?>
+                    parameterType is TypeVariable<*> && parameterType.genericDeclaration is Class<*> &&
+                        javaParameterAnnotatedNullability(method, position) == false -> type.withTopNullability(false)
+                    else -> type
                 }
             },
             typeParameterCount = method.typeParameters.size,
@@ -4164,7 +4167,8 @@ private fun keyTypeParameters(owner: KmClass, memberTypeParameters: List<KmTypeP
 /**
  * This type in a member key, see [memberKey], like `kotlin/collections/List<T>?`:
  * its classifier, a type parameter by its name, with its type arguments and its nullability,
- * as overloads might differ only by them, like `f(x: Int)` and `f(x: Int?)`.
+ * also definitely not nullable, like `T&Any`,
+ * as overloads might differ only by them, like `f(x: Int)` and `f(x: Int?)`, or `f(x: T)` and `f(x: T & Any)`.
  */
 internal fun KmType.memberKeyType(typeParameters: Map<Int, String>): String = buildString {
     append(
@@ -4186,6 +4190,7 @@ internal fun KmType.memberKeyType(typeParameters: Map<Int, String>): String = bu
         })
     }
     if (isNullable) append('?')
+    if (isDefinitelyNonNull) append("&Any")
 }
 
 /**

@@ -557,6 +557,12 @@ class KotlinDefinitelyNonNullOverload : KotlinPlainBase() {
     fun <T> plain(x: T & Any) {}
 }
 
+open class KotlinOpenDefinitelyNonNullOverload : KotlinPlainBase() {
+    open fun <T> plain(x: T & Any) {}
+}
+
+class KotlinDefinitelyNonNullOverloadSub : KotlinOpenDefinitelyNonNullOverload()
+
 // and so is the type variable of a Java class annotated not null, given a Kotlin type parameter, Y & Any
 class JavaNonNullElementBoundsOverload<Y> : com.xemantic.kotlin.introspection.test.other.JavaNonNullElementBounds<Y>() {
     fun <T : List<Y>> elements(x: T) {}
@@ -569,6 +575,15 @@ class JavaGenericBothOfNullable : com.xemantic.kotlin.introspection.test.other.J
 
 class JavaGenericBothOfNullableTypeParameter<Y> : com.xemantic.kotlin.introspection.test.other.JavaGenericBoth<Y?>() {
     fun <T : Y?> both(a: Y, b: T) {}
+}
+
+// but a type variable annotated not null is of the type given, not nullable, also when given a nullable one
+class JavaGenericNotNullOfNullable : com.xemantic.kotlin.introspection.test.other.JavaGenericBoth<String?>() {
+    override fun notNull(x: String) {}
+}
+
+class JavaGenericNotNullOfNullableTypeParameter<Y> : com.xemantic.kotlin.introspection.test.other.JavaGenericBoth<Y?>() {
+    override fun notNull(x: Y & Any) {}
 }
 
 class JavaGenericBoundedDefinitelyNonNull<Y> : com.xemantic.kotlin.introspection.test.other.JavaGenericBoth<Y>() {

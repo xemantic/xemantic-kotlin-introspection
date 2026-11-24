@@ -2868,14 +2868,38 @@ internal class DefaultKotlinIntrospector(
                 members.inherited(setterName).mapNotNull { candidate ->
                     (candidate.effectiveMember as? Member.Function)?.let { SyntheticSetter(it, candidate) }
                 }
+            // the substitution of the type parameters of a supertype, as the class inherits it, or null if not reached
+            val substitutions = IdentityHashMap<ClassDeclarations, Map<Int, KmType>?>()
+            fun inheritedSubstitution(supertypeDeclarations: ClassDeclarations): Map<Int, KmType>? =
+                substitutions.getOrPut(supertypeDeclarations) {
+                    val target = supertypeDeclarations.clazz ?: return@getOrPut null
+                    val pending = ArrayDeque(members.kmClass.supertypes.map { it.substituted(members.inheritingTypes) })
+                    val visited = HashSet<String>()
+                    while (pending.isNotEmpty()) {
+                        val supertype = pending.removeFirst()
+                        val name = (supertype.classifier as? KmClassifier.Class)?.name ?: continue
+                        if (!visited.add(name)) continue
+                        val superDeclarations = inheritedDeclarations(inheritedName(declarations, name)) ?: continue
+                        val superKmClass = superDeclarations.kmClass ?: continue
+                        val substitution = supertypeSubstitution(superKmClass, supertype, declarations)
+                        if (superDeclarations.clazz == target) return@getOrPut substitution
+                        pending += superKmClass.supertypes.map { it.substituted(substitution) }
+                    }
+                    null
+                }
             fun SyntheticSetter.sets(): Boolean {
                 val setterFunction = member.function
                 if (!setterFunction.isAccessorShaped(parameterCount = 1)) return false
                 val setterDeclarations = declarations(declarations)
-                val setterType = AccessorType.of(
-                    setterFunction.valueParameters.single().type.asInherited(isDeclared = setterDeclarations === declarations),
-                    member.declaration, setterDeclarations, candidate, parameter = 0, declarations.clazz
-                )
+                val declaredType = setterFunction.valueParameters.single().type
+                // one which is not part of the API, of a supertype, as kotlinc substitutes it, like the protected setP(T)
+                // of a Mid<T> given Int, but a private one, kept unsubstituted, passed over already, see settersInDeclarationOrder
+                val type = if (isUncallable && setterDeclarations !== declarations) {
+                    inheritedSubstitution(setterDeclarations)?.let { declaredType.substituted(it) } ?: declaredType
+                } else {
+                    declaredType.asInherited(isDeclared = setterDeclarations === declarations)
+                }
+                val setterType = AccessorType.of(type, member.declaration, setterDeclarations, candidate, parameter = 0, declarations.clazz)
                 return isSameAccessorType(getterType, setterType) ||
                     (isAssignableAccessorType(getterType, setterType) && setsOverriddenGetter(getter, getterDeclarations, this, members))
             }

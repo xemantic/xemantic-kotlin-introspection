@@ -1820,6 +1820,12 @@ class SyntheticPropertyHiddenOverKotlinSetter : com.xemantic.kotlin.introspectio
 abstract class SyntheticPropertyGenericPrivateSetter :
     com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyGenericPrivateSetter<String>()
 
+// The protected and package-private setters of a generic Java superclass, substituted, taken before the public ones above (#372)
+class SyntheticPropertyGenericHiddenSetter :
+    com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyGenericHiddenSetterMid<Int>()
+
+class SyntheticPropertyGenericHiddenSetterBelowJava : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyGenericHiddenSetterLow()
+
 // The private setter of a Java class below the one declaring the getter, taken before the public one of the class above
 class SyntheticPropertyHiddenSetterBelow : com.xemantic.kotlin.introspection.test.other.JavaSyntheticPropertyHiddenSetterBelow()
 
