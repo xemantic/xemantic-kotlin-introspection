@@ -2133,7 +2133,7 @@ internal class DefaultKotlinIntrospector(
                     }
                 }
                 val syntheticPropertyType = if (members.any { it is Member.Property }) null else publicSyntheticPropertyType(
-                    apiCompanion.kmClass, apiCompanion.foundClass, function.name, apiCompanion.apiClass
+                    ClassMembers(apiCompanion.kmClass, apiCompanion.foundClass, apiCompanion.apiClass), function.name
                 )
                 if (syntheticPropertyType?.isInvoked(isOfJavaGetter = true) == true) add(null)
             }
