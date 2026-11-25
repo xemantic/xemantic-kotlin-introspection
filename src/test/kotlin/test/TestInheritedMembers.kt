@@ -1329,6 +1329,29 @@ abstract class TypedReturnPutOpenGenericPutJoin :
 abstract class BoxedJavaPutBelowTypedReturnPutOpenGenericPutJoinImpl :
     com.xemantic.kotlin.introspection.test.other.JavaBoxedPutBelowTypedReturnPutOpenGenericPutJoin()
 
+interface IntReturnPut {
+    fun put(t: Int): Int
+}
+
+// the put(t: T): R of GenericTypedReturnPut<Integer, Integer>, returning Int!, given by a Java class, declared first,
+// is less specific than the put(t: Int): Int of IntReturnPut, the one the Kotlin class joins them into
+abstract class TypedReturnIntReturnPutJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaIntegerIntegerTypedReturnPut(), IntReturnPut
+
+abstract class BoxedJavaPutBelowTypedReturnIntReturnPutJoinImpl :
+    com.xemantic.kotlin.introspection.test.other.JavaBoxedPutBelowTypedReturnIntReturnPutJoin()
+
+interface NullableTypeParameterPut<T> {
+    fun put(t: T?): String
+}
+
+// one member of the put(t: T?) of NullableTypeParameterPut<Integer> and the put(t: T) of GenericPut<@NotNull Integer>,
+// which put(Integer) implements, taking Int!
+abstract class BoxedJavaPutOfNullableTypeParameterPutAndNotNullIntegerImpl :
+    com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOfNullableTypeParameterPutAndNotNullInteger()
+
+fun BoxedJavaPutOfNullableTypeParameterPutAndNotNullIntegerImpl.putNull(): String = put(null)
+
 // the put(t: T): R a Java interface gives Integer and String, returning String!, is less specific than the put(t: T) of GenericPut<Int>,
 // returning String, the one the Kotlin class joins them into, taking Int, also declared after it
 abstract class JavaTypedReturnPutIntPutJoin :

@@ -917,7 +917,7 @@ private fun platformPositions(method: Method): Set<Int> {
     val overridden = joinPicks(method, overriddenKotlinMethods(method, matched))
     return references.filterTo(HashSet()) { position ->
         overridden.all { inherited ->
-            val type = typeVariableParameterOf(inherited, position)
+            val type = typeVariableParameterOf(inherited, position, declaringClass, overridden)
             val typeClass = type?.genericDeclaration as? Class<*>
             typeClass != null && isJavaTypeArgument(declaringClass, typeClass, typeClass.typeParameters.indexOf(type))
         }
@@ -951,13 +951,42 @@ private fun joinPicks(method: Method, overridden: List<Method>): List<Method> {
  * like the `T` of the `put(t: T)` of `GenericPut<T>`, also of a member deprecated as hidden, compiled as a synthetic method
  * of no generic signature, told by the Kotlin metadata of its class then, or `null` of a parameter of another type.
  */
-private fun typeVariableParameterOf(method: Method, position: Int): TypeVariable<*>? {
+private fun typeVariableParameterOf(
+    method: Method,
+    position: Int,
+    inheriting: Class<*>? = null,
+    overridden: List<Method> = emptyList()
+): TypeVariable<*>? {
     (method.genericParameterTypes.getOrNull(position) as? TypeVariable<*>)?.let { return it }
+    // not told of a hidden member a Kotlin class above the [inheriting] Java class joins with another one of the [overridden],
+    // which K2 groups around the one contributed first, of the types of either (#384)
+    if (inheriting != null && method.isSynthetic && isJoinedByKotlinClass(inheriting, method, overridden)) return null
     // but not one taking it as nullable, like `put(t: T?)`, which accepts null whatever the type argument, see takesNullableTypeParameter
     val type = syntheticParameterType(method, position)?.takeIf { !it.isNullable }
     val id = (type?.classifier as? KmClassifier.TypeParameter)?.id ?: return null
     val index = readKmClass(method.declaringClass)?.typeParameters?.indexOfFirst { it.id == id } ?: return null
     return method.declaringClass.typeParameters.getOrNull(index)
+}
+
+/**
+ * Whether a Kotlin class above the Java class [type], below the class of the [inherited] method, inherits another of the [overridden] ones,
+ * joining them into one member, like `Y : JavaBase(), GenericPut<Int>, HN<Int>` the hidden `put(t: T?)` of `HN`.
+ */
+private fun isJoinedByKotlinClass(type: Class<*>, inherited: Method, overridden: List<Method>): Boolean {
+    val visited = HashSet<Class<*>>()
+    val pending = ArrayDeque(listOfNotNull(type.superclass) + type.interfaces)
+    while (pending.isNotEmpty()) {
+        val supertype = pending.removeFirst()
+        if (!visited.add(supertype) || supertype == inherited.declaringClass) continue
+        if (supertype.isKotlinClass && inherited.declaringClass.isAssignableFrom(supertype) && overridden.any { other ->
+                other.declaringClass != inherited.declaringClass && other.declaringClass.isAssignableFrom(supertype)
+            }
+        ) {
+            return true
+        }
+        pending += listOfNotNull(supertype.superclass) + supertype.interfaces
+    }
+    return false
 }
 
 /**
@@ -969,8 +998,12 @@ private fun takesNullableTypeParameter(method: Method, position: Int): Boolean =
     syntheticParameterType(method, position)?.let { it.isNullable && it.classifier is KmClassifier.TypeParameter } == true
 
 // the type of the value parameter at the position of a synthetic method of a Kotlin class, as its metadata tells
-private fun syntheticParameterType(method: Method, position: Int): KmType? {
-    if (!method.isSynthetic || !method.declaringClass.isKotlinClass) return null
+private fun syntheticParameterType(method: Method, position: Int): KmType? =
+    if (method.isSynthetic) kotlinParameterType(method, position) else null
+
+// the type of the value parameter at the position of a method of a Kotlin class, as its metadata tells
+private fun kotlinParameterType(method: Method, position: Int): KmType? {
+    if (!method.declaringClass.isKotlinClass) return null
     val kmClass = readKmClass(method.declaringClass) ?: return null
     val descriptor = AsmType.getMethodDescriptor(method)
     val function = kmClass.functions.firstOrNull { it.name == method.name && it.signature?.descriptor == descriptor } ?: return null
@@ -1004,7 +1037,11 @@ private fun notNullGivenPositions(method: Method): Set<Int> {
     fun TypeArgumentGiver.isNotNull() = this is TypeArgumentGiver.Java && !isNullable && !isPlatform
     return references.filterTo(HashSet()) { position ->
         val givers = overridden.map { inherited ->
-            val type = typeVariableParameterOf(inherited, position)
+            // none of a member taking a type parameter as nullable, like the put(t: T?) of NG<T>, accepting null whatever given
+            if (kotlinParameterType(inherited, position)?.let { it.isNullable && it.classifier is KmClassifier.TypeParameter } == true) {
+                return@filterTo false
+            }
+            val type = typeVariableParameterOf(inherited, position, declaringClass, overridden)
             val typeClass = type?.genericDeclaration as? Class<*> ?: return@filterTo false
             typeArgumentGivers(declaringClass, typeClass, typeClass.typeParameters.indexOf(type))
         }
@@ -1042,8 +1079,11 @@ private fun clashingNullabilityPositions(method: Method): Set<Int> {
             (nullability.types[position] ?: false.takeIf { nullability.isMarkedNotNull(position) })?.let { nullabilities += it }
         }
         overriddenKotlin.forEach { inherited ->
-            if (takesNullableTypeParameter(inherited, position)) nullabilities += true
-            val type = typeVariableParameterOf(inherited, position)
+            // unless a Kotlin class above joins it with another one, whose joined member the method overrides in its place
+            if (takesNullableTypeParameter(inherited, position) && !isJoinedByKotlinClass(declaringClass, inherited, overriddenKotlin)) {
+                nullabilities += true
+            }
+            val type = typeVariableParameterOf(inherited, position, declaringClass, overriddenKotlin)
             val typeClass = type?.genericDeclaration as? Class<*> ?: return@forEach
             nullabilities += givenNullabilities(typeArgumentGivers(declaringClass, typeClass, typeClass.typeParameters.indexOf(type)))
         }
@@ -1115,7 +1155,7 @@ private fun overriddenKotlinMethods(method: Method, matched: List<Method>): List
     val parameterTypes = method.parameterTypes
     val givenPrimitive = overriding.filter { inherited ->
         inherited.parameterTypes.indices.any { position ->
-            val type = typeVariableParameterOf(inherited, position)
+            val type = typeVariableParameterOf(inherited, position, method.declaringClass, overriding)
             val typeClass = type?.genericDeclaration as? Class<*>
             val isBoxed = parameterTypes.getOrNull(position)?.let { !it.isPrimitive && it.kotlin.javaPrimitiveType != null } == true
             typeClass != null && isBoxed &&
@@ -1164,8 +1204,9 @@ internal fun joinPick(join: Class<*>, first: Method, second: Method, fallback: M
     if (!isPlainJoin(join, first.name, first.parameterCount)) return fallback
     // the return types as the join sees them, like the String of the put(t: T): R of GenericTypedReturnPut<Int, String>,
     // erased to Object on the JVM, or the erased ones, when not told
-    val (firstReturn, isFirstPlatform) = returnTypeSeenBy(join, first)
-    val (secondReturn, isSecondPlatform) = returnTypeSeenBy(join, second)
+    // a primitive type and its boxed type alike, like the int of put(t: Int): Int and the Integer of R given Integer
+    val (firstReturn, isFirstPlatform) = returnTypeSeenBy(join, first).let { (type, isPlatform) -> type.kotlin.javaObjectType to isPlatform }
+    val (secondReturn, isSecondPlatform) = returnTypeSeenBy(join, second).let { (type, isPlatform) -> type.kotlin.javaObjectType to isPlatform }
     // a platform type less specific than the same type without it, like the String! a Java class gives for R
     if (firstReturn == secondReturn && isFirstPlatform != isSecondPlatform) return if (isFirstPlatform) second else first
     if (firstReturn != secondReturn) {
@@ -1190,19 +1231,23 @@ internal fun joinPick(join: Class<*>, first: Method, second: Method, fallback: M
 /**
  * Whether K2 joins the members of the [name] and the [parameterCount] the Kotlin class [join] inherits along its paths
  * into one, which [joinPick] tells: two of them, or more, when the first one reached, depth-first in the order of declaration,
- * takes a platform type a Java class gives, which any of them joins. A member is the one of a Kotlin class, also deprecated as hidden,
+ * takes a platform type a Java class gives, which any of them joins, and none is deprecated as hidden. A member is the one of a Kotlin class, also deprecated as hidden,
  * or of a Java class, but an interface, reached first along each path.
  */
 private fun isPlainJoin(join: Class<*>, name: String, parameterCount: Int): Boolean {
     // the classes declaring them, by each path, and whether the first one takes a platform type
     val reached = ArrayList<Class<*>>()
     var isFirstPlatform = false
+    var isHiddenJoined = false
+    // every path is walked, a budget keeping a lattice of supertypes from taking exponential time, more of them told apart anyway
+    var budget = 4096
     fun walk(type: Class<*>, giver: Class<*>?, depth: Int) {
-        if (depth > 64 || type.isJdkClass) return
-        val declares = (type.isKotlinClass || !type.isInterface) && reflectedValue(default = false) {
-            type.declaredMethods.any { it.name == name && it.parameterCount == parameterCount && !it.isBridge && !Modifier.isStatic(it.modifiers) }
+        if (depth > 64 || --budget < 0 || type.isJdkClass) return
+        val declared = if (!type.isKotlinClass && type.isInterface) null else reflectedValue(default = null) {
+            type.declaredMethods.firstOrNull { it.name == name && it.parameterCount == parameterCount && !it.isBridge && !Modifier.isStatic(it.modifiers) }
         }
-        if (declares && type != join) {
+        if (declared != null && type != join) {
+            if (declared.isSynthetic) isHiddenJoined = true
             if (reached.isEmpty()) {
                 isFirstPlatform = !type.isKotlinClass || giver != null && !giver.isKotlinClass &&
                     type.typeParameters.indices.all { givesPlatformTypeArguments(giver, type, it) }
@@ -1217,6 +1262,8 @@ private fun isPlainJoin(join: Class<*>, name: String, parameterCount: Int): Bool
         }.forEach { walk(it, type, depth + 1) }
     }
     walk(join, null, 0)
+    // nor of a hidden one, which the compiler may group with some of them first
+    if (budget < 0 || isHiddenJoined) return false
     // but not when the class of the first one is reached again, given other type arguments by Kotlin, a member apart then,
     // like the put(t: T) of GenericCharSequencePut<Int> next to the one a Java class gives Integer
     return reached.size <= 2 || isFirstPlatform && reached.count { it == reached.first() } == 1

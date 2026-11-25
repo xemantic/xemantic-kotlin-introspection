@@ -904,6 +904,24 @@ abstract class NotNullBoxedJavaPutOverHiddenNullableTypeAndNotNullGenericPutImpl
 
 fun NotNullBoxedJavaPutOverHiddenNullableTypeAndNotNullGenericPutImpl.putNull(): String = put(null)
 
+// a Kotlin class joining the hidden put(t: T?) with the put(t: T) of GenericPut, one member there,
+// which the put(@NotNull Integer) of a Java subclass overrides, taking Int as annotated
+abstract class HiddenNullableTypeGenericPutJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaIntegerGenericPutClass(), GenericPut<Int>, HiddenNullableTypeGenericPut<Int>
+
+abstract class NotNullBoxedJavaPutBelowHiddenNullableTypeJoinImpl :
+    com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPutBelowHiddenNullableTypeJoin()
+
+// a Kotlin class joining the put(t: T) of GenericPut<Integer>, given by its Java superclass, with the ones of GenericCharSequencePut<Int>
+// and of the hidden HiddenGenericPut<Int>, one member there, which the put(@NotNull Integer) of a Java subclass implements
+abstract class CharSequenceHiddenGenericPutJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaIntegerGenericPutClass(), GenericCharSequencePut<Int>, HiddenGenericPut<Int>
+
+abstract class NotNullBoxedJavaPutBelowCharSequenceHiddenJoinImpl :
+    com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPutBelowCharSequenceHiddenJoin()
+
+class NotNullBoxedJavaPutBelowCharSequenceHiddenJoinConcrete : NotNullBoxedJavaPutBelowCharSequenceHiddenJoinImpl()
+
 // the same next to GenericPut<@NotNull Integer> too, which makes the put(Integer) take Int
 abstract class BoxedJavaPutOverHiddenOpenGenericPutAndNotNullIntegerPutImpl :
     com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOverHiddenOpenGenericPutAndNotNullIntegerPut()

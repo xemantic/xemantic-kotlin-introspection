@@ -23915,6 +23915,30 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve Java member taking boxed type below Kotlin class joining member returning boxed type given by Java with one returning primitive type`() {
+        // the Int! a Java class gives for R is less specific than the Int of put(t: Int): Int, the one the Kotlin class joins them into,
+        // which the put(Integer) below does not override, so that a concrete subclass has to implement it
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaPutBelowTypedReturnIntReturnPutJoinImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaPutBelowTypedReturnIntReturnPutJoinImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedPutBelowTypedReturnIntReturnPutJoin
+            override fun put(t: Int?): Int
+            // inherited from com.xemantic.kotlin.introspection.test.IntReturnPut
+            fun put(t: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member implementing Kotlin member taking nullable type parameter and one given boxed type annotated not null once`() {
+        // the put(t: T?) accepts null whatever T is given, disagreeing with the @NotNull Integer of GenericPut,
+        // so that put(Integer) takes Int!, one member with both
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaPutOfNullableTypeParameterPutAndNotNullIntegerImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaPutOfNullableTypeParameterPutAndNotNullIntegerImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.NullableTypeParameterPut
+            open fun put(t: Int?): String
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve Java member taking boxed type below Kotlin class joining Kotlin member of generic return type given primitive type with one given boxed type by Java`() {
         // the put(t: T): R of GenericTypedReturnPut<Int, String>, declared first, returns String as the Kotlin class sees it,
         // like the put(t: T) of GenericPut<Integer>, so that the joined member takes its Int, which the put(Integer) below does not override,
@@ -24610,6 +24634,29 @@ class KotlinIntrospectorTest {
             open fun put(t: Int): String
             // inherited from com.xemantic.kotlin.introspection.test.GenericRenamedPut
             open fun put(q: Int?): String // named arguments prohibited: ambiguous parameter names
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking boxed type annotated not null below Kotlin class joining hidden member taking nullable type parameter as taking Int`() {
+        // the Kotlin class joins the hidden put(t: T?) with the put(t: T) of GenericPut into one member, which the method overrides,
+        // so that its @NotNull wins, and put(null) does not compile
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NotNullBoxedJavaPutBelowHiddenNullableTypeJoinImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NotNullBoxedJavaPutBelowHiddenNullableTypeJoinImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPutBelowHiddenNullableTypeJoin
+            override fun put(t: Int): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking boxed type annotated not null below Kotlin class joining hidden member with others once`() {
+        // the Kotlin class joins the put(t: T) of GenericPut<Integer>, declared first, taking Int!, with the ones
+        // of GenericCharSequencePut<Int> and HiddenGenericPut<Int>, one member, which the put(@NotNull Integer) below implements,
+        // so that a concrete subclass compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NotNullBoxedJavaPutBelowCharSequenceHiddenJoinImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NotNullBoxedJavaPutBelowCharSequenceHiddenJoinImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.GenericPut
+            open fun put(t: Int): String
         """.trimIndent()
     }
 

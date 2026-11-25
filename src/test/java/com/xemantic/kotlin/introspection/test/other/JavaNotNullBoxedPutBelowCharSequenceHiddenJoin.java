@@ -1,0 +1,34 @@
+/*
+ * xemantic-kotlin-introspection - Kotlin API introspection of the classpath, rendering LLM-friendly signatures
+ * Copyright (C) 2026  Kazimierz Pogoda / Xemantic
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+package com.xemantic.kotlin.introspection.test.other;
+
+import org.jetbrains.annotations.NotNull;
+
+/**
+ * Declares {@code put(@NotNull Integer)} below a Kotlin class joining the {@code put(t: T)} of {@code GenericPut<Integer>},
+ * given by its Java superclass, with the ones of {@code GenericCharSequencePut<Int>} and the hidden {@code HiddenGenericPut<Int>}.
+ */
+public abstract class JavaNotNullBoxedPutBelowCharSequenceHiddenJoin
+    extends com.xemantic.kotlin.introspection.test.CharSequenceHiddenGenericPutJoin {
+
+    public String put(@NotNull Integer t) {
+        return "";
+    }
+
+}
