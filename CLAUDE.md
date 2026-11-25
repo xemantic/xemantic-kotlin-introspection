@@ -332,6 +332,14 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   while a Java class whose methods do not reflect, like of a parameter class missing, is not described by kotlin-reflect either,
   its member listed from the built-in type instead (#370).
 
+- Between two extensions of the same name, kotlinc calls one on a class over one on a type parameter whenever neither is more specific,
+  like `C?.f()` over `<T : S> T.f()`, or `I.f()` over `<T : S> T.f()`, on a `C : S, I`, while a type parameter is more specific than a class
+  its bounds are subclasses of, like `<T> T.f() where T : S, T : I` than `S.f()` — two generic ones are ambiguous then, see `ComparedReceiver`.
+
+- When probing kotlinc with Kotlin sources compiled in two runs into one output directory, like a library and its subclasses after javac,
+  give the runs different `-module-name`s: the second `META-INF/main.kotlin_module` overwrites the first one,
+  so that its top-level functions are `unresolved reference`s.
+
 ## Anti-patterns to avoid
 
 - Do not add content to this file that is already discoverable by reading the source or build scripts — that inflates context without adding signal, reducing AI agent task success rates (see [arxiv 2602.11988](https://arxiv.org/abs/2602.11988)).
