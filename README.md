@@ -513,6 +513,8 @@ com.example.AnnotationTestClass
   where an inner class of a generic class accepts the same one, of an outer type which its outer type accepts,
   like `fun put(x: Outer<out CharSequence>.Inner)` next to `fun Bar.put(x: Outer<String>.Inner)`,
   a supertype of a function type its subtypes, like `fun run(x: Function<CharSequence>)` next to `fun Bar.run(x: () -> String)`,
+  also of a suspend one, like `fun run(x: Function<String>)` next to `fun Bar.run(x: suspend () -> String)`,
+  or `fun run(x: KFunction<String>)` next to `fun Bar.run(x: KSuspendFunction0<String>)`,
   but only `Function<*>`, or `Function<Any?>`, a function type returning `Unit`,
   as a reference to a function returning a value is coerced to it, like `bar.run(::describe)` of `fun Bar.run(x: () -> Unit)`, while it is no `Function<Unit>`,
   and only a function type returning `Unit`, or `Any?`, the function type returning `Unit` of the same shape,

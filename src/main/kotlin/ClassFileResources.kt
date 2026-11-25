@@ -92,6 +92,13 @@ internal fun ClassReader.namesSupertypesByClassEntries(): Boolean {
 }
 
 /**
+ * Whether the JVM internal [name] of a `Class` entry of a class file is the one of a class, or of an interface,
+ * unlike an empty one, or one of an array type, like `[Lcom/example/Foo;`, or named like it, like `[om/example/Foo`,
+ * which a malformed class file might name its supertype, or a generic signature might name a class.
+ */
+internal fun isClassInternalName(name: String): Boolean = name.isNotEmpty() && !name.startsWith('[')
+
+/**
  * The JVM internal name of the only class of no superclass.
  */
 internal const val OBJECT_INTERNAL_NAME = "java/lang/Object"

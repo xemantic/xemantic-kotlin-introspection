@@ -39,6 +39,10 @@ fun <T> T.unboundedNextToNullableClass() {}
 
 fun <T> T.unboundedNextToClass() {}
 
+// and next to one on a type parameter bounded by a nullable class, see #382
+
+fun <T> T.unboundedNextToNullableBounded() {}
+
 interface UnboundedPair<A, B>
 
 interface UnboundedStringPair : UnboundedPair<String, String>

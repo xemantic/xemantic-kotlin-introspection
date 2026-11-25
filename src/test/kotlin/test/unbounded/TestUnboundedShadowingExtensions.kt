@@ -28,3 +28,5 @@ fun Any?.unboundedNullableNextToNullableAny() {}
 fun UnboundedStringPair?.unboundedNextToNullableClass() {}
 
 fun UnboundedStringPair.unboundedNextToClass() {}
+
+fun <T : UnboundedStringPair?> T.unboundedNextToNullableBounded() {}

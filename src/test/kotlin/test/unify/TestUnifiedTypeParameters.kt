@@ -19,6 +19,9 @@
 package com.xemantic.kotlin.introspection.test.unify
 
 import com.xemantic.kotlin.introspection.test.other.JavaUnifiedListPair
+import com.xemantic.kotlin.introspection.test.other.JavaUnifiedNotNullFirstPair
+import com.xemantic.kotlin.introspection.test.other.JavaUnifiedNotNullStringPair
+import com.xemantic.kotlin.introspection.test.other.JavaUnifiedNullableFirstPair
 
 // A type parameter of a class matched against the types of an extension referring to its type parameters,
 // in invariant positions, takes one type in all of them, like V of UnifiedSame<V> : UnifiedPair<V, V>,
@@ -87,6 +90,21 @@ interface UnifiedJavaListPair<V> : JavaUnifiedListPair<V>
 
 fun <T> UnifiedPair<MutableList<T>, MutableList<T>>.unifiedMutableLists() {}
 
+// a type argument of Java annotated as nullable, or not, is no platform type, like UnifiedPair<V?, V!> of UnifiedPair<@Nullable V, V>,
+// no UnifiedPair<String, String>, or UnifiedPair<V & Any, V!> of UnifiedPair<@NotNull V, V>, no UnifiedPair<String?, String>, see #382
+
+interface UnifiedJavaNullableFirstPair<V> : JavaUnifiedNullableFirstPair<V>
+
+interface UnifiedJavaNotNullFirstPair<V> : JavaUnifiedNotNullFirstPair<V>
+
+// also a type of a class, like the UnifiedPair<String, V!> of UnifiedPair<@NotNull String, V>
+
+interface UnifiedJavaNotNullStringPair<V> : JavaUnifiedNotNullStringPair<V>
+
+fun UnifiedPair<String, String>.unifiedStringPair() {}
+
+fun UnifiedPair<String?, String>.unifiedNullableStringFirst() {}
+
 // Nothing does not count as a type argument making an extension callable, see #366,
 // like V of UnifiedSameKeyMap<V> : Map<V, V>, a T : Enum<T>, and a subtype of the final String, which only Nothing is both of,
 // while V of String is a T : Comparable<T>
@@ -96,6 +114,12 @@ interface UnifiedSameKeyMap<V> : Map<V, V>
 fun <T : Enum<T>> Map<T, String>.unifiedEnumKeysOfStrings() {}
 
 fun <T : Comparable<T>> Map<T, String>.unifiedComparableKeysOfStrings() {}
+
+// nor V, a T? as a key, a subtype of the value T, which is nullable then, no T : Any, see #382
+
+fun <T : Any> Map<T?, T>.unifiedNullableKeysOfNotNullValues() {}
+
+fun <T> Map<T?, T>.unifiedNullableKeys() {}
 
 // nor V of UnifiedSame<V> standing for the Nothing of UnifiedPair<Nothing, T>
 
@@ -113,3 +137,29 @@ fun UnifiedProducer<Int>.unifiedInts() {}
 fun UnifiedProducer<String>.unifiedStrings() {}
 
 fun UnifiedProducer<Nothing>.unifiedNothings() {}
+
+// also when bounded through another type parameter of the class, like V : U of U : CharSequence, see #382
+
+interface UnifiedBoundedThroughProducer<V : U, U : CharSequence> : UnifiedProducer<V>
+
+// nor is a JDK class named in Kotlin another class, like the java.util.ArrayList<T> of ArrayList<T> no MutableList<T>,
+// or java.util.List<T> neither MutableList<T>, nor List<T>, see #382, while V of java.util.List<String> is both java.util.List<T>
+
+fun <T> UnifiedPair<ArrayList<T>, MutableList<T>>.unifiedArrayListAndMutableList() {}
+
+fun <T> UnifiedPair<java.util.List<T>, MutableList<T>>.unifiedJdkAndMutableLists() {}
+
+fun <T> UnifiedPair<java.util.List<T>, List<T>>.unifiedJdkAndReadOnlyLists() {}
+
+fun <T> UnifiedPair<java.util.List<T>, java.util.List<T>>.unifiedJdkLists() {}
+
+// an invariant type parameter of the extension inferred from an out Nothing projection, like T of MutableList<T>
+// for MutableList<out Nothing>, as kotlinc infers it, unlike T? of MutableList<T?>, see #382
+
+interface UnifiedOutNothingWrap : UnifiedWrap<MutableList<out Nothing>>
+
+fun <T> UnifiedWrap<MutableList<T>>.unifiedWrappedMutableList() {}
+
+fun <T : Comparable<T>> UnifiedWrap<out MutableList<T>>.unifiedWrappedComparableMutableList() {}
+
+fun <T> UnifiedWrap<MutableList<T?>>.unifiedWrappedNullableMutableList() {}

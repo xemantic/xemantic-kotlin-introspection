@@ -145,6 +145,9 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 - A kotlinc crash, like `IllegalStateException: Arguments depth is too high` (see `matchesOnce`), ends the whole compilation:
   a batch probe reports one such row per run, with no `error:` line, so keep the classes causing it out of a batch.
 
+- Whether kotlinc crashes (`Arguments depth is too high`) is not told by the path the model takes to its verdict,
+  see `constrainsSubtypeOfIntersection`, `tellSubtypesInferredFrom` (#376).
+
 - In a kotlinc probe `import java.util.function.*` does not bring `Function`: the default import of `kotlin.Function` wins over a star import,
   so `Function<String, String>` fails with `one type argument expected` — import `java.util.function.Function` explicitly.
 
@@ -182,8 +185,16 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   taking a Kotlin class found by the package-given name, but telling a name of a relocation before, for the class itself fixes the latter
   and breaks package merges of the review harness (#355).
 
+- Pairing more JVM methods of a relocated class right is not a gain by itself: a package the JVM methods leave untold, as relocated to two packages,
+  keeps the lookups of packages merged into one, like `p/lib/` and `p/ext/` into `m/`, from false matches —
+  counting the prefix of a supertype for the prefix pairing (`prefixRelocatedPairs`), or telling a package by its other classes the JVM methods name,
+  fixed a few thousand listings of the #355 harness and broke a thousand of the merge layouts (#380), so measure such a rule on every layout.
+  Likewise, a rule telling a package which was left untold locates there every class of it no JVM method pairs, like a shrunk member's,
+  which turns into a false `override` — see `pairedPackages`.
+
 - A sweep judging an extension "callable only with `Nothing`" from a fixed list of type arguments misjudges it since `Nothing` does not count (#366, #362):
-  most such rows compile with a declared self-referring type — probe them with declared types too, see `isDeclarableFor`.
+  most such rows compile with a declared self-referring type — probe them with declared types too, see `isDeclarableFor`,
+  also of a suspend function type: `interface X : suspend () -> X` makes `<T : suspend () -> T> Inv<T>` callable on `G<X>` of `G<V> : Inv<suspend () -> V>` (#376).
 
 - Kotlin never passes named arguments to a Java method of its own, even one compiled with `-parameters`, so a Java method taking parameters never shadows an extension — see `isShadowingJavaMethod`;
   a Java method overriding a Kotlin member, or merged with one, takes the names of the Kotlin one though, like `k.over(x = 1)`, see the entry on `namedByKotlinMembers` below —
@@ -212,6 +223,9 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   Probe a parameter of a function type, or of a functional interface, also with lambdas with and without explicit parameters,
   anonymous functions, with and without a receiver, references to functions of another return type, with a default parameter,
   and suspend ones, and a generic class also on projected and function-typed receivers.
+
+- kotlinc's warning `this extension is shadowed by a member` tells no verdict: it is reported for `fun B.on(f: suspend () -> Unit)`
+  next to `fun on(f: Function<Unit>)`, though `b.on(::returningString)` of a suspend function calls the extension — probe the calls (#376).
 
 - A member / extension pair is told as never reaching the extension only as far as its probes go:
   `fun f(x: Comparable<String>)` next to `fun <T : CharSequence> S.f(x: Comparable<T>)` calls the member for a `Comparable<String>`
@@ -258,6 +272,11 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 - When probing whether a generic function overrides, compile it both with the `override` modifier and without:
   one rejected with the modifier (`overrides nothing`) might be rejected without it too, as an `accidental override` of the same JVM signature,
   while an overload of the same JVM signature might compile, like `where T : Comparable<T>, T : Any` next to `<T : Comparable<T>>`, see `boundsMatch`.
+
+- A synthetic property sweep row judged on a receiver like `X<String>` of a generic class, where a `setValue(String)` sets a `T getValue()`,
+  is an artifact of the receiver: the hint of the class listing stays `val` for the type parameter (#372), see `settersInDeclarationOrder` —
+  and javac rejects a private `setValue(T)` next to a public one of the same substituted signature (`weaker access privileges`),
+  so no fixture shows the private setter of a generic class passed over in a listing of the type parameter.
 
 - Read every error of a probe, not only the first one, and not only the type a mistyped `val x: Marker = …` names:
   `val r: Marker = Thread::name` reports the type `KMutableProperty1<Thread, String!>`, and, on the reference itself,
@@ -307,6 +326,19 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 - The sweep model counting the members rendered without a modifier as abstract can be right by accident:
   a visible member rendered abstract in place of the hidden one kotlinc demands — confirm a changed abstract count
   by overriding each candidate signature in a concrete subclass of its own.
+
+- The class-file path of `bridgeSignatures` cannot be told from its reflection fallback by a test, like one of a class file too new for ASM:
+  the bridges are read only for a reflected `Method`, so the declared methods of the class reflect, telling the same bridges,
+  while a Java class whose methods do not reflect, like of a parameter class missing, is not described by kotlin-reflect either,
+  its member listed from the built-in type instead (#370).
+
+- Between two extensions of the same name, kotlinc calls one on a class over one on a type parameter whenever neither is more specific,
+  like `C?.f()` over `<T : S> T.f()`, or `I.f()` over `<T : S> T.f()`, on a `C : S, I`, while a type parameter is more specific than a class
+  its bounds are subclasses of, like `<T> T.f() where T : S, T : I` than `S.f()` — two generic ones are ambiguous then, see `ComparedReceiver`.
+
+- When probing kotlinc with Kotlin sources compiled in two runs into one output directory, like a library and its subclasses after javac,
+  give the runs different `-module-name`s: the second `META-INF/main.kotlin_module` overwrites the first one,
+  so that its top-level functions are `unresolved reference`s.
 
 ## Anti-patterns to avoid
 

@@ -2301,6 +2301,35 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve class without extensions shadowed by members taking supertypes of suspend function types`() {
+        // suspendFunctionSupertypeShadowing.function { "" }, or .reference(::describeSuspending), call the members, see #376,
+        // as a suspend function type is a Function of its return type, and a suspend function reference type a KFunction,
+        // while .lambdaReference { "" } calls the extension, as a lambda is no KFunction,
+        // and .unitFunction(::describeSuspending), as the reference is coerced to return Unit, while it is no Function<Unit>
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SuspendFunctionSupertypeShadowing", pageSize = 30) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SuspendFunctionSupertypeShadowing [page 1/1]
+            class SuspendFunctionSupertypeShadowing : SuspendFunctionSupertypeShadowedSupertype {
+                fun function(x: Function<String>): Int
+                fun wideFunction(x: Function<CharSequence>): Int
+                fun parameterFunction(x: Function<String>): Int
+                fun receiverFunction(x: Function<String>): Int
+                fun anyFunction(x: Function<Any?>): Int
+                fun reference(x: KFunction<String>): Int
+                fun parameterReference(x: KFunction<String>): Int
+                fun callable(x: KCallable<*>): Int
+                fun typedCallable(x: KCallable<String>): Int
+                fun referenceFunction(x: Function<String>): Int
+                fun unitReferenceFunction(x: Function<Unit>): Int
+                fun lambdaReference(x: KFunction<String>): Int
+                fun unitFunction(x: Function<Unit>): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun SuspendFunctionSupertypeShadowedSupertype.lambdaReference(x: suspend () -> String): Int
+            fun SuspendFunctionSupertypeShadowedSupertype.unitFunction(x: suspend () -> Unit): Int
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve class without extensions of type parameters bounded by each other shadowed by members accepting their bounds`() {
         // boundedTypeParameterShadowing.boundedByOther(listOf("")) calls the member, while .narrower(listOfCharSequences) calls the extension
         resolver.resolve("com.xemantic.kotlin.introspection.test.BoundedTypeParameterShadowing") sameAsKotlin """
@@ -2587,6 +2616,26 @@ class KotlinIntrospectorTest {
             val NullableSpecificReceiver.same: Int
             val NullableSpecificReceiver?.same: Int
             fun NullableSpecificReceiver?.describeNullable(x: Int): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extensions on type parameters shadowed by more specific ones`() {
+        // genericSpecific.boundedBySubclass(), .onSupertype() and .genericRank call the ones
+        // of the more specific receivers, while .nextToNullable() and .nextToInterface() call the ones on a class,
+        // which kotlinc prefers to the ones on a type parameter when neither of them is more specific,
+        // and nullableGenericSpecific.nullableBoundedBySubclass() the only one taking a nullable receiver
+        resolver.resolve("com.xemantic.kotlin.introspection.test.GenericSpecificReceiver", pageSize = 20) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GenericSpecificReceiver [page 1/1]
+            open class GenericSpecificReceiver : GenericGeneralReceiver, GenericOtherReceiver
+            // from com.xemantic.kotlin.introspection.test
+            val <T : GenericSpecificReceiver> T.genericRank: Int
+            fun <T : GenericSpecificReceiver> T.boundedBySubclass(): Int
+            fun GenericOtherReceiver.nextToInterface(): Int
+            fun GenericSpecificReceiver?.nextToNullable(): Int
+            fun <T : GenericSpecificReceiver> T.nullableBoundedBySubclass(): Int
+            fun <T : GenericGeneralReceiver?> T.nullableBoundedBySubclass(): Int
+            fun <T : GenericSpecificReceiver> T.onSupertype(): Int
         """.trimIndent()
     }
 
@@ -5922,6 +5971,107 @@ class KotlinIntrospectorTest {
             fun <T : CharSequence> sort(x: T)
             // inherited from com.xemantic.kotlin.introspection.test.KotlinSortBase
             fun <T : Comparable<T>> sort(x: T)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve inherited function of another bound next to Kotlin function it overloads`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.KotlinCharSequenceSorterSub.sort"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.KotlinCharSequenceSorterSub.sort [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.KotlinOpenCharSequenceSorter
+            fun <T : CharSequence> sort(x: T)
+            // inherited from com.xemantic.kotlin.introspection.test.KotlinSortBase
+            fun <T : Comparable<T>> sort(x: T)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not mark function taking definitely not nullable type as override of one taking type parameter`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.KotlinDefinitelyNonNullOverload.plain"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.KotlinDefinitelyNonNullOverload.plain [page 1/1]
+            fun <T> plain(x: T & Any)
+            // inherited from com.xemantic.kotlin.introspection.test.KotlinPlainBase
+            fun <T> plain(x: T)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve inherited function taking definitely not nullable type next to one taking type parameter`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.KotlinDefinitelyNonNullOverloadSub.plain"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.KotlinDefinitelyNonNullOverloadSub.plain [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.KotlinOpenDefinitelyNonNullOverload
+            fun <T> plain(x: T & Any)
+            // inherited from com.xemantic.kotlin.introspection.test.KotlinPlainBase
+            fun <T> plain(x: T)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not mark function bounded by type parameter as override of Java one bounded by type variable annotated not null`() {
+        // kotlinc: 'elements' hides member of supertype, when marked override: overrides nothing, as the bound is List<Y & Any>
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaNonNullElementBoundsOverload.elements") should {
+            have("fun <T : List<Y>> elements(x: T)" in lines())
+            have(lines().any { it.startsWith("// inherited from ") })
+        }
+    }
+
+    @Test
+    fun `should not mark function taking not nullable type as override of Java one taking type variable given nullable type`() {
+        // kotlinc: overrides nothing, as both(E, T) of JavaGenericBoth<CharSequence?> takes CharSequence?
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaGenericBothOfNullable.both") should {
+            have("fun <T : CharSequence?> both(a: CharSequence, b: T)" in lines())
+            have(lines().any { it.startsWith("// inherited from ") })
+        }
+    }
+
+    @Test
+    fun `should not mark function taking type parameter as override of Java one taking type variable given it nullable`() {
+        // kotlinc: overrides nothing, as both(E, T) of JavaGenericBoth<Y?> takes Y?,
+        // though of the same JVM signature, both(Object, Object), which still leaves the Java method unlisted
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaGenericBothOfNullableTypeParameter.both") should {
+            have("fun <T : Y?> both(a: Y, b: T)" in lines())
+        }
+    }
+
+    @Test
+    fun `should mark function taking not nullable type as override of Java one taking type variable annotated not null given nullable type`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaGenericNotNullOfNullable.notNull") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaGenericNotNullOfNullable.notNull [page 1/1]
+            override fun notNull(x: String)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark function taking definitely not nullable type as override of Java one taking type variable annotated not null`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.JavaGenericNotNullOfNullableTypeParameter.notNull") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaGenericNotNullOfNullableTypeParameter.notNull [page 1/1]
+            override fun notNull(x: Y & Any)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark function bounded by definitely not nullable type as override of Java one bounded by platform type variable`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaGenericBoundedDefinitelyNonNull.bounded"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaGenericBoundedDefinitelyNonNull.bounded [page 1/1]
+            override fun <T : Y & Any> bounded(x: T)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should mark function bounded by definitely not nullable type as override of Java one bounded by type variable annotated not null`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.JavaNonNullElementBoundsOverride.elements"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.JavaNonNullElementBoundsOverride.elements [page 1/1]
+            override fun <T : List<Y & Any>> elements(x: T)
         """.trimIndent()
     }
 
@@ -12286,6 +12436,141 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should hint synthetic property as var when private setter of generic superclass takes its type variable`() {
+        // kotlinc keeps the private setValue(T) of the generic superclass unsubstituted, of no String,
+        // and assigns x.value = "" by the public setValue(String) of the class above it
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertyGenericPrivateSetter.value") should {
+            have("// also property: var value" in lines())
+            have("open fun setValue(arg0: String?)" in lines())
+        }
+    }
+
+    @Test
+    fun `should hint synthetic property as val when protected setter of generic superclass takes its type variable`() {
+        // kotlinc substitutes setP(T), unlike a private one, and rejects x.p = 1: cannot access, it is protected
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertyGenericHiddenSetter.p") should {
+            have("// also property: val p" in lines())
+            have(lines().none { " setP(" in it })
+        }
+    }
+
+    @Test
+    fun `should hint synthetic property as val when package-private setter of generic superclass takes its type variable`() {
+        // kotlinc substitutes setQ(T), unlike a private one, and rejects x.q = 1: cannot access, it is package-private
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertyGenericHiddenSetter.q") should {
+            have("// also property: val q" in lines())
+            have(lines().none { " setQ(" in it })
+        }
+    }
+
+    @Test
+    fun `should hint synthetic property as val when protected setter of generic superclass below Java class takes its type variable`() {
+        // kotlinc substitutes setP(T), unlike a private one, and rejects x.p = 1: cannot access, it is protected
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertyGenericHiddenSetterBelowJava.p") should {
+            have("// also property: val p" in lines())
+            have(lines().none { " setP(" in it })
+        }
+    }
+
+    @Test
+    fun `should hint synthetic property as val when private setter of generic superclass takes type argument of its getter`() {
+        // kotlinc takes the private setR(Integer), of the Int! of the substituted getR(): T, and rejects x.r = 1: cannot access
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertyGenericHiddenSetter.r") should {
+            have("// also property: val r" in lines())
+            have(lines().none { " setR(" in it })
+        }
+    }
+
+    @Test
+    fun `should hint synthetic property as val when package-private setter of generic superclass takes type variable given type of getter`() {
+        // kotlinc substitutes setS(T) to the Int! of getS(): Integer, and rejects x.s = 1: cannot access
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertyGenericHiddenSetter.s") should {
+            have("// also property: val s" in lines())
+            have(lines().none { " setS(" in it })
+        }
+    }
+
+    @Test
+    fun `should hint synthetic property as val when private setter of generic superclass takes no type variable`() {
+        // kotlinc takes the private setCount(Integer), unsubstituted too, and rejects x.count = 1: cannot access
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertyGenericPrivateSetter.count") should {
+            have("// also property: val count" in lines())
+            have(lines().none { " setCount(" in it })
+        }
+    }
+
+    @Test
+    fun `should hint synthetic property as val when private setter is declared below getter class`() {
+        // kotlinc rejects x.hidden = 1: cannot access, by the private setHidden(Integer) of JavaSyntheticPropertyHiddenSetterBelow
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertyHiddenSetterBelow.hidden") should {
+            have("// also property: val hidden" in lines())
+            have(lines().none { " setHidden(" in it })
+        }
+    }
+
+    @Test
+    fun `should hint synthetic property as val when package-private setter is declared above getter class`() {
+        // kotlinc rejects x.hidden = 1 outside the package: cannot access, by setHidden(Integer) of JavaSyntheticPropertyPackageSetterMid
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertyPackageSetterAbove.hidden") should {
+            have("// also property: val hidden" in lines())
+            have(lines().none { " setHidden(" in it })
+        }
+    }
+
+    @Test
+    fun `should tell JVM signature of synthetic property setter next to its JVM twin`() {
+        // x.w = 1 runs setW(Integer), while x.setW(1) runs the setW(int) implementing the Kotlin setW(w: Int)
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertyBoxedSetterTwin.w") should {
+            have("// also property: var w" in lines())
+            have("open fun setW(arg0: Int) // setW(Integer) on the JVM" in lines())
+        }
+    }
+
+    @Test
+    fun `should hint synthetic property as val when internal setter of generic superclass takes its type variable`() {
+        // kotlinc rejects x.p = 1 in another module: cannot access, it is internal
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertyInternalSetterDirect.p") should {
+            have("// also property: val p" in lines())
+        }
+    }
+
+    @Test
+    fun `should hint synthetic property as var when internal setter is reached through generic Kotlin subclass`() {
+        // kotlinc no longer sees the internal setP(p: T) through KotlinSyntheticPropertyInternalSetterMid<W>,
+        // and assigns x.p = 1 by the public setP(int) of JavaSyntheticPropertyInternalSetterTop
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertyInternalSetterThroughKotlin.p") should {
+            have("// also property: var p" in lines())
+            have("fun setP(arg0: Int)" in lines())
+        }
+    }
+
+    @Test
+    fun `should hint synthetic property as var when internal setter is reached through generic Java subclass`() {
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertyInternalSetterThroughJava.p") should {
+            have("// also property: var p" in lines())
+            have("fun setP(arg0: Int)" in lines())
+        }
+    }
+
+    @Test
+    fun `should hint synthetic property as val when Kotlin class declares private setter`() {
+        // kotlinc takes the private setK(Int?) before the setK(int) of the Java superclass, and rejects x.k = 1: cannot access
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertyKotlinPrivateSetters.k") should {
+            have("// also property: val k" in lines())
+            have(lines().none { " setK(" in it })
+        }
+    }
+
+    @Test
+    fun `should hint synthetic property as val when Kotlin class declares internal setter`() {
+        // kotlinc takes the internal setI(Int?) before the setI(int) of the Java superclass, and rejects x.i = 1 in another module
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertyKotlinPrivateSetters.i") should {
+            have("// also property: val i" in lines())
+            have(lines().none { " setI(" in it })
+        }
+    }
+
+    @Test
     fun `should hint synthetic property as val when final class inherits protected setter declared before public one`() {
         // kotlinc takes the protected setX(Integer), declared first, and rejects x.x = 1: cannot access
         resolver.resolve("com.xemantic.kotlin.introspection.test.SyntheticPropertyFinalProtectedSetterFirst.x") should {
@@ -13858,6 +14143,21 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve interface of pair of same type parameter without extensions on pairs of JDK class and another collection`() {
+        // V is no java.util.ArrayList<T>, nor java.util.List<T>, also a MutableList<T>, or a List<T>, see #382,
+        // while V of java.util.List<String> is both java.util.List<T>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.unify.UnifiedSame",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".unifiedArrayListAndMutableList()" in it })
+            have(lines().none { ".unifiedJdkAndMutableLists()" in it })
+            have(lines().none { ".unifiedJdkAndReadOnlyLists()" in it })
+            have(lines().any { ".unifiedJdkLists()" in it })
+        }
+    }
+
+    @Test
     fun `should resolve interface of Java pair of same platform list with extension on pair of mutable and read-only lists`() {
         // the (Mutable)List<V!>! of Java is either of them
         resolver.resolve(
@@ -13870,6 +14170,57 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve interface of Java pair of type argument annotated nullable without extensions on pairs of not nullable first type`() {
+        // the UnifiedPair<V?, V!> of UnifiedPair<@Nullable V, V> is no UnifiedPair<String, String>, see #382
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.unify.UnifiedJavaNullableFirstPair",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".unifiedStringPair()" in it })
+            have(lines().any { ".unifiedNullableStringFirst()" in it })
+            have(lines().any { ".unifiedNullable()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of Java pair of type argument annotated not nullable without extensions on pairs of nullable first type`() {
+        // the UnifiedPair<V & Any, V!> of UnifiedPair<@NotNull V, V> is no UnifiedPair<String?, String>, nor UnifiedPair<T?, T>, see #382
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.unify.UnifiedJavaNotNullFirstPair",
+            pageSize = 10000
+        ) should {
+            have(lines().any { ".unifiedStringPair()" in it })
+            have(lines().none { ".unifiedNullableStringFirst()" in it })
+            have(lines().none { ".unifiedNullable()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of Java pair of class type argument annotated not nullable without extension on pair of nullable first type`() {
+        // the UnifiedPair<String, V!> of UnifiedPair<@NotNull String, V> is no UnifiedPair<String?, String>, see #382
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.unify.UnifiedJavaNotNullStringPair",
+            pageSize = 10000
+        ) should {
+            have(lines().any { ".unifiedStringPair()" in it })
+            have(lines().none { ".unifiedNullableStringFirst()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of wrapped list of out Nothing with extensions inferring type parameter from it`() {
+        // kotlinc infers T of MutableList<T> from MutableList<out Nothing>, but not T? of MutableList<T?>, see #382
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.unify.UnifiedOutNothingWrap",
+            pageSize = 10000
+        ) should {
+            have(lines().any { ".unifiedWrappedMutableList()" in it })
+            have(lines().any { ".unifiedWrappedComparableMutableList()" in it })
+            have(lines().none { ".unifiedWrappedNullableMutableList()" in it })
+        }
+    }
+
+    @Test
     fun `should resolve interface of map of same type parameter without extension callable only with Nothing`() {
         // V is a T : Enum<T>, and a subtype of the final String, which only Nothing is, while V of String is a T : Comparable<T>
         resolver.resolve(
@@ -13878,6 +14229,18 @@ class KotlinIntrospectorTest {
         ) should {
             have(lines().none { ".unifiedEnumKeysOfStrings()" in it })
             have(lines().any { ".unifiedComparableKeysOfStrings()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of map of same type parameter without extension on nullable keys of not nullable values`() {
+        // V is T?, and a subtype of T, nullable then, which no T : Any is, see #382
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.unify.UnifiedSameKeyMap",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".unifiedNullableKeysOfNotNullValues()" in it })
+            have(lines().any { ".unifiedNullableKeys()" in it })
         }
     }
 
@@ -13901,6 +14264,18 @@ class KotlinIntrospectorTest {
         ) should {
             have(lines().none { ".unifiedInts()" in it })
             have(lines().none { ".unifiedNothings()" in it })
+            have(lines().any { ".unifiedStrings()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of covariant supertype of type parameter bounded through another one without extension callable only with Nothing`() {
+        // V : U of U : CharSequence is no subtype of the final Int either, but Nothing, see #382
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.unify.UnifiedBoundedThroughProducer",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".unifiedInts()" in it })
             have(lines().any { ".unifiedStrings()" in it })
         }
     }
@@ -14047,7 +14422,8 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve interface with extensions of its package on unbounded type parameter`() {
-        // like the extensions of its package on Any
+        // like the extensions of its package on Any, but the ones next to more specific ones,
+        // also on a type parameter, like unboundedNextToNullableBounded, see #382
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.unbounded.UnboundedStringPair",
             pageSize = 10000
@@ -14059,6 +14435,7 @@ class KotlinIntrospectorTest {
             fun <T> T.unboundedNextToClass()
             fun UnboundedStringPair.unboundedNextToClass()
             fun Any?.unboundedNextToNullableAny()
+            fun <T : UnboundedStringPair?> T.unboundedNextToNullableBounded()
             fun UnboundedStringPair?.unboundedNextToNullableClass()
             fun Any?.unboundedNullableNextToNullableAny()
             fun <T> T?.unboundedNullableReceiver()
@@ -14196,29 +14573,28 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve class with extension on type parameter next to extension on its supertype`() {
-        // BoundedReceiverCircle().describe() calls the one on the type parameter, more specific than the one on BoundedReceiverShape
+        // BoundedReceiverCircle().describe() calls the one on the type parameter, more specific than the one on BoundedReceiverShape,
+        // which is not listed then, see #382, like the label
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.BoundedReceiverCircle"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.BoundedReceiverCircle [page 1/1]
             class BoundedReceiverCircle : BoundedReceiverShape, BoundedReceiverNamed
             // from com.xemantic.kotlin.introspection.test
-            val BoundedReceiverShape.label: String
             val <T> T.label: String where T : BoundedReceiverShape, T : BoundedReceiverNamed
-            fun BoundedReceiverShape.describe(): String
             fun <T> T.describe(): String where T : BoundedReceiverShape, T : BoundedReceiverNamed
         """.trimIndent()
     }
 
     @Test
     fun `should resolve extension on type parameter next to extension on supertype as member of class`() {
-        // like in the listing of BoundedReceiverCircle
+        // like in the listing of BoundedReceiverCircle, without the one on BoundedReceiverShape,
+        // as circle.describe() calls the more specific one on the type parameter, see #382
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.BoundedReceiverCircle.describe"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.BoundedReceiverCircle.describe [page 1/1]
             // from com.xemantic.kotlin.introspection.test
-            fun BoundedReceiverShape.describe(): String
             fun <T> T.describe(): String where T : BoundedReceiverShape, T : BoundedReceiverNamed
         """.trimIndent()
     }
@@ -17407,6 +17783,92 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve class comparable to what is comparable to it without extensions on type parameter comparable to itself`() {
+        // kotlinc fails on x.deepSelf(), x.deepBounded(), and x.coerceAtLeast(x) with: Arguments depth is too high,
+        // while compareTo, of a Comparable of any type, is listed like for any comparable class
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.deep.DeepComparable"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.deep.DeepComparable [page 1/1]
+            interface DeepComparable : Comparable<Comparable<DeepComparable>>
+            // from com.xemantic.kotlin.introspection.test.deep
+            fun <T> T.deepAny()
+            // from kotlin
+            inline infix fun <T> Comparable<T>.compareTo(other: T): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve subclass of class comparable to what is comparable to it without extensions on type parameter comparable to itself`() {
+        // kotlinc fails on x.deepSelf(), and x.deepBounded(), with: Arguments depth is too high
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.deep.DeepComparableSub"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.deep.DeepComparableSub [page 1/1]
+            interface DeepComparableSub : DeepComparable
+            // from com.xemantic.kotlin.introspection.test.deep
+            fun <T> T.deepAny()
+            // from kotlin
+            inline infix fun <T> Comparable<T>.compareTo(other: T): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extension inferring intersection of class comparable to what is comparable to it`() {
+        // kotlinc fails on x.deepSinkOfComparable() with: Arguments depth is too high
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.deep.DeepStringSink"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.deep.DeepStringSink [page 1/1]
+            interface DeepStringSink : DeepSink<String, DeepComparable>
+            // from com.xemantic.kotlin.introspection.test.deep
+            fun <T> T.deepAny()
+            fun <T> DeepSink<T, T>.deepSinkOfAny()
+            fun <T : CharSequence> DeepSink<T, T>.deepSinkOfChars()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extensions inferring intersection of upper types of class comparable to what is comparable to it`() {
+        // kotlinc fails on x.deepSinkOfAny(), x.deepSinkOfChars(), and x.deepSinkOfComparable() with: Arguments depth is too high
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.deep.DeepComparableSink"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.deep.DeepComparableSink [page 1/1]
+            interface DeepComparableSink : DeepSink<DeepComparable, Comparable<DeepComparable>>
+            // from com.xemantic.kotlin.introspection.test.deep
+            fun <T> T.deepAny()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extension inferring common supertype of class comparable to what is comparable to it`() {
+        // kotlinc fails on x.deepSourceOfAny() with: Arguments depth is too high
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.deep.DeepComparableSource"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.deep.DeepComparableSource [page 1/1]
+            interface DeepComparableSource : DeepSource<DeepComparable, Comparable<DeepComparable>>
+            // from com.xemantic.kotlin.introspection.test.deep
+            fun <T> T.deepAny()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve generic class without witness of class comparable to what is comparable to it`() {
+        // x.deepSame() compiles for a DeepMap<String>, while the witness DeepComparable, of x.deepValues(), is no witness
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.deep.DeepMap"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.deep.DeepMap [page 1/1]
+            interface DeepMap<V : Comparable<V>> : Map<V, V>
+            // from com.xemantic.kotlin.introspection.test.deep
+            fun <T> T.deepAny()
+            fun <T : Comparable<T>> Map<T, T>.deepSame()
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve class comparable to what is comparable to it without recursing endlessly`() {
         // kotlinc fails on x.selfComparable() with: Arguments depth is too high
         resolver.resolve(
@@ -17632,6 +18094,75 @@ class KotlinIntrospectorTest {
             have("fun <T : suspend () -> String> GivenSuspendInvariant<T>.invariantOfSuspend()" in lines())
             have("fun <T : suspend () -> U, U> GivenSuspendInvariant<T>.invariantOfSuspendSupplier()" in lines())
         }
+    }
+
+    @Test
+    fun `should resolve class of invariant function type without extensions bounded by suspend function type`() {
+        // kotlinc: x.invariantOfSuspend() is inapplicable because of a receiver type mismatch, () -> String being no suspend () -> String
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.GivenSuspendInvariantSupplierClass"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GivenSuspendInvariantSupplierClass [page 1/1]
+            class GivenSuspendInvariantSupplierClass : GivenSuspendInvariant<() -> String>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve generic class of invariant suspend function type with extension bounded by suspend function type of itself`() {
+        // x.invariantOfSuspendSelf() compiles for V given as interface X : suspend () -> X
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.GivenSuspendSelfInvariant"
+        ) should {
+            have("fun <T : suspend () -> T> GivenSuspendInvariant<T>.invariantOfSuspendSelf()" in lines())
+        }
+    }
+
+    @Test
+    fun `should resolve generic class of function type of type parameter without extensions bounded by other function types`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.GivenAnyConsumerSource"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GivenAnyConsumerSource [page 1/1]
+            interface GivenAnyConsumerSource<V> : GivenAnyFunctionSource<(V) -> Unit>
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve generic class of supplier type of type parameter with extension bounded by supplier only`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.GivenAnySupplierSource"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GivenAnySupplierSource [page 1/1]
+            interface GivenAnySupplierSource<V> : GivenAnyFunctionSource<() -> V>
+            // from com.xemantic.kotlin.introspection.test
+            fun <T : () -> U, U : CharSequence> GivenAnyFunctionSource<T>.anySourceOfSupplier()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve generic class of suspend supplier type of type parameter with extensions bounded by suspend supplier only`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.GivenAnySuspendSupplierSource"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GivenAnySuspendSupplierSource [page 1/1]
+            interface GivenAnySuspendSupplierSource<V> : GivenAnyFunctionSource<suspend () -> V>
+            // from com.xemantic.kotlin.introspection.test
+            fun <T : Comparable<T>> GivenAnyFunctionSource<suspend () -> T>.anySourceOfSuspendComparable()
+            fun <T : suspend () -> U, U> GivenAnyFunctionSource<T>.anySourceOfSuspendSupplier()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve generic class of class of suspend supplier type with extensions bounded by suspend supplier`() {
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.GivenAnySuspendTaskSource"
+        ) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GivenAnySuspendTaskSource [page 1/1]
+            interface GivenAnySuspendTaskSource<V> : GivenAnyFunctionSource<GivenAnySuspendTask<V>>
+            // from com.xemantic.kotlin.introspection.test
+            fun <T : Comparable<T>> GivenAnyFunctionSource<suspend () -> T>.anySourceOfSuspendComparable()
+            fun <T : suspend () -> U, U> GivenAnyFunctionSource<T>.anySourceOfSuspendSupplier()
+        """.trimIndent()
     }
 
     @Test
@@ -24198,6 +24729,17 @@ class KotlinIntrospectorTest {
         resolver.resolve("com.xemantic.kotlin.introspection.test.InternalExposedMembersExposing.f") sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.InternalExposedMembersExposing.f [page 1/1]
             abstract fun f(): Int // declared by internal com.xemantic.kotlin.introspection.test.InternalExposedMembers
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve override of internal supertype exposed by class of another return type than Java member it overrides`() {
+        // kotlinc reads x.getV() as Int?, of the override, not as the Int! of the Java method
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InternalNullableGetterOverrideExposing.getV") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InternalNullableGetterOverrideExposing.getV [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedAccessors
+            // also property: var v
+            open fun getV(): Int?
         """.trimIndent()
     }
 
