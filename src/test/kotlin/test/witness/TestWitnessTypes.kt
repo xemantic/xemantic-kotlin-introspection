@@ -126,3 +126,65 @@ interface WitnessCharSequenceKeyMap<V : CharSequence> : Map<V, V?>
 fun <T> Map<T, T>.witnessComparableCharLists() where T : List<Char>, T : Comparable<T> {}
 
 interface WitnessCharSequenceSameKeyMap<V : CharSequence> : Map<V, V>
+
+// the bounds of a type parameter of the extension tell what a type of the class it stands for is a subtype of, see #386:
+// a List<V?> standing for T of WitnessBox<T & Any> is a List<T?>? of T : List<T?>?, so that V is a List<V?> too,
+// like interface X : List<X?>, but not of a V : Int?, as Int is final, nor of a V : CharSequence, clashing on get(index: Int)
+
+interface WitnessBox<T>
+
+fun <T : List<T?>?> WitnessBox<T & Any>.witnessSelfListBoxes() {}
+
+interface WitnessListBox<V> : WitnessBox<List<V?>>
+
+interface WitnessIntListBox<V : Int?> : WitnessBox<List<V?>>
+
+interface WitnessCharSequenceListBox<V : CharSequence> : WitnessBox<List<V?>>
+
+// a V : Comparable<String> is no Comparable<V> of a Map<V, V> as a Map<T, List<T>>, which kotlinc rejects ("has inconsistent values"),
+// unlike the String of a Map<T, T>
+interface WitnessStringComparableKeyMap<V : Comparable<String>> : Map<V, V>
+
+// nor can a type be declared extending a sealed class of another module, see #386, nor a class whose constructors are all private,
+// unlike through an open sealed subclass
+
+sealed class WitnessSealed
+
+interface WitnessSealedKeyMap<V : WitnessSealed> : Map<V, V>
+
+sealed class WitnessSealedWithOpenSubclass {
+    abstract class Open : WitnessSealedWithOpenSubclass()
+}
+
+interface WitnessOpenSealedKeyMap<V : WitnessSealedWithOpenSubclass> : Map<V, V>
+
+abstract class WitnessPrivatelyConstructed private constructor()
+
+interface WitnessPrivatelyConstructedKeyMap<V : WitnessPrivatelyConstructed> : Map<V, V>
+
+// a V of List<String>, of the List<T> the receiver takes in its place, with the String it takes in the place of T,
+// makes a Map<V, String> a Map<List<T>, T>, see #386
+fun <T : Comparable<T>> Map<List<T>, T>.witnessListKeysOfComparableValues() {}
+
+interface WitnessStringValueMap<V> : Map<V, String>
+
+// though constructed only internally, extended from another module through a public subclass of its own module,
+// like by abstract class Y : WitnessInternallyConstructedSubclass(), List<Y>, Comparable<Y>, see #386
+abstract class WitnessInternallyConstructed internal constructor()
+
+abstract class WitnessInternallyConstructedSubclass : WitnessInternallyConstructed()
+
+interface WitnessInternallyConstructedKeyMap<V : WitnessInternallyConstructed> : Map<V, V>
+
+interface WitnessInternallyConstructedBox<V : WitnessInternallyConstructed> : WitnessBoxOfComparable<V>
+
+interface WitnessBoxOfComparable<T>
+
+fun <T : Comparable<T>> WitnessBoxOfComparable<T>.witnessComparableBox() {}
+
+// also of a class referring to itself, where the receiver is not matched against such a supertype, see #386,
+// like the V of interface X : WitnessSelfBoundedKeyMap<X>, Comparable<X>, or the String of a Map<V, V>
+// next to a Comparable<WitnessComparableToItselfMap<V>>
+interface WitnessSelfBoundedKeyMap<V : WitnessSelfBoundedKeyMap<V>> : Map<V, V>
+
+interface WitnessComparableToItselfMap<V> : Map<V, V>, Comparable<WitnessComparableToItselfMap<V>>

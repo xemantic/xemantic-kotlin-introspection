@@ -475,12 +475,32 @@ private fun KmType.enhanceSupertypeArguments(type: Class<*>, supertype: Class<*>
 /**
  * Whether the generic signature of the class [type], the bounds of its type parameters, and its generic supertypes,
  * refers only to classes which can be loaded, also to the ones relocated with it, like by shading, by their rewritten names,
- * unlike to a class missing from the classpath.
+ * unlike to a class missing from the classpath, also one nested in a type argument, like the `Absent` of `W : List<Absent>`,
+ * which the JDK reifies only when asked for, see #386.
  */
-internal fun resolvesGenericSignature(type: Class<*>): Boolean = try {
-    type.typeParameters.forEach { it.bounds }
-    type.genericSuperclass
-    type.genericInterfaces
+internal fun resolvesGenericSignature(type: Class<*>): Boolean = resolvesTypes {
+    // read inside the try of resolvesTypes, as a supertype naming a missing class throws already here,
+    // like the Comparable<Absent> of interface M01<V> : Map<V, V>, Comparable<Absent>, see #386
+    type.typeParameters.asList() + listOfNotNull(type.genericSuperclass) + type.genericInterfaces
+}
+
+// whether the reified types, and the types they refer to, all the way down, refer only to classes which can be loaded,
+// each type variable walked through its bounds once
+private fun resolvesTypes(types: () -> List<Type>): Boolean = try {
+    val visited = HashSet<TypeVariable<*>>()
+    fun Type.walk() {
+        when (this) {
+            is ParameterizedType -> {
+                rawType
+                actualTypeArguments.forEach { it.walk() }
+                ownerType?.walk()
+            }
+            is GenericArrayType -> genericComponentType.walk()
+            is WildcardType -> (upperBounds + lowerBounds).forEach { it.walk() }
+            is TypeVariable<*> -> if (visited.add(this)) bounds.forEach { it.walk() }
+        }
+    }
+    types().forEach { it.walk() }
     true
 } catch (_: LinkageError) {
     false

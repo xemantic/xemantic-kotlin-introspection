@@ -20,6 +20,8 @@ package com.xemantic.kotlin.introspection
 
 import org.objectweb.asm.ClassReader
 import org.objectweb.asm.Opcodes
+import org.objectweb.asm.signature.SignatureReader
+import org.objectweb.asm.signature.SignatureVisitor
 
 // The class file resources of a class loader, looked up without loading the classes.
 // A class file resource is never encapsulated, also when it is in a named module.
@@ -141,4 +143,35 @@ internal fun locatedNameOf(binaryName: String, metadataName: String): String {
     val simpleName = metadataName.substringAfterLast('/').removePrefix(".")
     val localPrefix = if (metadataName.startsWith('.')) "." else ""
     return localPrefix + if (packageName.isEmpty()) simpleName else "${packageName.replace('.', '/')}/$simpleName"
+}
+
+/**
+ * The JVM internal names of the classes a generic, or a plain, method or field [signature] names, like `java/util/Map`,
+ * an inner class of a generic outer one by its binary name, like `p/Outer${'$'}Inner` of `Lp/Outer<Ljava/lang/String;>.Inner;`,
+ * or `null` if it cannot be parsed, see #386.
+ */
+internal fun signatureClassNames(signature: String): Set<String>? {
+    val classNames = LinkedHashSet<String>()
+    return try {
+        // the class types being visited, one per nesting of type arguments, which ASM visits with this same visitor,
+        // so that the ones of Outer<String> end before its .Inner, each class type ended by visitEnd
+        val visited = ArrayDeque<String>()
+        SignatureReader(signature).accept(object : SignatureVisitor(Opcodes.ASM9) {
+            override fun visitClassType(name: String) {
+                visited.addLast(name)
+                classNames += name
+            }
+            override fun visitInnerClassType(name: String) {
+                val inner = visited.removeLastOrNull()?.let { it + "\$" + name } ?: return
+                visited.addLast(inner)
+                classNames += inner
+            }
+            override fun visitEnd() {
+                visited.removeLastOrNull()
+            }
+        })
+        classNames
+    } catch (_: Exception) {
+        null
+    }
 }

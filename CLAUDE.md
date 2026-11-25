@@ -196,6 +196,14 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   most such rows compile with a declared self-referring type — probe them with declared types too, see `isDeclarableFor`,
   also of a suspend function type: `interface X : suspend () -> X` makes `<T : suspend () -> T> Inv<T>` callable on `G<X>` of `G<V> : Inv<suspend () -> V>` (#376).
 
+- A pool of declared types judging such rows needs their nullable forms too, and in every position of a class of several type parameters:
+  `C01<K, V : K> : Box<K>` with `fun <T : List<T>?> Box<T?>.f()` compiles only as `C01<SL1?, SL1>` (`interface SL1 : List<SL1>`),
+  and 36 rows of the #334 sweep judged callable only with `Nothing` compile with such types, or a self-referring `interface Y : A29<Y>, Comparable<Y>` (#386).
+
+- A class whose constructors are all `internal` is still extended from another module, through a public open subclass of its own module:
+  `abstract class Base internal constructor()` next to `abstract class Sub : Base()` lets a user declare `Y : Sub(), List<Y>, Comparable<Y>` for a `V : Base`,
+  and no index tells such subclasses, so only private constructors make a class undeclarable elsewhere, see `isOnlyDeclaredOtherThan` (#386).
+
 - Kotlin never passes named arguments to a Java method of its own, even one compiled with `-parameters`, so a Java method taking parameters never shadows an extension — see `isShadowingJavaMethod`;
   a Java method overriding a Kotlin member, or merged with one, takes the names of the Kotlin one though, like `k.over(x = 1)`, see the entry on `namedByKotlinMembers` below —
   its shadowing is not modelled: the extension next to such a Java override stays listed.

@@ -7457,6 +7457,7 @@ internal class DefaultKotlinIntrospector(
             // filtered by name first, like below, not to tell whether each of the others is listed
             fun <E : ReceiverBounded> Map<String, List<E>>.listedOnOtherSupertypes(
                 declarationOf: (E) -> Triple<String, KmType?, List<KmTypeParameter>>,
+                jvmSignatureOf: (E) -> JvmMethodSignature?,
                 canBeCalledOn: ClassSupertypes.(E) -> Boolean
             ): List<E> = otherSupertypes.flatMap { supertype ->
                 this[supertype].orEmpty().filter { extension ->
@@ -7466,20 +7467,45 @@ internal class DefaultKotlinIntrospector(
                         (!isRecursivelyBoundedOnTypeParameters(supertype, typeParameters) ||
                             // first as told with the type parameters of the class standing for any type, which is cheaper
                             (supertypes.canBeCalledOn(extension) &&
-                                supertypes.witnessed(listOfNotNull(receiver) + typeParameters.flatMap { it.upperBounds }, declarations::located)
+                                !namesMissingClass(listOfNotNull(receiver) + typeParameters.flatMap { it.upperBounds }, extension.sourceClass, jvmSignatureOf(extension)) &&
+                                supertypes.witnessed(receiver, typeParameters.flatMap { it.upperBounds }, declarations::located)
                                     .any { witnessed ->
                                         witnessed.canBeCalledOn(extension) &&
                                             supertypes.isDeclarableFor(witnessed.nothingWitnessedIds, receiver, typeParameters)
                                     }).also { if (it) toldCallable += extension })
                 }
             }
+            // one on a supertype of the user's own, whose type parameter of the class stands for any type, see isCallableOn,
+            // but callable only on Nothing given for a type parameter of the class, see witnessed,
+            // standing for no type which can be declared, see isDeclarableFor, like for V : Int? of Box<List<V?>>
+            // the fun <T : List<T?>?> Box<T & Any>.f(), as V would be a List<V?> too, see #386,
+            // while one which no witness makes callable stays listed, as the witnesses are only a few types
+            fun isCallableOnlyOnUndeclarable(receiver: KmType?, typeParameters: List<KmTypeParameter>, canBeCalledOn: ClassSupertypes.() -> Boolean): Boolean {
+                if (kmClass.typeParameters.isEmpty() || receiver == null) return false
+                val isRecursivelyBounded = typeParameters.any { typeParameter ->
+                    typeParameter.upperBounds.any { bound -> !bound.refersOnlyTo { it != typeParameter.id } }
+                }
+                if (!isRecursivelyBounded) return false
+                val callable = supertypes.witnessed(receiver, typeParameters.flatMap { it.upperBounds }, declarations::located)
+                    .filter { it.canBeCalledOn() }
+                return callable.isNotEmpty() && callable.all { it.nothingWitnessedIds.isNotEmpty() } &&
+                    callable.none { supertypes.isDeclarableFor(it.nothingWitnessedIds, receiver, typeParameters) }
+            }
             ListedExtensions(
-                (listed.functions + extensionIndex.listedOnOtherSupertypes(
+                (listed.functions.filterNot { extension ->
+                    (memberName == null || extension.function.name == memberName) && !extension.isBuiltinExtension &&
+                        isCallableOnlyOnUndeclarable(extension.function.receiverParameterType, extension.function.typeParameters) { canCall(extension.function) }
+                } + extensionIndex.listedOnOtherSupertypes(
                     { Triple(it.function.name, it.function.receiverParameterType, it.function.typeParameters) },
+                    { it.function.signature },
                     { canCall(it.function) }
                 )).distinct(),
-                (listed.properties + extensionPropertyIndex.listedOnOtherSupertypes(
+                (listed.properties.filterNot { extension ->
+                    (memberName == null || extension.property.name == memberName) && !extension.isBuiltinExtension &&
+                        isCallableOnlyOnUndeclarable(extension.property.receiverParameterType, extension.property.typeParameters) { canCall(extension.property) }
+                } + extensionPropertyIndex.listedOnOtherSupertypes(
                     { Triple(it.property.name, it.property.receiverParameterType, it.property.typeParameters) },
+                    { it.property.getterSignature },
                     { canCall(it.property) }
                 )).distinct()
             )
@@ -9460,7 +9486,7 @@ internal class DefaultKotlinIntrospector(
                 // given each of the witnesses, see witnessed, also next to a function type, see #376,
                 // the extension callable when kotlinc infers its type parameters for one of them, which is not Nothing, see #366
                 if (!isInferredByCall && isNotModelled && isModelled && isBoundedByEachOther && !isWitness && kmClass.typeParameters.isNotEmpty()) {
-                    val isWitnessedCallable = witnessed(listOf(receiver) + typeParameters.flatMap { it.upperBounds }, located, isFunctionTypeTold = true)
+                    val isWitnessedCallable = witnessed(receiver, typeParameters.flatMap { it.upperBounds }, located, isFunctionTypeTold = true)
                         .any { witnessed ->
                             val witnessedReached = witnessed.types[classReceiverIndexKey(receiver)]
                             // kotlinc failing on one of them, see TypeArgumentsTooDeep, tells nothing of the other ones
@@ -9568,8 +9594,10 @@ internal class DefaultKotlinIntrospector(
      * so that an extension is callable on the class when it is on any of them, like `fun <T : Comparable<T>> Map<T, T>.f()`,
      * whose bound a type parameter of the class standing for any type does not tell, see [listedExtensions].
      * The witnesses are the [WITNESS_TYPES], and the types of classes the bounds of the type parameters of the class,
-     * and the [extensionTypes], the receiver of the extension, and the bounds of its type parameters, refer to,
-     * like `Order` of `Map<T, Order>`, a type before its type arguments, up to [MAX_WITNESS_TYPES],
+     * and the [receiver] of the extension, and the [extensionBounds] of its type parameters, refer to,
+     * like `Order` of `Map<T, Order>`, a type before its type arguments, and the types the receiver takes where a supertype
+     * takes a type parameter of the class, with the types the supertype takes for the type parameters of the extension,
+     * like `List<String>` of `Map<List<T>, T>` for `Map<V, String>`, see #386, up to [MAX_WITNESS_TYPES],
      * each type parameter given each of them, or, when the combinations are more than [MAX_WITNESSES],
      * each of the first ones, as many as can be combined, and all of them the same one of the others,
      * as far as they satisfy the bounds of the type parameters, like only `Nothing` of `V : List<V>`.
@@ -9578,8 +9606,10 @@ internal class DefaultKotlinIntrospector(
      * the platform type `V!`, as kotlinc takes `X!` like `X`, while not all the shapes it takes `Nothing` in for `Nothing!`.
      * Such a platform type is just the witness, like `String`, so that a type which can be called on only
      * as the nullable one is not told.
-     * None, when a supertype, or a bound, refers to a type parameter of an outer class, or to the class itself,
+     * None, when a supertype, or a bound, refers to a type parameter of an outer class, or when a supertype the receiver is matched against,
+     * or any of them for a receiver of a type parameter, refers to the class itself,
      * like `Comparable<K<V>>`, whose supertypes would be the ones of the witness, also of other type arguments, like of `K<Int>`,
+     * while one the receiver is not matched against, like the `Comparable<K<V>>` of `K<V> : Map<V, V>` for `Map<T, T>`, leaves them, see #386,
      * or when a supertype, or a type of the extension, refers to a function type, like `List<(V) -> Unit>`,
      * matched leniently, see [ClassSupertypes.lenientToFunctionTypes], where kotlinc rejects the call,
      * or when the class, or a class a supertype, or a witness, refers to, reaches a Java class annotating
@@ -9590,15 +9620,18 @@ internal class DefaultKotlinIntrospector(
      * not when it is found by no name only because it is a dependency relocated by shading, the metadata keeping its old name.
      * Nor is a type a witness when telling whether it satisfies the bounds fails, see [TypeArgumentsTooDeep], like kotlinc does.
      *
+     * @param receiver the receiver of the extension, and [extensionBounds] the bounds of its type parameters.
      * @param isFunctionTypeTold whether the function types are told, not matched leniently, so that a supertype,
      *   or a type of the extension, referring to one has witnesses too, when only the inference of the call is matched,
      *   see [isCallableOn].
      */
     private fun ClassSupertypes.witnessed(
-        extensionTypes: List<KmType>,
+        receiver: KmType?,
+        extensionBounds: List<KmType>,
         located: (String) -> String,
         isFunctionTypeTold: Boolean = false
     ): List<ClassSupertypes> {
+        val extensionTypes = listOfNotNull(receiver) + extensionBounds
         val typeParameters = kmClass.typeParameters
         val ids = typeParameters.mapTo(HashSet()) { it.id }
         val bounds = typeParameters.flatMap { it.upperBounds }
@@ -9608,14 +9641,47 @@ internal class DefaultKotlinIntrospector(
         fun KmType.refersToAnyFunctionType() = !isFunctionTypeTold && (refersToFunctionType() || refersToSuspendFunctionType())
         val isTold = typeParameters.isNotEmpty() &&
             extensionTypes.none { it.refersToClass() || it.refersToAnyFunctionType() } &&
-            (reached + bounds).all { type -> type.refersOnlyTo { it in ids } && !type.refersToClass() && !type.refersToAnyFunctionType() }
+            (reached + bounds).all { type -> type.refersOnlyTo { it in ids } && !type.refersToAnyFunctionType() } &&
+            // a supertype, or a bound, referring to the class itself, like Comparable<A30<V>>, or V : A29<V>,
+            // only where a receiver of a class is not matched against it, see #386
+            (receiver?.classifier is KmClassifier.Class || (reached + bounds).none { it.refersToClass() }) &&
+            receiver?.let { types[classReceiverIndexKey(it)] }.orEmpty().none { it.refersToClass() }
         if (!isTold) return emptyList()
         // the types of classes referring to no type parameter, each before its type arguments, but no star projection itself,
         // while a type of one, like List<*>, is a type which can be given
         fun KmType.closedTypes(): List<KmType> =
             listOfNotNull(takeIf { it.classifier is KmClassifier.Class && it.outerType == null && it.refersOnlyTo { false } }) +
                 arguments.flatMap { it.type?.closedTypes().orEmpty() }
-        val candidates = (WITNESS_TYPES + (bounds + extensionTypes).flatMap { it.closedTypes() })
+        // the types the receiver of the extension takes where a supertype takes a type parameter of the class,
+        // with the types the supertype takes where the receiver takes a type parameter of the extension substituted for it,
+        // like List<String> of Map<List<T>, T> for V of Map<V, String>, see #386
+        fun receiverDerivedTypes(): List<KmType> {
+            val classReceiver = receiver?.takeIf { it.classifier is KmClassifier.Class } ?: return emptyList()
+            val ofClass = ArrayList<KmType>()
+            val ofExtension = HashMap<Int, KmType>()
+            fun pair(reached: KmType, expected: KmType) {
+                val expectedClassifier = expected.classifier
+                when (val classifier = reached.classifier) {
+                    is KmClassifier.TypeParameter -> if (classifier.id in ids) ofClass += expected
+                    is KmClassifier.Class -> when {
+                        expectedClassifier is KmClassifier.TypeParameter ->
+                            if (reached.refersOnlyTo { false } && !reached.isNullable) ofExtension.putIfAbsent(expectedClassifier.id, reached)
+                        (expectedClassifier as? KmClassifier.Class)?.name == classifier.name && reached.arguments.size == expected.arguments.size ->
+                            reached.arguments.zip(expected.arguments).forEach { (argument, expectedArgument) ->
+                                pair(argument.type ?: return@forEach, expectedArgument.type ?: return@forEach)
+                            }
+                    }
+                    is KmClassifier.TypeAlias -> {}
+                }
+            }
+            types[classReceiverIndexKey(classReceiver)].orEmpty().forEach { pair(it, classReceiver) }
+            if (ofExtension.isEmpty()) return emptyList()
+            return ofClass.filter { it.classifier is KmClassifier.Class }
+                .map { it.substituted(ofExtension) }
+                .filter { it.refersOnlyTo { false } }
+        }
+        // the ones derived from the receiver last, not to push a type of a bound past MAX_WITNESS_TYPES
+        val candidates = (WITNESS_TYPES + (bounds + extensionTypes).flatMap { it.closedTypes() } + receiverDerivedTypes())
             .distinctBy { it.structureKey() }
             .take(MAX_WITNESS_TYPES)
         // told once for these candidates, like the witnesses, as the supertypes they are matched with are the same
@@ -9678,14 +9744,57 @@ internal class DefaultKotlinIntrospector(
     }
 
     /**
+     * Whether the [types] of an extension, its receiver, and the bounds of its type parameters, name a class missing from the classpath,
+     * like the `Absent` of `fun <T : Comparable<T>, A : Absent> Map<T, T>.f()`, which kotlinc cannot access, so that the extension
+     * cannot be called, also with a witness, see [ClassSupertypes.witnessed], when the class the witnesses are given for does not name it, see #386,
+     * told by the generic signature of the extension's own method of its [sourceClass], of the JVM name and the descriptor of its [jvmSignature],
+     * like of an `@JvmName` one, read from the class file, not by the other methods of the facade,
+     * which may name another missing class, an optional dependency, while the extension names a relocated one,
+     * as a class not found by the name of the metadata might be relocated with the extension, like by shading, which does not rewrite the metadata,
+     * and none, when no method of the class is the extension's own.
+     */
+    private fun namesMissingClass(types: List<KmType>, sourceClass: String, jvmSignature: JvmMethodSignature?): Boolean {
+        fun KmType.classNames(): List<String> =
+            listOfNotNull((classifier as? KmClassifier.Class)?.name?.takeIf { it !in builtinClasses }) +
+                arguments.flatMap { it.type?.classNames().orEmpty() } + outerType?.classNames().orEmpty()
+        val names = types.flatMapTo(LinkedHashSet()) { it.classNames() }
+        if (names.all { findClassByMetadataName(it) != null }) return false
+        if (jvmSignature == null) return false
+        val bytes = readClassBytes(sourceClass) ?: return false
+        // read from the class file, as reflecting the methods of the facade loads the classes of all of them
+        val methods = ArrayList<Triple<String, String, String?>>()
+        try {
+            classReader(bytes).accept(object : ClassVisitor(Opcodes.ASM9) {
+                override fun visitMethod(
+                    access: Int, name: String, descriptor: String, signature: String?, exceptions: Array<out String>?
+                ): MethodVisitor? {
+                    if (name == jvmSignature.name) methods += Triple(name, descriptor, signature)
+                    return null
+                }
+            }, ClassReader.SKIP_CODE or ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES)
+        } catch (_: Exception) {
+            return false
+        }
+        // the one of the descriptor of the metadata, or, as relocating rewrites the descriptor, the only one of as many parameters
+        val parameterCount = AsmType.getArgumentTypes(jvmSignature.descriptor).size
+        val method = methods.singleOrNull { it.second == jvmSignature.descriptor }
+            ?: methods.singleOrNull { AsmType.getArgumentTypes(it.second).size == parameterCount }
+            ?: return false
+        val classNames = signatureClassNames(method.third ?: method.second) ?: return false
+        return classNames.any { findClassByBinaryName(it.replace('/', '.')) == null }
+    }
+
+    /**
      * Whether a type can be declared for each type parameter of the class of the given [ids], given `Nothing` as a witness,
      * see [witnessed], which stands for such a type, as `Nothing` itself does not count as a type argument of the class, see #366,
      * like `interface X : List<X>, Comparable<X>` for `V` of `Map<V, V>` as a `Map<T, List<T>>` of `T : Comparable<T>`:
      * as far as the classes it is a subtype of tell, the ones of the bounds of the type parameter,
      * and the ones the [receiver] of the extension takes in its positions, or the bounds of the type parameters of the extension there,
+     * also the bounds of a type parameter of the extension a type of the class stands for, like `List<T?>?` of `T : List<T?>?`
+     * for the `List<V?>` of `Box<List<V?>>` as a `Box<T & Any>`, so that `V` is a `List<V?>` too, see #386,
      * like `List`, and `Comparable`, of `Map<T, List<T>>`, also through the supertypes of the classes of the supertypes
      * of the class, like `List<V>` of `JavaList<V>` of `List<JavaList<V>>` for `List<List<T>>`,
-     * no final class which is no subclass of the others,
+     * no final class which is no subclass of the others, nor a class no type of another module can extend, see [isOnlyDeclaredOtherThan],
      * nor two classes which are not interfaces, neither of them a subclass of the other, see [isEmptyIntersectionOfClasses],
      * nor a `CharSequence`, and a `List` of an element which is no supertype of `Char`, like of itself,
      * whose `get(index: Int)` clash, like for `V : CharSequence` of `Map<V, V>` as a `Map<T, List<T>>`,
@@ -9700,6 +9809,8 @@ internal class DefaultKotlinIntrospector(
         val required = ids.associateWithTo(HashMap()) { id ->
             Required(receiverBoundTypes(id, kmClass.typeParameters).mapTo(ArrayList()) { it to false })
         }
+        // the types of the class matched against each type parameter of the extension, walked against its bounds once each
+        val boundsWalked = HashSet<String>()
         fun walk(reached: KmType, expected: KmType) {
             when (val classifier = reached.classifier) {
                 is KmClassifier.TypeParameter -> {
@@ -9714,6 +9825,15 @@ internal class DefaultKotlinIntrospector(
                     }
                 }
                 is KmClassifier.Class -> {
+                    // a type of the class standing for a type parameter of the extension, matched against its bounds in turn,
+                    // like List<V?> of Box<List<V?>> for T of Box<T & Any>, against List<T?>? of T : List<T?>?, so that V is a List too, see #386
+                    val expectedId = (expected.classifier as? KmClassifier.TypeParameter)?.id
+                    if (expectedId != null) {
+                        if (typeParameters.any { it.id == expectedId } && boundsWalked.add("$expectedId ${reached.structureKey()}")) {
+                            receiverBoundTypes(expectedId, typeParameters).forEach { walk(reached, it) }
+                        }
+                        return
+                    }
                     val expectedName = (expected.classifier as? KmClassifier.Class)?.name ?: return
                     when {
                         // its supertype of the class of the expected type, like List<V> of JavaList<V> for List<T>
@@ -9779,7 +9899,7 @@ internal class DefaultKotlinIntrospector(
             val supertypeArguments = requiring.types.flatMap { (type, isOfExtension) ->
                 supertypeArgumentsOf(type, if (isOfExtension) requiring.aliases else setOf(id))
             }
-            isEmptyIntersectionOfClasses(names) ||
+            isEmptyIntersectionOfClasses(names) || names.any { isOnlyDeclaredOtherThan(it, names) } ||
                 supertypeArguments.filter { (_, arguments) -> arguments.isNotEmpty() }
                     .groupBy({ it.first }, { it.second }).values.any { it.distinct().size > 1 } ||
                 (names.any { isOf(it, CHAR_SEQUENCE_CLASS_NAME) } && requiring.types.any { (type, isOfExtension) ->
@@ -9961,6 +10081,30 @@ internal class DefaultKotlinIntrospector(
                 is KmClassifier.TypeParameter -> receiverBoundTypes(classifier.id, typeParameters, visited)
                 is KmClassifier.TypeAlias -> emptyList()
             }
+        }
+    }
+
+    /**
+     * Whether no type which can be declared outside the module of the Kotlin class of the given [metadataName] is a subtype of it,
+     * and of all the classes of the [names], but the ones its module declares, which are told the same way: the class itself,
+     * unless it is a subtype of all of them, nor a class extending it, like of a sealed class, or interface,
+     * as kotlinc rejects extending one from another module, but through its sealed subclasses,
+     * nor of a final class, an enum class, an object, nor of a class whose constructors are all private, see #386,
+     * unless it declares nested classes, which might extend it, while one whose constructors are internal is not told,
+     * as a public open subclass its module declares, which no index tells, makes it extendable, like `abstract class Sub : Base()`,
+     * as far as the classes can be loaded, while a final class of the [names] which is no subtype of the others is told
+     * by [isEmptyIntersectionOfClasses] anyway.
+     */
+    private fun ClassSupertypes.isOnlyDeclaredOtherThan(metadataName: String, names: Set<String>, depth: Int = 0): Boolean {
+        if (names.all { isSubclass(metadataName, it) }) return false
+        val declared = findClassByMetadataName(metadataName)?.kmClass ?: return false
+        return when {
+            declared.modality == Modality.SEALED ->
+                depth < MAX_SEALED_DEPTH && declared.sealedSubclasses.all { isOnlyDeclaredOtherThan(it, names, depth + 1) }
+            declared.kind == ClassKind.INTERFACE || declared.kind == ClassKind.ANNOTATION_CLASS -> false
+            declared.kind != ClassKind.CLASS || declared.modality == Modality.FINAL -> true
+            else -> declared.nestedClasses.isEmpty() && declared.constructors.isNotEmpty() &&
+                declared.constructors.all { it.visibility in PRIVATE_VISIBILITIES }
         }
     }
 
@@ -17060,6 +17204,9 @@ private const val SELF_TYPE_ARGUMENT = "<self>"
 
 // the most combinations of the types given for the type parameters of a class, see WITNESS_TYPES
 private const val MAX_WITNESSES = 64
+
+// the most levels of sealed subclasses walked, telling whether a type extending a sealed class can be declared, see isOnlyDeclaredOtherThan
+private const val MAX_SEALED_DEPTH = 8
 
 // a type compared by its identity, see ReceiverMatcher.Unifier.isBoundedConsistently
 private class IdentityKey(val type: KmType) {

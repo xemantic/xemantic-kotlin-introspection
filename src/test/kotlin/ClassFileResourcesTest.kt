@@ -100,4 +100,37 @@ class ClassFileResourcesTest {
         assert(name == ".shaded/Outer\$f\$Local")
     }
 
+    @Test
+    fun `should tell classes of signature naming inner class of generic outer class by binary name`() {
+        // given
+        // fun <T : Comparable<T>, A : o.ext.Event> Map<T, T>.f(x: Outer<String>.Inner, y: Outer<List<String>>.Inner, z: Array<Outer<String>.Inner>), see #386
+        val signature = "<T::Ljava/lang/Comparable<TT;>;A:Lo/ext/Event;>(Ljava/util/Map<TT;TT;>;" +
+            "Lp/Outer<Ljava/lang/String;>.Inner;Lp/Outer<Ljava/util/List<Ljava/lang/String;>;>.Inner;[Lp/Outer<Ljava/lang/String;>.Inner;)V"
+
+        // when
+        val classNames = signatureClassNames(signature)
+
+        // then - the type arguments of the outer class do not take the place of its name
+        assert(
+            classNames == setOf(
+                "java/lang/Comparable", "o/ext/Event", "java/util/Map", "p/Outer", "java/lang/String", "p/Outer\$Inner", "java/util/List"
+            )
+        )
+    }
+
+    @Test
+    fun `should tell classes of signature naming inner class of generic outer class in type argument`() {
+        // given
+        // a Map<Outer<String>.Inner, Outer<String>.Inner.Deeper>
+        val signature = "(Ljava/util/Map<Lp/Outer<Ljava/lang/String;>.Inner;Lp/Outer<Ljava/lang/String;>.Inner.Deeper;>;)V"
+
+        // when
+        val classNames = signatureClassNames(signature)
+
+        // then
+        assert(
+            classNames == setOf("java/util/Map", "p/Outer", "java/lang/String", "p/Outer\$Inner", "p/Outer\$Inner\$Deeper")
+        )
+    }
+
 }
