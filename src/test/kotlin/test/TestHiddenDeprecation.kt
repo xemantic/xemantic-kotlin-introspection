@@ -878,6 +878,54 @@ interface HiddenGenericPut<T> {
 
 abstract class PrimitiveJavaHiddenGenericPutJoin : com.xemantic.kotlin.introspection.test.other.JavaPrimitivePut(), HiddenGenericPut<Int>
 
+// the put(Integer) of the Java class overrides the hidden put(t: T) of HiddenGenericPut<Integer>, a synthetic method of no generic signature,
+// and the visible one of GenericPut<Integer>, both given a platform type, so that it takes Int!
+abstract class BoxedJavaPutOverHiddenAndGenericPutImpl : com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOverHiddenAndGenericPut()
+
+fun BoxedJavaPutOverHiddenAndGenericPutImpl.putNull(): String = put(null)
+
+interface HiddenNullableTypeGenericPut<T> {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    fun put(t: T?): String
+}
+
+// the put(Integer) of the Java class overrides the hidden put(t: T?), taking Int? whatever T is given,
+// and the put(t: T) of GenericPut<@NotNull Integer>, taking Int, which disagree, so that it takes Int!
+abstract class BoxedJavaPutOverHiddenNullableTypeAndNotNullGenericPutImpl :
+    com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOverHiddenNullableTypeAndNotNullGenericPut()
+
+class BoxedJavaPutOverHiddenNullableTypeAndNotNullGenericPutConcrete : BoxedJavaPutOverHiddenNullableTypeAndNotNullGenericPutImpl()
+
+fun BoxedJavaPutOverHiddenNullableTypeAndNotNullGenericPutImpl.putNull(): String = put(null)
+
+// the same, the put(@NotNull Integer) of the Java class disagreeing with the hidden put(t: T?)
+abstract class NotNullBoxedJavaPutOverHiddenNullableTypeAndNotNullGenericPutImpl :
+    com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPutOverHiddenNullableTypeAndNotNullGenericPut()
+
+fun NotNullBoxedJavaPutOverHiddenNullableTypeAndNotNullGenericPutImpl.putNull(): String = put(null)
+
+// a Kotlin class joining the hidden put(t: T?) with the put(t: T) of GenericPut, one member there,
+// which the put(@NotNull Integer) of a Java subclass overrides, taking Int as annotated
+abstract class HiddenNullableTypeGenericPutJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaIntegerGenericPutClass(), GenericPut<Int>, HiddenNullableTypeGenericPut<Int>
+
+abstract class NotNullBoxedJavaPutBelowHiddenNullableTypeJoinImpl :
+    com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPutBelowHiddenNullableTypeJoin()
+
+// a Kotlin class joining the put(t: T) of GenericPut<Integer>, given by its Java superclass, with the ones of GenericCharSequencePut<Int>
+// and of the hidden HiddenGenericPut<Int>, one member there, which the put(@NotNull Integer) of a Java subclass implements
+abstract class CharSequenceHiddenGenericPutJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaIntegerGenericPutClass(), GenericCharSequencePut<Int>, HiddenGenericPut<Int>
+
+abstract class NotNullBoxedJavaPutBelowCharSequenceHiddenJoinImpl :
+    com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPutBelowCharSequenceHiddenJoin()
+
+class NotNullBoxedJavaPutBelowCharSequenceHiddenJoinConcrete : NotNullBoxedJavaPutBelowCharSequenceHiddenJoinImpl()
+
+// the same next to GenericPut<@NotNull Integer> too, which makes the put(Integer) take Int
+abstract class BoxedJavaPutOverHiddenOpenGenericPutAndNotNullIntegerPutImpl :
+    com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOverHiddenOpenGenericPutAndNotNullIntegerPut()
+
 abstract class HiddenOpenGenericPut<T> {
     @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
     open fun put(t: T): String = ""
@@ -903,6 +951,13 @@ abstract class BoxedJavaPutOverHiddenAbstractAndNotNullGenericPutDefaultJoin :
     com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOverHiddenAbstractAndNotNullGenericPut(), GenericDefaultPut<Int>
 
 fun BoxedJavaPutOverHiddenAbstractAndNotNullGenericPutDefaultJoin.putNamed(): String = put(t = 1)
+
+// the put(Integer) of the Java class, taking Int!, a JVM method of its own next to the put(t: T) of GenericDefaultPut<Int>,
+// put(Object), two members, which a concrete subclass cannot join, "inherited platform declarations clash"
+abstract class BoxedJavaPutOverHiddenOpenRenamedAndNullableGenericPutDefaultJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOverHiddenOpenRenamedAndNullableGenericPut(), GenericDefaultPut<Int>
+
+fun BoxedJavaPutOverHiddenOpenRenamedAndNullableGenericPutDefaultJoin.putNull(): String = put(null)
 
 // one member implemented by the put(Integer) of the Java class, next to a hidden one
 abstract class BoxedJavaPutOverHiddenNullableAndRenamedGenericPutImpl :

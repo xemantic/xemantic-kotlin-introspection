@@ -1303,6 +1303,133 @@ abstract class BoxedJavaPutOfNotNullAndNullableNullMarkedMidIntegerPutImpl :
 
 fun BoxedJavaPutOfNotNullAndNullableNullMarkedMidIntegerPutImpl.putNull(): String = put(t = null)
 
+abstract class StringJavaPutOfStringPutAndNullableStringImpl :
+    com.xemantic.kotlin.introspection.test.other.JavaStringPutOfStringPutAndNullableString()
+
+fun StringJavaPutOfStringPutAndNullableStringImpl.putNull(): String = put(t = null)
+
+interface GenericGet<T> {
+    fun get(t: T): T
+}
+
+// the get(String) of the Java class is an operator for the compiler, though the get(t: T) of GenericGet is not
+abstract class StringJavaGetImpl : com.xemantic.kotlin.introspection.test.other.JavaStringGet()
+
+fun StringJavaGetImpl.getIndexed(): String = this[""]
+
+interface GenericTypedReturnPut<T, R> {
+    fun put(t: T): R
+}
+
+// the put(t: T): R of GenericTypedReturnPut<Int, String>, declared first, returning String, like the put(t: T) of GenericPut<Integer>,
+// is the one the Kotlin class joins them into, taking Int, which the put(Integer) of a Java subclass does not override
+abstract class TypedReturnPutOpenGenericPutJoin :
+    GenericTypedReturnPut<Int, String>, com.xemantic.kotlin.introspection.test.other.JavaIntegerPutInterface
+
+abstract class BoxedJavaPutBelowTypedReturnPutOpenGenericPutJoinImpl :
+    com.xemantic.kotlin.introspection.test.other.JavaBoxedPutBelowTypedReturnPutOpenGenericPutJoin()
+
+interface IntReturnPut {
+    fun put(t: Int): Int
+}
+
+// the put(t: T): R of GenericTypedReturnPut<Integer, Integer>, returning Int!, given by a Java class, declared first,
+// is less specific than the put(t: Int): Int of IntReturnPut, the one the Kotlin class joins them into
+abstract class TypedReturnIntReturnPutJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaIntegerIntegerTypedReturnPut(), IntReturnPut
+
+abstract class BoxedJavaPutBelowTypedReturnIntReturnPutJoinImpl :
+    com.xemantic.kotlin.introspection.test.other.JavaBoxedPutBelowTypedReturnIntReturnPutJoin()
+
+interface NullableTypeParameterPut<T> {
+    fun put(t: T?): String
+}
+
+// one member of the put(t: T?) of NullableTypeParameterPut<Integer> and the put(t: T) of GenericPut<@NotNull Integer>,
+// which put(Integer) implements, taking Int!
+abstract class BoxedJavaPutOfNullableTypeParameterPutAndNotNullIntegerImpl :
+    com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOfNullableTypeParameterPutAndNotNullInteger()
+
+fun BoxedJavaPutOfNullableTypeParameterPutAndNotNullIntegerImpl.putNull(): String = put(null)
+
+// the put(t: T): R a Java interface gives Integer and String, returning String!, is less specific than the put(t: T) of GenericPut<Int>,
+// returning String, the one the Kotlin class joins them into, taking Int, also declared after it
+abstract class JavaTypedReturnPutIntPutJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaIntegerStringTypedReturnPutInterface, GenericPut<Int>
+
+abstract class BoxedJavaPutBelowJavaTypedReturnPutIntPutJoinImpl :
+    com.xemantic.kotlin.introspection.test.other.JavaBoxedPutBelowJavaTypedReturnPutIntPutJoin()
+
+// K2 groups the members around the put(t: T) of GenericPut<@Nullable Integer>, declared first, taking Int?,
+// which the one of OpenGenericPut<Integer>, taking Int!, joins, unlike the put(t: T): R of GenericTypedReturnPut<Int, String>,
+// taking Int, a member apart, which the put(Integer) of a Java subclass does not override
+abstract class NullableOpenTypedReturnPutJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaNullableIntegerPutInterface,
+    com.xemantic.kotlin.introspection.test.other.JavaIntegerOpenGenericPut(),
+    GenericTypedReturnPut<Int, String>
+
+abstract class BoxedJavaPutBelowNullableOpenTypedReturnPutJoinImpl :
+    com.xemantic.kotlin.introspection.test.other.JavaBoxedPutBelowNullableOpenTypedReturnPutJoin()
+
+// the put(t: T) of GenericCharSequencePut reached along two paths, given Integer by Java first, and Int by Kotlin,
+// next to the put(t: T) of GenericPut<@NotNull Integer>
+abstract class CharSequencePutTwiceNotNullIntegerJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaIntegerCharSequencePut(), GenericCharSequencePut<Int>,
+    com.xemantic.kotlin.introspection.test.other.JavaNotNullIntegerPutInterface
+
+abstract class NotNullBoxedJavaPutBelowCharSequencePutTwiceJoinImpl :
+    com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPutBelowCharSequencePutTwiceJoin()
+
+class NotNullBoxedJavaPutBelowCharSequencePutTwiceJoinConcrete : NotNullBoxedJavaPutBelowCharSequencePutTwiceJoinImpl()
+
+// a Kotlin interface giving Int, not nullable, to the generic JavaGenericMidPut<T>
+interface IntGenericMidPut : com.xemantic.kotlin.introspection.test.other.JavaGenericMidPut<Int>
+
+// a generic Kotlin interface passing its type parameter on to JavaGenericMidPut<T> as nullable
+interface NullableTypeParameterMidPut<T> : com.xemantic.kotlin.introspection.test.other.JavaGenericMidPut<T?>
+
+interface IntNullableTypeParameterMidPut : NullableTypeParameterMidPut<Int>
+
+abstract class BoxedJavaPutOfIntMidAndNotNullIntegerPutImpl :
+    com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOfIntMidAndNotNullIntegerPut()
+
+abstract class NotNullBoxedJavaPutOfNullableTypeParameterMidAndNotNullIntegerPutImpl :
+    com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPutOfNullableTypeParameterMidAndNotNullIntegerPut()
+
+fun NotNullBoxedJavaPutOfNullableTypeParameterMidAndNotNullIntegerPutImpl.putNull(): String = put(t = null)
+
+abstract class BoxedJavaPutOfNullableIntegerNotNullMidPutImpl :
+    com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOfNullableIntegerNotNullMidPut()
+
+// the same through the superclass
+abstract class BoxedJavaPutOfNullableIntegerNotNullMidBaseImpl :
+    com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOfNullableIntegerNotNullMidBase()
+
+// one member of the put(Integer) of JavaBoxedPutOverOpenGenericPut, taking Int!, and of the put(t: T) of GenericPut<@NotNull Integer>,
+// typed like the former, declared first
+abstract class BoxedJavaPutOverOpenGenericPutNotNullIntegerJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOverOpenGenericPut(),
+    com.xemantic.kotlin.introspection.test.other.JavaNotNullIntegerPutInterface
+
+abstract class BoxedJavaPutBelowOpenGenericPutNotNullIntegerJoinImpl :
+    com.xemantic.kotlin.introspection.test.other.JavaBoxedPutBelowOpenGenericPutNotNullIntegerJoin()
+
+class BoxedJavaPutBelowOpenGenericPutNotNullIntegerJoinConcrete : BoxedJavaPutBelowOpenGenericPutNotNullIntegerJoinImpl()
+
+fun BoxedJavaPutBelowOpenGenericPutNotNullIntegerJoinImpl.putNull(): String = put(null)
+
+// the put(t: T) of OpenGenericPut<Integer>, given by a Java class, taking Int!, joined with the put(t: T) of GenericPut<Int>,
+// given the primitive type by the Kotlin class itself, one member typed like the former, declared first
+abstract class BoxedJavaPutOverOpenGenericPutIntPutJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaIntegerOpenGenericPut(), GenericPut<Int>
+
+abstract class BoxedJavaPutBelowOpenGenericPutIntPutJoinImpl :
+    com.xemantic.kotlin.introspection.test.other.JavaBoxedPutBelowOpenGenericPutIntPutJoin()
+
+class BoxedJavaPutBelowOpenGenericPutIntPutJoinConcrete : BoxedJavaPutBelowOpenGenericPutIntPutJoinImpl()
+
+fun BoxedJavaPutBelowOpenGenericPutIntPutJoinImpl.putNull(): String = put(t = null)
+
 interface GenericRenamedPut<T> {
     fun put(q: T): String
 }
