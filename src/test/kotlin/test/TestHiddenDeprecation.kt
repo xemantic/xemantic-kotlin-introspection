@@ -898,6 +898,12 @@ class BoxedJavaPutOverHiddenNullableTypeAndNotNullGenericPutConcrete : BoxedJava
 
 fun BoxedJavaPutOverHiddenNullableTypeAndNotNullGenericPutImpl.putNull(): String = put(null)
 
+// the same, the put(@NotNull Integer) of the Java class disagreeing with the hidden put(t: T?)
+abstract class NotNullBoxedJavaPutOverHiddenNullableTypeAndNotNullGenericPutImpl :
+    com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPutOverHiddenNullableTypeAndNotNullGenericPut()
+
+fun NotNullBoxedJavaPutOverHiddenNullableTypeAndNotNullGenericPutImpl.putNull(): String = put(null)
+
 // the same next to GenericPut<@NotNull Integer> too, which makes the put(Integer) take Int
 abstract class BoxedJavaPutOverHiddenOpenGenericPutAndNotNullIntegerPutImpl :
     com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOverHiddenOpenGenericPutAndNotNullIntegerPut()

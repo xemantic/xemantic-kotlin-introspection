@@ -24574,6 +24574,16 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve Java member taking boxed type annotated not null overriding hidden member taking nullable type parameter as taking platform type`() {
+        // the hidden put(t: T?) takes Int?, disagreeing with the @NotNull of the Java method, so that it takes Int!
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NotNullBoxedJavaPutOverHiddenNullableTypeAndNotNullGenericPutImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NotNullBoxedJavaPutOverHiddenNullableTypeAndNotNullGenericPutImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPutOverHiddenNullableTypeAndNotNullGenericPut
+            override fun put(t: Int?): String
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve Java member taking boxed type overriding hidden member taking nullable type parameter and Kotlin generic one given boxed type annotated not null as taking platform type`() {
         // the hidden put(t: T?) takes Int? whatever T is given, disagreeing with the Int of GenericPut<@NotNull Integer>,
         // so that put(Integer) takes Int!, and put(null) compiles

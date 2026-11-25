@@ -953,15 +953,28 @@ private fun joinPicks(method: Method, overridden: List<Method>): List<Method> {
  */
 private fun typeVariableParameterOf(method: Method, position: Int): TypeVariable<*>? {
     (method.genericParameterTypes.getOrNull(position) as? TypeVariable<*>)?.let { return it }
+    // but not one taking it as nullable, like `put(t: T?)`, which accepts null whatever the type argument, see takesNullableTypeParameter
+    val type = syntheticParameterType(method, position)?.takeIf { !it.isNullable }
+    val id = (type?.classifier as? KmClassifier.TypeParameter)?.id ?: return null
+    val index = readKmClass(method.declaringClass)?.typeParameters?.indexOfFirst { it.id == id } ?: return null
+    return method.declaringClass.typeParameters.getOrNull(index)
+}
+
+/**
+ * Whether the value parameter at the [position] of the [method] of a Kotlin class, deprecated as hidden, a synthetic method,
+ * takes a type parameter of its class as nullable, like the `put(t: T?)` of `interface HN<T>`, which accepts null
+ * whatever the type argument, see [typeVariableParameterOf].
+ */
+private fun takesNullableTypeParameter(method: Method, position: Int): Boolean =
+    syntheticParameterType(method, position)?.let { it.isNullable && it.classifier is KmClassifier.TypeParameter } == true
+
+// the type of the value parameter at the position of a synthetic method of a Kotlin class, as its metadata tells
+private fun syntheticParameterType(method: Method, position: Int): KmType? {
     if (!method.isSynthetic || !method.declaringClass.isKotlinClass) return null
     val kmClass = readKmClass(method.declaringClass) ?: return null
     val descriptor = AsmType.getMethodDescriptor(method)
     val function = kmClass.functions.firstOrNull { it.name == method.name && it.signature?.descriptor == descriptor } ?: return null
-    // but not one taking it as nullable, like `put(t: T?)`, which accepts null whatever the type argument
-    val type = function.valueParameters.getOrNull(position)?.type?.takeIf { function.receiverParameterType == null && !it.isNullable }
-    val id = (type?.classifier as? KmClassifier.TypeParameter)?.id ?: return null
-    val index = kmClass.typeParameters.indexOfFirst { it.id == id }
-    return method.declaringClass.typeParameters.getOrNull(index)
+    return function.valueParameters.getOrNull(position)?.type?.takeIf { function.receiverParameterType == null }
 }
 
 /**
@@ -1029,6 +1042,7 @@ private fun clashingNullabilityPositions(method: Method): Set<Int> {
             (nullability.types[position] ?: false.takeIf { nullability.isMarkedNotNull(position) })?.let { nullabilities += it }
         }
         overriddenKotlin.forEach { inherited ->
+            if (takesNullableTypeParameter(inherited, position)) nullabilities += true
             val type = typeVariableParameterOf(inherited, position)
             val typeClass = type?.genericDeclaration as? Class<*> ?: return@forEach
             nullabilities += givenNullabilities(typeArgumentGivers(declaringClass, typeClass, typeClass.typeParameters.indexOf(type)))
