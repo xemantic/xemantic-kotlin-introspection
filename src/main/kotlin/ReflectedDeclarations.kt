@@ -456,6 +456,7 @@ internal fun parseKotlinMetadata(metadata: Metadata): KotlinClassMetadata? = try
 /**
  * Marks the type arguments of this supertype of the Java class [type], of the class [supertype], also the nested ones,
  * nullable, or not, as annotated, see [JavaClassNullability.supertypeArguments], like `Base<String?>` of `Base<@Nullable String>`,
+ * a type variable not nullable definitely, like `Base<V & Any>` of `Base<@NotNull V>`, a class marked, see [JAVA_NOT_NULL_MARKER],
  * which the compiler substitutes for the type parameters of the supertype in the members inherited from it,
  * while the ones not annotated are told by the class giving them, see [givesPlatformTypeArguments].
  */
@@ -464,7 +465,10 @@ private fun KmType.enhanceSupertypeArguments(type: Class<*>, supertype: Class<*>
     // by the indices of the supertypes in the class file, the superclass at -1, see TypeReference.getSuperTypeIndex
     val index = if (type.superclass == supertype) -1 else type.interfaces.indexOf(supertype).takeIf { it >= 0 } ?: return
     javaNullabilities.get(type).supertypeArguments[index]?.forEach { (path, isNullable) ->
-        nestedType(path)?.markNullable(isNullable)
+        nestedType(path)?.let { nested ->
+            nested.markNullable(isNullable, isDefinitelyNonNull = !isNullable)
+            if (!isNullable && nested.classifier is KmClassifier.Class) nested.annotations += KmAnnotation(JAVA_NOT_NULL_MARKER, emptyMap())
+        }
     }
 }
 
@@ -694,6 +698,17 @@ internal const val JAVA_ERASURE_MARKER = "com/xemantic/kotlin/introspection/Java
  * Whether this type is an erased type argument of a raw Kotlin supertype, see [JAVA_ERASURE_MARKER].
  */
 internal val KmType.isJavaErasure: Boolean get() = annotations.any { it.className == JAVA_ERASURE_MARKER }
+
+/**
+ * The marker of a type argument of a class, of a supertype of a Java class, annotated as not nullable, see [enhanceSupertypeArguments],
+ * never rendered, not a platform type, like the `String` of `Base<@NotNull String>`, see #382.
+ */
+internal const val JAVA_NOT_NULL_MARKER = "com/xemantic/kotlin/introspection/JavaNotNull"
+
+/**
+ * Whether this type is a type argument of a supertype of a Java class annotated as not nullable, see [JAVA_NOT_NULL_MARKER].
+ */
+internal val KmType.isJavaNotNull: Boolean get() = annotations.any { it.className == JAVA_NOT_NULL_MARKER }
 
 /**
  * The marker of an erased type argument of a raw Kotlin supertype of a Java class not told exactly, see [eraseRawKotlinArguments],

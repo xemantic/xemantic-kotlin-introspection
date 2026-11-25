@@ -876,6 +876,44 @@ fun NullableSpecificReceiver?.describeNullable(x: Int): Int = 1
 
 fun NullableGeneralReceiver?.describeNullable(x: Int): Int = 0
 
+// extensions on type parameters, never called next to the more specific ones of the same package, see #382,
+// like genericSpecific.boundedBySubclass() of fun <T : GenericSpecificReceiver> T.boundedBySubclass(),
+// see TestUnboundedReceiverExtensions for the ones on an unbounded type parameter,
+// also instead of one on a supertype, like genericSpecific.onSupertype(),
+// while one on a class is called instead of one on a type parameter, when neither of them is more specific,
+// like genericSpecific.nextToNullable() of fun GenericSpecificReceiver?.nextToNullable(),
+// or genericSpecific.nextToInterface() of fun GenericOtherReceiver.nextToInterface(),
+// and a nullable value calls the only one taking it, like nullableGenericSpecific.nullableBoundedBySubclass()
+interface GenericOtherReceiver
+
+open class GenericGeneralReceiver
+
+open class GenericSpecificReceiver : GenericGeneralReceiver(), GenericOtherReceiver
+
+fun <T : GenericGeneralReceiver> T.boundedBySubclass(): Int = 0
+
+fun <T : GenericSpecificReceiver> T.boundedBySubclass(): Int = 1
+
+fun <T : GenericGeneralReceiver?> T.nullableBoundedBySubclass(): Int = 0
+
+fun <T : GenericSpecificReceiver> T.nullableBoundedBySubclass(): Int = 1
+
+fun GenericGeneralReceiver.onSupertype(): Int = 0
+
+fun <T : GenericSpecificReceiver> T.onSupertype(): Int = 1
+
+fun <T : GenericGeneralReceiver> T.nextToNullable(): Int = 0
+
+fun GenericSpecificReceiver?.nextToNullable(): Int = 1
+
+fun <T : GenericGeneralReceiver> T.nextToInterface(): Int = 0
+
+fun GenericOtherReceiver.nextToInterface(): Int = 1
+
+val <T : GenericGeneralReceiver> T.genericRank: Int get() = 0
+
+val <T : GenericSpecificReceiver> T.genericRank: Int get() = 1
+
 // infix extensions on the supertype of a companion object, called only as InfixMembersCompanionHolder invoked 1,
 // or optional 1, next to its members called for InfixMembersCompanionHolder.invoked(1), or optional(other = 1):
 // a property of a type with an operator invoke, and a function taking one more parameter, which is optional,

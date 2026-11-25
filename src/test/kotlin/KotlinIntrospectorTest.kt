@@ -2620,6 +2620,26 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve class without extensions on type parameters shadowed by more specific ones`() {
+        // genericSpecific.boundedBySubclass(), .onSupertype() and .genericRank call the ones
+        // of the more specific receivers, while .nextToNullable() and .nextToInterface() call the ones on a class,
+        // which kotlinc prefers to the ones on a type parameter when neither of them is more specific,
+        // and nullableGenericSpecific.nullableBoundedBySubclass() the only one taking a nullable receiver
+        resolver.resolve("com.xemantic.kotlin.introspection.test.GenericSpecificReceiver", pageSize = 20) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.GenericSpecificReceiver [page 1/1]
+            open class GenericSpecificReceiver : GenericGeneralReceiver, GenericOtherReceiver
+            // from com.xemantic.kotlin.introspection.test
+            val <T : GenericSpecificReceiver> T.genericRank: Int
+            fun <T : GenericSpecificReceiver> T.boundedBySubclass(): Int
+            fun GenericOtherReceiver.nextToInterface(): Int
+            fun GenericSpecificReceiver?.nextToNullable(): Int
+            fun <T : GenericSpecificReceiver> T.nullableBoundedBySubclass(): Int
+            fun <T : GenericGeneralReceiver?> T.nullableBoundedBySubclass(): Int
+            fun <T : GenericSpecificReceiver> T.onSupertype(): Int
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve object with extensions on nullable receivers read on its nullable value`() {
         // a nullable value of the object, like nullableObject.onlyGeneralNullable, or nullableObject.member, reads the extensions on the nullable
         // receivers, which NullableSpecificObject.onlyGeneralNullable, and NullableSpecificObject.member, do not
@@ -14123,6 +14143,21 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve interface of pair of same type parameter without extensions on pairs of JDK class and another collection`() {
+        // V is no java.util.ArrayList<T>, nor java.util.List<T>, also a MutableList<T>, or a List<T>, see #382,
+        // while V of java.util.List<String> is both java.util.List<T>
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.unify.UnifiedSame",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".unifiedArrayListAndMutableList()" in it })
+            have(lines().none { ".unifiedJdkAndMutableLists()" in it })
+            have(lines().none { ".unifiedJdkAndReadOnlyLists()" in it })
+            have(lines().any { ".unifiedJdkLists()" in it })
+        }
+    }
+
+    @Test
     fun `should resolve interface of Java pair of same platform list with extension on pair of mutable and read-only lists`() {
         // the (Mutable)List<V!>! of Java is either of them
         resolver.resolve(
@@ -14135,6 +14170,57 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve interface of Java pair of type argument annotated nullable without extensions on pairs of not nullable first type`() {
+        // the UnifiedPair<V?, V!> of UnifiedPair<@Nullable V, V> is no UnifiedPair<String, String>, see #382
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.unify.UnifiedJavaNullableFirstPair",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".unifiedStringPair()" in it })
+            have(lines().any { ".unifiedNullableStringFirst()" in it })
+            have(lines().any { ".unifiedNullable()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of Java pair of type argument annotated not nullable without extensions on pairs of nullable first type`() {
+        // the UnifiedPair<V & Any, V!> of UnifiedPair<@NotNull V, V> is no UnifiedPair<String?, String>, nor UnifiedPair<T?, T>, see #382
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.unify.UnifiedJavaNotNullFirstPair",
+            pageSize = 10000
+        ) should {
+            have(lines().any { ".unifiedStringPair()" in it })
+            have(lines().none { ".unifiedNullableStringFirst()" in it })
+            have(lines().none { ".unifiedNullable()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of Java pair of class type argument annotated not nullable without extension on pair of nullable first type`() {
+        // the UnifiedPair<String, V!> of UnifiedPair<@NotNull String, V> is no UnifiedPair<String?, String>, see #382
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.unify.UnifiedJavaNotNullStringPair",
+            pageSize = 10000
+        ) should {
+            have(lines().any { ".unifiedStringPair()" in it })
+            have(lines().none { ".unifiedNullableStringFirst()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of wrapped list of out Nothing with extensions inferring type parameter from it`() {
+        // kotlinc infers T of MutableList<T> from MutableList<out Nothing>, but not T? of MutableList<T?>, see #382
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.unify.UnifiedOutNothingWrap",
+            pageSize = 10000
+        ) should {
+            have(lines().any { ".unifiedWrappedMutableList()" in it })
+            have(lines().any { ".unifiedWrappedComparableMutableList()" in it })
+            have(lines().none { ".unifiedWrappedNullableMutableList()" in it })
+        }
+    }
+
+    @Test
     fun `should resolve interface of map of same type parameter without extension callable only with Nothing`() {
         // V is a T : Enum<T>, and a subtype of the final String, which only Nothing is, while V of String is a T : Comparable<T>
         resolver.resolve(
@@ -14143,6 +14229,18 @@ class KotlinIntrospectorTest {
         ) should {
             have(lines().none { ".unifiedEnumKeysOfStrings()" in it })
             have(lines().any { ".unifiedComparableKeysOfStrings()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of map of same type parameter without extension on nullable keys of not nullable values`() {
+        // V is T?, and a subtype of T, nullable then, which no T : Any is, see #382
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.unify.UnifiedSameKeyMap",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".unifiedNullableKeysOfNotNullValues()" in it })
+            have(lines().any { ".unifiedNullableKeys()" in it })
         }
     }
 
@@ -14166,6 +14264,18 @@ class KotlinIntrospectorTest {
         ) should {
             have(lines().none { ".unifiedInts()" in it })
             have(lines().none { ".unifiedNothings()" in it })
+            have(lines().any { ".unifiedStrings()" in it })
+        }
+    }
+
+    @Test
+    fun `should resolve interface of covariant supertype of type parameter bounded through another one without extension callable only with Nothing`() {
+        // V : U of U : CharSequence is no subtype of the final Int either, but Nothing, see #382
+        resolver.resolve(
+            "com.xemantic.kotlin.introspection.test.unify.UnifiedBoundedThroughProducer",
+            pageSize = 10000
+        ) should {
+            have(lines().none { ".unifiedInts()" in it })
             have(lines().any { ".unifiedStrings()" in it })
         }
     }
@@ -14312,7 +14422,8 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve interface with extensions of its package on unbounded type parameter`() {
-        // like the extensions of its package on Any
+        // like the extensions of its package on Any, but the ones next to more specific ones,
+        // also on a type parameter, like unboundedNextToNullableBounded, see #382
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.unbounded.UnboundedStringPair",
             pageSize = 10000
@@ -14324,6 +14435,7 @@ class KotlinIntrospectorTest {
             fun <T> T.unboundedNextToClass()
             fun UnboundedStringPair.unboundedNextToClass()
             fun Any?.unboundedNextToNullableAny()
+            fun <T : UnboundedStringPair?> T.unboundedNextToNullableBounded()
             fun UnboundedStringPair?.unboundedNextToNullableClass()
             fun Any?.unboundedNullableNextToNullableAny()
             fun <T> T?.unboundedNullableReceiver()
@@ -14461,29 +14573,28 @@ class KotlinIntrospectorTest {
 
     @Test
     fun `should resolve class with extension on type parameter next to extension on its supertype`() {
-        // BoundedReceiverCircle().describe() calls the one on the type parameter, more specific than the one on BoundedReceiverShape
+        // BoundedReceiverCircle().describe() calls the one on the type parameter, more specific than the one on BoundedReceiverShape,
+        // which is not listed then, see #382, like the label
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.BoundedReceiverCircle"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.BoundedReceiverCircle [page 1/1]
             class BoundedReceiverCircle : BoundedReceiverShape, BoundedReceiverNamed
             // from com.xemantic.kotlin.introspection.test
-            val BoundedReceiverShape.label: String
             val <T> T.label: String where T : BoundedReceiverShape, T : BoundedReceiverNamed
-            fun BoundedReceiverShape.describe(): String
             fun <T> T.describe(): String where T : BoundedReceiverShape, T : BoundedReceiverNamed
         """.trimIndent()
     }
 
     @Test
     fun `should resolve extension on type parameter next to extension on supertype as member of class`() {
-        // like in the listing of BoundedReceiverCircle
+        // like in the listing of BoundedReceiverCircle, without the one on BoundedReceiverShape,
+        // as circle.describe() calls the more specific one on the type parameter, see #382
         resolver.resolve(
             "com.xemantic.kotlin.introspection.test.BoundedReceiverCircle.describe"
         ) sameAsKotlin """
             // com.xemantic.kotlin.introspection.test.BoundedReceiverCircle.describe [page 1/1]
             // from com.xemantic.kotlin.introspection.test
-            fun BoundedReceiverShape.describe(): String
             fun <T> T.describe(): String where T : BoundedReceiverShape, T : BoundedReceiverNamed
         """.trimIndent()
     }
