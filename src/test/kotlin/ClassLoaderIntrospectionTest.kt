@@ -1642,6 +1642,31 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should list extension on map by witness when its other supertype refers to class on the classpath`() {
+        // given
+        val root = isolatedTestFixturesCopy("withAbsent")
+        val introspector = KotlinIntrospector(URLClassLoader(arrayOf(root.toUri().toURL()), javaClass.classLoader))
+
+        // when
+        val interfaceSignature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.AbsentComparableKeyMap",
+            pageSize = 10000
+        )
+        val classSignature = introspector.resolve(
+            "com.xemantic.kotlin.introspection.isolated.AbsentListKeyMap",
+            pageSize = 10000
+        )
+
+        // then - V of String makes a Map<V, V> a Map<T, T> of T : Comparable<T>, the Comparable<Absent>, and the ArrayList<Absent>, reified
+        interfaceSignature should {
+            have(lines().any { ".absentSameComparables()" in it })
+        }
+        classSignature should {
+            have(lines().any { ".absentSameComparables()" in it })
+        }
+    }
+
+    @Test
     fun `should resolve map whose other supertype refers to a class missing from the classpath without witnesses`() {
         // given
         val introspector = introspectorWithoutAbsentClass()

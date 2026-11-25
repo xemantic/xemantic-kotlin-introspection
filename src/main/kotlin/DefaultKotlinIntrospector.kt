@@ -9780,21 +9780,7 @@ internal class DefaultKotlinIntrospector(
         val method = methods.singleOrNull { it.second == jvmSignature.descriptor }
             ?: methods.singleOrNull { AsmType.getArgumentTypes(it.second).size == parameterCount }
             ?: return false
-        val classNames = LinkedHashSet<String>()
-        try {
-            SignatureReader(method.third ?: method.second).accept(object : SignatureVisitor(Opcodes.ASM9) {
-                private var current: String? = null
-                override fun visitClassType(name: String) {
-                    current = name
-                    classNames += name
-                }
-                override fun visitInnerClassType(name: String) {
-                    current = current?.let { it + "\$" + name }?.also { classNames += it }
-                }
-            })
-        } catch (_: Exception) {
-            return false
-        }
+        val classNames = signatureClassNames(method.third ?: method.second) ?: return false
         return classNames.any { findClassByBinaryName(it.replace('/', '.')) == null }
     }
 
