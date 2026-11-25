@@ -18,6 +18,7 @@
 
 package com.xemantic.kotlin.introspection.test
 
+import com.xemantic.kotlin.introspection.test.other.JavaGenericMethodTask
 import com.xemantic.kotlin.introspection.test.other.JavaInfixInvokedGetterBase
 import com.xemantic.kotlin.introspection.test.other.JavaInvokedGenericTask
 import com.xemantic.kotlin.introspection.test.other.JavaInvokedGetterBase
@@ -477,6 +478,96 @@ fun SuspendFunctionSupertypeShadowedSupertype.unitReferenceFunction(x: KSuspendF
 fun SuspendFunctionSupertypeShadowedSupertype.lambdaReference(x: suspend () -> String): Int = 1
 
 fun SuspendFunctionSupertypeShadowedSupertype.unitFunction(x: suspend () -> Unit): Int = 1
+
+// members taking a function type of another return type than Unit next to extensions taking one returning Unit, see #378,
+// which a reference to a function returning anything is coerced to, also a suspend one, so that the extension is called
+// unless the member takes the reference too: returning Any?, or a type parameter which every type satisfies,
+// also through another one bounding it, like Q of <R, Q : R>, unlike unitCoercionShadowing.nullableUnit(::toString) of () -> Unit?,
+// .unitBound(::toString) of <R : Unit?>, or .suspendAny(::nullableValue) of suspend () -> Any, of fun nullableValue(): String?,
+// calling the extensions, and .boundedByInvariant(::toString, mutableListOf("")), as R is inferred as String
+interface UnitCoercionShadowedSupertype
+
+class UnitCoercionShadowing : UnitCoercionShadowedSupertype {
+    fun nullableUnit(x: () -> Unit?): Int = 0
+    fun parameterNullableUnit(x: (String) -> Unit?): Int = 0
+    fun <R : Unit?> unitBound(x: () -> R): Int = 0
+    fun <R : Unit?> nullableUnitBound(x: () -> R?): Int = 0
+    fun <R, Q : R> boundedByOther(x: () -> Q): Int = 0
+    fun <R, Q : R?> boundedByNullableOther(x: () -> Q): Int = 0
+    fun <R : Any, Q : R?> boundedByNullableAnyBounded(x: () -> Q): Int = 0
+    fun <R : Any, Q : R> boundedByAnyBounded(x: () -> Q): Int = 0
+    fun <R, Q : R> boundedByWidened(x: () -> Q, y: R): Int = 0
+    fun <R, Q : R> boundedByInvariant(x: () -> Q, y: MutableList<R>): Int = 0
+    fun suspendAny(x: suspend () -> Any): Int = 0
+    fun suspendNullableAny(x: suspend () -> Any?): Int = 0
+    fun suspendNullableUnit(x: suspend () -> Unit?): Int = 0
+    fun <R> suspendTypeParameter(x: suspend () -> R): Int = 0
+    fun <R : Any> suspendAnyBound(x: suspend () -> R): Int = 0
+    fun <R : Any> suspendNullableAnyBound(x: suspend () -> R?): Int = 0
+}
+
+fun UnitCoercionShadowedSupertype.nullableUnit(x: () -> Unit): Int = 1
+
+fun UnitCoercionShadowedSupertype.parameterNullableUnit(x: (String) -> Unit): Int = 1
+
+fun UnitCoercionShadowedSupertype.unitBound(x: () -> Unit): Int = 1
+
+fun UnitCoercionShadowedSupertype.nullableUnitBound(x: () -> Unit): Int = 1
+
+fun UnitCoercionShadowedSupertype.boundedByOther(x: () -> Unit): Int = 1
+
+fun UnitCoercionShadowedSupertype.boundedByNullableOther(x: () -> Unit): Int = 1
+
+fun UnitCoercionShadowedSupertype.boundedByNullableAnyBounded(x: () -> Unit): Int = 1
+
+fun UnitCoercionShadowedSupertype.boundedByAnyBounded(x: () -> Unit): Int = 1
+
+fun UnitCoercionShadowedSupertype.boundedByWidened(x: () -> Unit, y: String): Int = 1
+
+fun UnitCoercionShadowedSupertype.boundedByInvariant(x: () -> Unit, y: MutableList<String>): Int = 1
+
+fun UnitCoercionShadowedSupertype.suspendAny(x: suspend () -> Unit): Int = 1
+
+fun UnitCoercionShadowedSupertype.suspendNullableAny(x: suspend () -> Unit): Int = 1
+
+fun UnitCoercionShadowedSupertype.suspendNullableUnit(x: suspend () -> Unit): Int = 1
+
+fun UnitCoercionShadowedSupertype.suspendTypeParameter(x: suspend () -> Unit): Int = 1
+
+fun UnitCoercionShadowedSupertype.suspendAnyBound(x: suspend () -> Unit): Int = 1
+
+fun UnitCoercionShadowedSupertype.suspendNullableAnyBound(x: suspend () -> Unit): Int = 1
+
+// members taking a function type without a receiver next to extensions taking one with a receiver, see #378,
+// which every lambda of the latter is converted to, also by its implicit parameter, like receiverShadowing.unitReturning { },
+// so that they are called instead, unless taking more parameters, which a lambda naming none is not converted to,
+// so that receiverShadowing.twoParameters { } calls the extension, or no reference to a function returning a value,
+// like receiverShadowing.anyReturning(String::toIntOrNull), or not every value of the receiver, like .wideParameter(fun String.() {})
+interface ReceiverShadowedSupertype
+
+class ReceiverShadowing : ReceiverShadowedSupertype {
+    fun <R> typeParameterReturning(x: (String) -> R): Int = 0
+    fun unitReturning(x: (String) -> Unit): Int = 0
+    fun nullableAnyReturning(x: (String) -> Any?): Int = 0
+    fun suspendUnitReturning(x: suspend (String) -> Unit): Int = 0
+    fun twoParameters(x: (String, Int) -> Unit): Int = 0
+    fun anyReturning(x: (String) -> Any): Int = 0
+    fun wideParameter(x: (CharSequence) -> Unit): Int = 0
+}
+
+fun ReceiverShadowedSupertype.typeParameterReturning(x: String.() -> Unit): Int = 1
+
+fun ReceiverShadowedSupertype.unitReturning(x: String.() -> Unit): Int = 1
+
+fun ReceiverShadowedSupertype.nullableAnyReturning(x: String.() -> Unit): Int = 1
+
+fun ReceiverShadowedSupertype.suspendUnitReturning(x: suspend String.() -> Unit): Int = 1
+
+fun ReceiverShadowedSupertype.twoParameters(x: String.(Int) -> Unit): Int = 1
+
+fun ReceiverShadowedSupertype.anyReturning(x: String.() -> Unit): Int = 1
+
+fun ReceiverShadowedSupertype.wideParameter(x: String.() -> Unit): Int = 1
 
 // members accepting a type parameter of the extension bounded by another one, like its bounds, called instead of the extensions,
 // like boundedTypeParameterShadowing.boundedByOther(listOf("")), unlike one accepting less
@@ -939,6 +1030,26 @@ infix fun InfixCompanionSupertype.variadic(other: Int): Int = 1
 
 infix fun InfixCompanionSupertype.functionTyped(other: Int): Int = 1
 
+// and the ones next to a property of a type with an infix operator invoke, invoked also by InfixOperatorInvokedCompanionHolder infixInvoked 1,
+// so that no call reaches the infix extension, and only InfixOperatorInvokedCompanionHolder + 1 the infix operator one, see #378,
+// also on an instance, like infixOperatorInvokedPropertyHolder infixInvoked 1
+class InfixOperatorInvokedTask {
+    infix operator fun invoke(other: Int): Int = 0
+}
+
+class InfixOperatorInvokedCompanionHolder {
+    companion object : InfixCompanionSupertype, InfixOperatorCompanionSupertype {
+        val infixInvoked: InfixOperatorInvokedTask = InfixOperatorInvokedTask()
+        val plus: InfixOperatorInvokedTask = InfixOperatorInvokedTask()
+    }
+}
+
+class InfixOperatorInvokedPropertyHolder : InfixCompanionSupertype {
+    val infixInvoked: InfixOperatorInvokedTask = InfixOperatorInvokedTask()
+}
+
+infix fun InfixCompanionSupertype.infixInvoked(other: Int): Int = 1
+
 // and the ones next to the getters of a Java supertype of the companion object, read as synthetic properties of a type
 // with an operator invoke, called only as JavaInfixInvokedGetterHolder gotInfix 1, or JavaInfixInvokedGetterHolder + 1,
 // as JavaInfixInvokedGetterHolder.gotInfix(1), and JavaInfixInvokedGetterHolder.plus(1), invoke the properties
@@ -999,6 +1110,64 @@ class OperatorHiddenConstructedCompanionHolder @Deprecated("Use invoke", level =
 class OperatorOtherwiseConstructedCompanionHolder(val other: String) {
     companion object : OperatorCompanionSupertype {
         fun invoke(other: Int): Int = 0
+    }
+}
+
+// and ones whose constructor takes a functional interface, a Java one, or a fun interface, see #378,
+// which a lambda, a function reference, and a value of a function type are converted to,
+// so that it is always called instead of an invoke taking the function type of its abstract method,
+// like SamConstructedCompanionHolder { }, or KotlinSamConstructedCompanionHolder(task = task),
+// unlike one taking the function type of another return type, like SamOtherwiseConstructedCompanionHolder(task) of task: () -> String,
+// or an interface which is no fun interface, like PlainInterfaceConstructedCompanionHolder { }, calling the extensions
+interface LambdaOperatorCompanionSupertype
+
+operator fun LambdaOperatorCompanionSupertype.invoke(task: () -> Unit): Int = 1
+
+interface StringLambdaOperatorCompanionSupertype
+
+operator fun StringLambdaOperatorCompanionSupertype.invoke(task: () -> String): Int = 1
+
+fun interface ConstructedTask {
+    fun run()
+}
+
+interface PlainConstructedTask {
+    fun run()
+}
+
+class SamConstructedCompanionHolder(val task: Runnable) {
+    companion object : LambdaOperatorCompanionSupertype {
+        fun invoke(task: () -> Unit): Int = 0
+    }
+}
+
+class KotlinSamConstructedCompanionHolder(val task: ConstructedTask) {
+    companion object : LambdaOperatorCompanionSupertype {
+        fun invoke(task: () -> Unit): Int = 0
+    }
+}
+
+class SamOtherwiseConstructedCompanionHolder(val task: Runnable) {
+    companion object : StringLambdaOperatorCompanionSupertype {
+        fun invoke(task: () -> String): Int = 0
+    }
+}
+
+// and one taking a Java interface whose abstract method is generic, to which no lambda is converted,
+// like GenericMethodConstructedCompanionHolder { }, calling the extension
+interface IntLambdaOperatorCompanionSupertype
+
+operator fun IntLambdaOperatorCompanionSupertype.invoke(task: (Int) -> Unit): Int = 1
+
+class GenericMethodConstructedCompanionHolder(val task: JavaGenericMethodTask) {
+    companion object : IntLambdaOperatorCompanionSupertype {
+        fun invoke(task: (Int) -> Unit): Int = 0
+    }
+}
+
+class PlainInterfaceConstructedCompanionHolder(val task: PlainConstructedTask) {
+    companion object : LambdaOperatorCompanionSupertype {
+        fun invoke(task: () -> Unit): Int = 0
     }
 }
 

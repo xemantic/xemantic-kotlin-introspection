@@ -2112,7 +2112,7 @@ internal class DefaultKotlinIntrospector(
         // an infix one, or an operator, is called only so, like Foo ext 1, or Foo + 1, when a member of the companion object,
         // which is not infix, or no operator, is called instead of it by its name, like for Foo.ext(1), or Foo.plus(1):
         // a function, or a property invoked instead, also the synthetic property of a Java getter, see withoutShadowedByMembers,
-        // each a function, or null of a property, which is neither infix, nor an operator
+        // each a function, or null of a property, which is neither infix, nor an operator, unless invoked by an infix invoke
         val companionSupertypes by lazy(LazyThreadSafetyMode.NONE) { apiCompanion?.let { supertypesOf(it.kmClass) } }
         fun membersCalledByName(function: KmFunction): List<KmFunction?> {
             if (!(function.isInfix || function.isOperator) || apiCompanion == null || companionName == null) return emptyList()
@@ -2129,7 +2129,13 @@ internal class DefaultKotlinIntrospector(
                         ) {
                             add(member.function)
                         }
-                        is Member.Property -> if (member.property.isReadAnywhere && member.property.returnType.isInvoked()) add(null)
+                        // as an infix function, when invoked also by the infix call, through an infix invoke, see #378
+                        is Member.Property -> if (member.property.isReadAnywhere && member.property.returnType.isInvoked()) {
+                            val isInvokedInfix = function.isInfix && member.property.returnType.isInvokedByOperatorInsteadOf(
+                                function, companionName, { companionSupertypes }, isCalledInfix = true
+                            )
+                            add(if (isInvokedInfix) INFIX_INVOKED_PROPERTY else null)
+                        }
                     }
                 }
                 val syntheticPropertyType = if (members.any { it is Member.Property }) null else publicSyntheticPropertyType(
@@ -7680,7 +7686,8 @@ internal class DefaultKotlinIntrospector(
      * or of a supertype with type arguments which the type of the parameter is,
      * a projection kept, see [ClassSupertypes.supertypesOf], like `x: Collection<String>` for `x: List<String>`,
      * also of a function type, see [functionSupertypeOf], like `x: Function<CharSequence>` for `x: () -> String`,
-     * but only a function type returning `Unit`, or `Any?`, for one returning `Unit`, see [isCoercedToUnit],
+     * but only a function type returning `Unit`, `Any?`, or a type parameter which every type satisfies, for one returning `Unit`,
+     * see [isCoercedToUnit], also suspend ones, like `fun <R> run(x: suspend () -> R)` for `x: suspend () -> Unit`,
      * each type argument accepting its one by its variance, see [acceptsTypeArguments],
      * like `x: Collection<CharSequence>`, `x: Collection<out CharSequence>`, or `x: Collection<*>`, for `x: List<String>`,
      * a type parameter of its own inferred from the type argument, see [infers], like `x: Collection<T>` for `x: List<String>`,
@@ -7743,10 +7750,35 @@ internal class DefaultKotlinIntrospector(
         // the ones inferred alone, from a single type of the arguments: referred to once, and bounded by no type parameter
         val references = HashMap<Int, Int>()
         valueParameters.forEach { parameter -> parameter.type.typeParameterIds().forEach { references.merge(it, 1, Int::plus) } }
+        // whether the type parameter is inferred as a supertype of whatever a type parameter bounded by it is,
+        // as no parameter is of a type pinning it, but maybe of the very type parameter, like y: R of <R, Q : R>
+        fun isWidened(id: Int) = valueParameters.all { parameter ->
+            val type = parameter.type
+            type.typeParameterIds().none { it == id } || ((type.classifier as? KmClassifier.TypeParameter)?.id == id && !type.isDefinitelyNonNull)
+        }
+        // whether every type, or every one which is not nullable, when not used as nullable, satisfies the type parameter:
+        // bounded by Any?, or by Any, when used as nullable, like R of () -> R?, or by a type parameter which is widened to it,
+        // see isWidened, satisfied by every type itself, like Q of <R, Q : R>, unlike R : Unit?, or Q of <R : Any, Q : R>
+        fun acceptsEveryType(
+            typeParameter: KmTypeParameter,
+            isNullable: Boolean,
+            visited: MutableSet<Int> = HashSet()
+        ): Boolean = visited.add(typeParameter.id) && typeParameter.upperBounds.all { bound ->
+            when (val boundClassifier = bound.classifier) {
+                is KmClassifier.Class -> boundClassifier.name == ANY_CLASS_NAME && (isNullable || bound.isNullable)
+                is KmClassifier.TypeParameter -> !bound.isDefinitelyNonNull && isWidened(boundClassifier.id) &&
+                    ownTypeParameters[boundClassifier.id]?.let { acceptsEveryType(it, isNullable || bound.isNullable, visited) } == true
+                is KmClassifier.TypeAlias -> false
+            }
+        }.also { visited.remove(typeParameter.id) }
         fun inferredAlone(type: KmType): KmTypeParameter? {
             val id = (type.classifier as? KmClassifier.TypeParameter)?.id ?: return null
-            return ownTypeParameters[id]?.takeIf { typeParameter ->
-                references[id] == 1 && !type.isDefinitelyNonNull && typeParameter.upperBounds.all { it.isConcrete() }
+            val typeParameter = ownTypeParameters[id]?.takeIf { references[id] == 1 && !type.isDefinitelyNonNull } ?: return null
+            return when {
+                typeParameter.upperBounds.all { it.isConcrete() } -> typeParameter
+                // bounded by type parameters which every type satisfies, inferred like an unbounded one
+                acceptsEveryType(typeParameter, type.isNullable) -> KmTypeParameter(typeParameter.name, id, typeParameter.variance)
+                else -> null
             }
         }
         val pinnedId by lazy(LazyThreadSafetyMode.NONE) {
@@ -7854,6 +7886,11 @@ internal class DefaultKotlinIntrospector(
             return when (argumentClassifier) {
                 is KmClassifier.Class -> when {
                     classifier !is KmClassifier.Class -> false
+                    // suspend function types as the types of their own classes, which tell their return types, see isCoercedToUnit,
+                    // like SuspendFunction0<Any> of suspend () -> Any, unlike Function1<Continuation<Any>, Any?>
+                    type.isSuspend && argument.isSuspend && type.withSuspendFunctionTypeClass() !== type &&
+                        argument.withSuspendFunctionTypeClass() !== argument ->
+                        accepts(type.asSuspendFunctionTypeClass(), argument.asSuspendFunctionTypeClass(), visited, isTypeArgument)
                     // an inner class of a class with type arguments, the same one, of an outer type accepting the one of the argument
                     type.outerType != null && !(
                         argumentClassifier.name == classifier.name &&
@@ -7862,14 +7899,16 @@ internal class DefaultKotlinIntrospector(
                     type.arguments.isEmpty() -> isSubclass(argumentClassifier.name, classifier.name)
                     // a reference to a function returning anything is coerced to a function type returning Unit,
                     // which no function type of another return type is but of Any?, or a star projection,
-                    // or a type parameter of this function inferred as any type, also a nullable one, like R of () -> R,
+                    // or a type parameter of this function which every type satisfies, see acceptsEveryType,
+                    // like R of () -> R, or of () -> R? of R : Any, or Q of <R, Q : R>,
                     // unlike ::nullable of fun nullable(): String? for () -> Any, or for () -> R of R : Any,
+                    // or ::toString for () -> Unit?, or for () -> R of R : Unit?, see #378,
                     // though only when the parameter itself is of it, as a type argument is never converted
                     !isTypeArgument && argumentClassifier.name == classifier.name && isCoercedToUnit(argument) &&
                         type.arguments.last().type?.let { returned ->
                             val typeParameter = ownTypeParameters[(returned.classifier as? KmClassifier.TypeParameter)?.id]
-                            returned.isUnit || returned.isNullableAny() || (typeParameter != null && !returned.isDefinitelyNonNull &&
-                                (returned.isNullable || typeParameter.upperBounds.all { it.isNullable }))
+                            (returned.isUnit && !returned.isNullable) || returned.isNullableAny() ||
+                                (typeParameter != null && !returned.isDefinitelyNonNull && acceptsEveryType(typeParameter, returned.isNullable))
                         } == false -> false
                     else -> {
                         val supertype = if (argumentClassifier.name == classifier.name) argument else asSupertype(argument, type)
@@ -8024,9 +8063,11 @@ internal class DefaultKotlinIntrospector(
 
     /**
      * Whether a reference to a function returning anything is coerced to the [type], see [shadowsAsMember]:
-     * a function type returning `Unit`, but neither a suspend one, whose type, like `Function1<Continuation<Unit>, Any?>`,
-     * tells no return type, nor a function reference type, like `KFunction0<Unit>`,
-     * so that `bar.run(::nullable)` of `fun nullable(): String?` calls `fun Bar.run(x: () -> Unit)` next to `fun run(x: () -> Any)`.
+     * a function type returning `Unit`, also a suspend one as the type of its own class, like `SuspendFunction0<Unit>`,
+     * see [asSuspendFunctionTypeClass], as `Function1<Continuation<Unit>, Any?>` tells no return type,
+     * but not a function reference type, like `KFunction0<Unit>`, nor one returning `Unit?`,
+     * so that `bar.run(::nullable)` of `fun nullable(): String?` calls `fun Bar.run(x: () -> Unit)` next to `fun run(x: () -> Any)`,
+     * and next to `fun run(x: () -> Unit?)`, see #378.
      */
     private fun isCoercedToUnit(type: KmType): Boolean {
         val name = (type.classifier as? KmClassifier.Class)?.name ?: return false
@@ -8139,7 +8180,8 @@ internal class DefaultKotlinIntrospector(
      * and function types of the same shape, see [isFunctionTypeShapedLike], as a lambda naming its parameters,
      * like `{ s -> }`, is taken by `(String) -> Unit`, but not by `String.() -> Unit`, so that the extension is still called with it,
      * unless they are type arguments themselves, when [isTypeArgument], like of `List<String.() -> Unit>`,
-     * or of `() -> (String.() -> Unit)`, where Kotlin takes the lambdas of either shape.
+     * or of `() -> (String.() -> Unit)`, where Kotlin takes the lambdas of either shape,
+     * or the [type] takes every lambda of the [argument], see [takesLambdasOfReceiverShaped], like `(String) -> Unit` of `String.() -> Unit`.
      */
     private fun acceptsTypeArguments(
         type: KmType,
@@ -8152,7 +8194,8 @@ internal class DefaultKotlinIntrospector(
     ): Boolean {
         val name = (type.classifier as KmClassifier.Class).name
         val variances = declaredVariances(name)
-        if (type.isSuspend != argument.isSuspend || (!isTypeArgument && !type.isFunctionTypeShapedLike(argument)) ||
+        if (type.isSuspend != argument.isSuspend ||
+            (!isTypeArgument && !type.isFunctionTypeShapedLike(argument) && !type.takesLambdasOfReceiverShaped(argument)) ||
             variances?.size != type.arguments.size || argument.arguments.size != type.arguments.size
         ) {
             return false
@@ -8270,12 +8313,14 @@ internal class DefaultKotlinIntrospector(
      * its type arguments which are no projections, like `T` of `class Task<T> { operator fun invoke(x: T) }` for `Int` of `Task<Int>`,
      * also a Java class, whose `invoke` method without parameters, or with a vararg only, Kotlin calls as an operator,
      * but not one taking parameters, see [isShadowingJavaMethod], unlike a Kotlin `invoke` which a Java class inherits,
-     * next to an extension which is neither an operator, nor infix, unless [isCalledOnlyByName],
+     * next to an extension which is no operator, unless [isCalledOnlyByName],
+     * nor infix, unless the `invoke` is infix too, called then also for `foo run 1`, see #378,
      * nor called with type arguments given explicitly, see [hasExplicitTypeParameter],
-     * as only a call of the function form goes through the property.
+     * as only a call of the function form, or of the infix one, goes through the property.
      *
      * @param supertypes the supertypes of the class, see [shadowsAsMember].
      * @param isCalledOnlyByName whether only a call of the [extension] by its name is told, like `Foo.run(1)`, see [shadowsAsMember].
+     * @param isCalledInfix whether only the infix call of the [extension] is told, like `Foo run 1`, going through an infix `invoke`.
      * @param isOfJavaGetter whether the type is the one of a synthetic property of a Java getter, a platform type,
      *   unlike the type of a property, a platform type only when inferred from a Java expression.
      */
@@ -8284,9 +8329,10 @@ internal class DefaultKotlinIntrospector(
         className: String,
         supertypes: () -> ClassSupertypes?,
         isCalledOnlyByName: Boolean = false,
-        isOfJavaGetter: Boolean = false
+        isOfJavaGetter: Boolean = false,
+        isCalledInfix: Boolean = false
     ): Boolean {
-        if (!isCalledOnlyByName && (extension.isOperator || extension.isInfix)) return false
+        if (!isCalledOnlyByName && !isCalledInfix && extension.isOperator) return false
         if (extension.hasExplicitTypeParameter) return false
         if (isNullable || (flexibleTypeUpperBound != null && !isOfJavaGetter)) return false
         val name = (classifier as? KmClassifier.Class)?.name ?: return false
@@ -8309,10 +8355,11 @@ internal class DefaultKotlinIntrospector(
             }
         }
         return publicMembersNamed(kmClass, declarations, "invoke", apiClass).any { member ->
-            member is Member.Function && member.function.isOperator && member.function.shadowsAsMember(
-                extension, className, supertypes, isCalledOnlyByName,
-                typeArguments = if (kmClass.functions.any { it === member.function }) typeArguments else emptyMap()
-            )
+            member is Member.Function && member.function.isOperator && (!isCalledInfix || member.function.isInfix) &&
+                member.function.shadowsAsMember(
+                    extension, className, supertypes, isCalledOnlyByName || isCalledInfix,
+                    typeArguments = if (kmClass.functions.any { it === member.function }) typeArguments else emptyMap()
+                )
         }
     }
 
@@ -9941,6 +9988,15 @@ internal class DefaultKotlinIntrospector(
                 argument.type?.let { KmTypeProjection(argument.variance, it.withSuspendFunctionTypeClasses()) } ?: argument
             }
         )
+    }
+
+    // this suspend function type as the type of its own class, see withSuspendFunctionTypeClass, of its nullability and its annotations,
+    // like of its receiver, telling its shape, see isFunctionTypeShapedLike
+    private fun KmType.asSuspendFunctionTypeClass(): KmType = withSuspendFunctionTypeClass().also { type ->
+        if (type !== this) {
+            type.isNullable = isNullable
+            type.annotations += annotations
+        }
     }
 
     // whether this type, or a type argument of it, is Nothing, or Nothing?
@@ -14188,7 +14244,10 @@ internal class DefaultKotlinIntrospector(
      * unlike one which the call cannot use, like a private, an internal, or a protected one, also of a sealed class,
      * or one deprecated as hidden,
      * as verified with kotlinc 2.4.21, while an abstract class is constructed, failing to compile,
-     * or one of another type, like `class Foo(x: String)`, or of another parameter name, which `Foo(x = 1)` does not call.
+     * or one of another type, like `class Foo(x: String)`, or of another parameter name, which `Foo(x = 1)` does not call,
+     * where a parameter of a functional interface takes, like the function type of its abstract method, see [samFunctionType],
+     * the values of a function type of the parameter of the [function], which Kotlin converts to it, also lambdas and references,
+     * like `class Foo(x: Runnable)` next to `operator fun Bar.invoke(x: () -> Unit)`, see #378.
      *
      * @param companionSupertypes the supertypes of the companion object, see [shadowsAsMember].
      */
@@ -14201,8 +14260,69 @@ internal class DefaultKotlinIntrospector(
     ): Boolean = function.name == "invoke" && kmClass.constructors.any { constructor ->
         constructor.visibility == Visibility.PUBLIC && !declarations.isHidden(constructor) && KmFunction(function.name).also {
             it.typeParameters += kmClass.typeParameters
-            it.valueParameters += constructor.valueParameters
+            constructor.valueParameters.mapIndexedTo(it.valueParameters) { index, parameter ->
+                val given = function.valueParameters.getOrNull(index)?.type
+                val converted = if (given?.isLambdaConverted() == true && parameter.varargElementType == null) samFunctionType(parameter.type) else null
+                if (converted == null) parameter else KmValueParameter(parameter.name).also { convertedParameter ->
+                    convertedParameter.type = converted
+                    convertedParameter.declaresDefaultValue = parameter.declaresDefaultValue
+                }
+            }
         }.shadowsAsMember(function, companionName, companionSupertypes, isCalledOnlyByName = true)
+    }
+
+    // whether this type is a function type, which is not suspend, and has no receiver, nor context parameters,
+    // whose values Kotlin converts to a functional interface, see samFunctionType
+    private fun KmType.isLambdaConverted(): Boolean {
+        val name = (classifier as? KmClassifier.Class)?.name ?: return false
+        val functionTypeClass = FunctionTypeClass.of(name.replace('/', '.')) ?: return false
+        return functionTypeClass.kind == FunctionTypeKind.FUNCTION && !isSuspend && !isNullable && isFunctionTypeShapedLike(classType(name))
+    }
+
+    /**
+     * The function type of the abstract method of the functional interface of the [type], see [isConstructedInsteadOf],
+     * which Kotlin converts a lambda, a function reference, and a value of a function type to,
+     * like `() -> Unit` of `Runnable`, or of `fun interface Task { fun run() }`, of no type parameters,
+     * or `null` if it is not one, like an interface which is no fun interface, or its abstract method is not told:
+     * of a Java interface, of a method which is not generic, taking only primitive types, and returning one, or nothing, whose types are no platform types,
+     * of a Kotlin fun interface, declaring it, extending `Any` only, without a receiver, context parameters, or type parameters.
+     */
+    private fun samFunctionType(type: KmType): KmType? {
+        val name = (type.classifier as? KmClassifier.Class)?.name ?: return null
+        if (type.arguments.isNotEmpty() || FunctionTypeClass.of(name.replace('/', '.')) != null) return null
+        fun functionType(parameters: List<KmType>, returnType: KmType) =
+            classType(FunctionTypeKind.FUNCTION.metadataName(parameters.size)).also { functionType ->
+                (parameters + returnType).mapTo(functionType.arguments) { KmTypeProjection(KmVariance.INVARIANT, it) }
+            }
+        val kmClass = builtinClasses[name] ?: loadKmClass(name)
+        if (kmClass != null) {
+            if (kmClass.kind != ClassKind.INTERFACE || !kmClass.isFunInterface || kmClass.typeParameters.isNotEmpty() ||
+                kmClass.supertypes.any { (it.classifier as? KmClassifier.Class)?.name != ANY_CLASS_NAME }
+            ) {
+                return null
+            }
+            val abstract = kmClass.functions.singleOrNull { it.modality == Modality.ABSTRACT } ?: return null
+            @OptIn(ExperimentalContextParameters::class)
+            if (abstract.typeParameters.isNotEmpty() || abstract.receiverParameterType != null || abstract.contextParameters.isNotEmpty() ||
+                abstract.isSuspend || abstract.valueParameters.any { it.varargElementType != null || it.declaresDefaultValue }
+            ) {
+                return null
+            }
+            return functionType(abstract.valueParameters.map { it.type }, abstract.returnType)
+        }
+        val clazz = findClassByMetadataName(name)?.clazz ?: return null
+        return reflectedValue(default = null) {
+            if (!clazz.isInterface || clazz.typeParameters.isNotEmpty()) return@reflectedValue null
+            val method = clazz.methods.filter { method ->
+                Modifier.isAbstract(method.modifiers) &&
+                    runCatching { Any::class.java.getMethod(method.name, *method.parameterTypes) }.isFailure
+            }.singleOrNull() ?: return@reflectedValue null
+            // a generic method, to which Kotlin converts no lambda
+            if (method.typeParameters.isNotEmpty()) return@reflectedValue null
+            fun Class<*>.primitiveType() = JAVA_PRIMITIVE_TYPE_NAMES[this.name]?.let { classType(it) }
+            val parameters = method.parameterTypes.map { it.primitiveType() ?: return@reflectedValue null }
+            functionType(parameters, method.returnType.primitiveType() ?: return@reflectedValue null)
+        }
     }
 
     private fun formatSupertypes(
@@ -16480,6 +16600,15 @@ private class TypeProjections(val projections: Map<Int, KmTypeProjection>) {
     val substitution: Map<Int, KmType> = projections.mapValues { (_, projection) -> projection.type ?: NULLABLE_ANY_TYPE }
     val projected: Set<Int> = projections.filterValues { it.type == null || it.variance != KmVariance.INVARIANT }.keys
 }
+
+// a property invoked through an infix invoke, called by an infix call too, see membersCalledByName
+private val INFIX_INVOKED_PROPERTY = KmFunction("invoke").also { it.isInfix = true }
+
+// the Kotlin types of the Java primitive types, by their names, and of void, see samFunctionType
+private val JAVA_PRIMITIVE_TYPE_NAMES = mapOf(
+    "boolean" to "kotlin/Boolean", "char" to "kotlin/Char", "byte" to "kotlin/Byte", "short" to "kotlin/Short", "int" to "kotlin/Int",
+    "float" to "kotlin/Float", "long" to "kotlin/Long", "double" to "kotlin/Double", "void" to UNIT_CLASS_NAME
+)
 
 // the read-only collection types of the mutable ones, like kotlin/collections/List of kotlin/collections/MutableList, see collectionVariants
 private val READ_ONLY_COLLECTION_TYPES: Map<String, String> = MUTABLE_COLLECTION_TYPES.entries.associate { (readOnly, mutable) -> mutable to readOnly }

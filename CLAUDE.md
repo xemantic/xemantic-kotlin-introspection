@@ -339,6 +339,9 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
   give the runs different `-module-name`s: the second `META-INF/main.kotlin_module` overwrites the first one,
   so that its top-level functions are `unresolved reference`s.
 
+- An infix call goes through a property whose type has an `infix operator fun invoke`, like `Foo plus 1` of `val plus: Task`,
+  while an operator call, like `Foo + 1`, never goes through a property — so probe a property next to an infix operator extension by both forms (#378).
+
 ## Anti-patterns to avoid
 
 - Do not add content to this file that is already discoverable by reading the source or build scripts — that inflates context without adding signal, reducing AI agent task success rates (see [arxiv 2602.11988](https://arxiv.org/abs/2602.11988)).

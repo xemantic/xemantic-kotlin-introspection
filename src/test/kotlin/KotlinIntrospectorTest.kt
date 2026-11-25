@@ -2330,6 +2330,70 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve class with extensions taking function types returning Unit next to members not taking every coerced reference`() {
+        // unitCoercionShadowing.nullableUnit(::toString), .unitBound(::toString), .nullableUnitBound(::toString),
+        // .suspendAny(::nullableValue) of fun nullableValue(): String?, .suspendNullableUnit(::toString),
+        // and .boundedByInvariant(::toString, mutableListOf(""))
+        // call the extensions, as a reference coerced to return Unit is no function type of another return type,
+        // which no type of these bounds satisfies, see #378,
+        // while a type parameter bounded only by another one satisfied by every type, like Q of <R, Q : R>, takes any of them
+        resolver.resolve("com.xemantic.kotlin.introspection.test.UnitCoercionShadowing", pageSize = 40) sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.UnitCoercionShadowing [page 1/1]
+            class UnitCoercionShadowing : UnitCoercionShadowedSupertype {
+                fun nullableUnit(x: () -> Unit?): Int
+                fun parameterNullableUnit(x: (String) -> Unit?): Int
+                fun <R : Unit?> unitBound(x: () -> R): Int
+                fun <R : Unit?> nullableUnitBound(x: () -> R?): Int
+                fun <R, Q : R> boundedByOther(x: () -> Q): Int
+                fun <R, Q : R?> boundedByNullableOther(x: () -> Q): Int
+                fun <R : Any, Q : R?> boundedByNullableAnyBounded(x: () -> Q): Int
+                fun <R : Any, Q : R> boundedByAnyBounded(x: () -> Q): Int
+                fun <R, Q : R> boundedByWidened(x: () -> Q, y: R): Int
+                fun <R, Q : R> boundedByInvariant(x: () -> Q, y: MutableList<R>): Int
+                fun suspendAny(x: suspend () -> Any): Int
+                fun suspendNullableAny(x: suspend () -> Any?): Int
+                fun suspendNullableUnit(x: suspend () -> Unit?): Int
+                fun <R> suspendTypeParameter(x: suspend () -> R): Int
+                fun <R : Any> suspendAnyBound(x: suspend () -> R): Int
+                fun <R : Any> suspendNullableAnyBound(x: suspend () -> R?): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun UnitCoercionShadowedSupertype.boundedByAnyBounded(x: () -> Unit): Int
+            fun UnitCoercionShadowedSupertype.boundedByInvariant(x: () -> Unit, y: MutableList<String>): Int
+            fun UnitCoercionShadowedSupertype.nullableUnit(x: () -> Unit): Int
+            fun UnitCoercionShadowedSupertype.nullableUnitBound(x: () -> Unit): Int
+            fun UnitCoercionShadowedSupertype.parameterNullableUnit(x: (String) -> Unit): Int
+            fun UnitCoercionShadowedSupertype.suspendAny(x: suspend () -> Unit): Int
+            fun UnitCoercionShadowedSupertype.suspendAnyBound(x: suspend () -> Unit): Int
+            fun UnitCoercionShadowedSupertype.suspendNullableUnit(x: suspend () -> Unit): Int
+            fun UnitCoercionShadowedSupertype.unitBound(x: () -> Unit): Int
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve class without extensions taking function types with a receiver shadowed by members taking ones without`() {
+        // receiverShadowing.unitReturning { }, or { length }, failing to compile, call the members, see #378,
+        // as a lambda of a single parameter is converted to either shape, while .twoParameters { } calls the extension,
+        // and so do .anyReturning(String::toIntOrNull), of a reference coerced to return Unit, and .wideParameter(fun String.() {})
+        resolver.resolve("com.xemantic.kotlin.introspection.test.ReceiverShadowing") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.ReceiverShadowing [page 1/1]
+            class ReceiverShadowing : ReceiverShadowedSupertype {
+                fun <R> typeParameterReturning(x: (String) -> R): Int
+                fun unitReturning(x: (String) -> Unit): Int
+                fun nullableAnyReturning(x: (String) -> Any?): Int
+                fun suspendUnitReturning(x: suspend (String) -> Unit): Int
+                fun twoParameters(x: (String, Int) -> Unit): Int
+                fun anyReturning(x: (String) -> Any): Int
+                fun wideParameter(x: (CharSequence) -> Unit): Int
+            }
+            // from com.xemantic.kotlin.introspection.test
+            fun ReceiverShadowedSupertype.anyReturning(x: String.() -> Unit): Int
+            fun ReceiverShadowedSupertype.twoParameters(x: String.(Int) -> Unit): Int
+            fun ReceiverShadowedSupertype.wideParameter(x: String.() -> Unit): Int
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve class without extensions of type parameters bounded by each other shadowed by members accepting their bounds`() {
         // boundedTypeParameterShadowing.boundedByOther(listOf("")) calls the member, while .narrower(listOfCharSequences) calls the extension
         resolver.resolve("com.xemantic.kotlin.introspection.test.BoundedTypeParameterShadowing") sameAsKotlin """
@@ -2738,6 +2802,37 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve companion object member without infix extension next to property of type with infix operator invoke`() {
+        // InfixOperatorInvokedCompanionHolder infixInvoked 1, and .infixInvoked(1), invoke the property: no call reaches the extension, see #378
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InfixOperatorInvokedCompanionHolder.infixInvoked") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InfixOperatorInvokedCompanionHolder.infixInvoked [page 1/1]
+            companion object : InfixCompanionSupertype, InfixOperatorCompanionSupertype {
+                val infixInvoked: InfixOperatorInvokedTask
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should hint infix operator extension as operator next to property of type with infix operator invoke`() {
+        // InfixOperatorInvokedCompanionHolder plus 1 invokes the property, only InfixOperatorInvokedCompanionHolder + 1 calls the extension
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InfixOperatorInvokedCompanionHolder.plus") should {
+            have(
+                lines().last() == "/* called as InfixOperatorInvokedCompanionHolder + … */ " +
+                    "infix operator fun InfixOperatorCompanionSupertype.plus(other: Int): Int"
+            )
+        }
+    }
+
+    @Test
+    fun `should resolve class without infix extension shadowed by property of type with infix operator invoke`() {
+        // infixOperatorInvokedPropertyHolder infixInvoked 1 invokes the property, see #378
+        resolver.resolve("com.xemantic.kotlin.introspection.test.InfixOperatorInvokedPropertyHolder.infixInvoked") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.InfixOperatorInvokedPropertyHolder.infixInvoked [page 1/1]
+            val infixInvoked: InfixOperatorInvokedTask
+        """.trimIndent()
+    }
+
+    @Test
     fun `should hint infix extension on supertype of companion object as called on class name next to property of function type`() {
         // InfixMembersCompanionHolder.functionTyped(other = 1) calls the extension too, as a function type takes no named argument
         resolver.resolve("com.xemantic.kotlin.introspection.test.InfixMembersCompanionHolder.functionTyped") sameAsKotlin """
@@ -2913,6 +3008,62 @@ class KotlinIntrospectorTest {
             // from com.xemantic.kotlin.introspection.test
             /* called as OperatorOtherwiseConstructedCompanionHolder(…) */ operator fun OperatorCompanionSupertype.invoke(other: Int): Int
         """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve companion object member without operator extension invoke next to constructor taking Java functional interface`() {
+        // SamConstructedCompanionHolder { }, and (task) of task: () -> Unit, call the constructor, converting them to Runnable,
+        // and SamConstructedCompanionHolder.invoke { } the member: no call reaches the extension, see #378
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SamConstructedCompanionHolder.invoke") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.SamConstructedCompanionHolder.invoke [page 1/1]
+            companion object : LambdaOperatorCompanionSupertype {
+                fun invoke(task: () -> Unit): Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve companion object member without operator extension invoke next to constructor taking fun interface`() {
+        // KotlinSamConstructedCompanionHolder { }, and (task = task), call the constructor, converting them to ConstructedTask
+        resolver.resolve("com.xemantic.kotlin.introspection.test.KotlinSamConstructedCompanionHolder.invoke") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.KotlinSamConstructedCompanionHolder.invoke [page 1/1]
+            companion object : LambdaOperatorCompanionSupertype {
+                fun invoke(task: () -> Unit): Int
+            }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should hint operator extension invoke as operator next to constructor taking functional interface of other return type`() {
+        // SamOtherwiseConstructedCompanionHolder(task) of task: () -> String calls the extension, as it is not converted to Runnable
+        resolver.resolve("com.xemantic.kotlin.introspection.test.SamOtherwiseConstructedCompanionHolder.invoke") should {
+            have(
+                lines().last() == "/* called as SamOtherwiseConstructedCompanionHolder(…) */ " +
+                    "operator fun StringLambdaOperatorCompanionSupertype.invoke(task: () -> String): Int"
+            )
+        }
+    }
+
+    @Test
+    fun `should hint operator extension invoke as operator next to constructor taking Java interface of generic method`() {
+        // GenericMethodConstructedCompanionHolder { } calls the extension, as a lambda is not converted to JavaGenericMethodTask
+        resolver.resolve("com.xemantic.kotlin.introspection.test.GenericMethodConstructedCompanionHolder.invoke") should {
+            have(
+                lines().last() == "/* called as GenericMethodConstructedCompanionHolder(…) */ " +
+                    "operator fun IntLambdaOperatorCompanionSupertype.invoke(task: (Int) -> Unit): Int"
+            )
+        }
+    }
+
+    @Test
+    fun `should hint operator extension invoke as operator next to constructor taking interface which is no fun interface`() {
+        // PlainInterfaceConstructedCompanionHolder { } calls the extension, as a lambda is not converted to PlainConstructedTask
+        resolver.resolve("com.xemantic.kotlin.introspection.test.PlainInterfaceConstructedCompanionHolder.invoke") should {
+            have(
+                lines().last() == "/* called as PlainInterfaceConstructedCompanionHolder(…) */ " +
+                    "operator fun LambdaOperatorCompanionSupertype.invoke(task: () -> Unit): Int"
+            )
+        }
     }
 
     @Test
