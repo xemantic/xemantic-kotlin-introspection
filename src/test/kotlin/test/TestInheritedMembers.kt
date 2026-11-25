@@ -1329,6 +1329,36 @@ abstract class TypedReturnPutOpenGenericPutJoin :
 abstract class BoxedJavaPutBelowTypedReturnPutOpenGenericPutJoinImpl :
     com.xemantic.kotlin.introspection.test.other.JavaBoxedPutBelowTypedReturnPutOpenGenericPutJoin()
 
+// the put(t: T): R a Java interface gives Integer and String, returning String!, is less specific than the put(t: T) of GenericPut<Int>,
+// returning String, the one the Kotlin class joins them into, taking Int, also declared after it
+abstract class JavaTypedReturnPutIntPutJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaIntegerStringTypedReturnPutInterface, GenericPut<Int>
+
+abstract class BoxedJavaPutBelowJavaTypedReturnPutIntPutJoinImpl :
+    com.xemantic.kotlin.introspection.test.other.JavaBoxedPutBelowJavaTypedReturnPutIntPutJoin()
+
+// K2 groups the members around the put(t: T) of GenericPut<@Nullable Integer>, declared first, taking Int?,
+// which the one of OpenGenericPut<Integer>, taking Int!, joins, unlike the put(t: T): R of GenericTypedReturnPut<Int, String>,
+// taking Int, a member apart, which the put(Integer) of a Java subclass does not override
+abstract class NullableOpenTypedReturnPutJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaNullableIntegerPutInterface,
+    com.xemantic.kotlin.introspection.test.other.JavaIntegerOpenGenericPut(),
+    GenericTypedReturnPut<Int, String>
+
+abstract class BoxedJavaPutBelowNullableOpenTypedReturnPutJoinImpl :
+    com.xemantic.kotlin.introspection.test.other.JavaBoxedPutBelowNullableOpenTypedReturnPutJoin()
+
+// the put(t: T) of GenericCharSequencePut reached along two paths, given Integer by Java first, and Int by Kotlin,
+// next to the put(t: T) of GenericPut<@NotNull Integer>
+abstract class CharSequencePutTwiceNotNullIntegerJoin :
+    com.xemantic.kotlin.introspection.test.other.JavaIntegerCharSequencePut(), GenericCharSequencePut<Int>,
+    com.xemantic.kotlin.introspection.test.other.JavaNotNullIntegerPutInterface
+
+abstract class NotNullBoxedJavaPutBelowCharSequencePutTwiceJoinImpl :
+    com.xemantic.kotlin.introspection.test.other.JavaNotNullBoxedPutBelowCharSequencePutTwiceJoin()
+
+class NotNullBoxedJavaPutBelowCharSequencePutTwiceJoinConcrete : NotNullBoxedJavaPutBelowCharSequencePutTwiceJoinImpl()
+
 // a Kotlin interface giving Int, not nullable, to the generic JavaGenericMidPut<T>
 interface IntGenericMidPut : com.xemantic.kotlin.introspection.test.other.JavaGenericMidPut<Int>
 

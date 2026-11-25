@@ -23875,6 +23875,46 @@ class KotlinIntrospectorTest {
     }
 
     @Test
+    fun `should resolve Java member taking boxed type annotated not null below Kotlin class reaching Kotlin member along paths of Java and Kotlin type arguments once`() {
+        // the put(t: T) of GenericCharSequencePut, reached first through a Java class given Integer, and again given Int by Kotlin,
+        // is one member with the put(t: T) of GenericPut<@NotNull Integer>, which the put(@NotNull Integer) below implements,
+        // so that a concrete subclass compiles
+        resolver.resolve("com.xemantic.kotlin.introspection.test.NotNullBoxedJavaPutBelowCharSequencePutTwiceJoinImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.NotNullBoxedJavaPutBelowCharSequencePutTwiceJoinImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.GenericPut
+            open fun put(t: Int): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking boxed type below Kotlin class grouping members around one given boxed type annotated nullable`() {
+        // K2 groups the members around the put(t: T) of GenericPut<@Nullable Integer>, declared first, which the one
+        // of OpenGenericPut<Integer> joins, taking Int!, but not the put(t: T): R of GenericTypedReturnPut<Int, String>, taking Int,
+        // a member apart, which the put(Integer) below does not override, so that a concrete subclass has to implement it
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaPutBelowNullableOpenTypedReturnPutJoinImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaPutBelowNullableOpenTypedReturnPutJoinImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.GenericTypedReturnPut
+            fun put(t: Int): String
+            // inherited from com.xemantic.kotlin.introspection.test.GenericPut
+            open fun put(t: Int?): String
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should resolve Java member taking boxed type below Kotlin class joining Kotlin member of generic return type given platform type with one given primitive type`() {
+        // the put(t: T): R a Java interface gives String, returning String!, is less specific than the put(t: T) of GenericPut<Int>,
+        // declared after it, which the joined member takes the Int of, which the put(Integer) below does not override,
+        // so that a concrete subclass has to implement it
+        resolver.resolve("com.xemantic.kotlin.introspection.test.BoxedJavaPutBelowJavaTypedReturnPutIntPutJoinImpl.put") sameAsKotlin """
+            // com.xemantic.kotlin.introspection.test.BoxedJavaPutBelowJavaTypedReturnPutIntPutJoinImpl.put [page 1/1]
+            // inherited from com.xemantic.kotlin.introspection.test.other.JavaBoxedPutBelowJavaTypedReturnPutIntPutJoin
+            override fun put(arg0: Int?): String
+            // inherited from com.xemantic.kotlin.introspection.test.GenericPut
+            fun put(t: Int): String
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve Java member taking boxed type below Kotlin class joining Kotlin member of generic return type given primitive type with one given boxed type by Java`() {
         // the put(t: T): R of GenericTypedReturnPut<Int, String>, declared first, returns String as the Kotlin class sees it,
         // like the put(t: T) of GenericPut<Integer>, so that the joined member takes its Int, which the put(Integer) below does not override,

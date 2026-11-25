@@ -1133,9 +1133,10 @@ private fun overriddenKotlinMethods(method: Method, matched: List<Method>): List
         supertypes.filter { it.isKotlinClass }
     }
     // the member a Kotlin class above joins two of them into, see joinPick, by the nearest such class
-    fun pickOf(first: Method, second: Method): Method? = kotlinSupertypes.firstOrNull { join ->
+    // or the fallback, when more members are joined there
+    fun pickOf(first: Method, second: Method, fallback: Method? = null): Method? = kotlinSupertypes.firstOrNull { join ->
         first.declaringClass.isAssignableFrom(join) && second.declaringClass.isAssignableFrom(join)
-    }?.let { join -> joinPick(join, first, second) }
+    }?.let { join -> joinPick(join, first, second, fallback) }
     return overriding.filter { inherited ->
         // a member given a primitive type is overridden only when a Kotlin class joins it with one the method overrides,
         // which the joined member takes the type of, like the put(t: T) of PA<Integer> of `Y : JPA(), GenericPut<Int>`
@@ -1143,7 +1144,9 @@ private fun overriddenKotlinMethods(method: Method, matched: List<Method>): List
             notOverriding.none { it.declaringClass != inherited.declaringClass && inherited.declaringClass.isAssignableFrom(it.declaringClass) } &&
             // nor the ones a Kotlin class joins with one given a primitive type, one member taking it there,
             // like the put(t: T) of GenericPut<@NotNull Integer> joined with the one of GenericDefaultPut<Int>
-            givenPrimitive.none { primitive -> primitive.declaringClass != inherited.declaringClass && pickOf(primitive, inherited) == primitive }
+            givenPrimitive.none { primitive ->
+                primitive.declaringClass != inherited.declaringClass && pickOf(primitive, inherited, fallback = primitive) == primitive
+            }
     }
 }
 
@@ -1154,11 +1157,17 @@ private fun overriddenKotlinMethods(method: Method, matched: List<Method>): List
  * like the put(t: T) of the `PA<Integer>` of a Java superclass of `abstract class Y : JPA(), GenericPut<Int>`, taking `Int!`,
  * which a Java `put(Integer)` below overrides then, unlike the one of `abstract class Y : GenericPut<Int>, JPA()`, taking `Int`.
  */
-internal fun joinPick(join: Class<*>, first: Method, second: Method): Method {
+internal fun joinPick(join: Class<*>, first: Method, second: Method, fallback: Method? = null): Method? {
+    // told only of a join of these two, as K2 groups more of them around the first one, which might keep them apart,
+    // like the put(t: T) of GenericTypedReturnPut<Int, String> next to the put(t: T) of GenericPut<@Nullable Integer> declared first,
+    // and the one of a Java superclass given Integer, which joins the latter
+    if (!isPlainJoin(join, first.name, first.parameterCount)) return fallback
     // the return types as the join sees them, like the String of the put(t: T): R of GenericTypedReturnPut<Int, String>,
     // erased to Object on the JVM, or the erased ones, when not told
-    val firstReturn = returnTypeSeenBy(join, first)
-    val secondReturn = returnTypeSeenBy(join, second)
+    val (firstReturn, isFirstPlatform) = returnTypeSeenBy(join, first)
+    val (secondReturn, isSecondPlatform) = returnTypeSeenBy(join, second)
+    // a platform type less specific than the same type without it, like the String! a Java class gives for R
+    if (firstReturn == secondReturn && isFirstPlatform != isSecondPlatform) return if (isFirstPlatform) second else first
     if (firstReturn != secondReturn) {
         if (secondReturn.isAssignableFrom(firstReturn)) return first
         if (firstReturn.isAssignableFrom(secondReturn)) return second
@@ -1179,22 +1188,66 @@ internal fun joinPick(join: Class<*>, first: Method, second: Method): Method {
 }
 
 /**
+ * Whether K2 joins the members of the [name] and the [parameterCount] the Kotlin class [join] inherits along its paths
+ * into one, which [joinPick] tells: two of them, or more, when the first one reached, depth-first in the order of declaration,
+ * takes a platform type a Java class gives, which any of them joins. A member is the one of a Kotlin class, also deprecated as hidden,
+ * or of a Java class, but an interface, reached first along each path.
+ */
+private fun isPlainJoin(join: Class<*>, name: String, parameterCount: Int): Boolean {
+    // the classes declaring them, by each path, and whether the first one takes a platform type
+    val reached = ArrayList<Class<*>>()
+    var isFirstPlatform = false
+    fun walk(type: Class<*>, giver: Class<*>?, depth: Int) {
+        if (depth > 64 || type.isJdkClass) return
+        val declares = (type.isKotlinClass || !type.isInterface) && reflectedValue(default = false) {
+            type.declaredMethods.any { it.name == name && it.parameterCount == parameterCount && !it.isBridge && !Modifier.isStatic(it.modifiers) }
+        }
+        if (declares && type != join) {
+            if (reached.isEmpty()) {
+                isFirstPlatform = !type.isKotlinClass || giver != null && !giver.isKotlinClass &&
+                    type.typeParameters.indices.all { givesPlatformTypeArguments(giver, type, it) }
+            }
+            reached += type
+            return
+        }
+        val position = kotlinSuperclassPositions.get(type)
+        reflectedValue(default = emptyList()) {
+            val interfaces = type.interfaces.toList()
+            type.superclass?.let { interfaces.take(position) + it + interfaces.drop(position) } ?: interfaces
+        }.forEach { walk(it, type, depth + 1) }
+    }
+    walk(join, null, 0)
+    // but not when the class of the first one is reached again, given other type arguments by Kotlin, a member apart then,
+    // like the put(t: T) of GenericCharSequencePut<Int> next to the one a Java class gives Integer
+    return reached.size <= 2 || isFirstPlatform && reached.count { it == reached.first() } == 1
+}
+
+/**
  * The class of the return type of the [method], of a supertype of the [join], with the type arguments the [join] gives
  * its type parameters substituted, like `String` of the `put(t: T): R` of `GenericTypedReturnPut<Int, String>`,
- * along the first path to its class, or its erased return type, when it cannot be told.
+ * along the first path to its class, or its erased return type, when it cannot be told,
+ * and whether a Java class gives it along every path, a platform type then,
+ * like the `String!` of a Java `JR extends GenericTypedReturnPut<Integer, String>`.
  */
-private fun returnTypeSeenBy(join: Class<*>, method: Method): Class<*> = reflectedValue(default = method.returnType) {
+private fun returnTypeSeenBy(join: Class<*>, method: Method): Pair<Class<*>, Boolean> = reflectedValue(default = method.returnType to false) {
     var type: Type = method.genericReturnType
+    var isPlatform = false
     val visited = HashSet<Class<*>>()
-    // the type arguments of the supertypes of the classes walked from the join, by their type variables
-    val given = HashMap<TypeVariable<*>, Type>()
+    // the type arguments of the supertypes of the classes walked from the join, by their type variables,
+    // and whether a Java class gives them, a platform type then, unless annotated, see givesPlatformTypeArguments
+    val given = HashMap<TypeVariable<*>, Pair<Type, Boolean>>()
     fun walk(current: Class<*>) {
         if (!visited.add(current)) return
         (listOfNotNull(current.genericSuperclass) + current.genericInterfaces).forEach { supertype ->
             val raw = ((supertype as? ParameterizedType)?.rawType ?: supertype) as? Class<*> ?: return@forEach
             if (!method.declaringClass.isAssignableFrom(raw)) return@forEach
             (supertype as? ParameterizedType)?.actualTypeArguments?.forEachIndexed { index, argument ->
-                raw.typeParameters.getOrNull(index)?.let { given.putIfAbsent(it, argument) }
+                raw.typeParameters.getOrNull(index)?.let { variable ->
+                    val isJavaGiven = !current.isKotlinClass && givesPlatformTypeArguments(current, raw, index)
+                    // a platform type only when given by Java along every path, like Integer by a Java class and Int by Kotlin
+                    given[variable] = given[variable]?.let { (first, isPlatform) -> first to (isPlatform && isJavaGiven) }
+                        ?: (argument to isJavaGiven)
+                }
             }
             walk(raw)
         }
@@ -1202,12 +1255,14 @@ private fun returnTypeSeenBy(join: Class<*>, method: Method): Class<*> = reflect
     walk(join)
     repeat(visited.size + 1) {
         val variable = type as? TypeVariable<*> ?: return@repeat
-        type = given[variable] ?: return@repeat
+        val (argument, isJavaGiven) = given[variable] ?: return@repeat
+        type = argument
+        isPlatform = isPlatform || isJavaGiven
     }
     when (val resolved = type) {
-        is Class<*> -> resolved
-        is ParameterizedType -> resolved.rawType as? Class<*> ?: method.returnType
-        else -> method.returnType
+        is Class<*> -> resolved to isPlatform
+        is ParameterizedType -> (resolved.rawType as? Class<*> ?: method.returnType) to isPlatform
+        else -> method.returnType to false
     }
 }
 
