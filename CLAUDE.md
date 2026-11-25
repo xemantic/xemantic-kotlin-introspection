@@ -320,7 +320,7 @@ see [DEVELOPMENT.md](DEVELOPMENT.md#markdown-soft-wrapping-in-the-ide) for how t
 
 - A `var` of a Kotlin interface which a Java class joins with a getter of its Java superclass alone, or with accessors of two modalities,
   makes every Kotlin subclass fail with `inherited platform declarations clash`, so such a shape is no fixture —
-  and a sweep of the joins needs Kotlin joining classes, private properties, and accessors of other packages too, each of which kotlinc reads otherwise, see `javaJoinedGetterModality`.
+  and so does a Kotlin class joining a Java getter with an abstract interface property itself, so only interface defaults make Kotlin-join fixtures.
 
 - kotlinc 2.4.21 compiles a concrete subclass, of another module, of a class with an internal abstract member when it declares a function of that signature without `override`,
   like `fun ia(): String = ""` — `override fun ia()` is rejected (`has no access … so it cannot override it`), and leaving it out too (`inherits invisible abstract member`),

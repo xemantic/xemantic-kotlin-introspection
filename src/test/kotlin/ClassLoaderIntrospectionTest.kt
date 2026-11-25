@@ -3243,6 +3243,61 @@ class ClassLoaderIntrospectionTest {
     }
 
     @Test
+    fun `should not tell generic internal abstract member implemented by class which cannot be loaded`() {
+        // given
+        val introspector = introspectorWithoutAbsentClass("AbsentGreetingMarker.class")
+
+        // when
+        val implementing = introspector.resolve("com.xemantic.kotlin.introspection.isolated.UnloadableInternalGenericImplementing")
+        val sub = introspector.resolve("com.xemantic.kotlin.introspection.isolated.UnloadableInternalGenericImplementingSub")
+
+        // then
+        // ia(t: String) implements ia(t: T) of the superclass given String, though of another JVM signature (#390)
+        implementing sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.UnloadableInternalGenericImplementing [page 1/1]
+            abstract class UnloadableInternalGenericImplementing : LoadableInternalGenericAbstractBase<String>, AbsentGreetingMarker
+        """.trimIndent()
+        sub sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.UnloadableInternalGenericImplementingSub [page 1/1]
+            abstract class UnloadableInternalGenericImplementingSub : UnloadableInternalGenericImplementing
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should not tell hidden member of interface which cannot be loaded implemented by body of superclass`() {
+        // given
+        val introspector = introspectorWithoutAbsentClass("AbsentGreetingMarker.class")
+
+        // when
+        val join = introspector.resolve("com.xemantic.kotlin.introspection.isolated.UnloadableHiddenImplementedJoin")
+
+        // then
+        // the member of the class implements the one of the interface, as kotlinc 2.4.21 tells (#390)
+        join sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.UnloadableHiddenImplementedJoin [page 1/1]
+            abstract class UnloadableHiddenImplementedJoin : LoadableHiddenOpenBase, UnloadableHiddenAbstractFace
+        """.trimIndent()
+    }
+
+    @Test
+    fun `should tell hidden abstract member of superclass next to default of interface which cannot be loaded`() {
+        // given
+        val introspector = introspectorWithoutAbsentClass("AbsentGreetingMarker.class")
+
+        // when
+        val join = introspector.resolve("com.xemantic.kotlin.introspection.isolated.UnloadableHiddenAbstractJoin")
+
+        // then
+        // kotlinc 2.4.21: "does not implement abstract base class member: fun h(): String" (#390)
+        join sameAsKotlin """
+            // com.xemantic.kotlin.introspection.isolated.UnloadableHiddenAbstractJoin [page 1/1]
+            abstract class UnloadableHiddenAbstractJoin : LoadableHiddenAbstractBase, UnloadableHiddenDefaultFace {
+                // must implement hidden: fun h(): String
+            }
+        """.trimIndent()
+    }
+
+    @Test
     fun `should resolve member of internal supertype exposed by class which cannot be loaded as its own`() {
         // given
         val introspector = introspectorWithoutAbsentClass("AbsentGreetingMarker.class")

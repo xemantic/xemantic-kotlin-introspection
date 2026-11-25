@@ -4821,21 +4821,24 @@ internal class DefaultKotlinIntrospector(
             val isHidden: Boolean
         )
         val found = ArrayList<Found>()
-        // the JVM signatures of the members of a body of the Kotlin classes walked, by the names of the classes declaring them
-        val bodies = ArrayList<Pair<String, JvmMethodSignature>>()
+        // the JVM signatures of the members of a body of the Kotlin classes walked, by the names of the classes declaring them,
+        // with their signatures as rendered, of the ones of the classes which cannot be loaded, see isImplementedByUnloaded
+        val bodies = ArrayList<Triple<String, JvmMethodSignature, String?>>()
         // the names of the direct supertypes of the classes walked, by their names, telling a body below a member, see isImplemented
         val supertypeNames = HashMap<String, List<String>>()
-        // the names of the Kotlin classes walked which cannot be loaded, see isImplemented
+        // the names of the Kotlin classes walked, not interfaces, which cannot be loaded, see isImplementedByUnloaded
         val unloaded = HashSet<String>()
         fun scan(superKmClass: KmClass, superDeclarations: ClassDeclarations, member: (Member) -> Member, typeParameters: TypeParameterScope) {
             supertypeNames[superKmClass.name] = superKmClass.supertypes.classNames()
             if (superDeclarations is JavaClass || superDeclarations is BuiltinClass) return
-            if (superDeclarations.clazz == null) unloaded += superKmClass.name
+            val isUnloaded = superDeclarations.clazz == null && superKmClass.kind != ClassKind.INTERFACE
+            if (isUnloaded) unloaded += superKmClass.name
             val declaring = superDeclarations.clazz
             fun add(declared: Member, signature: JvmMethodSignature?, isHidden: Boolean, isInternal: Boolean, isAbstract: Boolean) {
                 signature ?: return
                 if (!isAbstract) {
-                    bodies += superKmClass.name to signature
+                    val renderedSignature = if (!isUnloaded) null else member(declared).let { it.twinSignature(inheritingNames) ?: it.signature(inheritingNames) }
+                    bodies += Triple(superKmClass.name, signature, renderedSignature)
                     return
                 }
                 if (!isHidden && !isInternal) return
@@ -4930,11 +4933,16 @@ internal class DefaultKotlinIntrospector(
             this.name == name && this.descriptor.substringBefore(')') == descriptor.substringBefore(')')
         fun JvmMethodSignature.isOf(method: Method) = isOf(method.name, AsmType.getMethodDescriptor(method))
         // of the classes which cannot be loaded, below the superclass, by their metadata: the nearest one declaring the member,
-        // of a body, or abstract, like an abstract override of a body of a loadable superclass, or the other way round
+        // of a body, or abstract, like an abstract override of a body of a loadable superclass, or the other way round,
+        // matched by the signature as rendered, with the type arguments substituted, like the ia(t: String) of `B : A<String>()`
+        // overriding the ia(t: T) of A, of another JVM signature, but not the interfaces, which a member of a class implements,
+        // like the body of a loadable superclass the abstract member of an interface which cannot be loaded
         fun isImplementedByUnloaded(member: Found): Boolean? {
-            val declaring = bodies.filter { (name, signature) -> name in unloaded && signature.isOf(member.signature.name, member.signature.descriptor) }
-                .map { (name, _) -> name to true } +
-                found.filter { it.declaringName in unloaded && it.signature.isOf(member.signature.name, member.signature.descriptor) }
+            fun isOfMember(signature: JvmMethodSignature, renderedSignature: String?) =
+                renderedSignature == member.renderedSignature || signature.isOf(member.signature.name, member.signature.descriptor)
+            val declaring = bodies.filter { (name, signature, rendered) -> name in unloaded && isOfMember(signature, rendered) }
+                .map { (name, _, _) -> name to true } +
+                found.filter { it.declaringName in unloaded && isOfMember(it.signature, it.renderedSignature) }
                     .map { it.declaringName to false }
             return declaring.firstOrNull { (name, _) -> declaring.none { (other, _) -> other != name && isSupertype(name, of = other) } }?.second
         }
@@ -4948,7 +4956,7 @@ internal class DefaultKotlinIntrospector(
             }
             declaringFaces.any { (type, method) ->
                 !Modifier.isAbstract(method.modifiers) && declaringFaces.none { (other, _) -> other != type && type.isAssignableFrom(other) }
-            } || bodies.any { (declaring, signature) ->
+            } || bodies.any { (declaring, signature, _) ->
                 signature.isOf(member.signature.name, member.signature.descriptor) && isSupertype(member.declaringName, of = declaring)
             }
         }

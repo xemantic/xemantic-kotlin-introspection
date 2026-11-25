@@ -68,6 +68,44 @@ abstract class UnloadableInternalImplementing : LoadableInternalAbstractBase(), 
 
 abstract class UnloadableInternalImplementingSub : UnloadableInternalImplementing()
 
+// and so a generic one, given a type argument, implemented of another JVM signature, `ia(String)` of `ia(Object)`
+abstract class LoadableInternalGenericAbstractBase<T> {
+    internal abstract fun ia(t: T): String
+}
+
+abstract class UnloadableInternalGenericImplementing : LoadableInternalGenericAbstractBase<String>(), AbsentGreetingMarker {
+    internal override fun ia(t: String): String = ""
+}
+
+abstract class UnloadableInternalGenericImplementingSub : UnloadableInternalGenericImplementing()
+
+// a hidden member of a body of a loadable superclass, which implements the abstract one of an interface which cannot be loaded,
+// so that kotlinc compiles a concrete subclass, and the other way round, the default of such an interface next to an abstract one
+// of a loadable superclass, which kotlinc demands, "does not implement abstract base class member: fun h(): String"
+abstract class LoadableHiddenOpenBase {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    open fun h(): String = ""
+}
+
+interface UnloadableHiddenAbstractFace : AbsentGreetingMarker {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    fun h(): String
+}
+
+abstract class UnloadableHiddenImplementedJoin : LoadableHiddenOpenBase(), UnloadableHiddenAbstractFace
+
+abstract class LoadableHiddenAbstractBase {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    abstract fun h(): String
+}
+
+interface UnloadableHiddenDefaultFace : AbsentGreetingMarker {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    fun h(): String = ""
+}
+
+abstract class UnloadableHiddenAbstractJoin : LoadableHiddenAbstractBase(), UnloadableHiddenDefaultFace
+
 // and of a class exposing an internal interface, which cannot be loaded
 internal interface UnloadableExposedFace {
     fun f(): Int
