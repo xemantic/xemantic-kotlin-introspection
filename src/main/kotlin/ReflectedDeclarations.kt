@@ -957,7 +957,8 @@ private fun typeVariableParameterOf(method: Method, position: Int): TypeVariable
     val kmClass = readKmClass(method.declaringClass) ?: return null
     val descriptor = AsmType.getMethodDescriptor(method)
     val function = kmClass.functions.firstOrNull { it.name == method.name && it.signature?.descriptor == descriptor } ?: return null
-    val type = function.valueParameters.getOrNull(position)?.type?.takeIf { function.receiverParameterType == null }
+    // but not one taking it as nullable, like `put(t: T?)`, which accepts null whatever the type argument
+    val type = function.valueParameters.getOrNull(position)?.type?.takeIf { function.receiverParameterType == null && !it.isNullable }
     val id = (type?.classifier as? KmClassifier.TypeParameter)?.id ?: return null
     val index = kmClass.typeParameters.indexOfFirst { it.id == id }
     return method.declaringClass.typeParameters.getOrNull(index)
@@ -1140,7 +1141,10 @@ private fun overriddenKotlinMethods(method: Method, matched: List<Method>): List
  * which a Java `put(Integer)` below overrides then, unlike the one of `abstract class Y : GenericPut<Int>, JPA()`, taking `Int`.
  */
 internal fun joinPick(join: Class<*>, first: Method, second: Method): Method {
-    val (firstReturn, secondReturn) = first.returnType to second.returnType
+    // the return types as the join sees them, like the String of the put(t: T): R of GenericTypedReturnPut<Int, String>,
+    // erased to Object on the JVM, or the erased ones, when not told
+    val firstReturn = returnTypeSeenBy(join, first)
+    val secondReturn = returnTypeSeenBy(join, second)
     if (firstReturn != secondReturn) {
         if (secondReturn.isAssignableFrom(firstReturn)) return first
         if (firstReturn.isAssignableFrom(secondReturn)) return second
@@ -1158,6 +1162,39 @@ internal fun joinPick(join: Class<*>, first: Method, second: Method): Method {
         }
     }
     return reached(join) ?: first
+}
+
+/**
+ * The class of the return type of the [method], of a supertype of the [join], with the type arguments the [join] gives
+ * its type parameters substituted, like `String` of the `put(t: T): R` of `GenericTypedReturnPut<Int, String>`,
+ * along the first path to its class, or its erased return type, when it cannot be told.
+ */
+private fun returnTypeSeenBy(join: Class<*>, method: Method): Class<*> = reflectedValue(default = method.returnType) {
+    var type: Type = method.genericReturnType
+    val visited = HashSet<Class<*>>()
+    // the type arguments of the supertypes of the classes walked from the join, by their type variables
+    val given = HashMap<TypeVariable<*>, Type>()
+    fun walk(current: Class<*>) {
+        if (!visited.add(current)) return
+        (listOfNotNull(current.genericSuperclass) + current.genericInterfaces).forEach { supertype ->
+            val raw = ((supertype as? ParameterizedType)?.rawType ?: supertype) as? Class<*> ?: return@forEach
+            if (!method.declaringClass.isAssignableFrom(raw)) return@forEach
+            (supertype as? ParameterizedType)?.actualTypeArguments?.forEachIndexed { index, argument ->
+                raw.typeParameters.getOrNull(index)?.let { given.putIfAbsent(it, argument) }
+            }
+            walk(raw)
+        }
+    }
+    walk(join)
+    repeat(visited.size + 1) {
+        val variable = type as? TypeVariable<*> ?: return@repeat
+        type = given[variable] ?: return@repeat
+    }
+    when (val resolved = type) {
+        is Class<*> -> resolved
+        is ParameterizedType -> resolved.rawType as? Class<*> ?: method.returnType
+        else -> method.returnType
+    }
 }
 
 /**

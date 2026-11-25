@@ -1317,6 +1317,18 @@ abstract class StringJavaGetImpl : com.xemantic.kotlin.introspection.test.other.
 
 fun StringJavaGetImpl.getIndexed(): String = this[""]
 
+interface GenericTypedReturnPut<T, R> {
+    fun put(t: T): R
+}
+
+// the put(t: T): R of GenericTypedReturnPut<Int, String>, declared first, returning String, like the put(t: T) of GenericPut<Integer>,
+// is the one the Kotlin class joins them into, taking Int, which the put(Integer) of a Java subclass does not override
+abstract class TypedReturnPutOpenGenericPutJoin :
+    GenericTypedReturnPut<Int, String>, com.xemantic.kotlin.introspection.test.other.JavaIntegerPutInterface
+
+abstract class BoxedJavaPutBelowTypedReturnPutOpenGenericPutJoinImpl :
+    com.xemantic.kotlin.introspection.test.other.JavaBoxedPutBelowTypedReturnPutOpenGenericPutJoin()
+
 // a Kotlin interface giving Int, not nullable, to the generic JavaGenericMidPut<T>
 interface IntGenericMidPut : com.xemantic.kotlin.introspection.test.other.JavaGenericMidPut<Int>
 

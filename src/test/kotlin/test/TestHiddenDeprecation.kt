@@ -884,6 +884,20 @@ abstract class BoxedJavaPutOverHiddenAndGenericPutImpl : com.xemantic.kotlin.int
 
 fun BoxedJavaPutOverHiddenAndGenericPutImpl.putNull(): String = put(null)
 
+interface HiddenNullableTypeGenericPut<T> {
+    @Deprecated("replaced", level = DeprecationLevel.HIDDEN)
+    fun put(t: T?): String
+}
+
+// the put(Integer) of the Java class overrides the hidden put(t: T?), taking Int? whatever T is given,
+// and the put(t: T) of GenericPut<@NotNull Integer>, taking Int, which disagree, so that it takes Int!
+abstract class BoxedJavaPutOverHiddenNullableTypeAndNotNullGenericPutImpl :
+    com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOverHiddenNullableTypeAndNotNullGenericPut()
+
+class BoxedJavaPutOverHiddenNullableTypeAndNotNullGenericPutConcrete : BoxedJavaPutOverHiddenNullableTypeAndNotNullGenericPutImpl()
+
+fun BoxedJavaPutOverHiddenNullableTypeAndNotNullGenericPutImpl.putNull(): String = put(null)
+
 // the same next to GenericPut<@NotNull Integer> too, which makes the put(Integer) take Int
 abstract class BoxedJavaPutOverHiddenOpenGenericPutAndNotNullIntegerPutImpl :
     com.xemantic.kotlin.introspection.test.other.JavaBoxedPutOverHiddenOpenGenericPutAndNotNullIntegerPut()
